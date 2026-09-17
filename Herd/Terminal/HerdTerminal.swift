@@ -100,9 +100,16 @@ final class HerdTerminalRuntime {
         return String(cString: text.text)
     }
 
+    /// Set while one of Herd's own interfaces owns the keyboard. It returns
+    /// true when it took focus itself, which keeps everything that hands
+    /// focus "back to the terminal" from typing into the agent underneath.
+    @MainActor
+    static var focusOwner: (() -> Bool)?
+
     /// Makes the key window's terminal surface first responder again.
     static func focusTerminal() {
         DispatchQueue.main.async {
+            if focusOwner?() == true { return }
             guard let window = NSApp.keyWindow ?? NSApp.windows.first(where: \.isVisible),
                   let content = window.contentView,
                   let surface = findSurface(in: content) else { return }

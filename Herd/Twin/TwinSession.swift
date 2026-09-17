@@ -67,6 +67,11 @@ final class TwinSession: ObservableObject {
             return
         }
         shownPanes.insert(paneId)
+        // While the twin is up it owns the keyboard: the agent underneath
+        // must not catch what you meant to type here.
+        HerdTerminalRuntime.focusOwner = { [weak self] in
+            (self?.isVisible ?? false) && TwinComposerFocus.request()
+        }
         refreshAttachment()
         startTimer()
     }
@@ -77,6 +82,7 @@ final class TwinSession: ObservableObject {
         // Don't reopen it behind the user's back.
         autoOpened.insert(paneId)
         stopTimerIfIdle()
+        HerdTerminalRuntime.focusOwner = nil
         HerdTerminalRuntime.focusTerminal()
     }
 

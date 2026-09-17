@@ -9,20 +9,26 @@ import IOSurface
 
 @MainActor
 enum DebugSnapshot {
-    /// Set while a SwiftUI overlay covers the terminal, so the terminal image
-    /// isn't composited over it.
-    static var overlayVisible = false
+    /// What is covering the terminal right now, by name. One shared flag lost
+    /// captures: whichever overlay changed last decided for all of them, and
+    /// the terminal image landed on top of a panel that was still open.
+    private static var overlays: Set<String> = []
+
+    /// Records whether one named overlay covers the terminal.
+    static func overlay(_ name: String, _ visible: Bool) {
+        if visible { overlays.insert(name) } else { overlays.remove(name) }
+    }
+
+    static var overlayVisible: Bool { !overlays.isEmpty }
     /// Set while a SwiftUI cover sits over part of the terminal.
     static var coverActive = false
-    /// Set while the visual twin is drawn over the terminal.
-    static var twinVisible = false
 
     /// Toasts draw over the terminal area, so the composited terminal image
     /// would erase them from the capture.
     @MainActor
     static var overlaysOnTop: Bool {
         overlayVisible || !ToastCenter.shared.visibleToasts.isEmpty || !AgentBannerCenter.shared.banners.isEmpty
-            || coverActive || twinVisible
+            || coverActive
     }
     static func start() {
         // Encoding window PNGs is main-thread heavy: debug builds only.

@@ -316,6 +316,21 @@ private struct TwinApprovalBar: View {
     }
 }
 
+/// Where the keyboard goes while the twin is open. Everything in Herd that
+/// hands focus back to the terminal asks here first.
+@MainActor
+enum TwinComposerFocus {
+    weak static var textView: NSTextView?
+
+    /// Puts the caret back in the box; false when there is no box.
+    @discardableResult
+    static func request() -> Bool {
+        guard let textView, let window = textView.window else { return false }
+        window.makeFirstResponder(textView)
+        return true
+    }
+}
+
 /// The input box. Return sends, Shift-Return starts a new line — the way
 /// every agent's own prompt behaves, so muscle memory carries over.
 private struct TwinComposer: NSViewRepresentable {
@@ -337,6 +352,7 @@ private struct TwinComposer: NSViewRepresentable {
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = false
         context.coordinator.textView = textView
+        TwinComposerFocus.textView = textView
         // The terminal surface grabs first responder back as the window
         // settles, so the box asks for focus again as that happens.
         for delay in [0.0, 0.25, 0.75] {

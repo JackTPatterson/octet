@@ -138,8 +138,8 @@ struct RootView: View {
             }
         }
         .animation(motion.animation(.palette, .smooth(duration: 0.14)), value: slash.isOpen)
-        .onChange(of: slash.isOpen) { _, open in DebugSnapshot.overlayVisible = open }
-        .onChange(of: confirmations.request?.id) { _, id in DebugSnapshot.overlayVisible = id != nil }
+        .onChange(of: slash.isOpen) { _, open in DebugSnapshot.overlay("slash", open) }
+        .onChange(of: confirmations.request?.id) { _, id in DebugSnapshot.overlay("confirm", id != nil) }
         .onChange(of: store.snapshot.focusedPaneId) { _, _ in slash.resetTyping() }
         .overlay(alignment: .topLeading) {
             // Herd's own command line, drawn over the shell's prompt.
@@ -186,7 +186,7 @@ struct RootView: View {
         .animation(motion.animation(.palette, .smooth(duration: 0.16)), value: ui.paletteVisible)
         .animation(motion.animation(.sidebar), value: ui.sidebarVisible)
         .onChange(of: ui.paletteVisible) { _, visible in
-            DebugSnapshot.overlayVisible = visible
+            DebugSnapshot.overlay("palette", visible)
             if visible {
                 store.refreshPlugins()
                 store.refreshRemoteMachines()
@@ -287,7 +287,7 @@ private struct TwinLayer: View {
             }
         }
         .animation(motion.animation(.palette, .smooth(duration: 0.16)), value: twin.isVisible)
-        .onChange(of: twin.isVisible) { _, visible in DebugSnapshot.twinVisible = visible }
+        .onChange(of: twin.isVisible) { _, visible in DebugSnapshot.overlay("twin", visible) }
     }
 }
 
@@ -379,7 +379,7 @@ private struct RecoveryOverlay: View {
         }
         .animation(motion.animation(.palette, .smooth(duration: 0.18)), value: recovery.offered.isEmpty)
         .onChange(of: recovery.offered.isEmpty) { _, empty in
-            DebugSnapshot.overlayVisible = !empty
+            DebugSnapshot.overlay("recovery", !empty)
         }
     }
 }
