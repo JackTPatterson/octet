@@ -56,12 +56,16 @@ struct RootView: View {
         }
         .onAppear {
             MarketplaceWindow.opener = { openWindow(id: MarketplaceWindow.id) }
+            AgentBoardWindow.opener = { openWindow(id: AgentBoardWindow.id) }
             slash.warmContexts()
             ClipboardWatcher.shared.start()
             #if DEBUG
             // Verification hook: open a window at launch without a click.
             if ProcessInfo.processInfo.environment["HERD_OPEN_WINDOW"] == MarketplaceWindow.id {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1) { MarketplaceWindow.open() }
+            }
+            if ProcessInfo.processInfo.environment["HERD_OPEN_WINDOW"] == AgentBoardWindow.id {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { AgentBoardWindow.open() }
             }
             if let window = ProcessInfo.processInfo.environment["HERD_OPEN_WINDOW"], window.hasPrefix("slash") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
@@ -161,6 +165,7 @@ struct RootView: View {
             DebugSnapshot.overlayVisible = visible
             if visible {
                 store.refreshPlugins()
+                store.refreshRemoteMachines()
                 palette.reset()
                 palette.reload(items: PaletteCatalog.items(store: store, ui: ui))
             } else {

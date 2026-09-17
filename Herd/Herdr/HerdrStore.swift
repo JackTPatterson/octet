@@ -215,6 +215,55 @@ final class HerdrStore: ObservableObject {
         return branches
     }
 
+    // MARK: - Remote machines
+
+    /// Machines the engine has saved, refreshed when the palette opens.
+    @Published private(set) var remoteMachines: [RemoteMachine] = []
+
+    func refreshRemoteMachines() {
+        guard let herdr = HerdrSession.locateHerdr() else { return }
+        PluginCLI.runShell("\(PluginCLI.quote(herdr)) machine list --json", timeout: 30) { [weak self] result in
+            let machines = RemoteMachines.parse(Data(result.output.utf8))
+            guard let self, machines != self.remoteMachines else { return }
+            self.remoteMachines = machines
+        }
+    }
+
+    /// Opens a session on a machine in a new tab of the focused workspace.
+    func openRemote(_ machine: RemoteMachine) {
+        guard let herdr = HerdrSession.locateHerdr() else { return }
+        var params: [String: Any] = [
+            "focus": true,
+            "tab_label": machine.label,
+            "root": [
+                "type": "pane",
+                "label": machine.label,
+                "command": machine.command(herdrPath: herdr, session: RemoteMachines.sessionName(for: machine)),
+            ] as [String: Any],
+        ]
+        if let workspace = focusedWorkspace { params["workspace_id"] = workspace.workspaceId }
+        perform("layout.apply", params, toast: ToastText(
+            progress: "Connecting to \(machine.label)…",
+            success: "Opened \(machine.label)",
+            failure: "Couldn't open \(machine.label)"
+        ))
+    }
+
+    /// Asks the engine to prepare a machine; it does the ssh work.
+    func addRemoteMachine(target: String) {
+        guard let herdr = HerdrSession.locateHerdr() else { return }
+        let handle = toasts.progress("Preparing \(target)…", detail: "Setting up the far side over ssh")
+        PluginCLI.runShell("\(PluginCLI.quote(herdr)) machine add \(PluginCLI.quote(target))", timeout: 300) { [weak self] result in
+            guard let self else { return }
+            if result.exitCode == 0 {
+                self.toasts.succeed(handle, "Added \(target)")
+            } else {
+                self.toasts.fail(handle, "Couldn't add \(target)", detail: PluginCLI.lastLines(result.output))
+            }
+            self.refreshRemoteMachines()
+        }
+    }
+
     // MARK: - Agent notices
 
     private var activityWatcher = AgentActivityWatcher()

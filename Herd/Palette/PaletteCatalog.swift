@@ -128,6 +128,21 @@ enum PaletteCatalog {
                 store.markIdle(workspace.workspaceId)
             })
         }
+        // Machines the engine can reach, each opening a session in a tab.
+        for machine in store.remoteMachines where machine.enabled {
+            items.append(action("remote.\(machine.id)", "Open \(machine.label)", "network",
+                                keywords: ["remote", "ssh", "machine", machine.target]) {
+                store.openRemote(machine)
+            })
+        }
+        items.append(action("remoteAdd", "Add a Remote Machine…", "network.badge.shield.half.filled",
+                            keywords: ["ssh", "remote", "machine", "connect"]) {
+            PaletteCatalog.addRemoteMachine(store: store)
+        })
+        items.append(action("agentBoard", "Agents…", "square.grid.2x2", shortcut: "⌘⇧A",
+                            keywords: ["board", "overview", "running", "status", "all"]) {
+            AgentBoardWindow.open()
+        })
         items.append(action("installSpecs", "Install Command Completion Specs", "square.and.arrow.down.on.square",
                             keywords: ["completion", "autocomplete", "subcommands", "flags", "specs"]) {
             SpecIngest.run { _ in } completion: { result in
@@ -440,8 +455,40 @@ enum ProjectDirectories {
 
 /// Native confirmation dialogs for plugin changes.
 @MainActor
+extension PaletteCatalog {
+    /// Prepares a machine through the engine, which sets up the far side over
+    /// ssh — so it only ever runs when the user asks for it by name.
+    @MainActor
+    static func addRemoteMachine(store: HerdrStore) {
+        ConfirmCenter.shared.ask(ConfirmCenter.Request(
+            title: "Add a remote machine",
+            message: "Herd asks the engine to prepare the far side over ssh, then lists it here. Enter the ssh target, e.g. user@host.",
+            confirmTitle: "Continue",
+            onConfirm: { _ in
+                PaletteCatalog.promptForTarget(store: store)
+            }
+        ))
+    }
+
+    @MainActor
+    private static func promptForTarget(store: HerdrStore) {
+        let alert = NSAlert()
+        alert.messageText = "ssh target"
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 22))
+        field.placeholderString = "user@host"
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Add")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let target = field.stringValue.trimmingCharacters(in: .whitespaces)
+        guard !target.isEmpty else { return }
+        store.addRemoteMachine(target: target)
+    }
+}
+
+@MainActor
 enum PluginDialogs {
-    /// Shows herdr's install preview; returns true when the user confirms.
+    /// Shows the install preview; returns true when the user confirms.
     static func confirmInstall(preview: String, answer: @escaping (Bool) -> Void) {
         let name = PluginCLI.previewField("name", in: preview) ?? "this plugin"
         ConfirmCenter.shared.ask(ConfirmCenter.Request(

@@ -9,6 +9,8 @@ import Foundation
 final class AgentUsageTracker: ObservableObject {
     /// Usage per terminal id, so it follows the pane rather than the tab.
     @Published private(set) var usage: [String: TwinUsage] = [:]
+    /// The last thing each agent said or did, for the board.
+    @Published private(set) var lastActivity: [String: String] = [:]
 
     private unowned let store: HerdrStore
     private var paths: [String: String] = [:]
@@ -42,6 +44,7 @@ final class AgentUsageTracker: ObservableObject {
 
         DispatchQueue.global(qos: .utility).async {
             var found: [String: TwinUsage] = [:]
+            var activity: [String: String] = [:]
             for agent in agents {
                 guard let text = Self.tail(agent.path) else { continue }
                 let conversation = TwinTranscript.parse(agent: kinds[agent.terminal],
@@ -49,11 +52,17 @@ final class AgentUsageTracker: ObservableObject {
                 if let usage = conversation.usage, usage.currentContextTokens > 0 {
                     found[agent.terminal] = usage
                 }
+                if let line = Self.lastLine(of: conversation) {
+                    activity[agent.terminal] = line
+                }
             }
             DispatchQueue.main.async { [weak self] in
-                guard let self, !found.isEmpty else { return }
+                guard let self else { return }
                 for (terminal, usage) in found where self.usage[terminal] != usage {
                     self.usage[terminal] = usage
+                }
+                for (terminal, line) in activity where self.lastActivity[terminal] != line {
+                    self.lastActivity[terminal] = line
                 }
             }
         }
@@ -72,6 +81,24 @@ final class AgentUsageTracker: ObservableObject {
             let directory = ClaudeTranscriptActivity.projectDirectory(forCwd: record.cwd)
             return "\(directory)/\(sessionId).jsonl"
         }
+    }
+
+    /// The newest thing worth reading: what it said, or what it is doing.
+    nonisolated static func lastLine(of conversation: TwinConversation) -> String? {
+        for message in conversation.messages.reversed() {
+            for block in message.blocks.reversed() {
+                switch block {
+                case .text(let text):
+                    let line = TwinTranscript.condense(text)
+                    if !line.isEmpty { return line }
+                case .toolCall(_, let name, let summary):
+                    return summary.isEmpty ? name : "\(name): \(summary)"
+                case .thinking, .toolResult:
+                    continue
+                }
+            }
+        }
+        return nil
     }
 
     /// Only the tail matters: the newest turn carries the context in play.

@@ -54,6 +54,14 @@ struct HerdApp: App {
             MarketplaceView(store: marketplace)
         }
         .defaultSize(width: 900, height: 620)
+        Window("Agents", id: "agents") {
+            AgentBoardView(store: store) { agent in
+                store.focus(AgentEvent(id: agent.paneId, kind: .finished, agent: agent.agent,
+                                       paneId: agent.paneId, tabId: agent.tabId,
+                                       workspaceId: agent.workspaceId, label: "", workedFor: nil, at: Date()))
+            }
+        }
+        .defaultSize(width: 620, height: 460)
     }
 }
 
@@ -98,6 +106,8 @@ struct HerdCommands: Commands {
         CommandGroup(after: .appSettings) {
             Button("Marketplace…") { MarketplaceWindow.open() }
                 .keyboardShortcut("m", modifiers: [.command, .shift])
+            Button("Agents…") { AgentBoardWindow.open() }
+                .keyboardShortcut("a", modifiers: [.command, .shift])
             Divider()
             Button("Install Subagent Tabs Hook") { SubagentHookMenu.install() }
             Button("Remove Subagent Tabs Hook") { SubagentHookMenu.uninstall() }
@@ -195,6 +205,18 @@ enum SubagentHookMenu {
 
 /// Opens the Marketplace window from menus and the palette. RootView hands
 /// over SwiftUI's `openWindow`, which is only available inside a view.
+/// Opens the agents board, the same way the Marketplace window opens.
+@MainActor
+enum AgentBoardWindow {
+    static let id = "agents"
+    static var opener: (() -> Void)?
+
+    static func open() {
+        NSApp.activate(ignoringOtherApps: true)
+        opener?()
+    }
+}
+
 @MainActor
 enum MarketplaceWindow {
     static let id = "marketplace"

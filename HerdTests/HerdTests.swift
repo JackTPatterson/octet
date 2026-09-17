@@ -1606,3 +1606,25 @@ final class TwinUsageTests: XCTestCase {
         XCTAssertNil(TwinUsage.window(forModel: "gpt-6-astra"))
     }
 }
+
+final class RemoteMachineTests: XCTestCase {
+    func testMachineListingIsReadEitherShape() {
+        let array = RemoteMachines.parse(Data(#"[{"id":"m1","label":"builder","target":"jack@builder.local","enabled":true}]"#.utf8))
+        XCTAssertEqual(array.map(\.label), ["builder"])
+        XCTAssertEqual(array.first?.target, "jack@builder.local")
+
+        let wrapped = RemoteMachines.parse(Data(#"{"machines":[{"name":"pve","ssh_target":"root@192.168.86.10","enabled":false}]}"#.utf8))
+        XCTAssertEqual(wrapped.first?.label, "pve")
+        XCTAssertFalse(wrapped.first?.enabled ?? true)
+        // Nothing usable is no machines, not a crash.
+        XCTAssertTrue(RemoteMachines.parse(Data("No saved SSH machines.".utf8)).isEmpty)
+        XCTAssertTrue(RemoteMachines.parse(Data(#"[{"label":"broken"}]"#.utf8)).isEmpty)
+    }
+
+    func testOpeningAMachineRunsTheEngineAgainstIt() {
+        let machine = RemoteMachine(id: "m", label: "Build Box", target: "jack@box")
+        XCTAssertEqual(RemoteMachines.sessionName(for: machine), "herd-build-box")
+        XCTAssertEqual(machine.command(herdrPath: "/usr/local/bin/herdr", session: "herd-build-box"),
+                       ["/usr/local/bin/herdr", "--remote", "jack@box", "--session", "herd-build-box"])
+    }
+}
