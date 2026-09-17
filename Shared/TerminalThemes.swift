@@ -2,7 +2,7 @@
 // built-in themes; image and gradient themes are omitted).
 
 /// A terminal color theme: background, foreground, accent, and the 16 ANSI colors.
-struct TerminalTheme: Identifiable, Equatable {
+struct TerminalTheme: Identifiable, Equatable, Codable {
     let name: String
     let background: String
     let foreground: String
@@ -12,8 +12,18 @@ struct TerminalTheme: Identifiable, Equatable {
 
     var id: String { name }
 
+    /// A theme read from the user's own terminal config, when they asked
+    /// Herd to follow it. Set once at launch and on import.
+    nonisolated(unsafe) static var imported: TerminalTheme?
+
     static func named(_ name: String) -> TerminalTheme {
-        all.first { $0.name == name } ?? all[0]
+        if let imported, imported.name == name { return imported }
+        return all.first { $0.name == name } ?? all[0]
+    }
+
+    /// Everything selectable: the imported one first, since it is the user's.
+    static var selectable: [TerminalTheme] {
+        imported.map { [$0] + all } ?? all
     }
 
     static let all: [TerminalTheme] = [

@@ -10,7 +10,6 @@ struct SidebarView: View {
     var body: some View {
         VStack(spacing: 0) {
             controlBar
-            Divider().overlay(Theme.divider)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
                     ForEach(store.activeGroups) { group in

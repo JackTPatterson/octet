@@ -158,6 +158,14 @@ Herd asks in its own dialog rather than a system alert, themed with the rest
 of the window: quitting, closing idle workspaces, reloading agents, removing
 a plugin, resetting settings, and the plugin install preview all use it.
 
+## Following your terminal's colours
+
+Settings → Appearance → **Follow your terminal's colours** reads the colours
+you already use — `~/.config/ghostty/config`, the theme that config names, or
+any `key = value` theme file you point Herd at — and uses them for the whole
+window instead of one of Herd's own. Colours the file doesn't set are filled
+in rather than left blank, and a light background switches the chrome with it.
+
 ## Pasting an image to an agent
 
 ⌘V with an image on the clipboard writes it into

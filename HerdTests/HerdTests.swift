@@ -1533,3 +1533,46 @@ final class ImagePasteTests: XCTestCase {
         XCTAssertEqual(left.count, 2)
     }
 }
+
+final class TerminalThemeImportTests: XCTestCase {
+    func testAGhosttyStyleConfigBecomesATheme() throws {
+        let theme = try XCTUnwrap(TerminalThemeImport.parse("""
+        # my terminal
+        font-family = "Berkeley Mono"
+        background = #1a1b26
+        foreground = #c0caf5
+        cursor-color = #7aa2f7
+        palette = 0=#15161e
+        palette = 4=#7aa2f7
+        palette = 15=#c0caf5
+        """, name: "tokyonight"))
+        XCTAssertEqual(theme.name, "tokyonight")
+        XCTAssertEqual(theme.background, "1a1b26")
+        XCTAssertEqual(theme.foreground, "c0caf5")
+        XCTAssertEqual(theme.accent, "7aa2f7")
+        XCTAssertEqual(theme.ansi[0], "15161e")
+        XCTAssertEqual(theme.ansi[15], "c0caf5")
+        XCTAssertEqual(theme.ansi.count, 16)
+        // Colours the file didn't set are filled in, never left blank.
+        XCTAssertFalse(theme.ansi[7].isEmpty)
+        XCTAssertFalse(theme.isLight)
+    }
+
+    func testLightBackgroundsAndShorthandColoursAreUnderstood() throws {
+        let light = try XCTUnwrap(TerminalThemeImport.parse("background = #fff\nforeground = #333", name: "Paper"))
+        XCTAssertEqual(light.background, "ffffff")
+        XCTAssertEqual(light.foreground, "333333")
+        XCTAssertTrue(light.isLight)
+        XCTAssertEqual(TerminalThemeImport.hex("'#AABBCC'"), "aabbcc")
+        XCTAssertNil(TerminalThemeImport.hex("not-a-colour"))
+        // A file with no colours isn't a theme.
+        XCTAssertNil(TerminalThemeImport.parse("font-size = 13", name: "x"))
+    }
+
+    func testAConfigThatOnlyNamesAThemeIsFollowed() {
+        XCTAssertEqual(TerminalThemeImport.themeName(in: "theme = catppuccin-mocha"), "catppuccin-mocha")
+        // The split form picks the dark one, which is what Herd defaults to.
+        XCTAssertEqual(TerminalThemeImport.themeName(in: "theme = light:rosepine-dawn,dark:rosepine"), "rosepine")
+        XCTAssertNil(TerminalThemeImport.themeName(in: "background = #000"))
+    }
+}

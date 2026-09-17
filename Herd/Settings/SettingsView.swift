@@ -171,10 +171,49 @@ private struct AppearanceSettings: View {
         return families.filter { !$0.hasPrefix(".") }.sorted()
     }
 
+    /// What Herd found to follow, or how to point it at a file.
+    private var importDetail: String {
+        if let theme = settings.values.importedTheme {
+            return "Using \(theme.name), read from your terminal config. Re-import after changing it."
+        }
+        return "Read the colours from your own terminal config (Ghostty, or any key = value theme file) rather than picking one of Herd's."
+    }
+
+    private func importTheme() {
+        if let theme = TerminalThemeImport.importFromConfig() {
+            adopt(theme)
+            return
+        }
+        // Nothing found where terminals keep it: let them point at the file.
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.prompt = "Import"
+        panel.message = "Choose a terminal config or theme file"
+        guard panel.runModal() == .OK, let url = panel.url,
+              let text = try? String(contentsOf: url, encoding: .utf8) else { return }
+        guard let theme = TerminalThemeImport.parse(text, name: url.deletingPathExtension().lastPathComponent) else {
+            ToastCenter.shared.fail(nil, "No colours in that file",
+                                    detail: "Herd looks for background, foreground and palette entries")
+            return
+        }
+        adopt(theme)
+    }
+
+    private func adopt(_ theme: TerminalTheme) {
+        settings.values.importedTheme = theme
+        settings.values.themeName = theme.name
+        ToastCenter.shared.info("Now following \(theme.name)", detail: "Read from your terminal config")
+    }
+
     var body: some View {
         SettingsGroup(title: "Theme") {
+            SettingsRow(title: "Follow your terminal's colours", detail: importDetail) {
+                Button(settings.values.importedTheme == nil ? "Import" : "Re-import") { importTheme() }
+            }
+            SettingsDivider()
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10)], spacing: 10) {
-                ForEach(TerminalTheme.all) { theme in
+                ForEach(TerminalTheme.selectable) { theme in
                     ThemeSwatch(theme: theme, selected: settings.values.themeName == theme.name) {
                         settings.values.themeName = theme.name
                     }

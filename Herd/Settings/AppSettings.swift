@@ -14,6 +14,8 @@ struct HerdSettings: Codable, Equatable {
 
     // MARK: Appearance (Ghostty + herdr panes)
     var themeName = "Dark"
+    /// Colours read from the user's terminal config, when they asked for it.
+    var importedTheme: TerminalTheme?
     var fontFamily = ""
     var fontSize: Double = 13
     var lineHeightPercent: Double = 100
@@ -109,6 +111,8 @@ struct HerdSettings: Codable, Equatable {
         defaultShell = value("defaultShell", defaults.defaultShell)
         shellMode = value("shellMode", defaults.shellMode)
         themeName = value("themeName", defaults.themeName)
+        importedTheme = value("importedTheme", defaults.importedTheme)
+        TerminalTheme.imported = importedTheme
         fontFamily = value("fontFamily", defaults.fontFamily)
         fontSize = value("fontSize", defaults.fontSize)
         lineHeightPercent = value("lineHeightPercent", defaults.lineHeightPercent)
@@ -324,7 +328,10 @@ final class SettingsStore: ObservableObject {
     }
 
     private func apply(from old: HerdSettings) {
-        if values.themeName != old.themeName {
+        if values.importedTheme != old.importedTheme {
+            TerminalTheme.imported = values.importedTheme
+        }
+        if values.themeName != old.themeName || values.importedTheme != old.importedTheme {
             Theme.palette = ThemePalette(theme: .named(values.themeName))
         }
         if values.ghosttyConfig != old.ghosttyConfig {
