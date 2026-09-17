@@ -177,10 +177,18 @@ blocked, Herd reads the screen and turns the menu into buttons — the numbered
 lists agents draw and plain `(y/n)` prompts both work, whoever is asking.
 Answering sends the same keystroke you would have typed.
 
-The twin is per pane: ⌘⇧V (or the palette) turns it on for the pane you are
-in and off again, and closing it for a pane keeps it closed. Settings →
-Agents has the switch for the feature and, next to it, **Open the twin for
-new agents** if you want it to be where agents start.
+Starting an agent opens it. Run `claude` — or anything else Herd recognises
+as an agent — in any pane and its twin is there, in that pane, without asking
+for it; an agent started in a background tab has its twin ready when you get
+to it. ⌘⇧V (or the palette) switches between the twin and the terminal for
+the pane you are in, and closing it for a pane keeps it closed. Settings →
+Agents turns the feature off, or just the opening-by-itself part.
+
+An agent that has only just started hasn't written anything yet, and the twin
+says so rather than showing the conversation from the last time you worked in
+that folder — a session has to be about the folder the pane is in, or carry
+the id of the session that is running, before the twin will show it. It keeps
+looking while it waits, so the first turn appears as soon as it lands.
 
 ## Confirmations
 

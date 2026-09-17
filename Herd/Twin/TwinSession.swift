@@ -25,6 +25,10 @@ final class TwinSession: ObservableObject {
     private var tail: TwinTail?
     private var source: TwinSource?
     private var attachedPane: String?
+    private var locating = false
+    private var lastLocate = Date.distantPast
+    /// How often to look again while an agent has written nothing.
+    private static let locateInterval: TimeInterval = 2
     private var timer: Timer?
     private var reading = false
     /// Panes the twin has already opened itself for, so closing it sticks.
@@ -66,12 +70,23 @@ final class TwinSession: ObservableObject {
             ToastCenter.shared.fail(nil, "No agent in this pane", detail: "The twin shows an agent's conversation.")
             return
         }
+        open(paneId, takeFocus: true)
+    }
+
+    /// Shows the twin for one pane, which may not be the one you are looking
+    /// at: an agent started in a background tab has its twin ready when you
+    /// get there.
+    private func open(_ paneId: String, takeFocus: Bool) {
         shownPanes.insert(paneId)
-        // While the twin is up it owns the keyboard: the agent underneath
-        // must not catch what you meant to type here.
-        HerdTerminalRuntime.focusOwner = { [weak self] in
-            (self?.isVisible ?? false) && TwinComposerFocus.request()
+        if takeFocus {
+            // While the twin is up it owns the keyboard: the agent underneath
+            // must not catch what you meant to type here.
+            HerdTerminalRuntime.focusOwner = { [weak self] in
+                (self?.isVisible ?? false) && TwinComposerFocus.request()
+            }
+            TwinComposerFocus.request()
         }
+        guard paneId == focusedPaneId else { return }
         refreshAttachment()
         startTimer()
     }
@@ -86,16 +101,20 @@ final class TwinSession: ObservableObject {
         HerdTerminalRuntime.focusTerminal()
     }
 
-    /// Called from the snapshot loop: follows focus, opens for new agents when
-    /// that's the preference, and forgets panes that have gone.
+    /// Called from the snapshot loop: opens for agents as they start, follows
+    /// focus, and forgets panes that have gone.
     func snapshotChanged() {
         let panes = Set(store.snapshot.panes.map(\.paneId))
         shownPanes.formIntersection(panes)
         autoOpened.formIntersection(panes)
-        if SettingsStore.shared.values.twinByDefault, let agent = focusedAgent,
-           !autoOpened.contains(agent.paneId) {
-            autoOpened.insert(agent.paneId)
-            shownPanes.insert(agent.paneId)
+        let settings = SettingsStore.shared.values
+        if settings.visualTwin, settings.twinByDefault {
+            // Every pane that starts an agent, not only the one in front:
+            // running `claude` in a tab is what asks for the twin.
+            for agent in store.snapshot.agents where !autoOpened.contains(agent.paneId) {
+                autoOpened.insert(agent.paneId)
+                open(agent.paneId, takeFocus: agent.paneId == focusedPaneId)
+            }
         }
         if isVisible {
             refreshAttachment()
@@ -107,20 +126,25 @@ final class TwinSession: ObservableObject {
 
     // MARK: - Reading
 
-    /// Points the twin at the focused pane's session file.
+    /// Points the twin at the focused pane's session file. An agent that has
+    /// only just started hasn't written one yet, so this keeps looking rather
+    /// than giving up on the first pass — or, worse, showing the conversation
+    /// it had last time.
     private func refreshAttachment() {
         guard let agent = focusedAgent else { return }
-        if attachedPane == agent.paneId, source != nil {
-            self.agent = agent
-            return
+        if attachedPane != agent.paneId {
+            attachedPane = agent.paneId
+            conversation = TwinConversation()
+            approval = nil
+            tail = nil
+            source = nil
+            notice = nil
+            lastLocate = .distantPast
         }
-        attachedPane = agent.paneId
         self.agent = agent
-        conversation = TwinConversation()
-        approval = nil
-        tail = nil
-        source = nil
-        notice = "Looking for this agent's session…"
+        guard source == nil, !locating, Date().timeIntervalSince(lastLocate) >= Self.locateInterval else { return }
+        locating = true
+        lastLocate = Date()
 
         let record = agent.terminalId.flatMap { store.recovery.record(forTerminal: $0) }
         let sessionId = agent.sessionReference ?? record?.sessionId
@@ -129,12 +153,17 @@ final class TwinSession: ObservableObject {
             cwds.append(extra)
         }
         let kind = agent.agent
+        // Only a session touched since this agent started belongs to it.
+        let since = sessionId == nil ? record?.firstSeen : nil
         DispatchQueue.global(qos: .userInitiated).async {
-            let found = TwinSources.locate(agent: kind, sessionId: sessionId, cwds: cwds)
+            let found = TwinSources.locate(agent: kind, sessionId: sessionId, cwds: cwds, since: since)
             DispatchQueue.main.async { [weak self] in
-                guard let self, self.attachedPane == agent.paneId else { return }
+                guard let self else { return }
+                self.locating = false
+                guard self.attachedPane == agent.paneId else { return }
                 guard let found else {
-                    self.notice = "Herd can't find a session file for \(AgentBrand.forAgent(kind)?.displayName ?? "this agent"). The terminal is still there."
+                    let name = AgentBrand.forAgent(kind)?.displayName ?? "This agent"
+                    self.notice = "\(name) hasn't written to its session yet. Send it something, or press ⌘⇧V for the terminal."
                     return
                 }
                 self.source = found
@@ -165,6 +194,7 @@ final class TwinSession: ObservableObject {
             stopTimerIfIdle()
             return
         }
+        refreshAttachment()
         read()
         readApproval()
     }

@@ -14,10 +14,14 @@ struct TwinSource: Equatable {
 /// the project you are standing in.
 enum TwinSources {
     /// Where the agent's session lives, given what recovery already knows.
+    /// `since` is when this agent started, when the caller knows it: without
+    /// a session id to go on, only a file written since then can be the
+    /// conversation you are looking at — the one beside it is last time's.
     static func locate(
         agent: String?,
         sessionId: String?,
         cwds: [String],
+        since: Date? = nil,
         home: String = NSHomeDirectory(),
         now: Date = Date()
     ) -> TwinSource? {
@@ -40,7 +44,7 @@ enum TwinSources {
                 }
             }
         }
-        return discover(agent: agent, cwds: cwds, home: home, now: now)
+        return discover(agent: agent, cwds: cwds, since: since, home: home, now: now)
     }
 
     /// The newest plausible session file for this agent, when there is no id
@@ -48,39 +52,41 @@ enum TwinSources {
     static func discover(
         agent: String?,
         cwds: [String],
+        since: Date? = nil,
         home: String = NSHomeDirectory(),
         now: Date = Date(),
         within: TimeInterval = 7 * 86_400
     ) -> TwinSource? {
+        // A minute of slack: an agent writes its first line moments after
+        // Herd first sees the process.
+        let floor = max(now.addingTimeInterval(-within), since?.addingTimeInterval(-60) ?? .distantPast)
         let id = AgentBrand.forAgent(agent)?.id ?? agent?.lowercased()
         if id == "claude" {
             for cwd in cwds {
                 let directory = ClaudeTranscriptActivity.projectDirectory(forCwd: cwd, home: home)
-                if let path = newest(in: directory, home: home, now: now, within: within) {
+                if let path = newest(in: directory, after: floor) {
                     return TwinSource(path: path, format: "claude")
                 }
             }
         }
-        guard let id, !id.isEmpty else { return nil }
-        var candidates: [(path: String, modified: Date, matchesCwd: Bool, looksLikeSession: Bool)] = []
+        // Claude keeps a folder per project, so a file outside this pane's
+        // folder is someone else's conversation by construction; there is no
+        // second guess worth making.
+        guard let id, !id.isEmpty, id != "claude" else { return nil }
+        var candidates: [(path: String, modified: Date, looksLikeSession: Bool)] = []
         var seen = Set<String>()
         for directory in directories(for: id, home: home) {
-            for path in jsonlFiles(in: directory, newerThan: now.addingTimeInterval(-within))
-            where seen.insert(path).inserted {
-                let modified = modificationDate(path)
-                candidates.append((
-                    path,
-                    modified,
-                    cwds.contains { mentions(path: path, cwd: $0) },
-                    looksLikeSession(path)
-                ))
+            for path in jsonlFiles(in: directory, newerThan: floor) where seen.insert(path).inserted {
+                // The session has to be about the folder this pane is in.
+                // Without that, the newest file in the agent's folder is
+                // whatever it is doing for some other window.
+                guard cwds.contains(where: { mentions(path: path, cwd: $0) }) else { continue }
+                candidates.append((path, modificationDate(path), looksLikeSession(path)))
             }
         }
-        // A file that names your folder beats a newer one that doesn't, and a
-        // file shaped like a session beats whatever else the agent keeps in
-        // there. Then the newest wins.
+        // A file shaped like a session beats whatever else the agent keeps in
+        // there, and then the newest wins.
         let ranked = candidates.sorted { first, second in
-            if first.matchesCwd != second.matchesCwd { return first.matchesCwd }
             if first.looksLikeSession != second.looksLikeSession { return first.looksLikeSession }
             return first.modified > second.modified
         }
@@ -163,10 +169,10 @@ enum TwinSources {
         return found
     }
 
-    private static func newest(in directory: String, home: String, now: Date, within: TimeInterval) -> String? {
+    private static func newest(in directory: String, after floor: Date) -> String? {
         jsonlFiles(in: directory, depth: 1)
             .map { ($0, modificationDate($0)) }
-            .filter { now.timeIntervalSince($0.1) <= within }
+            .filter { $0.1 >= floor }
             .max { $0.1 < $1.1 }?.0
     }
 

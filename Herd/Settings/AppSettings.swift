@@ -54,7 +54,7 @@ struct HerdSettings: Codable, Equatable {
     var pasteImagesAsFiles = true
     var autoNameTabs = true
     var visualTwin = true
-    var twinByDefault = false
+    var twinByDefault = true
     var showTips = true
 
     // MARK: Advanced (herdr)
@@ -155,6 +155,8 @@ struct HerdSettings: Codable, Equatable {
         promptEditor = value("promptEditor", defaults.promptEditor)
         pasteImagesAsFiles = value("pasteImagesAsFiles", defaults.pasteImagesAsFiles)
         autoNameTabs = value("autoNameTabs", defaults.autoNameTabs)
+        visualTwin = value("visualTwin", defaults.visualTwin)
+        twinByDefault = value("twinByDefault", defaults.twinByDefault)
         showTips = value("showTips", defaults.showTips)
         worktreesDirectory = value("worktreesDirectory", defaults.worktreesDirectory)
         // Move off the old default unless worktrees already live there.

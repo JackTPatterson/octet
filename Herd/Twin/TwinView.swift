@@ -124,8 +124,7 @@ struct TwinView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 14)
-                .frame(maxWidth: 820, alignment: .leading)
-                .frame(maxWidth: .infinity, alignment: .center)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .onChange(of: rows.count) { _, _ in
                 withAnimation(MotionPreferences.shared.animation(.palette, .smooth(duration: 0.2))) {
@@ -138,6 +137,11 @@ struct TwinView: View {
     }
 
     private static let bottomId = "twin-bottom"
+
+    private var placeholder: String {
+        let name = AgentBrand.forAgent(twin.agent?.agent)?.displayName ?? "the agent"
+        return "Message \(name)…"
+    }
 
     private var composerHeight: CGFloat {
         let lines = max(1, twin.draft.components(separatedBy: "\n").count)
@@ -152,7 +156,21 @@ struct TwinView: View {
             // lines in it, up to a few, and scrolls after that.
             TwinComposer(text: $twin.draft, onSubmit: { twin.submit() })
                 .frame(height: composerHeight)
-            if !twin.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                .overlay(alignment: .leading) {
+                    if twin.draft.isEmpty {
+                        Text(placeholder)
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(Theme.textTertiary)
+                            .padding(.leading, 4)
+                            .allowsHitTesting(false)
+                    }
+                }
+            if twin.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text("⏎ send")
+                    .font(Theme.captionFont)
+                    .foregroundStyle(Theme.textTertiary)
+                    .padding(.bottom, 3)
+            } else {
                 Button("Send") { twin.submit() }
                     .buttonStyle(HerdButtonStyle(kind: .primary))
                     .keyboardShortcut(.return, modifiers: .command)
@@ -160,9 +178,9 @@ struct TwinView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
-        .background(Theme.card.opacity(Theme.isLight ? 0.6 : 0.5))
+        .background(Theme.card)
         .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.border.opacity(0.6), lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.border, lineWidth: 1))
         .padding(.horizontal, 16)
         .padding(.bottom, 14)
     }

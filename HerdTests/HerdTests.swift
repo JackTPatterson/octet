@@ -1941,6 +1941,47 @@ final class TwinSourceRankingTests: XCTestCase {
         XCTAssertTrue(TwinSources.looksLikeSession(rollout))
     }
 
+    func testLastTimesConversationIsNotShownForAnAgentThatJustStarted() throws {
+        let home = try temporaryHome()
+        let cwd = "/repo/app"
+        let directory = ClaudeTranscriptActivity.projectDirectory(forCwd: cwd, home: home)
+        let previous = directory + "/00000000-old.jsonl"
+        try write(#"{"type":"user","uuid":"u1","message":{"role":"user","content":"yesterday"}}"# + "\n",
+                  to: previous, modified: Date().addingTimeInterval(-3_600))
+
+        // Started a minute ago and hasn't written a line: nothing to show,
+        // rather than the session sitting beside it.
+        let started = Date()
+        XCTAssertNil(TwinSources.locate(agent: "claude", sessionId: nil, cwds: [cwd], since: started, home: home))
+        // Without a start time to go on, the newest is the best guess.
+        XCTAssertEqual(TwinSources.locate(agent: "claude", sessionId: nil, cwds: [cwd], home: home)?.path, previous)
+
+        // Once it writes, it is the one.
+        let current = directory + "/11111111-new.jsonl"
+        try write(#"{"type":"user","uuid":"u2","message":{"role":"user","content":"now"}}"# + "\n", to: current)
+        XCTAssertEqual(TwinSources.locate(agent: "claude", sessionId: nil, cwds: [cwd], since: started, home: home)?.path,
+                       current)
+    }
+
+    func testAnotherProjectsConversationIsNeverShown() throws {
+        let home = try temporaryHome()
+        // A session for a different folder, being written to right now.
+        let elsewhere = home + "/.newagent/sessions/rollout-elsewhere.jsonl"
+        try write([
+            #"{"cwd":"/somewhere/else","role":"user","content":"someone else's work"}"#,
+            #"{"role":"assistant","content":"on it"}"#,
+        ].joined(separator: "\n") + "\n", to: elsewhere)
+
+        XCTAssertNil(TwinSources.locate(agent: "newagent", sessionId: nil, cwds: ["/repo/app"], home: home))
+
+        // Claude keeps a folder per project, so the same rule falls out of
+        // where it writes.
+        let other = ClaudeTranscriptActivity.projectDirectory(forCwd: "/somewhere/else", home: home)
+        try write(#"{"type":"user","uuid":"u1","message":{"role":"user","content":"theirs"}}"# + "\n",
+                  to: other + "/session.jsonl")
+        XCTAssertNil(TwinSources.locate(agent: "claude", sessionId: nil, cwds: ["/repo/app"], home: home))
+    }
+
     func testTodaysSessionIsFoundUnderYearsOfOldOnes() throws {
         let home = try temporaryHome()
         let old = Date().addingTimeInterval(-200 * 86_400)
