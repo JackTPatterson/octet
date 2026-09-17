@@ -20,6 +20,8 @@ final class TwinSession: ObservableObject {
     @Published var draft = ""
     /// Panes showing the twin instead of the terminal.
     @Published private(set) var shownPanes: Set<String> = []
+    /// What you have sent that the agent hasn't written down yet.
+    @Published private(set) var pending: [TwinPendingMessage] = []
 
     private unowned let store: HerdrStore
     private var tail: TwinTail?
@@ -139,6 +141,7 @@ final class TwinSession: ObservableObject {
             tail = nil
             source = nil
             notice = nil
+            pending = []
             lastLocate = .distantPast
         }
         self.agent = agent
@@ -213,6 +216,7 @@ final class TwinSession: ObservableObject {
                 guard self.attachedPane == pane else { return }
                 self.tail = working
                 if changed { self.conversation = working.conversation }
+                self.settlePending()
                 if working.conversation.messages.isEmpty, self.notice == nil, working.started {
                     self.notice = "This session is empty so far."
                 } else if !working.conversation.messages.isEmpty {
@@ -220,6 +224,13 @@ final class TwinSession: ObservableObject {
                 }
             }
         }
+    }
+
+    /// Clears the messages the agent has now written into its session.
+    private func settlePending() {
+        guard !pending.isEmpty else { return }
+        let settled = TwinPending.settle(pending, against: TwinRows.build(conversation))
+        if settled != pending { pending = settled }
     }
 
     /// Approvals never reach the session file — they are a question drawn on
@@ -238,10 +249,13 @@ final class TwinSession: ObservableObject {
     // MARK: - Writing back
 
     /// Sends what you typed to the real agent, as if you had typed it there.
+    /// It shows in the conversation straight away and settles into the real
+    /// turn once the agent writes it down.
     func submit() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, let paneId = attachedPane else { return }
         draft = ""
+        pending.append(TwinPendingMessage(text: text))
         prompt(text, to: paneId)
     }
 

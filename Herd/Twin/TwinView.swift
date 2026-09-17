@@ -120,13 +120,17 @@ struct TwinView: View {
                         TwinRowView(row: row)
                             .id(row.id)
                     }
+                    ForEach(twin.pending) { message in
+                        TwinPendingRow(text: message.text)
+                            .id(message.id)
+                    }
                     Color.clear.frame(height: 1).id(Self.bottomId)
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 14)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .onChange(of: rows.count) { _, _ in
+            .onChange(of: rows.count + twin.pending.count) { _, _ in
                 withAnimation(MotionPreferences.shared.animation(.palette, .smooth(duration: 0.2))) {
                     proxy.scrollTo(Self.bottomId, anchor: .bottom)
                 }
@@ -183,6 +187,30 @@ struct TwinView: View {
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.border, lineWidth: 1))
         .padding(.horizontal, 16)
         .padding(.bottom, 14)
+    }
+}
+
+/// A message on its way to the agent: the same shape as a turn, held quiet
+/// until the agent writes it down and it becomes one.
+private struct TwinPendingRow: View {
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Rectangle().fill(Theme.accent.opacity(0.4)).frame(width: 2)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(text)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Theme.textSecondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("sending…")
+                    .font(Theme.captionFont)
+                    .foregroundStyle(Theme.textTertiary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.vertical, 2)
     }
 }
 

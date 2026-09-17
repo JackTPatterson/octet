@@ -2001,3 +2001,35 @@ final class TwinSourceRankingTests: XCTestCase {
         XCTAssertEqual(source?.path, today)
     }
 }
+
+final class TwinPendingTests: XCTestCase {
+    private func userRows(_ texts: [String]) -> [TwinRow] {
+        texts.enumerated().map { TwinRow(id: "r\($0.offset)", kind: .user($0.element)) }
+    }
+
+    func testAMessageClearsOnceTheAgentWritesItDown() {
+        let sent = [TwinPendingMessage(text: "run the tests")]
+        XCTAssertEqual(TwinPending.settle(sent, against: []).count, 1)
+        XCTAssertTrue(TwinPending.settle(sent, against: userRows(["run the tests"])).isEmpty)
+        // Agents reflow what you send; the words are what match.
+        XCTAssertTrue(TwinPending.settle(sent, against: userRows(["run   the\ntests"])).isEmpty)
+    }
+
+    func testTheSameMessageTwiceIsMatchedTwice() {
+        let first = TwinPendingMessage(text: "again")
+        let second = TwinPendingMessage(text: "again")
+        // One copy written down clears one copy sent, not both.
+        let afterOne = TwinPending.settle([first, second], against: userRows(["again"]))
+        XCTAssertEqual(afterOne.map(\.id), [second.id])
+        XCTAssertTrue(TwinPending.settle([first, second], against: userRows(["again", "again"])).isEmpty)
+    }
+
+    func testAMessageTheAgentNeverRecordsStopsWaiting() {
+        let old = TwinPendingMessage(text: "hello", at: Date().addingTimeInterval(-300))
+        XCTAssertTrue(TwinPending.settle([old], against: []).isEmpty)
+        let recent = TwinPendingMessage(text: "hello", at: Date().addingTimeInterval(-5))
+        XCTAssertEqual(TwinPending.settle([recent], against: []).count, 1)
+        // Another turn in the conversation isn't this one.
+        XCTAssertEqual(TwinPending.settle([recent], against: userRows(["something else"])).count, 1)
+    }
+}

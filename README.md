@@ -184,6 +184,10 @@ to it. ⌘⇧V (or the palette) switches between the twin and the terminal for
 the pane you are in, and closing it for a pane keeps it closed. Settings →
 Agents turns the feature off, or just the opening-by-itself part.
 
+A message you send shows in the conversation as you send it and settles into
+the real turn when the agent writes it down a moment later, so nothing you
+typed is ever nowhere.
+
 An agent that has only just started hasn't written anything yet, and the twin
 says so rather than showing the conversation from the last time you worked in
 that folder — a session has to be about the folder the pane is in, or carry
