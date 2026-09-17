@@ -1576,3 +1576,33 @@ final class TerminalThemeImportTests: XCTestCase {
         XCTAssertNil(TerminalThemeImport.themeName(in: "background = #000"))
     }
 }
+
+final class TwinUsageTests: XCTestCase {
+    func testContextInPlayComesFromTheNewestTurn() {
+        let lines = [
+            #"{"type":"assistant","uuid":"a1","message":{"model":"claude-opus-5","content":[{"type":"text","text":"one"}],"usage":{"input_tokens":1000,"cache_read_input_tokens":9000,"output_tokens":200}}}"#,
+            #"{"type":"assistant","uuid":"a2","message":{"model":"claude-opus-5","content":[{"type":"text","text":"two"}],"usage":{"input_tokens":2000,"cache_read_input_tokens":60000,"output_tokens":300}}}"#,
+        ]
+        let usage = try? XCTUnwrap(TwinTranscript.parseClaude(lines: lines).usage)
+        // Totals accumulate; the context in play is the latest turn's input.
+        XCTAssertEqual(usage?.outputTokens, 500)
+        XCTAssertEqual(usage?.currentContextTokens, 62_000)
+        XCTAssertEqual(usage?.contextWindow, 200_000)
+        XCTAssertEqual(usage?.label, "31%")
+    }
+
+    func testAKnownWindowGivesAPercentAndAnUnknownOneGivesTokens() {
+        var usage = TwinUsage(inputTokens: 10, outputTokens: 5, cacheReadTokens: 0,
+                              contextWindow: nil, currentContextTokens: 52_000)
+        XCTAssertEqual(usage.label, "52k")
+        XCTAssertNil(usage.contextFraction)
+        usage.contextWindow = 272_000
+        XCTAssertEqual(usage.label, "19%")
+        // Nothing to say yet reads as nothing, not as zero percent.
+        XCTAssertEqual(TwinUsage().label, "")
+        XCTAssertEqual(TwinUsage.compact(950), "950")
+        XCTAssertEqual(TwinUsage.compact(1_500_000), "1.5M")
+        XCTAssertEqual(TwinUsage.window(forModel: "claude-opus-5[1m]"), 1_000_000)
+        XCTAssertNil(TwinUsage.window(forModel: "gpt-6-astra"))
+    }
+}

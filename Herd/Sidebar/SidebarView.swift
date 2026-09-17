@@ -141,6 +141,36 @@ private struct BranchChip: View {
     }
 }
 
+/// How much of the model's window the conversation is using.
+private struct ContextChip: View {
+    let usage: TwinUsage
+
+    var body: some View {
+        Text(usage.label)
+            .font(Theme.captionFont)
+            .foregroundStyle(colour)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 1)
+            .background(RoundedRectangle(cornerRadius: 3).fill(colour.opacity(0.14)))
+            .help(detail)
+    }
+
+    /// Quiet until it matters, then increasingly not.
+    private var colour: Color {
+        switch usage.contextFraction ?? 0 {
+        case ..<0.7: Theme.textTertiary
+        case ..<0.9: Color(hex: "e0af68")
+        default: Color(hex: "e5484d")
+        }
+    }
+
+    private var detail: String {
+        let used = TwinUsage.compact(usage.currentContextTokens)
+        guard let window = usage.contextWindow else { return "\(used) of context in play" }
+        return "\(used) of \(TwinUsage.compact(window)) context in play"
+    }
+}
+
 private struct WorkspaceCard: View {
     @ObservedObject var store: HerdrStore
     let workspace: HerdrWorkspace
@@ -184,6 +214,11 @@ private struct WorkspaceCard: View {
                         .font(Theme.uiFont)
                         .foregroundStyle(Theme.textSecondary)
                         .lineLimit(1)
+                    // How full this agent's context is, before it bites.
+                    if let usage = store.usageTracker.usage(forTerminal: agent?.terminalId),
+                       !usage.label.isEmpty {
+                        ContextChip(usage: usage)
+                    }
                 } else {
                     Image(systemName: "terminal")
                         .font(.system(size: 9))

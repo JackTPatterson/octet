@@ -254,6 +254,24 @@ enum AgentSessionFiles {
         return result
     }
 
+    /// The rollout file holding a Codex session, searched back through the
+    /// day folders it writes into.
+    static func codexPath(forSession sessionId: String, now: Date = Date(), home: String = NSHomeDirectory()) -> String? {
+        let calendar = Calendar(identifier: .gregorian)
+        for dayOffset in 0..<14 {
+            guard let day = calendar.date(byAdding: .day, value: -dayOffset, to: now) else { continue }
+            let parts = calendar.dateComponents([.year, .month, .day], from: day)
+            let directory = String(format: "%@/.codex/sessions/%04d/%02d/%02d", home,
+                                   parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
+            guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory) else { continue }
+            // The id is in the filename, so no file has to be opened.
+            if let match = names.first(where: { $0.contains(sessionId) && $0.hasSuffix(".jsonl") }) {
+                return directory + "/" + match
+            }
+        }
+        return nil
+    }
+
     static func codexSessionMeta(_ path: String) -> (id: String, cwd: String)? {
         guard let handle = FileHandle(forReadingAtPath: path) else { return nil }
         defer { try? handle.close() }

@@ -51,6 +51,8 @@ final class HerdrStore: ObservableObject {
 
     let client: HerdrClient
     let recovery: AgentRecoveryController
+    /// How full each agent's context is, refreshed from its session file.
+    private(set) lazy var usageTracker = AgentUsageTracker(store: self)
     private let resolver = ProjectGrouping.CachedResolver()
     private var refreshScheduled = false
     private var eventThread: Thread?
@@ -192,6 +194,7 @@ final class HerdrStore: ObservableObject {
         observeActivity(snapshot)
         autoNameTabs(in: snapshot)
         notifyAgentActivity(in: snapshot)
+        usageTracker.refreshIfDue()
         refreshTip()
         if branches != self.branches { self.branches = branches }
         guard snapshot != self.snapshot || groups.isEmpty else { return }

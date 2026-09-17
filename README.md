@@ -158,6 +158,14 @@ Herd asks in its own dialog rather than a system alert, themed with the rest
 of the window: quitting, closing idle workspaces, reloading agents, removing
 a plugin, resetting settings, and the plugin install preview all use it.
 
+## Context in view
+
+Each agent's card in the sidebar carries how full its context is, read from
+the session file the agent already writes: a percentage when Herd can tell
+the window honestly, tokens when it can't. It stays grey until 70%, warns at
+90%, and the tooltip gives the numbers. Running out of context and hitting a
+limit are two things you only notice too late; this is the cheap fix.
+
 ## Following your terminal's colours
 
 Settings → Appearance → **Follow your terminal's colours** reads the colours

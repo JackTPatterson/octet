@@ -45,8 +45,40 @@ struct TwinUsage: Equatable {
     var cacheReadTokens = 0
     /// What the model's window holds, when the agent records it.
     var contextWindow: Int?
+    /// What the most recent turn sent — the context in play right now,
+    /// rather than the running total.
+    var currentContextTokens = 0
 
     var total: Int { inputTokens + outputTokens }
+
+    /// How full the window is, when Herd can tell honestly.
+    var contextFraction: Double? {
+        guard let contextWindow, contextWindow > 0, currentContextTokens > 0 else { return nil }
+        return min(1, Double(currentContextTokens) / Double(contextWindow))
+    }
+
+    /// `38%` when the window is known, else `52k used`.
+    var label: String {
+        if let fraction = contextFraction { return "\(Int((fraction * 100).rounded()))%" }
+        guard currentContextTokens > 0 else { return "" }
+        return TwinUsage.compact(currentContextTokens)
+    }
+
+    static func compact(_ tokens: Int) -> String {
+        switch tokens {
+        case ..<1_000: "\(tokens)"
+        case ..<1_000_000: "\(tokens / 1_000)k"
+        default: String(format: "%.1fM", Double(tokens) / 1_000_000)
+        }
+    }
+
+    /// Windows Herd can infer from a model name when the agent doesn't say.
+    static func window(forModel model: String?) -> Int? {
+        guard let model = model?.lowercased() else { return nil }
+        if model.contains("1m") { return 1_000_000 }
+        if model.contains("claude") || model.contains("opus") || model.contains("sonnet") { return 200_000 }
+        return nil
+    }
 }
 
 enum TwinTranscript {
@@ -76,6 +108,11 @@ enum TwinTranscript {
                 if let cwd = object["cwd"] as? String { conversation.cwd = cwd }
                 if let usage = message["usage"] as? [String: Any] {
                     conversation.usage = claudeUsage(usage, into: conversation.usage)
+                }
+                if conversation.usage?.contextWindow == nil, let model = message["model"] as? String {
+                    var current = conversation.usage ?? TwinUsage()
+                    current.contextWindow = TwinUsage.window(forModel: model)
+                    conversation.usage = current
                 }
                 let blocks = claudeBlocks(message["content"])
                 guard !blocks.isEmpty else { continue }
@@ -129,6 +166,11 @@ enum TwinTranscript {
         usage.inputTokens += raw["input_tokens"] as? Int ?? 0
         usage.outputTokens += raw["output_tokens"] as? Int ?? 0
         usage.cacheReadTokens += raw["cache_read_input_tokens"] as? Int ?? 0
+        // The newest turn's input is the context actually in play.
+        let input = raw["input_tokens"] as? Int ?? 0
+        let cached = raw["cache_read_input_tokens"] as? Int ?? 0
+        let creation = raw["cache_creation_input_tokens"] as? Int ?? 0
+        usage.currentContextTokens = input + cached + creation
         return usage
     }
 
@@ -159,6 +201,14 @@ enum TwinTranscript {
                     current.inputTokens += usage["input_tokens"] as? Int ?? 0
                     current.outputTokens += usage["output_tokens"] as? Int ?? 0
                     current.cacheReadTokens += usage["cached_input_tokens"] as? Int ?? 0
+                    conversation.usage = current
+                }
+                // Codex records the running totals for the whole thread.
+                if let thread = payload["thread_token_usage"] as? [String: Any] {
+                    var current = conversation.usage ?? TwinUsage()
+                    let input = thread["input_tokens"] as? Int ?? 0
+                    let cached = thread["cached_input_tokens"] as? Int ?? 0
+                    current.currentContextTokens = max(current.currentContextTokens, input + cached)
                     conversation.usage = current
                 }
             case "response_item":

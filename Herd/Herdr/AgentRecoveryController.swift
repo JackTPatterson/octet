@@ -77,6 +77,11 @@ final class AgentRecoveryController: ObservableObject {
         offered = lost
     }
 
+    /// What Herd knows about the agent in one terminal.
+    func record(forTerminal terminalId: String) -> AgentSessionRecord? {
+        journal.records.first { $0.terminalId == terminalId }
+    }
+
     /// Past sessions with a known id, newest first, for a resume menu.
     func resumableSessions() -> [AgentSessionRecord] {
         AgentRecovery.history(journal: journal.records, current: lastSnapshot)
