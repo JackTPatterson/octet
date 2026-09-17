@@ -152,6 +152,36 @@ switch task inside a workspace and the tab stops reading as the task you
 started with. A tab you rename yourself is never renamed again, and split
 tabs are left alone. Settings → Agents & Recovery turns it off.
 
+## Visual twin
+
+⌘⇧V draws Herd's own interface over the pane an agent is running in: its
+turns as messages, reasoning collapsed under a line you can open, each tool
+call with the result it got back, and the model and context in the header.
+What you type in the box at the bottom goes to the real agent, so nothing
+about the agent changes — Herd is the interface, not a second brain.
+
+Nothing is scraped from the terminal to do this. Agents already write their
+turns to disk as structured lines, and the twin reads that: Claude's
+`~/.claude/projects/<project>/<session>.jsonl` and Codex's
+`~/.codex/sessions/<date>/rollout-*.jsonl` are read exactly, and any other
+agent is found the same way you would find it — the newest session file under
+the folder that agent keeps, preferring one that names the folder you are
+working in and that reads as a conversation rather than as the agent's
+command history. A format Herd doesn't know still parses if it writes a turn
+per line, which every agent seen so far does. When there is no session file
+to read, the twin says so and the terminal is still there.
+
+One thing never reaches those files: the question an agent is waiting on. A
+prompt is drawn on screen and nowhere else, so when an agent reports it is
+blocked, Herd reads the screen and turns the menu into buttons — the numbered
+lists agents draw and plain `(y/n)` prompts both work, whoever is asking.
+Answering sends the same keystroke you would have typed.
+
+The twin is per pane: ⌘⇧V (or the palette) turns it on for the pane you are
+in and off again, and closing it for a pane keeps it closed. Settings →
+Agents has the switch for the feature and, next to it, **Open the twin for
+new agents** if you want it to be where agents start.
+
 ## Confirmations
 
 Herd asks in its own dialog rather than a system alert, themed with the rest
@@ -290,6 +320,8 @@ visible actions (tabs, panes, workspaces, renames) stay silent unless they fail.
 | ⌃⌘↑ / ⌃⌘↓ | Previous / next workspace |
 | ⌘N | New workspace |
 | ⌘B | Toggle sidebar |
+| ⌘⇧V | Visual twin / terminal |
+| ⌘⇧A | Agents |
 
 ## License
 

@@ -64,6 +64,7 @@ enum Theme {
         "ctrl+super+down",
         "super+shift+w",
         "super+shift+t",
+        "super+shift+v",
         "super+digit_1",
         "super+digit_2",
         "super+digit_3",
@@ -74,6 +75,27 @@ enum Theme {
         "super+digit_8",
         "super+digit_9",
     ].map { "keybind = \($0)=unbind" }.joined(separator: "\n")
+}
+
+/// Herd's own buttons: the system's blue capsule doesn't belong on a panel
+/// drawn in the terminal's colours.
+struct HerdButtonStyle: ButtonStyle {
+    enum Kind { case primary, quiet }
+    var kind: Kind = .quiet
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(Theme.captionFont)
+            .foregroundStyle(kind == .primary ? Theme.terminalBackground : Theme.textSecondary)
+            .padding(.horizontal, 10)
+            .frame(height: 24)
+            .background(kind == .primary ? Theme.accent : Theme.card.opacity(0.9))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6)
+                .strokeBorder(kind == .primary ? Color.clear : Theme.border, lineWidth: 1))
+            .opacity(isEnabled ? (configuration.isPressed ? 0.75 : 1) : 0.4)
+    }
 }
 
 extension Color {

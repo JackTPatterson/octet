@@ -53,6 +53,8 @@ final class HerdrStore: ObservableObject {
     let recovery: AgentRecoveryController
     /// How full each agent's context is, refreshed from its session file.
     private(set) lazy var usageTracker = AgentUsageTracker(store: self)
+    /// Herd's own interface to whichever agent is focused.
+    private(set) lazy var twin = TwinSession(store: self)
     private let resolver = ProjectGrouping.CachedResolver()
     private var refreshScheduled = false
     private var eventThread: Thread?
@@ -196,6 +198,7 @@ final class HerdrStore: ObservableObject {
         notifyAgentActivity(in: snapshot)
         usageTracker.refreshIfDue()
         refreshTip()
+        twin.snapshotChanged()
         if branches != self.branches { self.branches = branches }
         guard snapshot != self.snapshot || groups.isEmpty else { return }
         self.snapshot = snapshot

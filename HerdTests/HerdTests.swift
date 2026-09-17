@@ -1628,3 +1628,335 @@ final class RemoteMachineTests: XCTestCase {
                        ["/usr/local/bin/herdr", "--remote", "jack@box", "--session", "herd-build-box"])
     }
 }
+
+final class TwinTailTests: XCTestCase {
+    private func temporaryDirectory() throws -> String {
+        let path = NSTemporaryDirectory() + "twin-tail-" + UUID().uuidString
+        try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(atPath: path) }
+        return path
+    }
+
+    func testFollowingAFileReadsOnlyWhatIsNew() throws {
+        let path = try temporaryDirectory() + "/session.jsonl"
+        let first = #"{"type":"user","uuid":"u1","message":{"role":"user","content":"hello"}}"# + "\n"
+        try first.write(toFile: path, atomically: true, encoding: .utf8)
+
+        var tail = TwinTail(format: "claude")
+        XCTAssertTrue(tail.pull(path: path))
+        XCTAssertEqual(tail.conversation.messages.count, 1)
+        // Nothing new: no work, no change.
+        XCTAssertFalse(tail.pull(path: path))
+
+        let handle = try XCTUnwrap(FileHandle(forWritingAtPath: path))
+        try handle.seekToEnd()
+        // An agent appends a line at a time, and can be caught mid-line.
+        let second = #"{"type":"assistant","uuid":"a1","message":{"content":[{"type":"text","text":"hi"}]}}"#
+        try handle.write(contentsOf: Data(second.prefix(40).utf8))
+        try handle.close()
+        XCTAssertFalse(tail.pull(path: path))
+        XCTAssertEqual(tail.conversation.messages.count, 1)
+
+        let rest = try XCTUnwrap(FileHandle(forWritingAtPath: path))
+        try rest.seekToEnd()
+        try rest.write(contentsOf: Data((second.dropFirst(40) + "\n").utf8))
+        try rest.close()
+        XCTAssertTrue(tail.pull(path: path))
+        XCTAssertEqual(tail.conversation.messages.count, 2)
+        XCTAssertEqual(tail.conversation.messages.last?.blocks, [.text("hi")])
+    }
+
+    func testAReplacedFileIsReadFromTheStartAgain() throws {
+        let path = try temporaryDirectory() + "/session.jsonl"
+        try (#"{"type":"user","uuid":"u1","message":{"role":"user","content":"one"}}"# + "\n")
+            .write(toFile: path, atomically: true, encoding: .utf8)
+        var tail = TwinTail(format: "claude")
+        tail.pull(path: path)
+        XCTAssertEqual(tail.conversation.messages.count, 1)
+
+        // Truncated and rewritten: the offset from before means nothing now.
+        try (#"{"type":"user","uuid":"u9","message":{"role":"user","content":"new"}}"# + "\n")
+            .write(toFile: path, atomically: true, encoding: .utf8)
+        XCTAssertTrue(tail.pull(path: path))
+        XCTAssertEqual(tail.conversation.messages.map(\.id), ["u9"])
+    }
+
+    func testMergingBatchesAccumulatesUsageWithoutRepeatingTurns() {
+        let first = TwinTranscript.parseClaude(lines: [
+            #"{"type":"assistant","uuid":"a1","message":{"model":"claude-opus-5","content":[{"type":"text","text":"one"}],"usage":{"input_tokens":10,"output_tokens":2,"cache_read_input_tokens":1000}}}"#
+        ])
+        let second = TwinTranscript.parseClaude(lines: [
+            #"{"type":"assistant","uuid":"a1","message":{"content":[{"type":"text","text":"one"}]}}"#,
+            #"{"type":"assistant","uuid":"a2","message":{"content":[{"type":"text","text":"two"}],"usage":{"input_tokens":20,"output_tokens":3,"cache_read_input_tokens":4000}}}"#
+        ])
+        let merged = TwinTranscript.merge(first, with: second)
+        XCTAssertEqual(merged.messages.map(\.id), ["a1", "a2"])
+        XCTAssertEqual(merged.usage?.inputTokens, 30)
+        XCTAssertEqual(merged.usage?.outputTokens, 5)
+        // The newest turn's input is the context in play, not the sum.
+        XCTAssertEqual(merged.usage?.currentContextTokens, 4020)
+        XCTAssertEqual(merged.model, "claude-opus-5")
+    }
+}
+
+final class TwinGenericReaderTests: XCTestCase {
+    func testAnUnknownAgentsOwnLinesStillBecomeAConversation() {
+        let lines = [
+            #"{"role":"user","content":"ship it","timestamp":"2026-09-17T10:00:00Z"}"#,
+            #"{"role":"assistant","content":"on it","tool_calls":[{"id":"c1","function":{"name":"bash","arguments":"{\"command\":\"make test\"}"}}]}"#,
+            "not json at all",
+        ]
+        let conversation = TwinTranscript.parse(agent: "some-new-agent", lines: lines)
+        XCTAssertEqual(conversation.messages.count, 2)
+        XCTAssertEqual(conversation.messages[0].role, .user)
+        XCTAssertEqual(conversation.messages[0].blocks, [.text("ship it")])
+        XCTAssertEqual(conversation.messages[1].blocks,
+                       [.text("on it"), .toolCall(id: "c1", name: "bash", summary: "make test")])
+    }
+
+    func testAKnownFormatIsRecognisedEvenFromAnUnknownAgent() {
+        // An agent Herd hasn't met may still write Claude's or Codex's shape.
+        let claude = #"{"type":"assistant","uuid":"a1","message":{"content":[{"type":"text","text":"hello"}]}}"#
+        XCTAssertEqual(TwinTranscript.parse(agent: "mystery", lines: [claude]).messages.first?.blocks, [.text("hello")])
+        let codex = #"{"type":"response_item","payload":{"type":"message","id":"m","role":"assistant","content":[{"type":"output_text","text":"done"}]}}"#
+        XCTAssertEqual(TwinTranscript.parse(agent: "mystery", lines: [codex]).messages.first?.blocks, [.text("done")])
+        // And nothing at all reads as nothing, rather than a made-up turn.
+        XCTAssertTrue(TwinTranscript.parse(agent: "mystery", lines: ["{}", ""]).messages.isEmpty)
+    }
+}
+
+final class TwinRowTests: XCTestCase {
+    func testAToolCallCarriesItsResultAndPlumbingNeverShows() {
+        let conversation = TwinTranscript.parseClaude(lines: [
+            #"{"type":"user","uuid":"u1","message":{"role":"user","content":"<command-name>/model</command-name>"}}"#,
+            #"{"type":"user","uuid":"u2","message":{"role":"user","content":"run the tests"}}"#,
+            #"{"type":"assistant","uuid":"a1","message":{"content":[{"type":"thinking","thinking":"check the suite"},{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"swift test"}}]}}"#,
+            #"{"type":"user","uuid":"u3","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"103 tests passed","is_error":false}]}}"#,
+            #"{"type":"assistant","uuid":"a2","message":{"content":[{"type":"text","text":"All green."}]}}"#,
+        ])
+        let rows = TwinRows.build(conversation)
+        XCTAssertEqual(rows.count, 4)
+        XCTAssertEqual(rows[0].kind, .user("run the tests"))
+        XCTAssertEqual(rows[1].kind, .thinking("check the suite"))
+        XCTAssertEqual(rows[2].kind, .tool(name: "Bash", summary: "swift test",
+                                           result: "103 tests passed", isError: false))
+        XCTAssertEqual(rows[3].kind, .assistant("All green."))
+        // Ids are stable, so the list doesn't churn while it is being read.
+        XCTAssertEqual(rows.map(\.id), TwinRows.build(conversation).map(\.id))
+    }
+
+    func testAResultThatHasntComeBackYetLeavesTheCallOnItsOwn() {
+        let conversation = TwinTranscript.parseClaude(lines: [
+            #"{"type":"assistant","uuid":"a1","message":{"content":[{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"/a.swift"}}]}}"#
+        ])
+        XCTAssertEqual(TwinRows.build(conversation).first?.kind,
+                       .tool(name: "Read", summary: "/a.swift", result: "", isError: false))
+    }
+}
+
+final class TwinApprovalTests: XCTestCase {
+    func testANumberedMenuBecomesAnswerableOptions() {
+        let screen = """
+        ● Bash(rm -rf build)
+        ╭──────────────────────────────────────────────╮
+        │ Do you want to run this command?             │
+        │   rm -rf build                               │
+        │                                              │
+        │ ❯ 1. Yes                                     │
+        │   2. Yes, and don't ask again this session   │
+        │   3. No, and tell Claude what to do instead  │
+        ╰──────────────────────────────────────────────╯
+        """
+        let approval = TwinApprovals.detect(screen: screen)
+        XCTAssertEqual(approval?.question, "Do you want to run this command?")
+        XCTAssertEqual(approval?.options.map(\.key), ["1", "2", "3"])
+        XCTAssertEqual(approval?.options.first?.label, "Yes")
+        XCTAssertEqual(approval?.options.first?.isAffirmative, true)
+        XCTAssertEqual(approval?.options.last?.isAffirmative, false)
+        // A number is all these menus need; no Return after it.
+        XCTAssertEqual(approval?.options.first?.needsReturn, false)
+    }
+
+    func testAYesNoPromptBecomesTwoOptionsThatNeedReturn() {
+        let approval = TwinApprovals.detect(screen: "Applying patch to src/main.rs\nProceed with the change? (y/n) ")
+        XCTAssertEqual(approval?.question, "Proceed with the change?")
+        XCTAssertEqual(approval?.options.map(\.key), ["y", "n"])
+        XCTAssertEqual(approval?.options.first?.needsReturn, true)
+    }
+
+    func testOrdinaryOutputIsNotMistakenForAQuestion() {
+        XCTAssertNil(TwinApprovals.detect(screen: "1. first thing I did\nthen some prose\nand more output"))
+        XCTAssertNil(TwinApprovals.detect(screen: "$ npm test\nok 1 passing\nok 2 passing"))
+        XCTAssertNil(TwinApprovals.detect(screen: ""))
+    }
+
+    func testAMenuNearTheTopOfATallPaneIsStillFound() {
+        // Captured from a real pane: the prompt sits where the conversation
+        // reached, with dozens of blank rows under it.
+        var lines = [
+            "   1       importer    +",
+            "● Bash(rm -rf build)",
+            "╭──────────────────────────────────────────────╮",
+            "│ Do you want to run this command?             │",
+            "│   rm -rf build                               │",
+            "│                                              │",
+            "│ ❯ 1. Yes                                     │",
+            "│   2. Yes, and don't ask again this session   │",
+            "│   3. No, and tell Claude what to do instead  │",
+            "╰──────────────────────────────────────────────╯",
+        ]
+        lines += Array(repeating: String(repeating: " ", count: 110), count: 45)
+        let approval = TwinApprovals.detect(screen: lines.joined(separator: "\n"))
+        XCTAssertEqual(approval?.question, "Do you want to run this command?")
+        XCTAssertEqual(approval?.detail, "rm -rf build")
+        XCTAssertEqual(approval?.options.count, 3)
+    }
+
+    func testTheNewestMenuWins() {
+        let screen = """
+        1. Old option
+        2. Another old option
+        some output since
+        Which file should I open?
+        1. auth.swift
+        2. session.swift
+        """
+        let approval = TwinApprovals.detect(screen: screen)
+        XCTAssertEqual(approval?.question, "Which file should I open?")
+        XCTAssertEqual(approval?.options.map(\.label), ["auth.swift", "session.swift"])
+    }
+}
+
+final class TwinSourceTests: XCTestCase {
+    private func temporaryHome() throws -> String {
+        let path = NSTemporaryDirectory() + "twin-home-" + UUID().uuidString
+        try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(atPath: path) }
+        return path
+    }
+
+    private func write(_ text: String, to path: String) throws {
+        try FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent,
+                                                withIntermediateDirectories: true)
+        try text.write(toFile: path, atomically: true, encoding: .utf8)
+    }
+
+    func testClaudeResolvesToItsOwnProjectFile() throws {
+        let home = try temporaryHome()
+        let directory = ClaudeTranscriptActivity.projectDirectory(forCwd: "/repo/app", home: home)
+        try write("{}\n", to: directory + "/session-abc.jsonl")
+        let source = TwinSources.locate(agent: "claude", sessionId: "session-abc", cwds: ["/repo/app"], home: home)
+        XCTAssertEqual(source?.path, directory + "/session-abc.jsonl")
+        XCTAssertEqual(source?.format, "claude")
+    }
+
+    func testAnUnknownAgentIsFoundByItsFolderAndPrefersYourProject() throws {
+        let home = try temporaryHome()
+        let mine = home + "/.newagent/sessions/2026/09/17/rollout-mine.jsonl"
+        let other = home + "/.newagent/sessions/2026/09/17/rollout-other.jsonl"
+        try write(#"{"cwd":"/repo/app","role":"user","content":"hi"}"# + "\n", to: mine)
+        try write(#"{"cwd":"/elsewhere","role":"user","content":"hi"}"# + "\n", to: other)
+        // The one that isn't yours is the newer file, and still loses.
+        let later = Date().addingTimeInterval(60)
+        try FileManager.default.setAttributes([.modificationDate: later], ofItemAtPath: other)
+
+        let source = TwinSources.locate(agent: "newagent", sessionId: nil, cwds: ["/repo/app"], home: home)
+        XCTAssertEqual(source?.path, mine)
+        XCTAssertEqual(source?.format, "newagent")
+    }
+
+    func testAnAgentWithNoSessionAnywhereResolvesToNothing() throws {
+        let home = try temporaryHome()
+        XCTAssertNil(TwinSources.locate(agent: "ghost", sessionId: nil, cwds: ["/repo"], home: home))
+        XCTAssertNil(TwinSources.locate(agent: nil, sessionId: nil, cwds: [], home: home))
+    }
+
+    func testStaleSessionsAreLeftAlone() throws {
+        let home = try temporaryHome()
+        let path = home + "/.newagent/sessions/old.jsonl"
+        try write("{}\n", to: path)
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-30 * 86_400)],
+                                              ofItemAtPath: path)
+        XCTAssertNil(TwinSources.discover(agent: "newagent", cwds: ["/repo"], home: home))
+    }
+}
+
+final class TwinMarkdownTests: XCTestCase {
+    func testFencedCodeIsSeparatedFromProse() {
+        let segments = TwinMarkdown.segments("""
+        Here's the fix:
+
+        ```swift
+        let x = 1
+        ```
+
+        That should do it.
+        """)
+        XCTAssertEqual(segments, [
+            .prose("Here's the fix:"),
+            .code(language: "swift", text: "let x = 1"),
+            .prose("That should do it."),
+        ])
+    }
+
+    func testAnUnfinishedFenceIsStillCode() {
+        XCTAssertEqual(TwinMarkdown.segments("writing it now:\n```sh\nmake build"),
+                       [.prose("writing it now:"), .code(language: "sh", text: "make build")])
+        XCTAssertEqual(TwinMarkdown.segments("just words"), [.prose("just words")])
+    }
+}
+
+final class TwinSourceRankingTests: XCTestCase {
+    private func temporaryHome() throws -> String {
+        let path = NSTemporaryDirectory() + "twin-rank-" + UUID().uuidString
+        try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(atPath: path) }
+        return path
+    }
+
+    private func write(_ text: String, to path: String, modified: Date? = nil) throws {
+        try FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent,
+                                                withIntermediateDirectories: true)
+        try text.write(toFile: path, atomically: true, encoding: .utf8)
+        if let modified {
+            try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: path)
+        }
+    }
+
+    func testTheAgentsOtherFilesAreNotMistakenForAConversation() throws {
+        let home = try temporaryHome()
+        // What Codex actually keeps beside its sessions.
+        try write(#"{"session_id":"x","ts":1}"# + "\n", to: home + "/.codex/history.jsonl")
+        try write(#"{"path":"/some/rollout.jsonl"}"# + "\n", to: home + "/.codex/session_index.jsonl")
+        let rollout = home + "/.codex/sessions/2026/09/17/rollout-2026-09-17T10-00-00-abc.jsonl"
+        try write([
+            #"{"type":"session_meta","payload":{"id":"abc","cwd":"/repo/app"}}"#,
+            #"{"type":"response_item","payload":{"type":"message","id":"m1","role":"user","content":[{"type":"input_text","text":"hi"}]}}"#,
+        ].joined(separator: "\n") + "\n", to: rollout)
+
+        let source = TwinSources.locate(agent: "codex", sessionId: nil, cwds: ["/repo/app"], home: home)
+        XCTAssertEqual(source?.path, rollout)
+        XCTAssertFalse(TwinSources.looksLikeSession(home + "/.codex/history.jsonl"))
+        XCTAssertFalse(TwinSources.looksLikeSession(home + "/.codex/session_index.jsonl"))
+        XCTAssertTrue(TwinSources.looksLikeSession(rollout))
+    }
+
+    func testTodaysSessionIsFoundUnderYearsOfOldOnes() throws {
+        let home = try temporaryHome()
+        let old = Date().addingTimeInterval(-200 * 86_400)
+        // Enough old sessions to exhaust a naive walk.
+        for index in 0..<60 {
+            try write(#"{"type":"session_meta","payload":{"id":"old","cwd":"/old"}}"# + "\n",
+                      to: home + "/.agentx/sessions/2025/01/\(index % 28 + 1)/rollout-old-\(index).jsonl",
+                      modified: old)
+        }
+        let today = home + "/.agentx/sessions/2026/09/17/rollout-today.jsonl"
+        try write([
+            #"{"type":"session_meta","payload":{"id":"now","cwd":"/repo/app"}}"#,
+            #"{"type":"response_item","payload":{"type":"message","id":"m1","role":"user","content":[{"type":"input_text","text":"hi"}]}}"#,
+        ].joined(separator: "\n") + "\n", to: today)
+
+        let source = TwinSources.discover(agent: "agentx", cwds: ["/repo/app"], home: home)
+        XCTAssertEqual(source?.path, today)
+    }
+}

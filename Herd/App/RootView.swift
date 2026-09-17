@@ -77,6 +77,30 @@ struct RootView: View {
                     }
                 }
             }
+            if ProcessInfo.processInfo.environment["HERD_OPEN_WINDOW"] == "twin" {
+                // Opens the twin as soon as an agent pane exists.
+                @MainActor func tryOpen(_ attempt: Int) {
+                    guard attempt < 30 else { return }
+                    if store.twin.canShow {
+                        store.twin.show()
+                        // Verification types into the twin, which needs the
+                        // window to be the one receiving keys.
+                        NSApp.activate(ignoringOtherApps: true)
+                        if ProcessInfo.processInfo.environment["HERD_TWIN_ANSWER"] != nil { answerWhenAsked(0) }
+                        return
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { MainActor.assumeIsolated { tryOpen(attempt + 1) } }
+                }
+                @MainActor func answerWhenAsked(_ attempt: Int) {
+                    guard attempt < 30 else { return }
+                    if let option = store.twin.approval?.options.first {
+                        store.twin.answer(option)
+                        return
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { MainActor.assumeIsolated { answerWhenAsked(attempt + 1) } }
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { MainActor.assumeIsolated { tryOpen(0) } }
+            }
             if ProcessInfo.processInfo.environment["HERD_OPEN_WINDOW"] == "banner" {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                     AgentBannerCenter.shared.show([
@@ -210,6 +234,9 @@ struct RootView: View {
             )
             .background(Color(hex: TerminalTheme.named(settings.values.themeName).background)
                 .opacity(settings.values.backgroundOpacity))
+            // The twin draws over the pane it is showing; the real terminal
+            // keeps running underneath, which is what it is a twin of.
+            .overlay { TwinLayer(twin: store.twin, store: store) }
 
         } else {
             VStack(spacing: 8) {
@@ -242,6 +269,25 @@ private struct WindowTransparency: NSViewRepresentable {
             window.appearance = NSAppearance(named: Theme.isLight ? .aqua : .darkAqua)
             HerdTerminalRuntime.applyBackgroundBlur(to: window)
         }
+    }
+}
+
+/// Shows the visual twin over the terminal while it is on for this pane.
+private struct TwinLayer: View {
+    @ObservedObject var twin: TwinSession
+    @ObservedObject var store: HerdrStore
+    @ObservedObject private var settings = SettingsStore.shared
+    @ObservedObject private var motion = MotionPreferences.shared
+
+    var body: some View {
+        ZStack {
+            if settings.values.visualTwin, twin.isVisible {
+                TwinView(twin: twin, store: store)
+                    .transition(motion.animates(.palette) ? .opacity : .identity)
+            }
+        }
+        .animation(motion.animation(.palette, .smooth(duration: 0.16)), value: twin.isVisible)
+        .onChange(of: twin.isVisible) { _, visible in DebugSnapshot.twinVisible = visible }
     }
 }
 

@@ -53,6 +53,8 @@ struct HerdSettings: Codable, Equatable {
     var promptEditor = true
     var pasteImagesAsFiles = true
     var autoNameTabs = true
+    var visualTwin = true
+    var twinByDefault = false
     var showTips = true
 
     // MARK: Advanced (herdr)

@@ -79,6 +79,27 @@ final class HerdTerminalRuntime {
         )
     }
 
+    /// What the terminal is showing right now, as text. Some of what an agent
+    /// says never reaches its session file — a question it is waiting on is
+    /// drawn on screen and nowhere else — so this is how Herd reads it.
+    @MainActor
+    static func screenText() -> String? {
+        // The key window may be a panel with no terminal in it, so this looks
+        // for the window that actually has the surface.
+        let windows = [NSApp.keyWindow].compactMap { $0 } + NSApp.windows.filter(\.isVisible)
+        guard let surfaceView = windows.lazy.compactMap({ $0.contentView.flatMap(findSurface(in:)) }).first,
+              let surface = surfaceView.surface else { return nil }
+        var text = ghostty_text_s()
+        let selection = ghostty_selection_s(
+            top_left: ghostty_point_s(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_TOP_LEFT, x: 0, y: 0),
+            bottom_right: ghostty_point_s(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_BOTTOM_RIGHT, x: 0, y: 0),
+            rectangle: false
+        )
+        guard ghostty_surface_read_text(surface, selection, &text) else { return nil }
+        defer { ghostty_surface_free_text(surface, &text) }
+        return String(cString: text.text)
+    }
+
     /// Makes the key window's terminal surface first responder again.
     static func focusTerminal() {
         DispatchQueue.main.async {

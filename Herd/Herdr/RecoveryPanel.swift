@@ -31,6 +31,8 @@ struct RecoveryPanel: View {
 
             Rectangle().fill(Theme.divider).frame(height: 1)
 
+            // A ScrollView takes whatever height it is given, which left a
+            // panel of empty space under a single session.
             ScrollView {
                 VStack(spacing: 2) {
                     ForEach(sessions) { record in
@@ -46,21 +48,22 @@ struct RecoveryPanel: View {
                 }
                 .padding(6)
             }
-            .frame(maxHeight: 260)
+            .frame(height: min(260, CGFloat(sessions.count) * 42 + 12))
 
             Rectangle().fill(Theme.divider).frame(height: 1)
 
-            HStack {
+            HStack(spacing: 8) {
                 Button(recovery.showingHistory ? "Close" : "Dismiss") { recovery.dismiss() }
+                    .buttonStyle(HerdButtonStyle())
                     .keyboardShortcut(.cancelAction)
                 Spacer()
                 Button(selected.count == sessions.count && sessions.count > 1 ? "Resume All" : "Resume \(selected.count)") {
                     recovery.resume(selected)
                 }
+                .buttonStyle(HerdButtonStyle(kind: .primary))
                 .keyboardShortcut(.defaultAction)
                 .disabled(selected.isEmpty)
             }
-            .controlSize(.small)
             .padding(10)
         }
         .frame(width: 380)

@@ -108,6 +108,8 @@ struct HerdCommands: Commands {
                 .keyboardShortcut("m", modifiers: [.command, .shift])
             Button("Agents…") { AgentBoardWindow.open() }
                 .keyboardShortcut("a", modifiers: [.command, .shift])
+            Button(store.twin.isVisible ? "Show Terminal" : "Visual Twin") { store.twin.toggle() }
+                .keyboardShortcut("v", modifiers: [.command, .shift])
             Divider()
             Button("Install Subagent Tabs Hook") { SubagentHookMenu.install() }
             Button("Remove Subagent Tabs Hook") { SubagentHookMenu.uninstall() }

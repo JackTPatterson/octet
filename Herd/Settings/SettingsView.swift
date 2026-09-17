@@ -488,6 +488,22 @@ private struct AgentSettings: View {
             }
             SettingsDivider()
             SettingsRow(
+                title: "Visual twin",
+                detail: "⌘⇧V draws Herd's own interface over an agent's pane, read from the session the agent is already writing. What you type there goes to the real agent, so nothing about it changes."
+            ) {
+                Toggle("", isOn: $settings.values.visualTwin).labelsHidden().toggleStyle(.switch)
+            }
+            SettingsDivider()
+            SettingsRow(
+                title: "Open the twin for new agents",
+                detail: "Start an agent and its pane opens in the twin rather than the terminal. Closing the twin for a pane keeps it closed."
+            ) {
+                Toggle("", isOn: $settings.values.twinByDefault)
+                    .labelsHidden().toggleStyle(.switch)
+                    .disabled(!settings.values.visualTwin)
+            }
+            SettingsDivider()
+            SettingsRow(
                 title: "Name tabs after their work",
                 detail: "Tabs follow what their pane reports it is doing, so a tab stops reading as the task you started with. A tab you rename yourself keeps its name."
             ) {

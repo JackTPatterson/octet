@@ -143,6 +143,11 @@ enum PaletteCatalog {
                             keywords: ["board", "overview", "running", "status", "all"]) {
             AgentBoardWindow.open()
         })
+        items.append(action("twin", store.twin.isVisible ? "Show the Terminal" : "Visual Twin",
+                            "rectangle.on.rectangle.angled", shortcut: "⌘⇧V",
+                            keywords: ["twin", "agent", "conversation", "native", "ui", "chat"]) {
+            store.twin.toggle()
+        })
         items.append(action("installSpecs", "Install Command Completion Specs", "square.and.arrow.down.on.square",
                             keywords: ["completion", "autocomplete", "subcommands", "flags", "specs"]) {
             SpecIngest.run { _ in } completion: { result in

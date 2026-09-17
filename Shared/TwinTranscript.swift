@@ -82,12 +82,102 @@ struct TwinUsage: Equatable {
 }
 
 enum TwinTranscript {
-    /// Parses whichever format the agent writes.
+    /// Parses whichever format the agent writes. Claude and Codex are the two
+    /// Herd knows by name; anything else goes through the loose reader, which
+    /// understands the shapes agents actually write rather than one vendor's.
     static func parse(agent: String?, lines: [String]) -> TwinConversation {
         switch AgentBrand.forAgent(agent)?.id {
+        case "claude": parseClaude(lines: lines)
         case "codex": parseCodex(lines: lines)
-        default: parseClaude(lines: lines)
+        default: parseGeneric(lines: lines)
         }
+    }
+
+    /// Folds a newly-read batch into the conversation so far. Tailing a file
+    /// means parsing only what arrived, so this is how the twin stays live
+    /// without re-reading a session that may be tens of megabytes.
+    static func merge(_ base: TwinConversation, with next: TwinConversation) -> TwinConversation {
+        var merged = base
+        var seen = Set(base.messages.map(\.id))
+        for message in next.messages where seen.insert(message.id).inserted {
+            merged.messages.append(message)
+        }
+        merged.title = next.title ?? merged.title
+        merged.model = next.model ?? merged.model
+        merged.cwd = next.cwd ?? merged.cwd
+        merged.consumedLines += next.consumedLines
+        if let usage = next.usage {
+            var current = merged.usage ?? TwinUsage()
+            // Totals accumulate; the window and the context in play are
+            // whatever the newest turn reported.
+            current.inputTokens += usage.inputTokens
+            current.outputTokens += usage.outputTokens
+            current.cacheReadTokens += usage.cacheReadTokens
+            current.contextWindow = usage.contextWindow ?? current.contextWindow
+            if usage.currentContextTokens > 0 { current.currentContextTokens = usage.currentContextTokens }
+            merged.usage = current
+        }
+        return merged
+    }
+
+    // MARK: - Any agent
+
+    /// Agents that aren't Claude or Codex still write a turn per line, and in
+    /// practice the line is one of a few shapes: a chat message, a message
+    /// nested under `message`, or an event wrapping one. This reads all of
+    /// them, and produces nothing rather than nonsense when it can't.
+    static func parseGeneric(lines: [String]) -> TwinConversation {
+        // The two known formats are common enough to be worth trying first:
+        // an agent may well write one of them.
+        let claude = parseClaude(lines: lines)
+        if !claude.messages.isEmpty { return claude }
+        let codex = parseCodex(lines: lines)
+        if !codex.messages.isEmpty { return codex }
+
+        var conversation = TwinConversation()
+        for line in lines {
+            conversation.consumedLines += 1
+            guard let object = json(line) else { continue }
+            let body = (object["message"] as? [String: Any]) ?? (object["payload"] as? [String: Any]) ?? object
+            if let cwd = (body["cwd"] ?? object["cwd"]) as? String { conversation.cwd = cwd }
+            if let model = (body["model"] ?? object["model"]) as? String { conversation.model = model }
+            guard let role = role(of: body) ?? role(of: object) else { continue }
+            var blocks = claudeBlocks(body["content"])
+            if blocks.isEmpty, let text = (body["text"] ?? body["content"]) as? String, !text.isEmpty {
+                blocks = [.text(text)]
+            }
+            // OpenAI-shaped tool calls travel beside the content.
+            if let calls = body["tool_calls"] as? [[String: Any]] {
+                blocks += calls.compactMap { call in
+                    let function = call["function"] as? [String: Any]
+                    let name = (function?["name"] ?? call["name"]) as? String ?? "tool"
+                    return .toolCall(
+                        id: call["id"] as? String ?? UUID().uuidString,
+                        name: name,
+                        summary: toolSummary(name: name, input: function?["arguments"] ?? call["arguments"])
+                    )
+                }
+            }
+            guard !blocks.isEmpty else { continue }
+            conversation.messages.append(TwinMessage(
+                id: (object["uuid"] ?? object["id"] ?? body["id"]) as? String ?? UUID().uuidString,
+                role: role,
+                blocks: blocks,
+                at: date(object["timestamp"] ?? object["created_at"] ?? body["timestamp"])
+            ))
+        }
+        return conversation
+    }
+
+    /// Who spoke, from whichever field the agent uses to say so.
+    private static func role(of object: [String: Any]) -> TwinMessage.Role? {
+        for key in ["role", "type", "kind", "speaker"] {
+            guard let raw = (object[key] as? String)?.lowercased() else { continue }
+            if raw.contains("user") || raw.contains("human") || raw.contains("prompt") { return .user }
+            if raw.contains("assistant") || raw.contains("agent") || raw.contains("model") { return .assistant }
+            if raw.contains("system") { return .system }
+        }
+        return nil
     }
 
     // MARK: - Claude Code
@@ -189,6 +279,7 @@ enum TwinTranscript {
                 conversation.cwd = payload["cwd"] as? String ?? conversation.cwd
             case "turn_context":
                 conversation.cwd = payload["cwd"] as? String ?? conversation.cwd
+                conversation.model = payload["model"] as? String ?? conversation.model
             case "event_msg":
                 if let window = payload["model_context_window"] as? Int {
                     var usage = conversation.usage ?? TwinUsage()
