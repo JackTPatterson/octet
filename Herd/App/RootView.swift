@@ -40,6 +40,13 @@ struct RootView: View {
                 }
             }
         }
+        .overlay(alignment: .topLeading) {
+            // The engine's chrome row travels down with bottom-anchored
+            // content, and only a root-level overlay paints above the hosted
+            // terminal view. It goes on first, so Herd's own panels are never
+            // painted over by it.
+            ChromeCover(anchor: terminalAnchor, twin: store.twin, prompt: prompt, sidebarInset: sidebarInset)
+        }
         .overlay(alignment: .topTrailing) {
             AgentBannerStack(center: AgentBannerCenter.shared) { event in
                 store.focus(event)
@@ -161,19 +168,6 @@ struct RootView: View {
                             y: fitsBelow ? below : max(0, top - 244))
             }
         }
-        .overlay(alignment: .topLeading) {
-            // The engine's chrome row travels down with bottom-anchored
-            // content. Only a root-level overlay paints above the hosted
-            // terminal view, so the cover lives here rather than on it.
-            let _ = { DebugSnapshot.coverActive = terminalAnchor.chromeCover != nil || prompt.isActive }()
-            if let cover = terminalAnchor.chromeCover {
-                Color(hex: TerminalTheme.named(settings.values.themeName).background)
-                    .frame(width: cover.width, height: cover.height)
-                    .offset(x: sidebarInset + cover.minX,
-                            y: Theme.titleBarHeight + Theme.tabBarHeight + cover.minY)
-                    .allowsHitTesting(false)
-            }
-        }
         .overlay { ConfirmDialog(center: confirmations) }
         .overlay {
             if ui.paletteVisible {
@@ -268,6 +262,29 @@ private struct WindowTransparency: NSViewRepresentable {
             window.backgroundColor = translucent ? .clear : Theme.palette.nsColor(\.background)
             window.appearance = NSAppearance(named: Theme.isLight ? .aqua : .darkAqua)
             HerdTerminalRuntime.applyBackgroundBlur(to: window)
+        }
+    }
+}
+
+/// Hides the engine's chrome row where it rides down with bottom-anchored
+/// content. There is nothing to cover while the twin is up, since none of the
+/// terminal is showing.
+private struct ChromeCover: View {
+    @ObservedObject var anchor: TerminalAnchor
+    @ObservedObject var twin: TwinSession
+    @ObservedObject var prompt: PromptEditor
+    @ObservedObject private var settings = SettingsStore.shared
+    let sidebarInset: CGFloat
+
+    var body: some View {
+        let cover = twin.isVisible ? nil : anchor.chromeCover
+        let _ = { DebugSnapshot.coverActive = cover != nil || prompt.isActive }()
+        if let cover {
+            Color(hex: TerminalTheme.named(settings.values.themeName).background)
+                .frame(width: cover.width, height: cover.height)
+                .offset(x: sidebarInset + cover.minX,
+                        y: Theme.titleBarHeight + Theme.tabBarHeight + cover.minY)
+                .allowsHitTesting(false)
         }
     }
 }

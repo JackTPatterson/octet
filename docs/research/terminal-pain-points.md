@@ -77,6 +77,9 @@ existing theme. That is worth fixing rather than defending.
 5. **Remote sessions in the UI** (the SSH complaint). The engine already
    manages machines; Herd doesn't surface them.
 
-We cannot fix an agent's own full-screen repainting (4) from outside it —
-that lives in the agent's client. Worth saying plainly rather than implying
-Herd solves it.
+Full-screen repainting (4) looked out of reach from outside the agent, and
+was, until the visual twin: agents write their turns to disk as structured
+lines, so Herd can draw the conversation itself and never repaint at all. The
+twin renders each agent's own idiom — Claude's `●`/`⎿` and `Update(file)`,
+Codex's `•` and patches — so what it replaces is the repainting, not the
+interface people know.

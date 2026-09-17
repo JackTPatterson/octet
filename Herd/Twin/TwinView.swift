@@ -11,6 +11,7 @@ struct TwinView: View {
     @ObservedObject private var settings = SettingsStore.shared
 
     private var rows: [TwinRow] { TwinRows.build(twin.conversation) }
+    private var style: TwinStyle { TwinStyle.forAgent(twin.agent?.agent) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -33,7 +34,6 @@ struct TwinView: View {
     private var header: some View {
         let agent = twin.agent
         let brand = AgentBrand.forAgent(agent?.agent)
-        let usage = store.usageTracker.usage(forTerminal: agent?.terminalId) ?? twin.conversation.usage
         return HStack(spacing: 8) {
             if let brand { AgentLogo(brand: brand, size: 13) }
             Text(title)
@@ -47,16 +47,6 @@ struct TwinView: View {
                     .foregroundStyle(Theme.textSecondary)
             }
             Spacer(minLength: 8)
-            if let model = twin.conversation.model {
-                Text(shortModel(model))
-                    .font(Theme.captionFont)
-                    .foregroundStyle(Theme.textTertiary)
-            }
-            if let usage, !usage.label.isEmpty {
-                Text("\(usage.label) context")
-                    .font(Theme.captionFont)
-                    .foregroundStyle(Theme.textTertiary)
-            }
             if agent?.agentStatus == .working {
                 Button("Stop") { twin.interrupt() }
                     .buttonStyle(HerdButtonStyle())
@@ -85,14 +75,6 @@ struct TwinView: View {
         return AgentBrand.forAgent(twin.agent?.agent)?.displayName ?? "Agent"
     }
 
-    private func shortModel(_ model: String) -> String {
-        // `claude-opus-5-20260101` reads better as `opus-5`.
-        var parts = model.split(separator: "-").map(String.init)
-        parts.removeAll { part in part.count >= 4 && part.allSatisfy { $0.isNumber } }
-        if parts.first == "claude" || parts.first == "gpt" { parts.removeFirst() }
-        return parts.isEmpty ? model : parts.joined(separator: "-")
-    }
-
     private func stateLabel(_ status: HerdrAgentStatus) -> String {
         switch status {
         case .working: "working"
@@ -117,7 +99,7 @@ struct TwinView: View {
                             .frame(maxWidth: .infinity, alignment: .center)
                     }
                     ForEach(rows) { row in
-                        TwinRowView(row: row)
+                        TwinRowView(row: row, style: style)
                             .id(row.id)
                     }
                     ForEach(twin.pending) { message in
@@ -155,7 +137,20 @@ struct TwinView: View {
     // MARK: - Composer
 
     private var composer: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            inputBox
+            statusLine
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 12)
+    }
+
+    private var inputBox: some View {
         HStack(alignment: .bottom, spacing: 10) {
+            Text(style.promptPrefix)
+                .font(Theme.monoFont)
+                .foregroundStyle(Theme.textTertiary)
+                .padding(.bottom, 3)
             // An NSTextView has no height of its own, so the box grows by the
             // lines in it, up to a few, and scrolls after that.
             TwinComposer(text: $twin.draft, onSubmit: { twin.submit() })
@@ -169,12 +164,7 @@ struct TwinView: View {
                             .allowsHitTesting(false)
                     }
                 }
-            if twin.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Text("⏎ send")
-                    .font(Theme.captionFont)
-                    .foregroundStyle(Theme.textTertiary)
-                    .padding(.bottom, 3)
-            } else {
+            if !twin.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Button("Send") { twin.submit() }
                     .buttonStyle(HerdButtonStyle(kind: .primary))
                     .keyboardShortcut(.return, modifiers: .command)
@@ -185,8 +175,40 @@ struct TwinView: View {
         .background(Theme.card)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.border, lineWidth: 1))
-        .padding(.horizontal, 16)
-        .padding(.bottom, 14)
+    }
+
+    /// What each agent keeps at the foot of its own screen: which model, how
+    /// much context is left, and where it is working.
+    private var statusLine: some View {
+        let usage = store.usageTracker.usage(forTerminal: twin.agent?.terminalId) ?? twin.conversation.usage
+        var parts: [String] = []
+        if let model = twin.conversation.model { parts.append(TwinStyle.shortModel(model)) }
+        if let usage, !usage.label.isEmpty { parts.append("\(usage.label) context") }
+        if let cwd = twin.agent?.effectiveCwd ?? twin.conversation.cwd {
+            parts.append(TwinStyle.shortPath(cwd))
+        }
+        if let workspace = twin.agent?.workspaceId, let branch = store.branches[workspace] {
+            parts.append(branch)
+        }
+        return HStack(spacing: 8) {
+            Text(parts.joined(separator: "  ·  "))
+                .font(Theme.captionFont)
+                .foregroundStyle(Theme.textTertiary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 8)
+            Text(hint)
+                .font(Theme.captionFont)
+                .foregroundStyle(Theme.textTertiary)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 2)
+    }
+
+    private var hint: String {
+        twin.agent?.agentStatus == .working
+            ? "\(style.interruptHint)  ·  ⌘⇧V terminal"
+            : "⏎ send  ·  ⇧⏎ newline  ·  ⌘⇧V terminal"
     }
 }
 
@@ -217,6 +239,7 @@ private struct TwinPendingRow: View {
 /// One line of the conversation.
 private struct TwinRowView: View {
     let row: TwinRow
+    let style: TwinStyle
     @State private var expanded = false
 
     var body: some View {
@@ -244,50 +267,212 @@ private struct TwinRowView: View {
                     .foregroundStyle(Theme.textTertiary)
             }
             .tint(Theme.textTertiary)
-        case .tool(let name, let summary, let result, let isError):
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Image(systemName: icon(for: name))
-                        .font(.system(size: 10))
-                        .foregroundStyle(isError ? Color(hex: AgentStateColor.blocked) : Theme.textTertiary)
-                    Text(name)
-                        .font(Theme.captionFont)
-                        .foregroundStyle(Theme.textSecondary)
-                    Text(summary)
-                        .font(Theme.monoFont)
-                        .foregroundStyle(Theme.textTertiary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer(minLength: 4)
-                    if !result.isEmpty {
-                        Button(expanded ? "Hide" : "Output") { expanded.toggle() }
-                            .buttonStyle(HerdButtonStyle())
-                    }
-                }
-                if expanded, !result.isEmpty {
-                    Text(result)
-                        .font(Theme.monoFont)
-                        .foregroundStyle(Theme.textTertiary)
-                        .textSelection(.enabled)
-                        .padding(8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Theme.card.opacity(0.5))
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                }
+        case .command(let command, let output, let isError):
+            step(title: style.toolTitle(style.id == "claude" ? "Bash" : "exec") + "(",
+                 mono: command, trailing: ")",
+                 tint: isError ? Color(hex: AgentStateColor.blocked) : Theme.textSecondary) {
+                output
             }
-            .padding(.vertical, 2)
+        case .diff(let diff, let result):
+            step(title: style.callLine(tool: "Edit", argument: (diff.path as NSString).lastPathComponent),
+                 mono: diff.summary, tint: Theme.textSecondary) {
+                result
+            } extra: {
+                TwinDiffView(diff: diff)
+            }
+        case .todos(let todos):
+            TwinTodoList(todos: todos, title: style.planTitle)
+                .padding(.vertical, 2)
+        case .tool(let name, let summary, let result, let isError):
+            step(title: style.toolTitle(name), mono: summary,
+                 tint: isError ? Color(hex: AgentStateColor.blocked) : Theme.textSecondary) {
+                result
+            }
         }
     }
 
-    private func icon(for name: String) -> String {
-        switch name.lowercased() {
-        case let tool where tool.contains("bash") || tool.contains("shell") || tool.contains("exec"): "terminal"
-        case let tool where tool.contains("read") || tool.contains("cat"): "doc.text"
-        case let tool where tool.contains("write") || tool.contains("edit") || tool.contains("patch"): "square.and.pencil"
-        case let tool where tool.contains("search") || tool.contains("grep") || tool.contains("glob"): "magnifyingglass"
-        case let tool where tool.contains("web") || tool.contains("fetch"): "globe"
-        case let tool where tool.contains("task") || tool.contains("agent"): "person.2"
-        default: "wrench.and.screwdriver"
+    /// One step the agent took, drawn the way its own interface draws one:
+    /// a bullet, what it did, and what came back under it.
+    @ViewBuilder
+    private func step<Extra: View>(
+        title: String,
+        mono: String,
+        trailing: String = "",
+        tint: Color,
+        output: () -> String,
+        @ViewBuilder extra: () -> Extra = { EmptyView() }
+    ) -> some View {
+        let result = output()
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: trailing.isEmpty ? 6 : 2) {
+                Text(style.bullet)
+                    .padding(.trailing, trailing.isEmpty ? 0 : 4)
+                    .font(Theme.captionFont)
+                    .foregroundStyle(tint)
+                Text(title)
+                    .font(Theme.captionFont)
+                    .foregroundStyle(Theme.textSecondary)
+                Text(mono + trailing)
+                    .font(Theme.monoFont)
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(expanded ? nil : 1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+                Spacer(minLength: 4)
+                if !result.isEmpty || hasExtra {
+                    Button(expanded ? "Hide" : "Output") { expanded.toggle() }
+                        .buttonStyle(HerdButtonStyle())
+                }
+            }
+            extra()
+            if !result.isEmpty {
+                HStack(alignment: .top, spacing: 6) {
+                    Text(style.resultMarker)
+                        .font(Theme.monoFont)
+                        .foregroundStyle(Theme.textTertiary)
+                    if expanded {
+                        Text(result)
+                            .font(Theme.monoFont)
+                            .foregroundStyle(Theme.textTertiary)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        Text(TwinStyle.resultLine(result))
+                            .font(Theme.monoFont)
+                            .foregroundStyle(Theme.textTertiary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                }
+                .padding(.leading, 2)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private var hasExtra: Bool {
+        if case .diff = row.kind { return true } else { return false }
+    }
+}
+
+/// The lines an edit changed, with the gutters a diff is read by.
+private struct TwinDiffView: View {
+    let diff: TwinDiff
+    @State private var expanded = false
+
+    private var shown: [TwinDiff.Line] { expanded ? diff.lines : Array(diff.lines.prefix(14)) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(shown.enumerated()), id: \.offset) { _, line in
+                HStack(alignment: .top, spacing: 8) {
+                    Text(marker(line))
+                        .font(Theme.monoFont)
+                        .foregroundStyle(colour(line))
+                        .frame(width: 8, alignment: .leading)
+                    Text(text(line))
+                        .font(Theme.monoFont)
+                        .foregroundStyle(colour(line))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 1)
+                .background(background(line))
+            }
+            if diff.lines.count > shown.count {
+                Button("\(diff.lines.count - shown.count) more lines") { expanded = true }
+                    .buttonStyle(.plain)
+                    .font(Theme.captionFont)
+                    .foregroundStyle(Theme.textTertiary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+            }
+        }
+        .padding(.vertical, 4)
+        .background(Theme.card.opacity(0.5))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func marker(_ line: TwinDiff.Line) -> String {
+        switch line {
+        case .added: "+"
+        case .removed: "−"
+        case .context: ""
+        }
+    }
+
+    private func text(_ line: TwinDiff.Line) -> String {
+        switch line {
+        case .added(let value), .removed(let value), .context(let value): value
+        }
+    }
+
+    private func colour(_ line: TwinDiff.Line) -> Color {
+        switch line {
+        case .added: Color(hex: AgentStateColor.done)
+        case .removed: Color(hex: AgentStateColor.blocked)
+        case .context: Theme.textTertiary
+        }
+    }
+
+    private func background(_ line: TwinDiff.Line) -> Color {
+        switch line {
+        case .added: Color(hex: AgentStateColor.done).opacity(0.08)
+        case .removed: Color(hex: AgentStateColor.blocked).opacity(0.08)
+        case .context: Color.clear
+        }
+    }
+}
+
+/// The plan an agent keeps while it works, as a list you can read at a glance.
+private struct TwinTodoList: View {
+    let todos: [TwinTodo]
+    let title: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+                Text(title.uppercased())
+                    .font(Theme.headerFont)
+                    .foregroundStyle(Theme.textTertiary)
+                Text("\(todos.filter { $0.status == .completed }.count)/\(todos.count)")
+                    .font(Theme.captionFont)
+                    .foregroundStyle(Theme.textTertiary)
+            }
+            ForEach(todos) { todo in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Image(systemName: glyph(todo.status))
+                        .font(.system(size: 10))
+                        .foregroundStyle(tint(todo.status))
+                    Text(todo.text)
+                        .font(Theme.uiFont)
+                        .foregroundStyle(todo.status == .completed ? Theme.textTertiary : Theme.textMuted)
+                        .strikethrough(todo.status == .completed, color: Theme.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.card.opacity(0.5))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func glyph(_ status: TwinTodo.Status) -> String {
+        switch status {
+        case .completed: "checkmark.square"
+        case .inProgress: "square.dashed.inset.filled"
+        case .pending: "square"
+        }
+    }
+
+    private func tint(_ status: TwinTodo.Status) -> Color {
+        switch status {
+        case .completed: Color(hex: AgentStateColor.done)
+        case .inProgress: Theme.accent
+        case .pending: Theme.textTertiary
         }
     }
 }

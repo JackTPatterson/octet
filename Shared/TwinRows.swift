@@ -8,6 +8,12 @@ struct TwinRow: Identifiable, Equatable {
         case user(String)
         case assistant(String)
         case thinking(String)
+        /// A shell command and what it printed, the way both agents show it.
+        case command(command: String, output: String, isError: Bool)
+        /// An edit, as the lines that changed.
+        case diff(TwinDiff, result: String)
+        /// The plan an agent is keeping as it works.
+        case todos([TwinTodo])
         case tool(name: String, summary: String, result: String, isError: Bool)
     }
 
@@ -15,7 +21,12 @@ struct TwinRow: Identifiable, Equatable {
     let kind: Kind
     var at: Date?
 
-    var isTool: Bool { if case .tool = kind { return true } else { return false } }
+    var isTool: Bool {
+        switch kind {
+        case .tool, .command, .diff, .todos: true
+        case .user, .assistant, .thinking: false
+        }
+    }
 }
 
 enum TwinRows {
@@ -48,12 +59,22 @@ enum TwinRows {
                     rows.append(TwinRow(id: id, kind: .thinking(trimmed), at: message.at))
                 case .toolCall(let callId, let name, let summary):
                     let result = results[callId]
-                    rows.append(TwinRow(
-                        id: id,
-                        kind: .tool(name: name, summary: summary,
-                                    result: result?.summary ?? "", isError: result?.isError ?? false),
-                        at: message.at
-                    ))
+                    let output = result?.summary ?? ""
+                    let isError = result?.isError ?? false
+                    // What the call was doing decides how it is drawn, which
+                    // is how the agents' own interfaces work.
+                    let kind: TwinRow.Kind
+                    switch conversation.details[callId] {
+                    case .command(let command):
+                        kind = .command(command: command, output: output, isError: isError)
+                    case .diff(let diff):
+                        kind = .diff(diff, result: output)
+                    case .todos(let todos):
+                        kind = .todos(todos)
+                    default:
+                        kind = .tool(name: name, summary: summary, result: output, isError: isError)
+                    }
+                    rows.append(TwinRow(id: id, kind: kind, at: message.at))
                 case .toolResult:
                     // Shown on its call's row.
                     continue

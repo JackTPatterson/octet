@@ -1457,8 +1457,10 @@ final class TwinTranscriptTests: XCTestCase {
         XCTAssertEqual(conversation.messages[1].blocks[0], .thinking("consider the session store"))
         XCTAssertEqual(conversation.messages[1].blocks[2],
                        .toolCall(id: "t1", name: "Read", summary: "/repo/auth.swift"))
+        // A result keeps the lines it came back as: an agent's own interface
+        // shows the head of the output, not a one-line paraphrase.
         XCTAssertEqual(conversation.messages[2].blocks[0],
-                       .toolResult(id: "t1", summary: "func login() {}", isError: false))
+                       .toolResult(id: "t1", summary: "func login() {}\nmore", isError: false))
         XCTAssertEqual(conversation.usage?.inputTokens, 120)
         XCTAssertEqual(conversation.usage?.cacheReadTokens, 900)
         XCTAssertEqual(conversation.consumedLines, 4)
@@ -1738,8 +1740,9 @@ final class TwinRowTests: XCTestCase {
         XCTAssertEqual(rows.count, 4)
         XCTAssertEqual(rows[0].kind, .user("run the tests"))
         XCTAssertEqual(rows[1].kind, .thinking("check the suite"))
-        XCTAssertEqual(rows[2].kind, .tool(name: "Bash", summary: "swift test",
-                                           result: "103 tests passed", isError: false))
+        // A shell call is drawn as a command, the way both agents draw one.
+        XCTAssertEqual(rows[2].kind, .command(command: "swift test",
+                                              output: "103 tests passed", isError: false))
         XCTAssertEqual(rows[3].kind, .assistant("All green."))
         // Ids are stable, so the list doesn't churn while it is being read.
         XCTAssertEqual(rows.map(\.id), TwinRows.build(conversation).map(\.id))
@@ -2031,5 +2034,157 @@ final class TwinPendingTests: XCTestCase {
         XCTAssertEqual(TwinPending.settle([recent], against: []).count, 1)
         // Another turn in the conversation isn't this one.
         XCTAssertEqual(TwinPending.settle([recent], against: userRows(["something else"])).count, 1)
+    }
+}
+
+final class TwinToolTests: XCTestCase {
+    func testAShellCallIsReadAsACommandWhicheverAgentWroteIt() {
+        // Claude.
+        XCTAssertEqual(TwinTools.detail(name: "Bash", input: ["command": "npm test", "description": "Run tests"]),
+                       .command("npm test"))
+        // Codex, older shape: the shell wrapper isn't the command.
+        XCTAssertEqual(TwinTools.detail(name: "shell", input: #"{"command":["bash","-lc","cargo test"]}"#),
+                       .command("cargo test"))
+        // Codex, newer shape: the call is the script it runs.
+        let script = "text(await tools.exec_command({cmd:\"pwd && rg --files\",\"max_output_tokens\":6000}));\n"
+        XCTAssertEqual(TwinTools.detail(name: "exec", input: script), .command("pwd && rg --files"))
+    }
+
+    func testAnEditIsReadAsTheLinesItChanges() {
+        let detail = TwinTools.detail(name: "Edit", input: [
+            "file_path": "/repo/app/importer.py",
+            "old_string": "def load(rows):\n    pattern = re.compile(r'x')\n    return rows",
+            "new_string": "def load(rows):\n    return rows",
+        ])
+        guard case .diff(let diff) = detail else { return XCTFail("expected a diff, got \(String(describing: detail))") }
+        XCTAssertEqual(diff.path, "/repo/app/importer.py")
+        XCTAssertEqual(diff.removed, 1)
+        XCTAssertEqual(diff.added, 0)
+        XCTAssertEqual(diff.summary, "−1")
+        // The lines that didn't change are kept around it, so it reads.
+        XCTAssertEqual(diff.lines.first, .context("def load(rows):"))
+        XCTAssertTrue(diff.lines.contains(.removed("    pattern = re.compile(r'x')")))
+    }
+
+    func testAWrittenFileIsAllAdditionsAndAPatchIsParsed() {
+        guard case .diff(let written)? = TwinTools.detail(name: "Write", input: [
+            "file_path": "/repo/new.swift", "content": "import Foundation\n\nlet x = 1",
+        ]) else { return XCTFail("expected a diff") }
+        XCTAssertEqual(written.added, 3)
+        XCTAssertEqual(written.removed, 0)
+
+        let patch = """
+        *** Begin Patch
+        *** Update File: src/main.rs
+        @@
+        -let x = 1;
+        +let x = 2;
+         println!("{x}");
+        *** End Patch
+        """
+        guard case .diff(let applied)? = TwinTools.detail(name: "apply_patch", input: ["input": patch]) else {
+            return XCTFail("expected a diff")
+        }
+        XCTAssertEqual(applied.path, "src/main.rs")
+        XCTAssertEqual(applied.summary, "+1 −1")
+        XCTAssertEqual(applied.lines.last, .context("println!(\"{x}\");"))
+    }
+
+    func testAPlanIsReadAsAChecklist() {
+        let detail = TwinTools.detail(name: "TodoWrite", input: ["todos": [
+            ["content": "Read the importer", "status": "completed"],
+            ["content": "Hoist the pattern", "status": "in_progress"],
+            ["content": "Add a regression test", "status": "pending"],
+        ]])
+        guard case .todos(let todos) = detail else { return XCTFail("expected todos") }
+        XCTAssertEqual(todos.map(\.status), [.completed, .inProgress, .pending])
+        XCTAssertEqual(todos.first?.text, "Read the importer")
+    }
+
+    func testOtherCallsStillSayWhatTheyTouched() {
+        XCTAssertEqual(TwinTools.detail(name: "Read", input: ["file_path": "/repo/a.swift"]), .file(path: "/repo/a.swift"))
+        XCTAssertEqual(TwinTools.detail(name: "Grep", input: ["pattern": "TODO"]), .search(query: "TODO"))
+        XCTAssertEqual(TwinTools.detail(name: "WebFetch", input: ["url": "https://example.com"]),
+                       .link(url: "https://example.com"))
+        XCTAssertNil(TwinTools.detail(name: "Mystery", input: ["unknown": 1]))
+    }
+}
+
+final class TwinStyleTests: XCTestCase {
+    func testEachAgentKeepsItsOwnIdiom() {
+        let claude = TwinStyle.forAgent("claude")
+        XCTAssertEqual(claude.bullet, "●")
+        XCTAssertEqual(claude.resultMarker, "⎿")
+        XCTAssertEqual(claude.promptPrefix, ">")
+        // Claude calls an Edit an Update, on screen.
+        XCTAssertEqual(claude.callLine(tool: "Edit", argument: "importer.py"), "Update(importer.py)")
+        XCTAssertEqual(claude.callLine(tool: "Bash", argument: "npm test"), "Bash(npm test)")
+
+        let codex = TwinStyle.forAgent("codex")
+        XCTAssertEqual(codex.bullet, "•")
+        XCTAssertEqual(codex.callLine(tool: "apply_patch", argument: "main.rs"), "Apply patch(main.rs)")
+
+        // An agent Herd doesn't know still gets a usable one.
+        XCTAssertEqual(TwinStyle.forAgent("mystery").promptPrefix, "›")
+    }
+
+    func testLongArgumentsAreCutRatherThanWrapped() {
+        let line = TwinStyle.claude.callLine(tool: "Bash", argument: String(repeating: "x", count: 400), limit: 40)
+        XCTAssertLessThanOrEqual(line.count, 40)
+        XCTAssertTrue(line.hasSuffix("…)"))
+    }
+
+    func testTheResultLineSaysHowMuchMoreThereIs() {
+        XCTAssertEqual(TwinStyle.resultLine("only one line"), "only one line")
+        XCTAssertEqual(TwinStyle.resultLine("first\nsecond"), "first  (+1 line)")
+        XCTAssertEqual(TwinStyle.resultLine("first\nsecond\nthird"), "first  (+2 lines)")
+        XCTAssertEqual(TwinStyle.resultLine(""), "")
+    }
+}
+
+final class TwinRichRowTests: XCTestCase {
+    func testATranscriptBecomesCommandDiffAndChecklistRows() {
+        let conversation = TwinTranscript.parseClaude(lines: [
+            #"{"type":"assistant","uuid":"a1","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"swift test"}}]}}"#,
+            #"{"type":"user","uuid":"u1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"Executed 128 tests\nwith 0 failures"}]}}"#,
+            #"{"type":"assistant","uuid":"a2","message":{"content":[{"type":"tool_use","id":"t2","name":"Edit","input":{"file_path":"/repo/a.swift","old_string":"let x = 1","new_string":"let x = 2"}}]}}"#,
+            #"{"type":"assistant","uuid":"a3","message":{"content":[{"type":"tool_use","id":"t3","name":"TodoWrite","input":{"todos":[{"content":"Ship it","status":"pending"}]}}]}}"#,
+        ])
+        let rows = TwinRows.build(conversation)
+        XCTAssertEqual(rows.count, 3)
+        // The command keeps the lines it printed, not a one-line paraphrase.
+        XCTAssertEqual(rows[0].kind, .command(command: "swift test",
+                                              output: "Executed 128 tests\nwith 0 failures", isError: false))
+        guard case .diff(let diff, _) = rows[1].kind else { return XCTFail("expected a diff row") }
+        XCTAssertEqual(diff.summary, "+1 −1")
+        guard case .todos(let todos) = rows[2].kind else { return XCTFail("expected a checklist row") }
+        XCTAssertEqual(todos.map(\.text), ["Ship it"])
+    }
+
+    func testCodexStepsReadTheSameWay() {
+        let arguments = #"{\"command\":[\"bash\",\"-lc\",\"cargo build\"]}"#
+        let conversation = TwinTranscript.parseCodex(lines: [
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"id\":\"f1\",\"call_id\":\"c1\",\"name\":\"shell\",\"arguments\":\"\(arguments)\"}}",
+            #"{"type":"response_item","payload":{"type":"function_call_output","id":"o1","call_id":"c1","output":"Compiling herd v0.1.0"}}"#,
+        ])
+        let rows = TwinRows.build(conversation)
+        XCTAssertEqual(rows.first?.kind, .command(command: "cargo build",
+                                                  output: "Compiling herd v0.1.0", isError: false))
+    }
+}
+
+final class TwinStatusLineTests: XCTestCase {
+    func testTheModelReadsAsItsAgentNamesIt() {
+        XCTAssertEqual(TwinStyle.shortModel("claude-opus-5-20260101"), "opus-5")
+        XCTAssertEqual(TwinStyle.shortModel("claude-sonnet-5"), "sonnet-5")
+        // Codex's own name for it, left alone.
+        XCTAssertEqual(TwinStyle.shortModel("gpt-5-codex"), "gpt-5-codex")
+        XCTAssertEqual(TwinStyle.shortModel("claude"), "claude")
+    }
+
+    func testThePathInTheStatusLineIsTheFolderNotThePathToIt() {
+        XCTAssertEqual(TwinStyle.shortPath("/private/tmp/a/b/c/twin/proj"), "…/twin/proj")
+        XCTAssertEqual(TwinStyle.shortPath(NSHomeDirectory() + "/Developer/herd"), "~/Developer/herd")
+        XCTAssertEqual(TwinStyle.shortPath("/repo"), "/repo")
     }
 }

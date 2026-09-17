@@ -160,6 +160,16 @@ call with the result it got back, and the model and context in the header.
 What you type in the box at the bottom goes to the real agent, so nothing
 about the agent changes — Herd is the interface, not a second brain.
 
+It reads as the agent you know. Claude marks a step with `●`, writes
+`Bash(npm test)` and `Update(importer.py)`, puts what came back under `⎿`,
+keeps a to-do list while it works and a status line at the foot; Codex marks
+a step with `•`, calls the same edit a patch, and prompts with `›`. The twin
+keeps all of that — the same words, marks and layout — and draws it properly:
+a command's output collapses to its first line with the rest a click away, an
+edit is a real diff with added and removed lines, the to-do list is a
+checklist, and the status line carries the model, how full the context is,
+and the folder and branch you are working in.
+
 Nothing is scraped from the terminal to do this. Agents already write their
 turns to disk as structured lines, and the twin reads that: Claude's
 `~/.claude/projects/<project>/<session>.jsonl` and Codex's
@@ -170,6 +180,11 @@ working in and that reads as a conversation rather than as the agent's
 command history. A format Herd doesn't know still parses if it writes a turn
 per line, which every agent seen so far does. When there is no session file
 to read, the twin says so and the terminal is still there.
+
+This is also the answer to the complaint Herd couldn't otherwise reach: an
+agent's TUI repainting the whole screen, thousands of lines for a screenful,
+is what makes a terminal agent feel heavy. The twin never repaints — it draws
+rows from a file, so scrolling is scrolling and nothing flickers.
 
 One thing never reaches those files: the question an agent is waiting on. A
 prompt is drawn on screen and nowhere else, so when an agent reports it is

@@ -10,6 +10,10 @@ struct TwinConversation: Equatable {
     var model: String?
     var cwd: String?
     var usage: TwinUsage?
+    /// What each tool call is doing, by call id: the command, the diff, the
+    /// checklist. The blocks carry a line of text; this carries the thing
+    /// itself, so the twin can draw it the way the agent does.
+    var details: [String: TwinToolDetail] = [:]
     /// How far through the file the parse got, so tailing can resume.
     var consumedLines = 0
 }
@@ -102,6 +106,7 @@ enum TwinTranscript {
         for message in next.messages where seen.insert(message.id).inserted {
             merged.messages.append(message)
         }
+        merged.details.merge(next.details) { _, new in new }
         merged.title = next.title ?? merged.title
         merged.model = next.model ?? merged.model
         merged.cwd = next.cwd ?? merged.cwd
@@ -142,20 +147,19 @@ enum TwinTranscript {
             if let cwd = (body["cwd"] ?? object["cwd"]) as? String { conversation.cwd = cwd }
             if let model = (body["model"] ?? object["model"]) as? String { conversation.model = model }
             guard let role = role(of: body) ?? role(of: object) else { continue }
-            var blocks = claudeBlocks(body["content"])
+            var blocks = claudeBlocks(body["content"], details: &conversation.details)
             if blocks.isEmpty, let text = (body["text"] ?? body["content"]) as? String, !text.isEmpty {
                 blocks = [.text(text)]
             }
             // OpenAI-shaped tool calls travel beside the content.
             if let calls = body["tool_calls"] as? [[String: Any]] {
-                blocks += calls.compactMap { call in
+                for call in calls {
                     let function = call["function"] as? [String: Any]
                     let name = (function?["name"] ?? call["name"]) as? String ?? "tool"
-                    return .toolCall(
-                        id: call["id"] as? String ?? UUID().uuidString,
-                        name: name,
-                        summary: toolSummary(name: name, input: function?["arguments"] ?? call["arguments"])
-                    )
+                    let id = call["id"] as? String ?? UUID().uuidString
+                    let input = function?["arguments"] ?? call["arguments"]
+                    if let detail = TwinTools.detail(name: name, input: input) { conversation.details[id] = detail }
+                    blocks.append(.toolCall(id: id, name: name, summary: toolSummary(name: name, input: input)))
                 }
             }
             guard !blocks.isEmpty else { continue }
@@ -204,7 +208,7 @@ enum TwinTranscript {
                     current.contextWindow = TwinUsage.window(forModel: model)
                     conversation.usage = current
                 }
-                let blocks = claudeBlocks(message["content"])
+                let blocks = claudeBlocks(message["content"], details: &conversation.details)
                 guard !blocks.isEmpty else { continue }
                 let id = object["uuid"] as? String ?? UUID().uuidString
                 conversation.messages.append(TwinMessage(
@@ -217,7 +221,10 @@ enum TwinTranscript {
         return conversation
     }
 
-    private static func claudeBlocks(_ content: Any?) -> [TwinMessage.Block] {
+    private static func claudeBlocks(
+        _ content: Any?,
+        details: inout [String: TwinToolDetail]
+    ) -> [TwinMessage.Block] {
         // A plain string is the whole message.
         if let text = content as? String {
             return text.isEmpty ? [] : [.text(text)]
@@ -233,8 +240,12 @@ enum TwinTranscript {
                 return text.isEmpty ? nil : .thinking(text)
             case "tool_use":
                 let name = block["name"] as? String ?? "tool"
+                let id = block["id"] as? String ?? UUID().uuidString
+                if let detail = TwinTools.detail(name: name, input: block["input"]) {
+                    details[id] = detail
+                }
                 return .toolCall(
-                    id: block["id"] as? String ?? UUID().uuidString,
+                    id: id,
                     name: name,
                     summary: toolSummary(name: name, input: block["input"])
                 )
@@ -322,11 +333,15 @@ enum TwinTranscript {
                     let name = payload["name"] as? String ?? "tool"
                     let callId = payload["call_id"] as? String ?? id
                     pendingCalls[callId] = name
+                    let arguments = payload["arguments"] ?? payload["action"] ?? payload["input"]
+                    if let detail = TwinTools.detail(name: name, input: arguments) {
+                        conversation.details[callId] = detail
+                    }
                     conversation.messages.append(TwinMessage(
                         id: id,
                         role: .assistant,
                         blocks: [.toolCall(id: callId, name: name,
-                                           summary: toolSummary(name: name, input: payload["arguments"]))],
+                                           summary: toolSummary(name: name, input: arguments))],
                         at: date(object["timestamp"])
                     ))
                 case "function_call_output", "local_shell_call_output", "custom_tool_call_output":
@@ -380,15 +395,21 @@ enum TwinTranscript {
         return condense(object.keys.sorted().joined(separator: ", "))
     }
 
-    static func resultSummary(_ content: Any?) -> String {
-        if let text = content as? String { return condense(text) }
-        if let blocks = content as? [[String: Any]] {
-            return condense(blocks.compactMap { $0["text"] as? String }.joined(separator: "\n"))
+    /// What came back, kept as the lines it came back as — an agent's own UI
+    /// shows the head of a command's output, not a one-line paraphrase — and
+    /// bounded so a runaway result can't become the conversation.
+    static func resultSummary(_ content: Any?, lines limit: Int = 40, characters: Int = 4_000) -> String {
+        var text = ""
+        if let string = content as? String { text = string }
+        else if let blocks = content as? [[String: Any]] {
+            text = blocks.compactMap { $0["text"] as? String ?? $0["content"] as? String }.joined(separator: "\n")
+        } else if let object = content as? [String: Any] {
+            text = object["output"] as? String ?? object["content"] as? String ?? ""
         }
-        if let object = content as? [String: Any] {
-            return condense(object["output"] as? String ?? object["content"] as? String ?? "")
-        }
-        return ""
+        text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        var kept = text.components(separatedBy: "\n").prefix(limit).joined(separator: "\n")
+        if kept.count > characters { kept = String(kept.prefix(characters - 1)) + "…" }
+        return kept
     }
 
     /// First meaningful line, trimmed to something a row can hold.
