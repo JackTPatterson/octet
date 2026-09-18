@@ -14,6 +14,9 @@ struct TwinRow: Identifiable, Equatable {
         case diff(TwinDiff, result: String)
         /// The plan an agent is keeping as it works.
         case todos([TwinTodo])
+        /// Plumbing worth a line rather than a wall: a subagent finishing, a
+        /// hook firing. Quiet, one line, never the XML it arrived as.
+        case note(String)
         case tool(name: String, summary: String, result: String, isError: Bool)
     }
 
@@ -24,7 +27,7 @@ struct TwinRow: Identifiable, Equatable {
     var isTool: Bool {
         switch kind {
         case .tool, .command, .diff, .todos: true
-        case .user, .assistant, .thinking: false
+        case .user, .assistant, .thinking, .note: false
         }
     }
 }
@@ -49,7 +52,14 @@ enum TwinRows {
                 switch block {
                 case .text(let text):
                     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !trimmed.isEmpty, !isNoise(trimmed) else { continue }
+                    guard !trimmed.isEmpty else { continue }
+                    // Agents inject blocks meant for themselves. The ones
+                    // worth knowing about become a line; the rest go.
+                    if let note = TwinNotes.summarise(trimmed) {
+                        rows.append(TwinRow(id: id, kind: .note(note), at: message.at))
+                        continue
+                    }
+                    guard !isNoise(trimmed) else { continue }
                     rows.append(TwinRow(id: id,
                                         kind: message.role == .user ? .user(trimmed) : .assistant(trimmed),
                                         at: message.at))
@@ -86,10 +96,11 @@ enum TwinRows {
 
     /// Lines agents inject that are plumbing rather than conversation.
     static func isNoise(_ text: String) -> Bool {
-        if text.hasPrefix("<") && text.contains(">") && text.count < 4_000 {
+        if text.hasPrefix("<"), text.contains(">") {
             // `<command-name>`, `<local-command-stdout>`, reminders.
             let tags = ["<command-name>", "<command-message>", "<local-command", "<system-reminder>",
-                        "<user-prompt-submit-hook>", "<bash-input>", "<bash-stdout>", "<bash-stderr>"]
+                        "<user-prompt-submit-hook>", "<bash-input>", "<bash-stdout>", "<bash-stderr>",
+                        "<task-notification>", "<function_results>"]
             if tags.contains(where: text.hasPrefix) { return true }
         }
         return text.hasPrefix("Caveat: The messages below")

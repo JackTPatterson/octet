@@ -283,8 +283,21 @@ private struct TwinRowView: View {
         case .todos(let todos):
             TwinTodoList(todos: todos, title: style.planTitle)
                 .padding(.vertical, 2)
+        case .note(let text):
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: "bell")
+                    .font(.system(size: 9))
+                    .foregroundStyle(Theme.textTertiary)
+                Text(text)
+                    .font(Theme.captionFont)
+                    .foregroundStyle(Theme.textTertiary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.vertical, 1)
         case .tool(let name, let summary, let result, let isError):
-            step(title: style.toolTitle(name), mono: summary,
+            step(title: style.toolTitle(name) + (summary.isEmpty ? "" : "("),
+                 mono: summary, trailing: summary.isEmpty ? "" : ")",
                  tint: isError ? Color(hex: AgentStateColor.blocked) : Theme.textSecondary) {
                 result
             }

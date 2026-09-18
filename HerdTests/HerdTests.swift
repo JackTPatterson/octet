@@ -2188,3 +2188,49 @@ final class TwinStatusLineTests: XCTestCase {
         XCTAssertEqual(TwinStyle.shortPath("/repo"), "/repo")
     }
 }
+
+final class TwinNoteTests: XCTestCase {
+    private let notification = """
+    <task-notification>
+    <task-id>a48d99c7e525c02ee</task-id>
+    <tool-use-id>toolu_01GmXRtVEikhNFAXTWu8aPgn</tool-use-id>
+    <output-file>/tmp/tasks/a48d99c7e525c02ee.output</output-file>
+    <status>completed</status>
+    <summary>Agent "Answer arithmetic" finished</summary>
+    <note>A task-notification fires each time this agent stops.</note>
+    <result>4</result>
+    <usage><subagent_tokens>21701</subagent_tokens></usage>
+    </task-notification>
+    """
+
+    func testABackgroundAgentFinishingIsOneLineNotAPageOfXML() {
+        XCTAssertEqual(TwinNotes.summarise(notification), "Agent \"Answer arithmetic\" finished · 4")
+        XCTAssertEqual(TwinNotes.tag("status", in: notification), "completed")
+        XCTAssertNil(TwinNotes.tag("missing", in: notification))
+        XCTAssertNil(TwinNotes.summarise("just a message"))
+    }
+
+    func testTheWallOfXMLNeverReachesTheConversation() {
+        let conversation = TwinTranscript.parseClaude(lines: [
+            "{\"type\":\"user\",\"uuid\":\"u1\",\"message\":{\"role\":\"user\",\"content\":\(json(notification))}}",
+            #"{"type":"assistant","uuid":"a1","message":{"content":[{"type":"text","text":"4"}]}}"#,
+        ])
+        let rows = TwinRows.build(conversation)
+        XCTAssertEqual(rows.map(\.kind), [
+            .note("Agent \"Answer arithmetic\" finished · 4"),
+            .assistant("4"),
+        ])
+    }
+
+    func testAMessageThatMerelyStartsWithABracketIsStillAMessage() {
+        // Hiding anything starting with "<" would swallow real questions.
+        XCTAssertFalse(TwinRows.isNoise("<div> isn't rendering — any idea why?"))
+        XCTAssertFalse(TwinRows.isNoise("<T: Sendable> is the constraint I want"))
+        XCTAssertTrue(TwinRows.isNoise("<system-reminder>be careful</system-reminder>"))
+        XCTAssertTrue(TwinRows.isNoise("<command-name>/model</command-name>"))
+    }
+
+    private func json(_ text: String) -> String {
+        String(decoding: try! JSONSerialization.data(withJSONObject: text, options: .fragmentsAllowed), as: UTF8.self)
+    }
+}
