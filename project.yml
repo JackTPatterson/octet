@@ -60,7 +60,7 @@ targets:
         PRODUCT_NAME: Octet
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Octet
-        # Drawn by scripts/make-icon.swift.
+        # Built from the layered Icon Composer source at Octet/AppIcon.icon.
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_NSPrincipalClass: NSApplication
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools

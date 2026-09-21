@@ -39,8 +39,8 @@ whose window shows Octet beside the Applications folder, itself signed,
 notarized and stapled. The one-time setup (certificate, notarization
 credentials) is described at the top of the script.
 
-`scripts/make-dmg.sh <app> <out.dmg>` builds the disk image alone, and
-`scripts/make-icon.swift` redraws the app icon into the asset catalog.
+`scripts/make-dmg.sh <app> <out.dmg>` builds the disk image alone. The app
+icon lives in the layered Icon Composer source `Octet/AppIcon.icon`.
 
 ## Subagent tabs
 
