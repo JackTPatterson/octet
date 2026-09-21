@@ -128,25 +128,15 @@ final class AgentsStore: ObservableObject {
 
     /// Continues a background session in Claude Code's own interface, in a
     /// new tab of the workspace for its folder.
-    func attach(_ agent: BackgroundAgent, client: EngineClient, workspaceId: String?) {
+    /// The layout for a tab attached to a background session, for a window
+    /// to open: with several windows open, only the one asked may move.
+    static func attachLayout(_ agent: BackgroundAgent) -> [String: Any] {
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-        var params: [String: Any] = [
-            "focus": true,
+        return [
             "tab_label": agent.name,
             "root": ["type": "pane", "label": agent.name, "cwd": agent.cwd,
                      "command": [shell, "-lic", "claude attach \(agent.id); exec \(shell) -l"]] as [String: Any],
         ]
-        if let workspaceId { params["workspace_id"] = workspaceId }
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                try client.call("layout.apply", params)
-                DispatchQueue.main.async { MainActor.assumeIsolated { AgentCenter.shared.showingBoard = false; AgentCenter.shared.activeId = nil } }
-            } catch {
-                DispatchQueue.main.async {
-                    ToastCenter.shared.fail(nil, "Couldn't open \(agent.name) in a terminal", detail: String(describing: error))
-                }
-            }
-        }
     }
 
     /// Stops the background run and continues the session here, natively.

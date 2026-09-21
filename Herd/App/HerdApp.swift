@@ -5,11 +5,12 @@ import SwiftUI
 struct HerdApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var store: SessionStore
-    @StateObject private var ui = UIState()
     @StateObject private var marketplace: MarketplaceStore
     @StateObject private var slash: SlashController
     @StateObject private var prompt: PromptEditor
     private let session: EngineSession?
+
+    @MainActor private static var started = false
 
     init() {
         let session = EngineSession.make()
@@ -37,10 +38,15 @@ struct HerdApp: App {
     }
 
     var body: some Scene {
-        WindowGroup {
-            RootView(store: store, ui: ui, session: session, slash: slash, prompt: prompt)
+        // Each window is its own client of the one engine session, showing
+        // a workspace of its own; what it was opened for comes back with it.
+        WindowGroup(for: HerdWindowSpec.self) { $spec in
+            HerdWindowRoot(spec: spec, store: store, session: session, slash: slash, prompt: prompt)
                 .frame(minWidth: 720, minHeight: 420)
                 .onAppear {
+                    // Once for the app, not once per window.
+                    guard !Self.started else { return }
+                    Self.started = true
                     store.start()
                     AccountStore.shared.start()
                     AgentsStore.shared.start()
@@ -48,10 +54,12 @@ struct HerdApp: App {
                     AgentDiscoveryStore.shared.scanIfStale()
                     DebugSnapshot.start()
                 }
+        } defaultValue: {
+            HerdWindowSpec()
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1280, height: 820)
-        .commands { HerdCommands(store: store, ui: ui) }
+        .commands { HerdCommands(store: store) }
 
         Settings {
             SettingsView(store: store)
@@ -94,29 +102,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 /// Shortcuts come from `HerdShortcut`, which the Settings Keyboard page lists too.
+/// Each acts on the terminal window in front.
 struct HerdCommands: Commands {
     let store: SessionStore
-    let ui: UIState
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
-            Button(HerdShortcut.newTab.title) { MainWindow.perform { store.newTab() } }
+            Button(HerdShortcut.newTab.title) { KeyWindow.act { $0.newTab() } }
                 .keyboardShortcut(HerdShortcut.newTab.keyboardShortcut)
-            Button(HerdShortcut.newConversation.title) { MainWindow.perform { store.newConversation() } }
+            Button(HerdShortcut.newConversation.title) { KeyWindow.act { $0.newConversation() } }
                 .keyboardShortcut(HerdShortcut.newConversation.keyboardShortcut)
             // Codex's has no shortcut of its own: ⌘⇧N belongs to Claude's,
             // and a second chord for the same thing isn't worth the key.
-            Button("New Codex Conversation") { MainWindow.perform { store.newConversation(engine: .codex) } }
-            Button(HerdShortcut.agents.title) { MainWindow.perform { store.toggleAgentsBoard() } }
+            Button("New Codex Conversation") { KeyWindow.act { $0.newConversation(engine: .codex) } }
+            Button(HerdShortcut.agents.title) { KeyWindow.act { $0.toggleAgentsBoard() } }
                 .keyboardShortcut(HerdShortcut.agents.keyboardShortcut)
-            Button(HerdShortcut.newWorkspace.title) { MainWindow.perform { store.newWorkspace() } }
+            Button(HerdShortcut.newWorkspace.title) { KeyWindow.act { $0.newWorkspace() } }
                 .keyboardShortcut(HerdShortcut.newWorkspace.keyboardShortcut)
-            Button(HerdShortcut.openFolder.title) { PaletteCatalog.openFolder(store: store) }
+            Button(HerdShortcut.newWindow.title) { WindowActions.newWindow(store: store) }
+                .keyboardShortcut(HerdShortcut.newWindow.keyboardShortcut)
+            Button(HerdShortcut.openFolder.title) { KeyWindow.act { PaletteCatalog.openFolder(window: $0) } }
                 .keyboardShortcut(HerdShortcut.openFolder.keyboardShortcut)
             Divider()
             // ⌘W closes Settings or Marketplace when one of them is in front.
             Button(HerdShortcut.closeTab.title) {
-                if MainWindow.isKey { store.closeFocusedTab() } else { NSApp.keyWindow?.performClose(nil) }
+                if MainWindow.isKey { KeyWindow.act { $0.closeFocusedTab() } } else { NSApp.keyWindow?.performClose(nil) }
             }
             .keyboardShortcut(HerdShortcut.closeTab.keyboardShortcut)
         }
@@ -126,11 +136,11 @@ struct HerdCommands: Commands {
             SecureKeyboardEntryToggle()
         }
         CommandGroup(after: .sidebar) {
-            Button(HerdShortcut.palette.title) { MainWindow.perform { ui.paletteVisible.toggle() } }
+            Button(HerdShortcut.palette.title) { KeyWindow.act { $0.ui.paletteVisible.toggle() } }
                 .keyboardShortcut(HerdShortcut.palette.keyboardShortcut)
-            Button(HerdShortcut.paletteAll.title) { MainWindow.perform { ui.paletteVisible.toggle() } }
+            Button(HerdShortcut.paletteAll.title) { KeyWindow.act { $0.ui.paletteVisible.toggle() } }
                 .keyboardShortcut(HerdShortcut.paletteAll.keyboardShortcut)
-            Button(HerdShortcut.toggleSidebar.title) { MainWindow.perform { ui.sidebarVisible.toggle() } }
+            Button(HerdShortcut.toggleSidebar.title) { KeyWindow.act { $0.ui.sidebarVisible.toggle() } }
                 .keyboardShortcut(HerdShortcut.toggleSidebar.keyboardShortcut)
             Divider()
             // The terminal's own zoom keys are unbound (Theme.herdShortcutUnbinds),
@@ -143,39 +153,48 @@ struct HerdCommands: Commands {
                 .keyboardShortcut(HerdShortcut.resetFontSize.keyboardShortcut)
         }
         CommandMenu("Pane") {
-            Button(HerdShortcut.splitRight.title) { MainWindow.perform { store.splitPane(.right) } }
+            Button(HerdShortcut.splitRight.title) { KeyWindow.act { $0.splitPane(.right) } }
                 .keyboardShortcut(HerdShortcut.splitRight.keyboardShortcut)
-            Button(HerdShortcut.splitDown.title) { MainWindow.perform { store.splitPane(.down) } }
+            Button(HerdShortcut.splitDown.title) { KeyWindow.act { $0.splitPane(.down) } }
                 .keyboardShortcut(HerdShortcut.splitDown.keyboardShortcut)
-            Button(HerdShortcut.toggleZoom.title) { MainWindow.perform { store.toggleZoom() } }
+            Button(HerdShortcut.toggleZoom.title) { KeyWindow.act { $0.toggleZoom() } }
                 .keyboardShortcut(HerdShortcut.toggleZoom.keyboardShortcut)
-            Button("Close Pane") { MainWindow.perform { store.closeFocusedPane() } }
+            Button("Close Pane") { KeyWindow.act { $0.closeFocusedPane() } }
+            Button("Move Pane to New Tab") { KeyWindow.act { $0.moveFocusedPaneToNewTab() } }
             Divider()
-            Button(HerdShortcut.focusLeft.title) { MainWindow.perform { store.focusPane(.left) } }
+            Button(HerdShortcut.focusLeft.title) { KeyWindow.act { $0.focusPane(.left) } }
                 .keyboardShortcut(HerdShortcut.focusLeft.keyboardShortcut)
-            Button(HerdShortcut.focusRight.title) { MainWindow.perform { store.focusPane(.right) } }
+            Button(HerdShortcut.focusRight.title) { KeyWindow.act { $0.focusPane(.right) } }
                 .keyboardShortcut(HerdShortcut.focusRight.keyboardShortcut)
-            Button(HerdShortcut.focusUp.title) { MainWindow.perform { store.focusPane(.up) } }
+            Button(HerdShortcut.focusUp.title) { KeyWindow.act { $0.focusPane(.up) } }
                 .keyboardShortcut(HerdShortcut.focusUp.keyboardShortcut)
-            Button(HerdShortcut.focusDown.title) { MainWindow.perform { store.focusPane(.down) } }
+            Button(HerdShortcut.focusDown.title) { KeyWindow.act { $0.focusPane(.down) } }
                 .keyboardShortcut(HerdShortcut.focusDown.keyboardShortcut)
         }
         CommandMenu("Navigate") {
-            Button(HerdShortcut.nextTab.title) { MainWindow.perform { store.selectAdjacentTab(offset: 1) } }
+            Button(HerdShortcut.nextTab.title) { KeyWindow.act { $0.selectAdjacentTab(offset: 1) } }
                 .keyboardShortcut(HerdShortcut.nextTab.keyboardShortcut)
-            Button(HerdShortcut.previousTab.title) { MainWindow.perform { store.selectAdjacentTab(offset: -1) } }
+            Button(HerdShortcut.previousTab.title) { KeyWindow.act { $0.selectAdjacentTab(offset: -1) } }
                 .keyboardShortcut(HerdShortcut.previousTab.keyboardShortcut)
             Divider()
-            Button(HerdShortcut.nextWorkspace.title) { MainWindow.perform { store.selectAdjacentWorkspace(offset: 1) } }
+            Button(HerdShortcut.nextWorkspace.title) { KeyWindow.act { $0.selectAdjacentWorkspace(offset: 1) } }
                 .keyboardShortcut(HerdShortcut.nextWorkspace.keyboardShortcut)
-            Button(HerdShortcut.previousWorkspace.title) { MainWindow.perform { store.selectAdjacentWorkspace(offset: -1) } }
+            Button(HerdShortcut.previousWorkspace.title) { KeyWindow.act { $0.selectAdjacentWorkspace(offset: -1) } }
                 .keyboardShortcut(HerdShortcut.previousWorkspace.keyboardShortcut)
             Divider()
             ForEach(1...9, id: \.self) { number in
                 let shortcut = HerdShortcut.tab(number)
-                Button(shortcut.title) { MainWindow.perform { store.selectTab(number: number) } }
+                Button(shortcut.title) { KeyWindow.act { $0.selectTab(number: number) } }
                     .keyboardShortcut(shortcut.keyboardShortcut)
             }
+        }
+        // Window mechanics after the system's own Window items, the way
+        // browsers and editors put them.
+        CommandGroup(after: .windowArrangement) {
+            Divider()
+            Button("Move Tab to New Window") { KeyWindow.act { WindowActions.moveFocusedTabToNewWindow(from: $0) } }
+            Button("Merge All Windows") { WindowActions.mergeAllWindows() }
+                .disabled(false)
         }
         // Replaces SwiftUI's item that only says help isn't available.
         CommandGroup(replacing: .help) {
@@ -262,10 +281,19 @@ enum HerdKeyHook {
            let store, PasteHandler.handleCommandV(store: store) {
             return true
         }
-        // A dialog over the terminal owns the keyboard; Return and Esc reach
-        // its buttons as key equivalents before this runs.
+        // A dialog over the terminal owns the keyboard. Its buttons' Return
+        // and Esc equivalents don't reach it past the terminal, so they're
+        // answered here.
         if let request = ConfirmCenter.shared.request,
-           request.window == nil || request.window === MainWindow.window { return true }
+           request.window == nil || request.window === event.window {
+            let plain = event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty
+            switch event.keyCode {
+            case 36 where plain, 76 where plain: ConfirmCenter.shared.confirm()
+            case 53 where !request.cancelTitle.isEmpty: ConfirmCenter.shared.cancel()
+            default: break
+            }
+            return true
+        }
         // Input methods and dead keys compose text over several keystrokes;
         // raw key codes would break Japanese, Chinese, Korean and Option-accents.
         if isComposing(event) { return false }
@@ -292,9 +320,10 @@ private func isComposing(_ event: NSEvent) -> Bool {
 enum MainWindow {
     static weak var window: NSWindow?
 
+    /// A terminal window is in front: any of them, now there can be several.
     static var isKey: Bool {
-        guard let window else { return true }
-        return NSApp.keyWindow == nil || NSApp.keyWindow === window
+        guard let key = NSApp.keyWindow else { return true }
+        return key === window || WindowRegistry.shared.windows.contains { $0.nsWindow === key }
     }
 
     static func perform(_ action: () -> Void) {

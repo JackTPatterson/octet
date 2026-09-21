@@ -78,6 +78,7 @@ enum ConversationDebug {
 // MARK: - Header
 
 private struct ConversationHeader: View {
+    @EnvironmentObject private var window: WindowContext
     @ObservedObject var session: AgentSession
     let client: EngineClient
     @ObservedObject private var accounts = AccountStore.shared
@@ -109,7 +110,7 @@ private struct ConversationHeader: View {
                     .help("Cost so far at API prices")
             }
             HerdButton(title: "Open in Terminal", icon: "terminal", kind: .ghost, compact: true) {
-                session.openInTerminal(client: client)
+                session.openInTerminal(window: window)
             }
             .disabled(conversation.items.isEmpty)
                 .help("Continue this conversation in \(session.engine.displayName)'s own interface, in a new tab")

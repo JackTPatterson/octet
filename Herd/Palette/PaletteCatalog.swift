@@ -34,14 +34,15 @@ struct PaletteItem: Identifiable {
 /// Builds every palette entry from live session state.
 @MainActor
 enum PaletteCatalog {
-    static func items(store: SessionStore, ui: UIState) -> [PaletteItem] {
-        actions(store: store, ui: ui)
-            + discoveredAgents(store: store)
-            + workspaces(store: store)
-            + tabs(store: store)
-            + agents(store: store)
-            + projects(store: store)
-            + plugins(store: store)
+    /// Everything the palette offers, acting on the window it opened in.
+    static func items(window: WindowContext) -> [PaletteItem] {
+        actions(window: window)
+            + discoveredAgents(window: window)
+            + workspaces(window: window)
+            + tabs(window: window)
+            + agents(window: window)
+            + projects(window: window)
+            + plugins(window: window)
     }
 
     // MARK: Discovered agents
@@ -49,7 +50,7 @@ enum PaletteCatalog {
     /// One row per agent installed on this machine, opening a terminal tab
     /// already running it. The terminal is agent-agnostic, so this works for
     /// agents Herd has no driver for.
-    static func discoveredAgents(store: SessionStore) -> [PaletteItem] {
+    static func discoveredAgents(window: WindowContext) -> [PaletteItem] {
         AgentDiscoveryStore.shared.agents.compactMap { agent in
             guard agent.executablePath != nil else { return nil }
             let brand = AgentBrand.forAgent(agent.id)
@@ -60,16 +61,18 @@ enum PaletteCatalog {
                 subtitle: agent.version ?? agent.command,
                 keywords: ["run", "terminal", "agent", agent.command],
                 icon: brand.map { .agent($0) } ?? .symbol("terminal"),
-                effect: .run { store.newTab(running: agent) }
+                effect: .run { window.newTab(running: agent) }
             )
         }
     }
 
     // MARK: Actions
 
-    static func actions(store: SessionStore, ui: UIState) -> [PaletteItem] {
-        let workspace = store.focusedWorkspace
-        let tab = store.focusedWorkspaceTabs.first { $0.tabId == store.snapshot.focusedTabId }
+    static func actions(window: WindowContext) -> [PaletteItem] {
+        let store = window.store
+        let ui = window.ui
+        let workspace = window.focusedWorkspace
+        let tab = window.focusedWorkspaceTabs.first { $0.tabId == window.displayedFocusedTabId }
         func action(
             _ id: String, _ title: String, _ symbol: String, shortcut: String? = nil,
             keywords: [String] = [], _ run: @escaping () -> Void
@@ -79,24 +82,32 @@ enum PaletteCatalog {
         }
 
         var items: [PaletteItem] = [
-            action("newTab", "New Tab", "plus.square", shortcut: "⌘T", keywords: ["create", "terminal"]) { store.newTab() },
-            action("closeTab", "Close Tab", "xmark.square", shortcut: "⌘W") { store.closeFocusedTab() },
-            action("nextTab", "Next Tab", "arrow.right.square", shortcut: "⌘⇧]") { store.selectAdjacentTab(offset: 1) },
-            action("previousTab", "Previous Tab", "arrow.left.square", shortcut: "⌘⇧[") { store.selectAdjacentTab(offset: -1) },
+            action("newTab", "New Tab", "plus.square", shortcut: "⌘T", keywords: ["create", "terminal"]) { window.newTab() },
+            action("closeTab", "Close Tab", "xmark.square", shortcut: "⌘W") { window.closeFocusedTab() },
+            action("nextTab", "Next Tab", "arrow.right.square", shortcut: "⌘⇧]") { window.selectAdjacentTab(offset: 1) },
+            action("previousTab", "Previous Tab", "arrow.left.square", shortcut: "⌘⇧[") { window.selectAdjacentTab(offset: -1) },
             action("moveTabLeft", "Move Tab Left", "arrow.left.to.line", keywords: ["reorder"]) { store.moveFocusedTab(by: -1) },
             action("moveTabRight", "Move Tab Right", "arrow.right.to.line", keywords: ["reorder"]) { store.moveFocusedTab(by: 1) },
-            action("newWorkspace", "New Workspace", "rectangle.stack.badge.plus", shortcut: "⌘N", keywords: ["space"]) { store.newWorkspace() },
-            action("openFolder", "Open Folder as Workspace…", "folder.badge.plus", shortcut: "⌘O", keywords: ["project", "directory"]) { openFolder(store: store) },
-            action("nextWorkspace", "Next Workspace", "chevron.down.square", shortcut: "⌃⌘↓") { store.selectAdjacentWorkspace(offset: 1) },
-            action("previousWorkspace", "Previous Workspace", "chevron.up.square", shortcut: "⌃⌘↑") { store.selectAdjacentWorkspace(offset: -1) },
-            action("splitRight", "Split Pane Right", "rectangle.split.2x1", shortcut: "⌘D", keywords: ["vertical"]) { store.splitPane(.right) },
-            action("splitDown", "Split Pane Down", "rectangle.split.1x2", shortcut: "⌘⇧D", keywords: ["horizontal"]) { store.splitPane(.down) },
-            action("zoomPane", "Toggle Pane Zoom", "arrow.up.left.and.arrow.down.right", shortcut: "⌘⇧↩", keywords: ["maximize"]) { store.toggleZoom() },
-            action("closePane", "Close Pane", "xmark.rectangle") { store.closeFocusedPane() },
-            action("focusLeft", "Focus Pane Left", "arrow.left", shortcut: "⌘⌥←") { store.focusPane(.left) },
-            action("focusRight", "Focus Pane Right", "arrow.right", shortcut: "⌘⌥→") { store.focusPane(.right) },
-            action("focusUp", "Focus Pane Up", "arrow.up", shortcut: "⌘⌥↑") { store.focusPane(.up) },
-            action("focusDown", "Focus Pane Down", "arrow.down", shortcut: "⌘⌥↓") { store.focusPane(.down) },
+            action("newWorkspace", "New Workspace", "rectangle.stack.badge.plus", shortcut: "⌘N", keywords: ["space"]) { window.newWorkspace() },
+            action("openFolder", "Open Folder as Workspace…", "folder.badge.plus", shortcut: "⌘O", keywords: ["project", "directory"]) { openFolder(window: window) },
+            action("nextWorkspace", "Next Workspace", "chevron.down.square", shortcut: "⌃⌘↓") { window.selectAdjacentWorkspace(offset: 1) },
+            action("previousWorkspace", "Previous Workspace", "chevron.up.square", shortcut: "⌃⌘↑") { window.selectAdjacentWorkspace(offset: -1) },
+            action("splitRight", "Split Pane Right", "rectangle.split.2x1", shortcut: "⌘D", keywords: ["vertical"]) { window.splitPane(.right) },
+            action("splitDown", "Split Pane Down", "rectangle.split.1x2", shortcut: "⌘⇧D", keywords: ["horizontal"]) { window.splitPane(.down) },
+            action("zoomPane", "Toggle Pane Zoom", "arrow.up.left.and.arrow.down.right", shortcut: "⌘⇧↩", keywords: ["maximize"]) { window.toggleZoom() },
+            action("closePane", "Close Pane", "xmark.rectangle") { window.closeFocusedPane() },
+            action("newWindow", "New Window", "rectangle.on.rectangle", shortcut: "⌥⌘N",
+                   keywords: ["window", "open"]) { WindowActions.newWindow(store: store) },
+            action("tabToWindow", "Move Tab to New Window", "rectangle.on.rectangle",
+                   keywords: ["window", "tear", "detach", "pop out"]) { WindowActions.moveFocusedTabToNewWindow(from: window) },
+            action("mergeWindows", "Merge All Windows", "rectangle.on.rectangle",
+                   keywords: ["window", "combine", "close"]) { WindowActions.mergeAllWindows() },
+            action("paneToTab", "Move Pane to New Tab", "rectangle.on.rectangle",
+                   keywords: ["break", "unsplit", "detach", "split", "pane", "tab"]) { window.moveFocusedPaneToNewTab() },
+            action("focusLeft", "Focus Pane Left", "arrow.left", shortcut: "⌘⌥←") { window.focusPane(.left) },
+            action("focusRight", "Focus Pane Right", "arrow.right", shortcut: "⌘⌥→") { window.focusPane(.right) },
+            action("focusUp", "Focus Pane Up", "arrow.up", shortcut: "⌘⌥↑") { window.focusPane(.up) },
+            action("focusDown", "Focus Pane Down", "arrow.down", shortcut: "⌘⌥↓") { window.focusPane(.down) },
             action("toggleSidebar", "Toggle Sidebar", "sidebar.left", shortcut: "⌘B") { ui.sidebarVisible.toggle() },
             action("reloadConfig", "Reload Terminal Config", "arrow.clockwise", keywords: ["settings"]) { store.reloadSessionConfig() },
             action("installHook", "Install Subagent Tabs Hook", "sparkles",
@@ -131,7 +142,7 @@ enum PaletteCatalog {
                 id: "action.newWorktree", kind: .action, title: "New Worktree…", keywords: ["git", "branch"],
                 icon: .symbol("arrow.triangle.branch"),
                 effect: .prompt(title: "New Worktree", placeholder: "Branch name", initial: "") { branch in
-                    store.createWorktree(branch: branch)
+                    window.createWorktree(branch: branch)
                 }
             ))
             items.append(action("closeWorkspace", "Close Workspace", "xmark.bin") {
@@ -212,8 +223,9 @@ enum PaletteCatalog {
 
     // MARK: Navigation
 
-    static func workspaces(store: SessionStore) -> [PaletteItem] {
-        store.groups.flatMap { group in
+    static func workspaces(window: WindowContext) -> [PaletteItem] {
+        let store = window.store
+        return store.groups.flatMap { group in
             group.workspaces.map { workspace in
                 let agent = store.primaryAgent(in: store.snapshot.agents(inWorkspace: workspace.workspaceId))
                 let branch = store.branches[workspace.workspaceId]
@@ -225,13 +237,14 @@ enum PaletteCatalog {
                     subtitle: subtitle,
                     keywords: [store.snapshot.directory(ofWorkspace: workspace.workspaceId) ?? ""],
                     icon: .state(agent?.agentStatus ?? workspace.agentStatus),
-                    effect: .run { store.focusWorkspace(workspace.workspaceId) }
+                    effect: .run { window.focusWorkspace(workspace.workspaceId) }
                 )
             }
         }
     }
 
-    static func tabs(store: SessionStore) -> [PaletteItem] {
+    static func tabs(window: WindowContext) -> [PaletteItem] {
+        let store = window.store
         let labels = Dictionary(uniqueKeysWithValues: store.snapshot.workspaces.map { ($0.workspaceId, $0.label) })
         return store.snapshot.tabs.sorted { ($0.workspaceId, $0.number) < ($1.workspaceId, $1.number) }.map { tab in
             let agent = store.primaryAgent(in: store.snapshot.agents(inTab: tab.tabId))
@@ -241,12 +254,13 @@ enum PaletteCatalog {
                 title: TabAutoName.display(label: tab.label, number: tab.number),
                 subtitle: [labels[tab.workspaceId], "tab \(tab.number)"].compactMap { $0 }.joined(separator: " · "),
                 icon: brand.map { .agent($0) } ?? .symbol("terminal"),
-                effect: .run { store.focusTabAnywhere(tab) }
+                effect: .run { window.focusTabAnywhere(tab) }
             )
         }
     }
 
-    static func agents(store: SessionStore) -> [PaletteItem] {
+    static func agents(window: WindowContext) -> [PaletteItem] {
+        let store = window.store
         let workspaceLabels = Dictionary(uniqueKeysWithValues: store.snapshot.workspaces.map { ($0.workspaceId, $0.label) })
         let tabLabels = Dictionary(uniqueKeysWithValues: store.snapshot.tabs.map { ($0.tabId, $0.label) })
         return store.snapshot.agents.map { agent in
@@ -258,26 +272,28 @@ enum PaletteCatalog {
                            agent.tabId.flatMap { tabLabels[$0] }].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "),
                 keywords: [agent.agent ?? ""],
                 icon: brand.map { .agent($0) } ?? .state(agent.agentStatus),
-                effect: .run { store.focusAgent(paneId: agent.paneId) }
+                effect: .run { window.focusAgent(paneId: agent.paneId) }
             )
         }
     }
 
-    static func projects(store: SessionStore) -> [PaletteItem] {
-        ProjectDirectories.list().map { path in
+    static func projects(window: WindowContext) -> [PaletteItem] {
+        let store = window.store
+        return ProjectDirectories.list().map { path in
             let open = store.groups.contains { $0.id == path }
             return PaletteItem(
                 id: "project.\(path)", kind: .project, title: URL(fileURLWithPath: path).lastPathComponent,
                 subtitle: abbreviateHome(path) + (open ? " · open" : ""),
                 icon: .symbol(open ? "folder.fill" : "folder"),
-                effect: .run { store.openProject(path: path) }
+                effect: .run { window.openProject(path: path) }
             )
         }
     }
 
     // MARK: Plugins
 
-    static func plugins(store: SessionStore) -> [PaletteItem] {
+    static func plugins(window: WindowContext) -> [PaletteItem] {
+        let store = window.store
         var items: [PaletteItem] = []
         for plugin in store.plugins {
             let owner = [plugin.name, plugin.version.map { "v\($0)" }].compactMap { $0 }.joined(separator: " ")
@@ -420,14 +436,14 @@ enum PaletteCatalog {
         }
     }
 
-    static func openFolder(store: SessionStore) {
+    static func openFolder(window: WindowContext) {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         panel.directoryURL = URL(fileURLWithPath: NSHomeDirectory() + "/Developer")
         if panel.runModal() == .OK, let url = panel.url {
-            store.openProject(path: url.path)
+            window.openProject(path: url.path)
         }
     }
 }

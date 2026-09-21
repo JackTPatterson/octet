@@ -51,6 +51,7 @@ extension HerdShortcut {
     static let newConversation = HerdShortcut(title: "New Claude Conversation", key: "n", modifiers: [.command, .shift])
     static let agents = HerdShortcut(title: "Agents Board", key: "a", modifiers: [.command, .shift])
     static let newWorkspace = HerdShortcut(title: "New Workspace", key: "n")
+    static let newWindow = HerdShortcut(title: "New Window", key: "n", modifiers: [.command, .option])
     static let openFolder = HerdShortcut(title: "Open Folder as Workspace…", key: "o")
     static let closeTab = HerdShortcut(title: "Close Tab", key: "w")
 
@@ -93,7 +94,7 @@ extension HerdShortcut {
     /// The Keyboard page, in menu order.
     static let groups: [(title: String, shortcuts: [HerdShortcut])] = [
         ("Herd", [settings, marketplace, quit]),
-        ("File", [newTab, newConversation, agents, newWorkspace, openFolder, closeTab]),
+        ("File", [newTab, newConversation, agents, newWorkspace, newWindow, openFolder, closeTab]),
         ("View", [palette, paletteAll, toggleSidebar, increaseFontSize, decreaseFontSize, resetFontSize]),
         ("Pane", [splitRight, splitDown, toggleZoom, focusLeft, focusRight, focusUp, focusDown]),
         ("Navigate", [nextTab, previousTab, nextWorkspace, previousWorkspace, tabNumber, lastTab]),

@@ -3,6 +3,7 @@ import SwiftUI
 /// Vertical tabs: project groups with uppercase headers and
 /// bordered workspace cards tinted by the running agent's vendor hue.
 struct SidebarView: View {
+    @EnvironmentObject private var window: WindowContext
     @ObservedObject var store: SessionStore
     var width: CGFloat = Theme.sidebarWidth
     @ObservedObject private var motion = MotionPreferences.shared
@@ -39,7 +40,7 @@ struct SidebarView: View {
             .background {
                 Color.clear
                     .contentShape(Rectangle())
-                    .onTapGesture(count: 2) { store.newWorkspace() }
+                    .onTapGesture(count: 2) { window.newWorkspace() }
             }
             TipCard(store: store)
             if !store.idleWorkspaces.isEmpty {
@@ -55,7 +56,7 @@ struct SidebarView: View {
     private var controlBar: some View {
         HStack(spacing: 6) {
             ControlButton(title: "New workspace", icon: "plus", shortcut: "⌘N") {
-                store.newWorkspace()
+                window.newWorkspace()
             }
         }
         .padding(.horizontal, 8)
@@ -156,14 +157,18 @@ private struct BranchChip: View {
 }
 
 private struct WorkspaceCard: View {
+    @EnvironmentObject private var window: WindowContext
     @ObservedObject var store: SessionStore
     let workspace: EngineWorkspace
     @State private var hovered = false
     @State private var renaming = false
+    @StateObject private var peek = HoverIntent()
 
     var body: some View {
         let snapshot = store.snapshot
-        let isSelected = workspace.workspaceId == store.focusedWorkspace?.workspaceId
+        let isSelected = workspace.workspaceId == window.focusedWorkspace?.workspaceId
+        // Open in another window: a click brings that window forward.
+        let elsewhere = WindowRegistry.shared.window(showing: workspace.workspaceId).map { $0 !== window } ?? false
         let agents = snapshot.agents(inWorkspace: workspace.workspaceId)
         let agent = store.primaryAgent(in: agents)
         let brand = AgentBrand.forAgent(agent?.agent)
@@ -190,6 +195,12 @@ private struct WorkspaceCard: View {
                         .help("Pinned: never moves to Idle")
                 }
                 Spacer(minLength: 0)
+                if elsewhere {
+                    HerdIcon("rectangle.on.rectangle", size: 12)
+                        .foregroundStyle(Theme.textTertiary)
+                        .help("Open in another window. Click to bring it forward.")
+                        .accessibilityLabel("Open in another window")
+                }
             }
             // The folder only earns a line when the name doesn't already say it.
             if let directory, !Self.labelNamesFolder(workspace.label, directory) {
@@ -235,8 +246,20 @@ private struct WorkspaceCard: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
         .contentShape(Rectangle())
-        .onHover { hovered = $0 }
-        .onTapGesture { store.focusWorkspace(workspace.workspaceId) }
+        .onHover { hovering in
+            hovered = hovering
+            // Not while renaming or dragging a tab over it.
+            peek.source(hovering && !renaming && TabDrag.shared.tabId == nil)
+        }
+        .popover(isPresented: $peek.isShown, arrowEdge: .trailing) {
+            WorkspacePeek(store: store, workspace: workspace) { peek.close() }
+                .environmentObject(window)
+                .onHover { peek.card($0) }
+        }
+        .onTapGesture {
+            peek.close()
+            window.focusWorkspace(workspace.workspaceId)
+        }
         .simultaneousGesture(TapGesture(count: 2).onEnded { renaming = true })
         .contextMenu {
             Button("Rename Workspace…") { renaming = true }
@@ -245,7 +268,7 @@ private struct WorkspaceCard: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-        .accessibilityAction { store.focusWorkspace(workspace.workspaceId) }
+        .accessibilityAction { window.focusWorkspace(workspace.workspaceId) }
         .accessibilityAction(named: "Rename") { renaming = true }
         .accessibilityAction(named: "Close") { store.closeWorkspace(workspace.workspaceId) }
     }
@@ -319,6 +342,7 @@ struct ControlButton: View {
 
 /// Context menu items shared by workspace cards and idle rows.
 struct WorkspaceOrganizeMenu: View {
+    @EnvironmentObject private var window: WindowContext
     @ObservedObject var store: SessionStore
     let workspace: EngineWorkspace
 
@@ -332,7 +356,7 @@ struct WorkspaceOrganizeMenu: View {
         if store.idleWorkspaces.contains(where: { $0.workspaceId == id }) {
             Button("Keep in View Now") {
                 store.setPinned(id, false)
-                store.focusWorkspace(id)
+                window.focusWorkspace(id)
             }
         } else {
             Button("Move to Idle") { store.markIdle(id) }
@@ -422,6 +446,7 @@ struct IdleDock: View {
 }
 
 private struct IdleRow: View {
+    @EnvironmentObject private var window: WindowContext
     @ObservedObject var store: SessionStore
     let workspace: EngineWorkspace
     @State private var hovered = false
@@ -471,7 +496,7 @@ private struct IdleRow: View {
         .background(RoundedRectangle(cornerRadius: Theme.rowRadius).fill(hovered ? Theme.hover : Color.clear))
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
-        .onTapGesture { store.focusWorkspace(workspace.workspaceId) }
+        .onTapGesture { window.focusWorkspace(workspace.workspaceId) }
         .contextMenu { WorkspaceOrganizeMenu(store: store, workspace: workspace) }
         .help("\(workspace.label) · last used \(WorkspaceActivity.ageLabel(since: store.activity.lastActive(workspace.workspaceId))) ago")
     }

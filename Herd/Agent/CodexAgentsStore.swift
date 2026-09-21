@@ -104,24 +104,14 @@ final class CodexAgentsStore: ObservableObject {
     }
 
     /// Continues the session in Codex's own interface, in a new tab.
-    func resume(_ agent: BackgroundAgent, client: EngineClient, workspaceId: String?) {
+    /// The layout for a tab resuming a Codex thread, for a window to open.
+    static func resumeLayout(_ agent: BackgroundAgent) -> [String: Any] {
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-        var params: [String: Any] = [
-            "focus": true, "tab_label": agent.name,
+        return [
+            "tab_label": agent.name,
             "root": ["type": "pane", "label": agent.name, "cwd": agent.cwd,
                      "command": [shell, "-lic", "codex resume \(agent.id); exec \(shell) -l"]] as [String: Any],
         ]
-        if let workspaceId { params["workspace_id"] = workspaceId }
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                try client.call("layout.apply", params)
-                DispatchQueue.main.async { MainActor.assumeIsolated { AgentCenter.shared.board = nil } }
-            } catch {
-                DispatchQueue.main.async {
-                    ToastCenter.shared.fail(nil, "Couldn't open \(agent.name) in a terminal", detail: String(describing: error))
-                }
-            }
-        }
     }
 
     private func run(_ arguments: [String], failure: String) {

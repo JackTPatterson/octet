@@ -98,8 +98,8 @@ final class SlashController: ObservableObject {
     private func focusedAgentPane() -> (paneId: String, agent: String?)? {
         let snapshot = store.snapshot
         let agents = snapshot.agents
-        guard let agent = agents.first(where: { $0.paneId == snapshot.focusedPaneId })
-            ?? agents.first(where: { $0.tabId == (store.displayedFocusedTabId ?? snapshot.focusedTabId) })
+        guard let agent = agents.first(where: { $0.paneId == store.keyPaneId })
+            ?? agents.first(where: { $0.tabId == store.keyTabId })
         else { return nil }
         return (agent.paneId, agent.agent)
     }

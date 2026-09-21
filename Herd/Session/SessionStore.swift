@@ -46,6 +46,22 @@ final class SessionStore: ObservableObject {
     @Published private(set) var focusedProcess: ShellPrompt.ProcessInfo?
     /// True while the focused pane sits at its shell's own prompt.
     var focusedPaneAtPrompt: Bool { ShellPrompt.isAtPrompt(focusedProcess) }
+    /// The pane `focusedProcess` describes.
+    @Published private(set) var focusedProcessPaneId: String?
+    /// With several windows, the pane whose process to read: the key
+    /// window's, which the engine's single focused pane may not be.
+    var processPane: (() -> String?)?
+
+    /// The terminal window acting now, for code that isn't inside one.
+    var keyWindow: WindowContext? { WindowRegistry.shared.key }
+    /// The key window's pane, tab and prompt state; the engine's focus with
+    /// one window.
+    var keyPaneId: String? {
+        keyWindow?.focusedPaneId ?? snapshot.focusedPaneId ?? snapshot.panes.first(where: \.focused)?.paneId
+    }
+    var keyTabId: String? { keyWindow?.displayedFocusedTabId ?? displayedFocusedTabId }
+    var keyProcess: ShellPrompt.ProcessInfo? { keyWindow.map(\.focusedProcess) ?? focusedProcess }
+    var keyPaneAtPrompt: Bool { ShellPrompt.isAtPrompt(keyProcess) }
     @Published private(set) var isConnected = false
     @Published var lastError: String?
 
@@ -156,15 +172,18 @@ final class SessionStore: ObservableObject {
         }
     }
 
-    func refresh() {
+    /// `then` runs once the new snapshot is applied, or it failed.
+    func refresh(then: (@MainActor () -> Void)? = nil) {
         let client = self.client
         let inference = recovery.inferenceRequest()
+        let chosenPane = processPane?()
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = Result { try client.snapshot() }
             // Disk reads stay off the main thread.
             let snapshot = try? result.get()
             // One extra call: what the focused pane is actually running.
-            let focusedPaneId = snapshot?.focusedPaneId
+            let focusedPaneId = chosenPane.flatMap { id in snapshot?.panes.contains { $0.paneId == id } == true ? id : nil }
+                ?? snapshot?.focusedPaneId
                 ?? snapshot?.panes.first(where: \.focused)?.paneId
             let process = focusedPaneId.flatMap { paneId in
                 (try? client.call("pane.process_info", ["pane_id": paneId])).flatMap(ShellPrompt.parse)
@@ -178,11 +197,13 @@ final class SessionStore: ObservableObject {
                 switch result {
                 case .success(let snapshot):
                     if process != self.focusedProcess { self.focusedProcess = process }
+                    if focusedPaneId != self.focusedProcessPaneId { self.focusedProcessPaneId = focusedPaneId }
                     self.recovery.observe(snapshot, inferred: inferred ?? [:])
                     self.apply(snapshot, branches: branches ?? [:])
                 case .failure(let error):
                     self.lastError = String(describing: error)
                 }
+                then?()
             }
         }
     }
@@ -219,10 +240,11 @@ final class SessionStore: ObservableObject {
     /// Raises a banner when an agent stops working, unless you are already
     /// looking at that pane.
     private func notifyAgentActivity(in snapshot: EngineSnapshot) {
-        let focusedTab = displayedFocusedTabId ?? snapshot.focusedTabId
+        var shown = WindowRegistry.shared.shownTabIds
+        if shown.isEmpty, let tab = displayedFocusedTabId ?? snapshot.focusedTabId { shown.insert(tab) }
         let appActive = NSApp?.isActive == true
         let events = activityWatcher.events(in: snapshot) { agent in
-            appActive && agent.tabId == focusedTab
+            appActive && agent.tabId.map(shown.contains) == true
         }
         guard !events.isEmpty else { return }
         AgentBannerCenter.shared.show(events)
@@ -334,7 +356,9 @@ final class SessionStore: ObservableObject {
     /// Herd is the active app, so leaving Herd open overnight doesn't keep it fresh.
     private func observeActivity(_ snapshot: EngineSnapshot) {
         var updated = activity
-        let focused = snapshot.focusedWorkspaceId
+        // The window in front's workspace: with several, the engine's focus
+        // is only whichever moved last.
+        let focused = keyWindow?.focusedWorkspace?.workspaceId ?? snapshot.focusedWorkspaceId
         if let focused, focused != lastFocusedWorkspaceId, lastFocusedWorkspaceId != nil {
             forcedIdle.remove(focused)
         }
@@ -380,10 +404,12 @@ final class SessionStore: ObservableObject {
     func markIdle(_ workspaceId: String) {
         setPinned(workspaceId, false)
         forcedIdle.insert(workspaceId)
-        if workspaceId == snapshot.focusedWorkspaceId,
-           let next = activeGroups.flatMap(\.workspaces).first(where: { $0.workspaceId != workspaceId }) {
+        let showing = keyWindow?.focusedWorkspace?.workspaceId ?? snapshot.focusedWorkspaceId
+        let elsewhere = WindowRegistry.shared.shownWorkspaceIds()
+        if workspaceId == showing,
+           let next = activeGroups.flatMap(\.workspaces).first(where: { $0.workspaceId != workspaceId && !elsewhere.contains($0.workspaceId) }) {
             lastFocusedWorkspaceId = next.workspaceId
-            focusWorkspace(next.workspaceId)
+            if let window = keyWindow { window.focusWorkspace(next.workspaceId) } else { focusWorkspace(next.workspaceId) }
         }
         var updated = activity
         updated.markIdle(workspaceId)
@@ -472,6 +498,17 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    /// An engine call for a window that steers itself: failures are toasted,
+    /// and `then` hears where anything it created ended up.
+    func call(_ method: String, _ params: [String: Any], failure: String,
+              then: @escaping @MainActor (EngineCreated) -> Void) {
+        // What was made has to be in the snapshot before a window can be
+        // steered to it by position.
+        perform(method, params, failure: failure) { [weak self] result in
+            self?.refresh { then(EngineCreated(result: result)) }
+        }
+    }
+
     private static func describe(_ error: Error) -> String {
         if case EngineSocketError.server(_, let message) = error, !message.isEmpty { return message }
         return String(describing: error)
@@ -536,15 +573,8 @@ final class SessionStore: ObservableObject {
     /// runs by its resolved path, and the shell takes over when it exits, so
     /// the tab stays useful rather than closing under you.
     func newTab(running agent: DiscoveredAgent) {
-        guard let path = agent.executablePath else { return }
-        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-        let cwd = focusedWorkspace.flatMap { snapshot.directory(ofWorkspace: $0.workspaceId) } ?? NSHomeDirectory()
-        var params: [String: Any] = [
-            "focus": true, "tab_label": agent.displayName,
-            "root": ["type": "pane", "label": agent.displayName, "cwd": cwd,
-                     "command": [shell, "-lic", "\(shellQuoted(path)); exec \(shell) -l"]] as [String: Any],
-        ]
-        if let workspace = focusedWorkspace { params["workspace_id"] = workspace.workspaceId }
+        guard var params = agentTabParams(agent, workspaceId: focusedWorkspace?.workspaceId) else { return }
+        params["focus"] = true
         let client = self.client
         DispatchQueue.global(qos: .userInitiated).async {
             do {
@@ -558,9 +588,101 @@ final class SessionStore: ObservableObject {
         }
     }
 
-    /// A path is going into a shell line, and home folders have spaces in them.
-    private func shellQuoted(_ path: String) -> String {
-        "'" + path.replacingOccurrences(of: "'", with: #"'"'"'"#) + "'"
+    /// The `layout.apply` for a tab running `agent` in `workspaceId`.
+    func agentTabParams(_ agent: DiscoveredAgent, workspaceId: String?) -> [String: Any]? {
+        guard let path = agent.executablePath else { return nil }
+        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+        let cwd = workspaceId.flatMap { snapshot.directory(ofWorkspace: $0) } ?? NSHomeDirectory()
+        var params: [String: Any] = [
+            "tab_label": agent.displayName,
+            "root": ["type": "pane", "label": agent.displayName, "cwd": cwd,
+                     "command": [shell, "-lic", "\(shellQuote(path)); exec \(shell) -l"]] as [String: Any],
+        ]
+        if let workspaceId { params["workspace_id"] = workspaceId }
+        return params
+    }
+
+    // MARK: - Moving tabs into splits
+
+    /// The panes of a tab, for the drop zones a dragged tab shows over it.
+    func paneLayout(ofTab tabId: String, completion: @escaping (PaneLayout?) -> Void) {
+        guard let pane = snapshot.panes.first(where: { $0.tabId == tabId }) else { return completion(nil) }
+        let client = self.client
+        DispatchQueue.global(qos: .userInitiated).async {
+            let layout = (try? client.call("pane.layout", ["pane_id": pane.paneId])).flatMap(PaneLayout.parse)
+            DispatchQueue.main.async { completion(layout) }
+        }
+    }
+
+    /// The one pane a tab holds, if it holds only one. A tab dragged onto the
+    /// terminal becomes a split by moving its pane, so a tab already split
+    /// has no single pane to move.
+    func onlyPane(ofTab tabId: String) -> EnginePane? {
+        let panes = snapshot.panes.filter { $0.tabId == tabId }
+        return panes.count == 1 ? panes.first : nil
+    }
+
+    /// Moves a single-pane tab into `targetTab`, beside `targetPane` on
+    /// `edge`. The tab it leaves is empty and the engine closes it.
+    func splitTab(_ tabId: String, into targetTab: String, beside targetPane: String, edge: SplitEdge) {
+        guard tabId != targetTab, let moving = onlyPane(ofTab: tabId) else { return }
+        let client = self.client
+        let multi = WindowRegistry.shared.isMulti
+        let destination: [String: Any] = ["type": "tab", "tab_id": targetTab, "target_pane_id": targetPane, "split": edge.split]
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let outcome = Result {
+                // Several windows: `focus` would move every one of them.
+                try client.call("pane.move", ["pane_id": moving.paneId, "destination": destination, "focus": !multi])
+                if edge.swaps {
+                    try client.call("pane.swap", ["source_pane_id": moving.paneId, "target_pane_id": targetPane])
+                }
+            }
+            DispatchQueue.main.async {
+                if case .failure(let error) = outcome {
+                    ToastCenter.shared.fail(nil, "Couldn't split the tab in", detail: String(describing: error))
+                }
+                self?.scheduleRefresh()
+                HerdTerminalRuntime.focusTerminal()
+            }
+        }
+    }
+
+    /// The focused pane, out of its split and into a tab of its own: the way
+    /// back from dragging a tab in.
+    func moveFocusedPaneToNewTab() {
+        guard let paneId = snapshot.focusedPaneId,
+              let tabId = snapshot.panes.first(where: { $0.paneId == paneId })?.tabId,
+              snapshot.panes.filter({ $0.tabId == tabId }).count > 1 else { return }
+        perform("pane.move", ["pane_id": paneId, "destination": ["type": "new_tab"], "focus": true],
+                failure: "Couldn't move the pane to a new tab")
+    }
+
+    /// Types a line into the focused pane's shell and runs it, as if typed,
+    /// then gives the terminal back its keyboard focus.
+    func runInFocusedPane(_ line: String) {
+        guard let paneId = snapshot.focusedPaneId else { return }
+        runInPane(paneId, line: line)
+    }
+
+    /// Types a line into `paneId`'s shell and runs it.
+    func runInPane(_ paneId: String, line: String) {
+        let client = self.client
+        DispatchQueue.global(qos: .userInitiated).async {
+            let outcome = Result { try client.call("pane.send_text", ["pane_id": paneId, "text": line + "\r"]) }
+            if case .failure(let error) = outcome {
+                DispatchQueue.main.async {
+                    ToastCenter.shared.fail(nil, "Couldn't run that in the terminal", detail: String(describing: error))
+                }
+            }
+        }
+        HerdTerminalRuntime.focusTerminal()
+    }
+
+    /// Starts an agent in the focused pane: by name when the shell would find
+    /// it, else by the path discovery found it at.
+    func runInFocusedPane(_ agent: DiscoveredAgent) {
+        guard let path = agent.executablePath else { return }
+        runInFocusedPane(agent.onShellPath == true ? agent.command : shellQuote(path))
     }
 
     /// ⌘⇧A: the agents board for the tab in front (Codex's in a Codex tab,
@@ -703,8 +825,14 @@ final class SessionStore: ObservableObject {
         moveTab(id, by: offset)
     }
 
+    /// The tabs of the workspace `id` is in, whichever window shows it.
+    private func tabs(besideTab id: String) -> [EngineTab] {
+        guard let workspace = snapshot.tabs.first(where: { $0.tabId == id })?.workspaceId else { return [] }
+        return snapshot.tabs(inWorkspace: workspace)
+    }
+
     func moveTab(_ id: String, by offset: Int) {
-        guard let index = focusedWorkspaceTabs.firstIndex(where: { $0.tabId == id }) else { return }
+        guard let index = tabs(besideTab: id).firstIndex(where: { $0.tabId == id }) else { return }
         // A gap after the tab's own slot counts from before the move.
         moveTab(id, toGap: offset > 0 ? index + offset + 1 : index + offset)
     }
@@ -713,7 +841,12 @@ final class SessionStore: ObservableObject {
     /// just before the tab now at that position (count means the end).
     /// Moving the first of four with insert_index 2 leaves it second.
     func moveTab(_ id: String, toGap gap: Int) {
-        let tabs = focusedWorkspaceTabs
+        moveTab(id, toGap: gap, among: tabs(besideTab: id))
+    }
+
+    /// `tabs` is the workspace's order, given when the snapshot doesn't have
+    /// the tab yet: one that just moved in from another window.
+    func moveTab(_ id: String, toGap gap: Int, among tabs: [EngineTab]) {
         guard let index = tabs.firstIndex(where: { $0.tabId == id }) else { return }
         let gap = max(0, min(tabs.count, gap))
         // Either gap next to the tab leaves it where it is.
@@ -723,12 +856,11 @@ final class SessionStore: ObservableObject {
     }
 
     func closeTabs(except id: String) {
-        focusTab(id)
-        for tab in focusedWorkspaceTabs where tab.tabId != id { closeTab(tab.tabId) }
+        for tab in tabs(besideTab: id) where tab.tabId != id { closeTab(tab.tabId) }
     }
 
     func closeTabs(rightOf id: String) {
-        let tabs = focusedWorkspaceTabs
+        let tabs = tabs(besideTab: id)
         guard let index = tabs.firstIndex(where: { $0.tabId == id }) else { return }
         for tab in tabs[(index + 1)...] { closeTab(tab.tabId) }
     }
@@ -756,16 +888,18 @@ final class SessionStore: ObservableObject {
     /// Context the session server passes to plugin commands, matching what the session server's own UI sends.
     var pluginInvocationContext: [String: Any] {
         var context: [String: Any] = ["invocation_source": "herd-palette"]
-        if let workspace = focusedWorkspace {
+        let window = keyWindow
+        if let workspace = window?.focusedWorkspace ?? focusedWorkspace {
             context["workspace_id"] = workspace.workspaceId
             context["workspace_label"] = workspace.label
             if let cwd = snapshot.directory(ofWorkspace: workspace.workspaceId) { context["workspace_cwd"] = cwd }
         }
-        if let tab = focusedWorkspaceTabs.first(where: { $0.tabId == snapshot.focusedTabId }) {
+        let tabs = window?.focusedWorkspaceTabs ?? focusedWorkspaceTabs
+        if let tab = tabs.first(where: { $0.tabId == (window?.displayedFocusedTabId ?? snapshot.focusedTabId) }) {
             context["tab_id"] = tab.tabId
             context["tab_label"] = tab.label
         }
-        if let paneId = focusedPaneId {
+        if let paneId = window?.focusedPaneId ?? focusedPaneId {
             context["focused_pane_id"] = paneId
             if let pane = snapshot.panes.first(where: { $0.paneId == paneId }) {
                 if let cwd = pane.foregroundCwd ?? pane.cwd { context["focused_pane_cwd"] = cwd }
@@ -822,10 +956,10 @@ final class SessionStore: ObservableObject {
     }
 
     func openPluginPane(pluginId: String, paneId: String, placement: String?, title: String) {
-        var params: [String: Any] = ["plugin_id": pluginId, "entrypoint": paneId, "focus": true]
+        var params: [String: Any] = ["plugin_id": pluginId, "entrypoint": paneId, "focus": !WindowRegistry.shared.isMulti]
         // Overlay and popup panes always attach to the active pane; the session server
         // rejects an explicit target for them.
-        if let pane = focusedPaneId, placement == "split" || placement == "tab" || placement == "zoomed" {
+        if let pane = keyPaneId, placement == "split" || placement == "tab" || placement == "zoomed" {
             params["target_pane_id"] = pane
         }
         perform("plugin.pane.open", params, failure: "Couldn't open \(title)")

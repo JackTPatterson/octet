@@ -4,6 +4,7 @@ import SwiftUI
 /// the way its agent view groups them, with a live transcript of the
 /// selected one. Claude only; ← from an empty composer opens it, Esc returns.
 struct AgentsBoard: View {
+    @EnvironmentObject private var window: WindowContext
     @ObservedObject var store: SessionStore
     @ObservedObject private var agents = AgentsStore.shared
     @ObservedObject private var motion = MotionPreferences.shared
@@ -114,7 +115,7 @@ struct AgentsBoard: View {
     private func dispatch() {
         let text = task.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        let cwd = store.focusedWorkspace.flatMap { store.snapshot.directory(ofWorkspace: $0.workspaceId) } ?? NSHomeDirectory()
+        let cwd = window.focusedWorkspace.flatMap { store.snapshot.directory(ofWorkspace: $0.workspaceId) } ?? NSHomeDirectory()
         AgentsStore.shared.dispatch(task: text, cwd: cwd, model: "claude-sonnet-5", effort: nil,
                                     mode: AgentSession.PermissionMode.auto.rawValue)
         task = ""
@@ -189,6 +190,7 @@ struct StateMark: View {
 
 /// A session's live transcript, read from its log, with its actions.
 private struct AgentDetail: View {
+    @EnvironmentObject private var window: WindowContext
     let agent: BackgroundAgent
     @ObservedObject var store: SessionStore
     @State private var conversation = AgentConversation()
@@ -251,7 +253,10 @@ private struct AgentDetail: View {
             }
             .help("Stop the background run and continue this conversation in Herd")
             HerdButton(title: "Open in Terminal", icon: "terminal", kind: .secondary, compact: true) {
-                AgentsStore.shared.attach(agent, client: store.client, workspaceId: workspaceId)
+                window.applyLayout(AgentsStore.attachLayout(agent).merging(
+                    workspaceId.map { ["workspace_id": $0] } ?? [:]) { $1 },
+                    failure: "Couldn't open \(agent.name) in a terminal")
+                AgentCenter.shared.setBoard(nil, in: window.focusedWorkspace?.workspaceId)
             }
             if agent.state == .working || agent.state == .needsInput {
                 HerdButton(title: "Stop", kind: .secondary, compact: true) { AgentsStore.shared.stop(agent) }
@@ -274,7 +279,7 @@ private struct AgentDetail: View {
     /// The workspace for the session's folder, or the focused one.
     private var workspaceId: String? {
         store.snapshot.workspaces.first { store.snapshot.directory(ofWorkspace: $0.workspaceId) == agent.cwd }?.workspaceId
-            ?? store.focusedWorkspace?.workspaceId
+            ?? window.focusedWorkspace?.workspaceId
     }
 
     private func load() {

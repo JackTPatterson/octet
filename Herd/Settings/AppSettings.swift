@@ -28,6 +28,9 @@ struct HerdSettings: Codable, Equatable {
     var backgroundBlur = false
     var windowPadding: WindowPadding = .normal
     var textPosition: TextPosition = .bottom
+    /// A new tab's empty rows offer agents, recent folders and shortcuts
+    /// until something runs in it.
+    var newTabSplash = true
     var paneBorders: PaneBorders = .auto
     var paneGaps = true
     var paneScrollbars = true
@@ -146,6 +149,7 @@ struct HerdSettings: Codable, Equatable {
         backgroundBlur = value("backgroundBlur", defaults.backgroundBlur)
         windowPadding = value("windowPadding", defaults.windowPadding)
         textPosition = value("textPosition", defaults.textPosition)
+        newTabSplash = value("newTabSplash", defaults.newTabSplash)
         paneBorders = value("paneBorders", defaults.paneBorders)
         paneGaps = value("paneGaps", defaults.paneGaps)
         paneScrollbars = value("paneScrollbars", defaults.paneScrollbars)
@@ -313,6 +317,8 @@ struct HerdSettings: Codable, Equatable {
         [experimental]
         pane_history = \(paneHistory)
         allow_nested = \(allowNestedSessions)
+
+        \(EngineNavigation.keysConfig)
         """
     }
 

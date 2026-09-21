@@ -1594,3 +1594,220 @@ final class AgentDiscoveryTests: XCTestCase {
         XCTAssertEqual(AgentDiscovery.version(of: quiet), "agent 1.2.3")
     }
 }
+
+final class NewTabFreshnessTests: XCTestCase {
+    private let start = Date(timeIntervalSince1970: 1_790_000_000)
+    private func at(_ seconds: TimeInterval) -> Date { start.addingTimeInterval(seconds) }
+    private let settled = NewTabFreshness.settleDelay + 0.1
+
+    // The terminal reports a reading only when the grid changes, so these
+    // feed one per change, as it does.
+
+    func testOneReadingOfOutputEndsItForGood() {
+        var freshness = NewTabFreshness()
+        XCTAssertTrue(freshness.observe(tab: "t1", cursorRow: 0, rowsInUse: 1, at: at(0)))
+        // `ls` prints, the grid settles, and nothing more is reported.
+        XCTAssertFalse(freshness.observe(tab: "t1", cursorRow: 7, rowsInUse: 8, at: at(settled + 2)))
+        XCTAssertTrue(freshness.used.contains("t1"))
+        // `clear` empties the screen, but the tab has been used.
+        XCTAssertFalse(freshness.observe(tab: "t1", cursorRow: 0, rowsInUse: 1, at: at(settled + 5)))
+    }
+
+    func testANewTabShowsTheSplash() {
+        var freshness = NewTabFreshness()
+        // Before the shell has drawn anything, and once its prompt is up.
+        XCTAssertTrue(freshness.observe(tab: "t1", cursorRow: 0, rowsInUse: 0, at: at(0)))
+        XCTAssertTrue(freshness.observe(tab: "t1", cursorRow: 0, rowsInUse: 1, at: at(0.1)))
+    }
+
+    func testACommandWithNoOutputStillCounts() {
+        var freshness = NewTabFreshness()
+        _ = freshness.observe(tab: "t1", cursorRow: 0, rowsInUse: 1, at: at(0))
+        // Settled on its first prompt, on row 0.
+        XCTAssertTrue(freshness.observe(tab: "t1", cursorRow: 0, rowsInUse: 1, at: at(settled)))
+        // `cd somewhere`: a second prompt one row down, nothing printed.
+        XCTAssertFalse(freshness.observe(tab: "t1", cursorRow: 1, rowsInUse: 2, at: at(settled + 3)))
+        XCTAssertTrue(freshness.used.contains("t1"))
+    }
+
+    func testATwoLinePromptIsStillFresh() {
+        var freshness = NewTabFreshness()
+        XCTAssertTrue(freshness.observe(tab: "t1", cursorRow: 2, rowsInUse: 3, at: at(0)))
+        XCTAssertTrue(freshness.observe(tab: "t1", cursorRow: 2, rowsInUse: 3, at: at(settled)))
+    }
+
+    func testTheLastTabShowingJustAfterASwitchDoesNotCount() {
+        var freshness = NewTabFreshness()
+        // Just switched to t2; the grid still shows t1's output.
+        XCTAssertFalse(freshness.observe(tab: "t2", cursorRow: 20, rowsInUse: 21, at: at(0)))
+        XCTAssertFalse(freshness.used.contains("t2"))
+        // Then t2's own prompt draws.
+        XCTAssertTrue(freshness.observe(tab: "t2", cursorRow: 0, rowsInUse: 1, at: at(0.1)))
+        XCTAssertTrue(freshness.observe(tab: "t2", cursorRow: 0, rowsInUse: 1, at: at(settled)))
+    }
+
+    func testAnUnsettledPromptRowIsNotTrusted() {
+        var freshness = NewTabFreshness()
+        // A stale reading of another tab's prompt, on row 2, then t2's own on
+        // row 0: row 2 must not become t2's prompt row, or a `cd` in t2 (to
+        // row 1) would go unnoticed.
+        _ = freshness.observe(tab: "t2", cursorRow: 2, rowsInUse: 1, at: at(0))
+        _ = freshness.observe(tab: "t2", cursorRow: 0, rowsInUse: 1, at: at(settled))
+        XCTAssertFalse(freshness.observe(tab: "t2", cursorRow: 1, rowsInUse: 2, at: at(settled + 2)))
+        XCTAssertTrue(freshness.used.contains("t2"))
+    }
+
+    func testItSaysWhenToLookAgain() {
+        var freshness = NewTabFreshness()
+        _ = freshness.observe(tab: "t1", cursorRow: 0, rowsInUse: 1, at: at(0))
+        XCTAssertEqual(freshness.settles(tab: "t1", at: at(0.1)), at(NewTabFreshness.settleDelay))
+        XCTAssertNil(freshness.settles(tab: "t1", at: at(settled)))
+        // Switching tabs starts the wait again.
+        _ = freshness.observe(tab: "t2", cursorRow: 0, rowsInUse: 1, at: at(10))
+        XCTAssertNotNil(freshness.settles(tab: "t2", at: at(10.1)))
+    }
+
+    func testTypingHidesItAndErasingBringsItBack() {
+        var freshness = NewTabFreshness()
+        // The prompt "~ % " leaves the cursor at column 4 on row 0.
+        _ = freshness.observe(tab: "t1", cursorRow: 0, cursorColumn: 4, rowsInUse: 1, at: at(0))
+        XCTAssertTrue(freshness.observe(tab: "t1", cursorRow: 0, cursorColumn: 4, rowsInUse: 1, at: at(settled)))
+        // "cla" typed.
+        XCTAssertFalse(freshness.observe(tab: "t1", cursorRow: 0, cursorColumn: 7, rowsInUse: 1, at: at(settled + 1)))
+        // Typing isn't using: the tab is still fresh.
+        XCTAssertFalse(freshness.used.contains("t1"))
+        // Backspaced away.
+        XCTAssertTrue(freshness.observe(tab: "t1", cursorRow: 0, cursorColumn: 4, rowsInUse: 1, at: at(settled + 2)))
+    }
+
+    func testThePromptColumnIsTheLeftmostSeen() {
+        var freshness = NewTabFreshness()
+        // Settled while something was already typed, at column 9.
+        _ = freshness.observe(tab: "t1", cursorRow: 0, cursorColumn: 9, rowsInUse: 1, at: at(0))
+        _ = freshness.observe(tab: "t1", cursorRow: 0, cursorColumn: 9, rowsInUse: 1, at: at(settled))
+        // Erased back to the prompt's own end: that is the real start.
+        XCTAssertTrue(freshness.observe(tab: "t1", cursorRow: 0, cursorColumn: 4, rowsInUse: 1, at: at(settled + 1)))
+        XCTAssertFalse(freshness.observe(tab: "t1", cursorRow: 0, cursorColumn: 5, rowsInUse: 1, at: at(settled + 2)))
+    }
+
+    func testTabsAreJudgedApart() {
+        var freshness = NewTabFreshness()
+        _ = freshness.observe(tab: "t1", cursorRow: 0, rowsInUse: 1, at: at(0))
+        _ = freshness.observe(tab: "t1", cursorRow: 9, rowsInUse: 10, at: at(settled))
+        XCTAssertTrue(freshness.used.contains("t1"))
+        XCTAssertTrue(freshness.observe(tab: "t2", cursorRow: 0, rowsInUse: 1, at: at(settled + 1)))
+        freshness.forget("t1")
+        XCTAssertFalse(freshness.used.contains("t1"))
+    }
+}
+
+final class SplitDropTests: XCTestCase {
+    /// One pane filling a 100×50-cell tab, shown in a 1000×500 view.
+    private let single = PaneLayout(area: CGRect(x: 0, y: 0, width: 100, height: 50),
+                                    panes: [.init(id: "p1", rect: CGRect(x: 0, y: 0, width: 100, height: 50))])
+    private let view = CGSize(width: 1000, height: 500)
+
+    func testTheNearestEdgeWins() {
+        XCTAssertEqual(SplitDrop.target(at: CGPoint(x: 950, y: 250), in: view, layout: single)?.edge, .right)
+        XCTAssertEqual(SplitDrop.target(at: CGPoint(x: 40, y: 250), in: view, layout: single)?.edge, .left)
+        XCTAssertEqual(SplitDrop.target(at: CGPoint(x: 500, y: 20), in: view, layout: single)?.edge, .top)
+        XCTAssertEqual(SplitDrop.target(at: CGPoint(x: 500, y: 480), in: view, layout: single)?.edge, .bottom)
+    }
+
+    func testTheHighlightIsTheHalfTheTabWillTake() {
+        let target = SplitDrop.target(at: CGPoint(x: 950, y: 250), in: view, layout: single)
+        XCTAssertEqual(target?.paneId, "p1")
+        XCTAssertEqual(target?.highlight, CGRect(x: 500, y: 0, width: 500, height: 500))
+        XCTAssertEqual(SplitDrop.target(at: CGPoint(x: 500, y: 480), in: view, layout: single)?.highlight,
+                       CGRect(x: 0, y: 250, width: 1000, height: 250))
+    }
+
+    func testASplitTabPicksThePaneUnderThePoint() {
+        // Two panes side by side, split at column 50, with a divider column.
+        let split = PaneLayout(area: CGRect(x: 0, y: 0, width: 101, height: 50), panes: [
+            .init(id: "left", rect: CGRect(x: 0, y: 0, width: 50, height: 50)),
+            .init(id: "right", rect: CGRect(x: 51, y: 0, width: 50, height: 50)),
+        ])
+        let wide = CGSize(width: 1010, height: 500)
+        let onRight = SplitDrop.target(at: CGPoint(x: 990, y: 250), in: wide, layout: split)
+        XCTAssertEqual(onRight?.paneId, "right")
+        XCTAssertEqual(onRight?.edge, .right)
+        // The right pane's left edge: between the two, not the window's edge.
+        XCTAssertEqual(SplitDrop.target(at: CGPoint(x: 530, y: 250), in: wide, layout: split)?.edge, .left)
+        // On the divider itself, the nearer pane takes it.
+        XCTAssertNotNil(SplitDrop.target(at: CGPoint(x: 505, y: 250), in: wide, layout: split))
+    }
+
+    func testLeftAndTopAreSplitsThenSwaps() {
+        XCTAssertEqual(SplitEdge.left.split, "right")
+        XCTAssertTrue(SplitEdge.left.swaps)
+        XCTAssertEqual(SplitEdge.top.split, "down")
+        XCTAssertTrue(SplitEdge.top.swaps)
+        XCTAssertFalse(SplitEdge.right.swaps)
+        XCTAssertFalse(SplitEdge.bottom.swaps)
+    }
+
+    func testLayoutParsesTheEnginesAnswer() {
+        let result: [String: Any] = ["type": "pane_layout", "layout": [
+            "area": ["x": 0, "y": 0, "width": 155, "height": 51],
+            "panes": [["pane_id": "w4:p3", "focused": true, "rect": ["x": 0, "y": 0, "width": 155, "height": 51]]],
+        ]]
+        let layout = PaneLayout.parse(result)
+        XCTAssertEqual(layout?.area, CGRect(x: 0, y: 0, width: 155, height: 51))
+        XCTAssertEqual(layout?.panes.map(\.id), ["w4:p3"])
+        XCTAssertNil(PaneLayout.parse(["layout": ["area": ["x": 0, "y": 0, "width": 0, "height": 0], "panes": []]]))
+    }
+}
+
+final class EngineNavigationTests: XCTestCase {
+    private typealias Stroke = EngineNavigation.Stroke
+    private let prefix = EngineNavigation.prefix
+
+    func testTheFirstNineAreOneJump() {
+        XCTAssertEqual(EngineNavigation.toTab(from: 0, to: 1), [prefix, Stroke(key: "digit2")])
+        XCTAssertEqual(EngineNavigation.toWorkspace(from: nil, to: 0), [prefix, Stroke(key: "digit1", alt: true)])
+        XCTAssertEqual(EngineNavigation.toWorkspace(from: 3, to: 8), [prefix, Stroke(key: "digit9", alt: true)])
+    }
+
+    func testBeingThereAlreadyIsNoKeys() {
+        XCTAssertTrue(EngineNavigation.toTab(from: 4, to: 4).isEmpty)
+        XCTAssertTrue(EngineNavigation.toTab(from: nil, to: -1).isEmpty)
+    }
+
+    func testPastNineItJumpsToTheNinthAndSteps() {
+        let next = [prefix, Stroke(key: "n")]
+        XCTAssertEqual(EngineNavigation.toTab(from: nil, to: 10), [prefix, Stroke(key: "digit9")] + next + next)
+        // From right next door, stepping is shorter than the jump.
+        XCTAssertEqual(EngineNavigation.toTab(from: 11, to: 10), [prefix, Stroke(key: "p")])
+        XCTAssertEqual(EngineNavigation.toWorkspace(from: 9, to: 10), [prefix, Stroke(key: "n", alt: true)])
+    }
+
+    func testStrokesCarryWhatTheTerminalNeeds() {
+        XCTAssertNil(prefix.text)
+        XCTAssertEqual(prefix.codepoint, UInt32(("b" as Unicode.Scalar).value))
+        XCTAssertEqual(Stroke(key: "digit2").text, "2")
+        XCTAssertNil(Stroke(key: "digit2", alt: true).text)
+        XCTAssertEqual(Stroke(key: "digit2", alt: true).codepoint, UInt32(("2" as Unicode.Scalar).value))
+    }
+
+    func testTheConfigBindsWhatThePlannerSends() {
+        let config = EngineNavigation.keysConfig
+        for binding in ["prefix = \"ctrl+b\"", "switch_tab = \"prefix+1..9\"", "switch_workspace = \"prefix+alt+1..9\"",
+                        "next_workspace = \"prefix+alt+n\"", "next_tab = \"prefix+n\""] {
+            XCTAssertTrue(config.contains(binding), binding)
+        }
+    }
+
+    // Each create call's answer, as the engine gives it.
+    func testCreatedIdsComeOutOfEveryShape() {
+        XCTAssertEqual(EngineCreated(result: ["tab": ["tab_id": "w1:t2", "workspace_id": "w1"],
+                                              "root_pane": ["pane_id": "w1:p2"]]),
+                       EngineCreated(workspaceId: "w1", tabId: "w1:t2", paneId: "w1:p2"))
+        XCTAssertEqual(EngineCreated(result: ["workspace": ["workspace_id": "w2", "active_tab_id": "w2:t1"],
+                                              "tab": ["tab_id": "w2:t1", "workspace_id": "w2"]]).tabId, "w2:t1")
+        XCTAssertEqual(EngineCreated(result: ["layout": ["workspace_id": "w1", "tab_id": "w1:t3", "focused_pane_id": "w1:p3"]]),
+                       EngineCreated(workspaceId: "w1", tabId: "w1:t3", paneId: "w1:p3"))
+        XCTAssertEqual(EngineCreated(result: ["move_result": ["pane": ["pane_id": "w3:p1", "workspace_id": "w3", "tab_id": "w3:t1"]]]),
+                       EngineCreated(workspaceId: "w3", tabId: "w3:t1", paneId: "w3:p1"))
+    }
+}

@@ -5,6 +5,7 @@ import SwiftUI
 /// tabs are named after the subagent.
 struct TabBarView: View {
     @ObservedObject var store: SessionStore
+    @EnvironmentObject private var window: WindowContext
     @ObservedObject private var motion = MotionPreferences.shared
     @ObservedObject private var agents = AgentCenter.shared
     @Namespace private var selection
@@ -15,12 +16,12 @@ struct TabBarView: View {
     static let spring = Animation.spring(response: 0.26, dampingFraction: 0.88)
 
     var body: some View {
-        let tabs = store.displayedTabs
-        let workspaceId = store.focusedWorkspace?.workspaceId
+        let tabs = window.displayedTabs
+        let workspaceId = window.focusedWorkspace?.workspaceId
         let conversations = agents.sessions(in: workspaceId)
         let showingConversation = agents.active(in: workspaceId) != nil
         // A conversation in front means no terminal tab is.
-        let focusedId = showingConversation ? nil : store.displayedFocusedTabId
+        let focusedId = showingConversation ? nil : window.displayedFocusedTabId
 
         HStack(spacing: 0) {
             ScrollViewReader { proxy in
@@ -30,9 +31,13 @@ struct TabBarView: View {
                             let index = tabs.firstIndex(of: tab) ?? 0
                             TabItem(store: store, tab: tab, index: index, count: tabs.count,
                                     isActive: tab.tabId == focusedId, selection: selection)
-                                .onDrag { NSItemProvider(object: tab.tabId as NSString) }
+                                .onDrag {
+                                    // Dropped on the terminal, the tab becomes a split.
+                                    TabDrag.shared.begin(tab.tabId, store: store)
+                                    return NSItemProvider(object: tab.tabId as NSString)
+                                }
                                 .onDrop(of: [.text], delegate: TabDropDelegate(
-                                    store: store, index: index, tabs: tabs, gap: $dropGap))
+                                    window: window, index: index, tabs: tabs, gap: $dropGap))
                                 .overlay(alignment: .leading) { insertionBar(visible: dropGap == index) }
                                 .overlay(alignment: .trailing) {
                                     insertionBar(visible: index == tabs.count - 1 && dropGap == tabs.count)
@@ -41,18 +46,18 @@ struct TabBarView: View {
                                 .transition(motion.animates(.tabs) ? .tabCollapse : .identity)
                         }
                         ForEach(conversations) { session in
-                            ConversationTab(session: session, isActive: agents.activeId == session.id, selection: selection)
+                            ConversationTab(session: session, isActive: agents.active(in: workspaceId)?.id == session.id, selection: selection)
                                 .id(session.id)
                                 .transition(motion.animates(.tabs) ? .tabCollapse : .identity)
                         }
-                        NewTabButton(newTab: { store.newTab() },
-                                     newConversation: { store.newConversation(engine: $0) },
-                                     newAgentTab: { store.newTab(running: $0) })
+                        NewTabButton(newTab: { window.newTab() },
+                                     newConversation: { window.newConversation(engine: $0) },
+                                     newAgentTab: { window.newTab(running: $0) })
                     }
                     .animation(motion.animation(.tabs, Self.spring), value: tabs.map(\.tabId))
                     .animation(motion.animation(.tabs, Self.spring), value: focusedId)
                     .animation(motion.animation(.tabs, Self.spring), value: conversations.map(\.id))
-                    .animation(motion.animation(.tabs, Self.spring), value: agents.activeId)
+                    .animation(motion.animation(.tabs, Self.spring), value: agents.active(in: workspaceId)?.id)
                 }
                 .onChange(of: focusedId) { _, id in
                     guard let id else { return }
@@ -65,6 +70,14 @@ struct TabBarView: View {
             if showsCodexButton { CodexAgentsButton().padding(.trailing, 8) }
         }
         .frame(height: Theme.tabBarHeight)
+        // The rest of the strip takes a tab too, onto the end, as a
+        // browser's does; the tabs' own targets sit above this one.
+        .background {
+            Color.clear
+                .contentShape(Rectangle())
+                .onDrop(of: [.text], delegate: TabDropDelegate(
+                    window: window, index: tabs.count, tabs: tabs, gap: $dropGap, fixedGap: tabs.count))
+        }
         .background(Theme.chrome)
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.divider).frame(height: 1) }
     }
@@ -79,15 +92,16 @@ struct TabBarView: View {
     /// A board button belongs to whichever vendor is in front: the open
     /// board, else the conversation showing, else the focused tab's agent.
     private func showsBoardButton(_ engine: AgentSession.Engine) -> Bool {
-        if let board = agents.board { return board == (engine == .codex ? .codex : .claude) }
-        if let conversation = agents.active(in: store.focusedWorkspace?.workspaceId) {
+        let workspaceId = window.focusedWorkspace?.workspaceId
+        if let board = agents.board(in: workspaceId) { return board == (engine == .codex ? .codex : .claude) }
+        if let conversation = agents.active(in: workspaceId) {
             return conversation.engine == engine
         }
         return focusedTabAgent == engine.agent
     }
 
     private var focusedTabAgent: String? {
-        guard let tabId = store.displayedFocusedTabId else { return nil }
+        guard let tabId = window.displayedFocusedTabId else { return nil }
         return AgentBrand.forAgent(store.primaryAgent(in: store.snapshot.agents(inTab: tabId))?.agent)?.id
     }
 
@@ -102,13 +116,16 @@ struct TabBarView: View {
 /// Drag a tab onto another: dropping on its left half lands before it, on
 /// its right half after it. The session server's `tab.move` does the reorder.
 private struct TabDropDelegate: DropDelegate {
-    let store: SessionStore
+    /// The window this bar is in: a tab from another window moves into it.
+    let window: WindowContext
     let index: Int
     let tabs: [EngineTab]
     @Binding var gap: Int?
+    /// Where anything dropped lands, for the empty strip past the tabs.
+    var fixedGap: Int?
 
     private func gap(for info: DropInfo) -> Int {
-        info.location.x < Theme.tabWidth / 2 ? index : index + 1
+        fixedGap ?? (info.location.x < Theme.tabWidth / 2 ? index : index + 1)
     }
 
     func validateDrop(info: DropInfo) -> Bool { info.hasItemsConforming(to: [.text]) }
@@ -124,9 +141,10 @@ private struct TabDropDelegate: DropDelegate {
         let landing = gap(for: info)
         gap = nil
         guard let provider = info.itemProviders(for: [.text]).first else { return false }
+        TabDrag.shared.landed()
         _ = provider.loadObject(ofClass: NSString.self) { object, _ in
             guard let id = object as? String else { return }
-            DispatchQueue.main.async { store.moveTab(id, toGap: landing) }
+            DispatchQueue.main.async { WindowActions.moveTab(id, into: window, at: landing) }
         }
         return true
     }
@@ -134,6 +152,7 @@ private struct TabDropDelegate: DropDelegate {
 
 private struct TabItem: View {
     @ObservedObject var store: SessionStore
+    @EnvironmentObject private var window: WindowContext
     let tab: EngineTab
     let index: Int
     let count: Int
@@ -171,7 +190,7 @@ private struct TabItem: View {
                     .truncationMode(.tail)
             }
             Spacer(minLength: 4)
-            TabCloseButton { store.closeTab(tab.tabId) }
+            TabCloseButton { window.closeTab(tab.tabId) }
                 .opacity(hovered || isActive ? 1 : 0)
         }
         .padding(.leading, 12)
@@ -201,10 +220,10 @@ private struct TabItem: View {
             .animation(motion.animation(.tabs, .easeOut(duration: 0.12)), value: hovered)
         }
         .overlay(alignment: .trailing) { Rectangle().fill(Theme.divider).frame(width: 1) }
-        .overlay { MiddleClickCatcher { store.closeTab(tab.tabId) } }
+        .overlay { MiddleClickCatcher { window.closeTab(tab.tabId) } }
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
-        .onTapGesture { store.focusTab(tab.tabId) }
+        .onTapGesture { window.focusTab(tab.tabId) }
         .simultaneousGesture(TapGesture(count: 2).onEnded { renaming = true })
         .contextMenu {
             Button("Rename Tab…") { renaming = true }
@@ -215,17 +234,25 @@ private struct TabItem: View {
             Button("Move Tab Left") { store.moveTab(tab.tabId, by: -1) }.disabled(index == 0)
             Button("Move Tab Right") { store.moveTab(tab.tabId, by: 1) }.disabled(index >= count - 1)
             Divider()
-            Button("Close Tab") { store.closeTab(tab.tabId) }
-            Button("Close Other Tabs") { store.closeTabs(except: tab.tabId) }.disabled(count < 2)
+            Button("Move Tab to New Window") {
+                WindowActions.tearOff(tabId: tab.tabId, store: store, frame: WindowActions.cascaded(from: window))
+            }
+            .disabled(store.onlyPane(ofTab: tab.tabId) == nil)
+            Divider()
+            Button("Close Tab") { window.closeTab(tab.tabId) }
+            Button("Close Other Tabs") {
+                window.focusTab(tab.tabId)
+                store.closeTabs(except: tab.tabId)
+            }.disabled(count < 2)
             Button("Close Tabs to the Right") { store.closeTabs(rightOf: tab.tabId) }.disabled(index >= count - 1)
         }
         .help(index < 9 ? "\(title)  ⌘\(index + 1)" : title)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(agent.map { "\(title), \(brand?.displayName ?? "agent") \(stateLabel($0.agentStatus))" } ?? title)
         .accessibilityAddTraits(isActive ? [.isButton, .isSelected] : .isButton)
-        .accessibilityAction { store.focusTab(tab.tabId) }
+        .accessibilityAction { window.focusTab(tab.tabId) }
         .accessibilityAction(named: "Rename") { renaming = true }
-        .accessibilityAction(named: "Close") { store.closeTab(tab.tabId) }
+        .accessibilityAction(named: "Close") { window.closeTab(tab.tabId) }
     }
 }
 
@@ -332,43 +359,121 @@ private struct NewTabButton: View {
         VStack(alignment: .leading, spacing: 1) {
             NewMenuRow(mark: .icon("terminal"), title: "New Tab", keys: "⌘T") { choose(newTab) }
             Rectangle().fill(Theme.divider).frame(height: 1).padding(.vertical, 4)
-            NewMenuRow(mark: .agent("claude"), title: "New Claude Conversation", keys: "⌘⇧N") {
-                choose { newConversation(.claude) }
-            }
-            NewMenuRow(mark: .agent("codex"), title: "New Codex Conversation") {
-                choose { newConversation(.codex) }
-            }
-            // Every agent found on this machine can have a terminal tab,
-            // whether or not Herd knows how to drive it itself.
-            if !runnable.isEmpty {
-                Rectangle().fill(Theme.divider).frame(height: 1).padding(.vertical, 4)
-                Text("Open a tab running")
-                    .font(Theme.headerFont)
-                    .kerning(0.4)
-                    .foregroundStyle(Theme.textTertiary)
-                    .padding(.horizontal, 8)
-                    .padding(.bottom, 2)
-                ForEach(runnable) { agent in
-                    NewMenuRow(mark: .agent(agent.id), title: agent.displayName) {
-                        choose { newAgentTab(agent) }
-                    }
-                }
+            // One row per agent, each with what it can open: Herd's own chat
+            // view, or a terminal tab running its CLI.
+            ForEach(entries) { entry in
+                AgentMenuRow(
+                    entry: entry,
+                    chat: entry.engine.map { engine in { choose { newConversation(engine) } } },
+                    terminal: entry.agent.map { agent in { choose { newAgentTab(agent) } } }
+                )
             }
         }
         // Enough inset that a row's highlight clears the popover's own
         // rounded corner; any less and the corner clips it square.
         .padding(8)
-        .frame(width: 292)
+        .frame(width: 320)
         .background(Theme.chrome)
     }
 
-    /// Agents with an executable to run. One whose config folder is all
-    /// that's left can't open a tab.
-    private var runnable: [DiscoveredAgent] { discovery.agents.filter { $0.executablePath != nil } }
+    /// Claude and Codex first, since Herd can chat with them, then every
+    /// other agent found with an executable to run.
+    private var entries: [AgentMenuEntry] {
+        let runnable = discovery.agents.filter { $0.executablePath != nil }
+        let chat: [AgentSession.Engine] = [.claude, .codex]
+        let driven = chat.map { engine in
+            AgentMenuEntry(id: engine.agent, name: engine == .claude ? "Claude Code" : "Codex", engine: engine,
+                           agent: runnable.first { $0.id == engine.agent })
+        }
+        let others = runnable.filter { agent in !chat.contains { $0.agent == agent.id } }
+            .map { AgentMenuEntry(id: $0.id, name: $0.displayName, engine: nil, agent: $0) }
+        return driven + others
+    }
 
     private func choose(_ action: () -> Void) {
         menuOpen = false
         action()
+    }
+}
+
+private struct AgentMenuEntry: Identifiable {
+    let id: String
+    let name: String
+    /// Set when Herd has a chat view for this agent.
+    let engine: AgentSession.Engine?
+    /// Set when its CLI is installed, so it can run in a terminal tab.
+    let agent: DiscoveredAgent?
+}
+
+/// An agent in the new-tab menu: its mark and name, then a button for each
+/// way it can open. Clicking the row takes the first.
+private struct AgentMenuRow: View {
+    let entry: AgentMenuEntry
+    let chat: (() -> Void)?
+    let terminal: (() -> Void)?
+    @State private var hovered = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Group {
+                if let brand = AgentBrand.forAgent(entry.id) { AgentLogo(brand: brand, size: 13) }
+            }
+            .frame(width: 16)
+            Text(entry.name)
+                .font(Theme.uiFont)
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            if let chat {
+                OpenChip(icon: "text.bubble", title: "Chat",
+                         help: "New \(entry.engine?.displayName ?? entry.name) conversation"
+                            + (entry.engine == .claude ? " (⌘⇧N)" : ""),
+                         action: chat)
+            }
+            if let terminal {
+                OpenChip(icon: "terminal", title: "Terminal",
+                         help: "New tab running \(entry.name)", action: terminal)
+            }
+        }
+        .padding(.leading, 8)
+        .padding(.trailing, 4)
+        .frame(height: 30)
+        .background(hovered ? Theme.hover : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius + 2))
+        .contentShape(Rectangle())
+        .onTapGesture { (chat ?? terminal)?() }
+        .onHover { hovered = $0 }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(entry.name)
+    }
+}
+
+/// One way to open an agent, as a small labeled button.
+private struct OpenChip: View {
+    let icon: String
+    let title: String
+    let help: String
+    let action: () -> Void
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                HerdIcon(icon, size: 11)
+                Text(title).font(Theme.uiFont)
+            }
+            .foregroundStyle(hovered ? Theme.textPrimary : Theme.textSecondary)
+            .padding(.horizontal, 7)
+            .frame(height: 22)
+            .background(RoundedRectangle(cornerRadius: Theme.rowRadius)
+                .fill(hovered ? Theme.accent.opacity(0.22) : Theme.terminalBackground.opacity(0.6)))
+            .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius)
+                .strokeBorder(hovered ? Theme.accent.opacity(0.6) : Theme.border, lineWidth: 1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .onHover { hovered = $0 }
     }
 }
 
@@ -478,13 +583,15 @@ private struct ConversationTab: View {
 
 /// Opens the Claude agents board; a count shows sessions waiting on you.
 private struct AgentsButton: View {
+    @EnvironmentObject private var window: WindowContext
     @ObservedObject private var agents = AgentsStore.shared
     @ObservedObject private var center = AgentCenter.shared
     @State private var hovered = false
 
     var body: some View {
         let waiting = agents.needsInput.count
-        Button { center.showingBoard.toggle() } label: {
+        let showing = center.board(in: window.focusedWorkspace?.workspaceId) == .claude
+        Button { center.setBoard(showing ? nil : .claude, in: window.focusedWorkspace?.workspaceId) } label: {
             HStack(spacing: 4) {
                 if let brand = AgentBrand.forAgent("claude") { AgentLogo(brand: brand, size: 12) }
                 HerdIcon("tool.agent", size: 14)
@@ -497,10 +604,10 @@ private struct AgentsButton: View {
                         .background(Capsule().fill(Color(hex: "FFC107")))
                 }
             }
-            .foregroundStyle(center.showingBoard ? Theme.textPrimary : Theme.textSecondary)
+            .foregroundStyle(showing ? Theme.textPrimary : Theme.textSecondary)
             .padding(.horizontal, 7)
             .frame(height: 24)
-            .background(center.showingBoard ? Theme.cardSelected : hovered ? Theme.hover : Color.clear)
+            .background(showing ? Theme.cardSelected : hovered ? Theme.hover : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
         }
         .buttonStyle(.plain)

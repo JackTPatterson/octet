@@ -996,28 +996,18 @@ final class AgentSession: ObservableObject, Identifiable {
     /// Continues this conversation in the agent's own interface, in a new tab
     /// of the same workspace. The headless process stops first so two
     /// processes never write the same session.
-    func openInTerminal(client: EngineClient) {
+    func openInTerminal(window: WindowContext) {
         guard hasTurns else { return }
         close()
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-        let params: [String: Any] = [
-            "focus": true,
+        window.applyLayout([
             "workspace_id": workspaceId,
             "tab_label": title,
             "root": [
                 "type": "pane", "label": title, "cwd": cwd,
                 "command": [shell, "-lic", "\(resumeCommand); exec \(shell) -l"],
             ] as [String: Any],
-        ]
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                try client.call("layout.apply", params)
-            } catch {
-                DispatchQueue.main.async {
-                    ToastCenter.shared.fail(nil, "Couldn't open the conversation in a terminal", detail: String(describing: error))
-                }
-            }
-        }
+        ], failure: "Couldn't open the conversation in a terminal")
     }
 }
 
@@ -1027,16 +1017,56 @@ final class AgentCenter: ObservableObject {
     static let shared = AgentCenter()
 
     @Published private(set) var sessions: [AgentSession] = []
-    /// The conversation shown in place of the terminal, if any.
-    @Published var activeId: String? { didSet { if activeId != nil { board = nil } } }
     enum Board { case claude, codex }
 
-    /// Which agents board is shown in place of the terminal, if any.
-    @Published var board: Board? {
+    /// What each workspace shows in place of its terminal: a conversation,
+    /// or an agents board. A workspace is in one window at a time, so this is
+    /// each window's too, and two windows never trade overlays.
+    @Published private var activeIds: [String: String] = [:]
+    @Published private var boards: [String: Board] = [:] {
         didSet {
-            AgentsStore.shared.watching = board == .claude
-            CodexAgentsStore.shared.watching = board == .codex
+            AgentsStore.shared.watching = boards.values.contains(.claude)
+            CodexAgentsStore.shared.watching = boards.values.contains(.codex)
         }
+    }
+
+    func active(in workspaceId: String?) -> AgentSession? {
+        guard let workspaceId, let id = activeIds[workspaceId] else { return nil }
+        return sessions.first { $0.id == id && $0.workspaceId == workspaceId }
+    }
+
+    /// Shows `sessionId` in its own workspace, or nothing in `workspaceId`.
+    func setActive(_ sessionId: String?, in workspaceId: String?) {
+        if let sessionId, let session = sessions.first(where: { $0.id == sessionId }) {
+            activeIds[session.workspaceId] = sessionId
+            boards[session.workspaceId] = nil
+        } else if let workspaceId {
+            activeIds[workspaceId] = nil
+        }
+    }
+
+    func board(in workspaceId: String?) -> Board? { workspaceId.flatMap { boards[$0] } }
+
+    func setBoard(_ board: Board?, in workspaceId: String?) {
+        guard let workspaceId else { return }
+        boards[workspaceId] = board
+        if board != nil { activeIds[workspaceId] = nil }
+    }
+
+    /// The workspace in the window in front, where a menu or button acts.
+    private var frontWorkspace: String? { WindowRegistry.shared.key?.focusedWorkspace?.workspaceId }
+
+    /// The conversation in front: the front window's, set by id wherever
+    /// that conversation lives.
+    var activeId: String? {
+        get { frontWorkspace.flatMap { activeIds[$0] } }
+        set { setActive(newValue, in: frontWorkspace) }
+    }
+
+    /// The front window's board.
+    var board: Board? {
+        get { board(in: frontWorkspace) }
+        set { setBoard(newValue, in: frontWorkspace) }
     }
 
     /// The Claude board, kept as a flag for the places that toggle it.
@@ -1048,7 +1078,7 @@ final class AgentCenter: ObservableObject {
     /// Takes in a session made elsewhere (brought back from the background).
     func adopt(_ session: AgentSession) {
         sessions.append(session)
-        activeId = session.id
+        setActive(session.id, in: session.workspaceId)
         save()
     }
 
@@ -1059,8 +1089,8 @@ final class AgentCenter: ObservableObject {
         guard session.conversation.items.contains(where: { if case .user = $0.kind { return true }; return false }) else { return }
         session.moveToBackground { moved in
             guard moved else { return }
+            AgentCenter.shared.setActive(nil, in: session.workspaceId)
             AgentCenter.shared.sessions.removeAll { $0.id == session.id }
-            if AgentCenter.shared.activeId == session.id { AgentCenter.shared.activeId = nil }
             AgentCenter.shared.showingBoard = true
             AgentCenter.shared.save()
             AgentsStore.shared.refresh()
@@ -1096,15 +1126,11 @@ final class AgentCenter: ObservableObject {
         sessions.filter { $0.workspaceId == workspaceId }
     }
 
-    func active(in workspaceId: String?) -> AgentSession? {
-        sessions.first { $0.id == activeId && $0.workspaceId == workspaceId }
-    }
-
     @discardableResult
     func newConversation(workspaceId: String, cwd: String, engine: AgentSession.Engine = .claude) -> AgentSession {
         let session = AgentSession(workspaceId: workspaceId, cwd: cwd, engine: engine)
         sessions.append(session)
-        activeId = session.id
+        setActive(session.id, in: workspaceId)
         session.prewarm()
         save()
         return session
@@ -1112,8 +1138,8 @@ final class AgentCenter: ObservableObject {
 
     func close(_ session: AgentSession) {
         session.close()
+        if activeIds[session.workspaceId] == session.id { activeIds[session.workspaceId] = nil }
         sessions.removeAll { $0.id == session.id }
-        if activeId == session.id { activeId = nil }
         save()
     }
 }

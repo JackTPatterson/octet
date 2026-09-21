@@ -53,8 +53,7 @@ enum PasteHandler {
 
     /// Types the path into the focused pane.
     private static func send(path: String, store: SessionStore, copied: Bool) -> Bool {
-        let snapshot = store.snapshot
-        guard let paneId = snapshot.focusedPaneId ?? snapshot.panes.first(where: \.focused)?.paneId else { return false }
+        guard let paneId = store.keyPaneId else { return false }
         let client = store.client
         let text = ImagePaste.insertion(for: path) + " "
         DispatchQueue.global(qos: .userInitiated).async {

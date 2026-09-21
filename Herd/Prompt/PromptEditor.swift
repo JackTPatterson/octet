@@ -70,14 +70,14 @@ final class PromptEditor: ObservableObject {
             guard isActive else { return false }
             return handleCommandKey(event)
         }
-        guard isActive || store.focusedPaneAtPrompt else {
-            log("ignored key, atPrompt=\(store.focusedPaneAtPrompt) process=\(String(describing: store.focusedProcess))")
+        guard isActive || store.keyPaneAtPrompt else {
+            log("ignored key, atPrompt=\(store.keyPaneAtPrompt) process=\(String(describing: store.keyProcess))")
             return false
         }
         // The shell being in front isn't enough: `read -s` is the shell too.
         // Only a live line editor means this is a command line, not a secret.
         if !isActive {
-            guard let pid = store.focusedProcess?.shellPid,
+            guard let pid = store.keyProcess?.shellPid,
                   ShellPrompt.lineEditorActive(shellPid: pid) == true else {
                 log("ignored key, shell not in its line editor")
                 return false
@@ -224,7 +224,7 @@ final class PromptEditor: ObservableObject {
     }
 
     private func activate() {
-        paneId = store.snapshot.focusedPaneId ?? store.snapshot.panes.first(where: \.focused)?.paneId
+        paneId = store.keyPaneId
         let pane = store.snapshot.panes.first { $0.paneId == paneId }
         cwd = pane?.effectiveCwd
         loadCompletionSources()
@@ -244,8 +244,8 @@ final class PromptEditor: ObservableObject {
     private func followAnchor() {
         guard isActive else { return }
         // Focus moved, or the pane is running something now: step aside.
-        let focused = store.snapshot.focusedPaneId ?? store.snapshot.panes.first(where: \.focused)?.paneId
-        guard store.focusedPaneAtPrompt, focused == paneId else {
+        let focused = store.keyPaneId
+        guard store.keyPaneAtPrompt, focused == paneId else {
             // Whatever was typed belongs to the shell, not the bin.
             flush()
             return

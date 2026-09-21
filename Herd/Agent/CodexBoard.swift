@@ -4,6 +4,7 @@ import SwiftUI
 /// transcript and a reply field (Codex can queue a message to a session).
 /// Opens from Codex tabs; Esc returns.
 struct CodexBoard: View {
+    @EnvironmentObject private var window: WindowContext
     @ObservedObject var store: SessionStore
     @ObservedObject private var codex = CodexAgentsStore.shared
     @ObservedObject private var motion = MotionPreferences.shared
@@ -102,7 +103,7 @@ struct CodexBoard: View {
     private func start() {
         let text = task.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        let cwd = store.focusedWorkspace.flatMap { store.snapshot.directory(ofWorkspace: $0.workspaceId) } ?? NSHomeDirectory()
+        let cwd = window.focusedWorkspace.flatMap { store.snapshot.directory(ofWorkspace: $0.workspaceId) } ?? NSHomeDirectory()
         CodexAgentsStore.shared.start(task: text, cwd: cwd)
         task = ""
     }
@@ -110,6 +111,7 @@ struct CodexBoard: View {
 
 /// A Codex session's transcript, live, with a reply field and its actions.
 private struct CodexDetail: View {
+    @EnvironmentObject private var window: WindowContext
     let agent: BackgroundAgent
     @ObservedObject var store: SessionStore
     @State private var conversation = AgentConversation()
@@ -126,7 +128,10 @@ private struct CodexDetail: View {
                 }
                 Spacer(minLength: 8)
                 HerdButton(title: "Resume in Terminal", icon: "terminal", kind: .secondary, compact: true) {
-                    CodexAgentsStore.shared.resume(agent, client: store.client, workspaceId: workspaceId)
+                    window.applyLayout(CodexAgentsStore.resumeLayout(agent).merging(
+                        workspaceId.map { ["workspace_id": $0] } ?? [:]) { $1 },
+                        failure: "Couldn't open \(agent.name) in a terminal")
+                    AgentCenter.shared.setBoard(nil, in: window.focusedWorkspace?.workspaceId)
                 }
                 HerdButton(title: "Archive", kind: .ghost, compact: true) { CodexAgentsStore.shared.archive(agent) }
                 HerdButton(title: "Delete", kind: .ghost, compact: true) {
@@ -178,7 +183,7 @@ private struct CodexDetail: View {
 
     private var workspaceId: String? {
         store.snapshot.workspaces.first { store.snapshot.directory(ofWorkspace: $0.workspaceId) == agent.cwd }?.workspaceId
-            ?? store.focusedWorkspace?.workspaceId
+            ?? window.focusedWorkspace?.workspaceId
     }
 
     private func send() {
@@ -208,14 +213,16 @@ private struct CodexDetail: View {
 
 /// Opens the Codex agents board from Codex tabs.
 struct CodexAgentsButton: View {
+    @EnvironmentObject private var window: WindowContext
     @ObservedObject private var codex = CodexAgentsStore.shared
     @ObservedObject private var center = AgentCenter.shared
     @State private var hovered = false
 
     var body: some View {
         let waiting = codex.needsInput.count
-        let open = center.board == .codex
-        Button { center.board = open ? nil : .codex } label: {
+        let workspace = window.focusedWorkspace?.workspaceId
+        let open = center.board(in: workspace) == .codex
+        Button { center.setBoard(open ? nil : .codex, in: workspace) } label: {
             HStack(spacing: 4) {
                 if let brand = AgentBrand.forAgent("codex") { AgentLogo(brand: brand, size: 12) }
                 HerdIcon("tool.agent", size: 14)

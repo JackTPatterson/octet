@@ -68,8 +68,8 @@ final class MarketplaceStore: ObservableObject {
     /// The agent a prompt would run in: the focused pane's, else the only one.
     var promptTarget: EngineAgent? {
         let agents = session.snapshot.agents
-        return agents.first { $0.paneId == session.snapshot.focusedPaneId }
-            ?? agents.first { $0.tabId == session.snapshot.focusedTabId }
+        return agents.first { $0.paneId == session.keyPaneId }
+            ?? agents.first { $0.tabId == session.keyTabId }
             ?? (agents.count == 1 ? agents.first : nil)
     }
 
