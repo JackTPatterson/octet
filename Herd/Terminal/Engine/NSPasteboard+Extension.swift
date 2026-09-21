@@ -1,5 +1,3 @@
-// Copied from Ghostty (https://github.com/ghostty-org/ghostty, commit 4a0e9e1) macOS sources.
-// MIT License, Copyright (c) 2024 Mitchell Hashimoto, Ghostty contributors. See LICENSE-ghostty.
 import AppKit
 import GhosttyKit
 import UniformTypeIdentifiers
@@ -29,9 +27,9 @@ extension NSPasteboard.PasteboardType {
 }
 
 extension NSPasteboard {
-    /// The pasteboard to used for Ghostty selection.
-    static var ghosttySelection: NSPasteboard = {
-        NSPasteboard(name: .init("com.mitchellh.ghostty.selection"))
+    /// The pasteboard used for the terminal selection.
+    static var engineSelection: NSPasteboard = {
+        NSPasteboard(name: .init("studio.jpdigital.herd.selection"))
     }()
 
     /// Gets the contents of the pasteboard as a string following a specific set of semantics.
@@ -44,7 +42,7 @@ extension NSPasteboard {
             if let plist = item.propertyList(forType: .fileURL),
                let fileURL = NSURL(pasteboardPropertyList: plist, ofType: .fileURL) as URL?,
                fileURL.isFileURL {
-                return Ghostty.Shell.escape(fileURL.path)
+                return TerminalEngine.Shell.escape(fileURL.path)
             } else {
                 return item.string(forType: .string)
             }
@@ -56,14 +54,14 @@ extension NSPasteboard {
         return strings.joined(separator: " ")
     }
 
-    /// The pasteboard for the Ghostty enum type.
-    static func ghostty(_ clipboard: ghostty_clipboard_e) -> NSPasteboard? {
+    /// The pasteboard for the terminal clipboard enum type.
+    static func terminal(_ clipboard: ghostty_clipboard_e) -> NSPasteboard? {
         switch clipboard {
         case GHOSTTY_CLIPBOARD_STANDARD:
             return Self.general
 
         case GHOSTTY_CLIPBOARD_SELECTION:
-            return Self.ghosttySelection
+            return Self.engineSelection
 
         default:
             return nil

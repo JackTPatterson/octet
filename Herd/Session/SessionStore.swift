@@ -2,22 +2,22 @@ import AppKit
 import Foundation
 import SwiftUI
 
-/// Live mirror of Herd's herdr session: subscribes to herdr events and
+/// Live mirror of Herd's session: subscribes to session server events and
 /// re-fetches `session.snapshot` (coalesced) whenever anything changes.
 @MainActor
-final class HerdrStore: ObservableObject {
-    @Published private(set) var snapshot: HerdrSnapshot = .empty
+final class SessionStore: ObservableObject {
+    @Published private(set) var snapshot: EngineSnapshot = .empty
     @Published private(set) var groups: [ProjectGroup] = []
     /// Git branch per workspace id, read from `.git/HEAD` on each snapshot.
     @Published private(set) var branches: [String: String] = [:]
-    /// Plugins installed in Herd's herdr session; refreshed when the palette opens.
-    @Published private(set) var plugins: [HerdrPlugin] = []
+    /// Plugins installed in Herd's session; refreshed when the palette opens.
+    @Published private(set) var plugins: [EnginePlugin] = []
 
     // MARK: Idle organization
     /// Project groups holding only workspaces that are in use.
     @Published private(set) var activeGroups: [ProjectGroup] = []
     /// Workspaces unused past `idleAfter`, most recently used first.
-    @Published private(set) var idleWorkspaces: [HerdrWorkspace] = []
+    @Published private(set) var idleWorkspaces: [EngineWorkspace] = []
     @Published private(set) var activity = WorkspaceActivity()
     @Published private(set) var pinnedWorkspaceIds: Set<String> = []
     @Published var idleAfter: TimeInterval = WorkspaceActivity.defaultIdleAfter {
@@ -27,7 +27,7 @@ final class HerdrStore: ObservableObject {
         }
     }
     // Isolated sessions (HERD_SESSION) keep their own activity state.
-    private static let keySuffix = HerdrSession.name == "herd" ? "" : ".\(HerdrSession.name)"
+    private static let keySuffix = EngineSession.name == "herd" ? "" : ".\(EngineSession.name)"
     private static let manualNamesKey = "herd.tabs.manualNames" + keySuffix
     private static let stampsKey = "herd.activity.stamps" + keySuffix
     private static let pinnedKey = "herd.activity.pinned" + keySuffix
@@ -49,14 +49,14 @@ final class HerdrStore: ObservableObject {
     @Published private(set) var isConnected = false
     @Published var lastError: String?
 
-    let client: HerdrClient
+    let client: EngineClient
     let recovery: AgentRecoveryController
     private let resolver = ProjectGrouping.CachedResolver()
     private var refreshScheduled = false
     private var eventThread: Thread?
     private var pollTimer: Timer?
 
-    init(client: HerdrClient) {
+    init(client: EngineClient) {
         self.client = client
         recovery = AgentRecoveryController(client: client)
         let defaults = UserDefaults.standard
@@ -70,25 +70,25 @@ final class HerdrStore: ObservableObject {
         if storedIdleAfter > 0 { idleAfter = storedIdleAfter }
     }
 
-    var focusedWorkspace: HerdrWorkspace? {
+    var focusedWorkspace: EngineWorkspace? {
         snapshot.workspaces.first { $0.workspaceId == snapshot.focusedWorkspaceId }
             ?? snapshot.workspaces.first(where: \.focused)
     }
 
-    var focusedWorkspaceTabs: [HerdrTab] {
+    var focusedWorkspaceTabs: [EngineTab] {
         guard let id = focusedWorkspace?.workspaceId else { return [] }
         return snapshot.tabs(inWorkspace: id)
     }
 
     // MARK: Optimistic tab state
-    // Tab clicks and closes show immediately instead of waiting for herdr's
+    // Tab clicks and closes show immediately instead of waiting for the session server's
     // round trip, so the tab bar animates the moment you act.
     @Published private(set) var pendingFocusedTabId: String?
     @Published private(set) var pendingClosedTabIds: Set<String> = []
     private var pendingFocusDeadline = Date.distantPast
 
     /// Tabs the tab bar shows: the focused workspace's, minus ones closing.
-    var displayedTabs: [HerdrTab] {
+    var displayedTabs: [EngineTab] {
         focusedWorkspaceTabs.filter { !pendingClosedTabIds.contains($0.tabId) }
     }
 
@@ -96,7 +96,7 @@ final class HerdrStore: ObservableObject {
         pendingFocusedTabId ?? snapshot.focusedTabId ?? focusedWorkspaceTabs.first(where: \.focused)?.tabId
     }
 
-    private func settleOptimisticTabs(with snapshot: HerdrSnapshot) {
+    private func settleOptimisticTabs(with snapshot: EngineSnapshot) {
         if let pending = pendingFocusedTabId,
            snapshot.focusedTabId == pending || Date() > pendingFocusDeadline
             || !snapshot.tabs.contains(where: { $0.tabId == pending }) {
@@ -136,7 +136,7 @@ final class HerdrStore: ObservableObject {
         thread.name = "herd.terminal-events"
         eventThread = thread
         thread.start()
-        // Agent state changes are per-pane subscriptions in herdr; a light
+        // Agent state changes are per-pane subscriptions in the session server; a light
         // periodic snapshot keeps state glyphs current.
         pollTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.scheduleRefresh() }
@@ -187,7 +187,7 @@ final class HerdrStore: ObservableObject {
         }
     }
 
-    func apply(_ snapshot: HerdrSnapshot, branches: [String: String]) {
+    func apply(_ snapshot: EngineSnapshot, branches: [String: String]) {
         settleOptimisticTabs(with: snapshot)
         observeActivity(snapshot)
         autoNameTabs(in: snapshot)
@@ -201,7 +201,7 @@ final class HerdrStore: ObservableObject {
         repartition()
     }
 
-    private nonisolated static func readBranches(_ snapshot: HerdrSnapshot) -> [String: String] {
+    private nonisolated static func readBranches(_ snapshot: EngineSnapshot) -> [String: String] {
         var branches: [String: String] = [:]
         for workspace in snapshot.workspaces {
             if let directory = snapshot.directory(ofWorkspace: workspace.workspaceId),
@@ -218,7 +218,7 @@ final class HerdrStore: ObservableObject {
 
     /// Raises a banner when an agent stops working, unless you are already
     /// looking at that pane.
-    private func notifyAgentActivity(in snapshot: HerdrSnapshot) {
+    private func notifyAgentActivity(in snapshot: EngineSnapshot) {
         let focusedTab = displayedFocusedTabId ?? snapshot.focusedTabId
         let appActive = NSApp?.isActive == true
         let events = activityWatcher.events(in: snapshot) { agent in
@@ -296,7 +296,7 @@ final class HerdrStore: ObservableObject {
     // MARK: - Tab names
 
     /// Renames tabs to the work their pane reports, for any agent or shell.
-    private func autoNameTabs(in snapshot: HerdrSnapshot) {
+    private func autoNameTabs(in snapshot: EngineSnapshot) {
         guard SettingsStore.shared.values.autoNameTabs else {
             pendingTabNames.removeAll()
             return
@@ -332,7 +332,7 @@ final class HerdrStore: ObservableObject {
 
     /// Stamps activity. The focused workspace counts as in use only while
     /// Herd is the active app, so leaving Herd open overnight doesn't keep it fresh.
-    private func observeActivity(_ snapshot: HerdrSnapshot) {
+    private func observeActivity(_ snapshot: EngineSnapshot) {
         var updated = activity
         let focused = snapshot.focusedWorkspaceId
         if let focused, focused != lastFocusedWorkspaceId, lastFocusedWorkspaceId != nil {
@@ -425,7 +425,7 @@ final class HerdrStore: ObservableObject {
     }
 
     private nonisolated static func describeNonisolated(_ error: Error) -> String {
-        if case HerdrSocketError.server(_, let message) = error, !message.isEmpty { return message }
+        if case EngineSocketError.server(_, let message) = error, !message.isEmpty { return message }
         return String(describing: error)
     }
 
@@ -473,7 +473,7 @@ final class HerdrStore: ObservableObject {
     }
 
     private static func describe(_ error: Error) -> String {
-        if case HerdrSocketError.server(_, let message) = error, !message.isEmpty { return message }
+        if case EngineSocketError.server(_, let message) = error, !message.isEmpty { return message }
         return String(describing: error)
     }
 
@@ -489,9 +489,11 @@ final class HerdrStore: ObservableObject {
 
     func focusWorkspace(_ id: String) { perform("workspace.focus", ["workspace_id": id]) }
     func focusTab(_ id: String) {
+        AgentCenter.shared.activeId = nil
+        AgentCenter.shared.board = nil
         pendingFocusedTabId = id
         pendingFocusDeadline = Date().addingTimeInterval(1.5)
-        // Settles on the next snapshot, or after the deadline if herdr refused.
+        // Settles on the next snapshot, or after the deadline if the session server refused.
         perform("tab.focus", ["tab_id": id], failure: "Couldn't switch tabs")
     }
 
@@ -499,7 +501,7 @@ final class HerdrStore: ObservableObject {
         let label = tabLabel(id)
         let tabs = displayedTabs
         if id == displayedFocusedTabId, let index = tabs.firstIndex(where: { $0.tabId == id }), tabs.count > 1 {
-            // Show the neighbor herdr will focus while the close is in flight.
+            // Show the neighbor the session server will focus while the close is in flight.
             pendingFocusedTabId = tabs[index > 0 ? index - 1 : 1].tabId
             pendingFocusDeadline = Date().addingTimeInterval(1.5)
         }
@@ -527,6 +529,55 @@ final class HerdrStore: ObservableObject {
             if let cwd = snapshot.directory(ofWorkspace: workspace.workspaceId) { params["cwd"] = cwd }
         }
         perform("tab.create", params, failure: "Couldn't open a tab")
+    }
+
+    /// A terminal tab already running an agent. The terminal doesn't care
+    /// which agent it is, so anything discovery found can open one: the CLI
+    /// runs by its resolved path, and the shell takes over when it exits, so
+    /// the tab stays useful rather than closing under you.
+    func newTab(running agent: DiscoveredAgent) {
+        guard let path = agent.executablePath else { return }
+        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+        let cwd = focusedWorkspace.flatMap { snapshot.directory(ofWorkspace: $0.workspaceId) } ?? NSHomeDirectory()
+        var params: [String: Any] = [
+            "focus": true, "tab_label": agent.displayName,
+            "root": ["type": "pane", "label": agent.displayName, "cwd": cwd,
+                     "command": [shell, "-lic", "\(shellQuoted(path)); exec \(shell) -l"]] as [String: Any],
+        ]
+        if let workspace = focusedWorkspace { params["workspace_id"] = workspace.workspaceId }
+        let client = self.client
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                try client.call("layout.apply", params)
+            } catch {
+                DispatchQueue.main.async {
+                    ToastCenter.shared.fail(nil, "Couldn't open \(agent.displayName) in a tab",
+                                            detail: String(describing: error))
+                }
+            }
+        }
+    }
+
+    /// A path is going into a shell line, and home folders have spaces in them.
+    private func shellQuoted(_ path: String) -> String {
+        "'" + path.replacingOccurrences(of: "'", with: #"'"'"'"#) + "'"
+    }
+
+    /// ⌘⇧A: the agents board for the tab in front (Codex's in a Codex tab,
+    /// otherwise Claude's), or closes whichever is open.
+    func toggleAgentsBoard() {
+        let center = AgentCenter.shared
+        if center.board != nil { center.board = nil; return }
+        let agent = displayedFocusedTabId.flatMap { primaryAgent(in: snapshot.agents(inTab: $0)) }
+        center.board = AgentBrand.forAgent(agent?.agent)?.id == "codex" ? .codex : .claude
+    }
+
+    /// A native conversation in the focused workspace's folder, with either
+    /// agent. Both run headless and draw in the same view.
+    func newConversation(engine: AgentSession.Engine = .claude) {
+        guard let workspace = focusedWorkspace else { return }
+        let cwd = snapshot.directory(ofWorkspace: workspace.workspaceId) ?? NSHomeDirectory()
+        AgentCenter.shared.newConversation(workspaceId: workspace.workspaceId, cwd: cwd, engine: engine)
     }
 
     func newWorkspace(cwd: String? = nil) {
@@ -603,7 +654,7 @@ final class HerdrStore: ObservableObject {
     func focusAgent(paneId: String) { perform("agent.focus", ["target": paneId]) }
 
     /// Focuses a tab in any workspace.
-    func focusTabAnywhere(_ tab: HerdrTab) {
+    func focusTabAnywhere(_ tab: EngineTab) {
         let client = self.client
         let currentWorkspaceId = focusedWorkspace?.workspaceId
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -637,7 +688,7 @@ final class HerdrStore: ObservableObject {
         ))
     }
 
-    func reloadHerdrConfig(quiet: Bool = false) {
+    func reloadSessionConfig(quiet: Bool = false) {
         if quiet {
             perform("server.reload_config", [:], failure: "Couldn't apply the settings")
         } else {
@@ -648,12 +699,38 @@ final class HerdrStore: ObservableObject {
     }
 
     func moveFocusedTab(by offset: Int) {
+        guard let id = displayedFocusedTabId ?? snapshot.focusedTabId else { return }
+        moveTab(id, by: offset)
+    }
+
+    func moveTab(_ id: String, by offset: Int) {
+        guard let index = focusedWorkspaceTabs.firstIndex(where: { $0.tabId == id }) else { return }
+        // A gap after the tab's own slot counts from before the move.
+        moveTab(id, toGap: offset > 0 ? index + offset + 1 : index + offset)
+    }
+
+    /// The session server's `insert_index` is a gap in the current order: the tab lands
+    /// just before the tab now at that position (count means the end).
+    /// Moving the first of four with insert_index 2 leaves it second.
+    func moveTab(_ id: String, toGap gap: Int) {
         let tabs = focusedWorkspaceTabs
-        guard let index = tabs.firstIndex(where: { $0.tabId == snapshot.focusedTabId }) else { return }
-        let target = max(0, min(tabs.count - 1, index + offset))
-        guard target != index else { return }
-        let label = tabLabel(tabs[index].tabId)
-        perform("tab.move", ["tab_id": tabs[index].tabId, "insert_index": target], failure: "Couldn't move \(label)")
+        guard let index = tabs.firstIndex(where: { $0.tabId == id }) else { return }
+        let gap = max(0, min(tabs.count, gap))
+        // Either gap next to the tab leaves it where it is.
+        guard gap != index, gap != index + 1 else { return }
+        let label = tabLabel(id)
+        perform("tab.move", ["tab_id": id, "insert_index": gap], failure: "Couldn't move \(label)")
+    }
+
+    func closeTabs(except id: String) {
+        focusTab(id)
+        for tab in focusedWorkspaceTabs where tab.tabId != id { closeTab(tab.tabId) }
+    }
+
+    func closeTabs(rightOf id: String) {
+        let tabs = focusedWorkspaceTabs
+        guard let index = tabs.firstIndex(where: { $0.tabId == id }) else { return }
+        for tab in tabs[(index + 1)...] { closeTab(tab.tabId) }
     }
 
     // MARK: - Plugins
@@ -661,11 +738,11 @@ final class HerdrStore: ObservableObject {
     func refreshPlugins() {
         let client = self.client
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let plugins: [HerdrPlugin]
+            let plugins: [EnginePlugin]
             do {
                 let result = try client.call("plugin.list")
                 let data = try JSONSerialization.data(withJSONObject: result["plugins"] ?? [])
-                plugins = try JSONDecoder().decode([HerdrPlugin].self, from: data)
+                plugins = try JSONDecoder().decode([EnginePlugin].self, from: data)
             } catch {
                 DispatchQueue.main.async { self?.lastError = String(describing: error) }
                 return
@@ -676,7 +753,7 @@ final class HerdrStore: ObservableObject {
         }
     }
 
-    /// Context herdr passes to plugin commands, matching what herdr's own UI sends.
+    /// Context the session server passes to plugin commands, matching what the session server's own UI sends.
     var pluginInvocationContext: [String: Any] {
         var context: [String: Any] = ["invocation_source": "herd-palette"]
         if let workspace = focusedWorkspace {
@@ -702,7 +779,7 @@ final class HerdrStore: ObservableObject {
     }
 
     /// Invokes a plugin action and follows its run in `plugin.log.list` so the
-    /// toast reports when the command actually finishes, not just when herdr
+    /// toast reports when the command actually finishes, not just when the session server
     /// accepted it.
     func invokePluginAction(pluginId: String, actionId: String, title: String) {
         let client = self.client
@@ -716,11 +793,11 @@ final class HerdrStore: ObservableObject {
                 DispatchQueue.main.async { self?.toasts.fail(handle, "Couldn't run \(title)", detail: Self.describe(error)) }
                 return
             }
-            var log: HerdrPluginLog?
+            var log: EnginePluginLog?
             for _ in 0..<240 {
                 let logs = (try? client.call("plugin.log.list", ["plugin_id": pluginId, "limit": 10]))
                     .flatMap { try? JSONSerialization.data(withJSONObject: $0["logs"] ?? []) }
-                    .flatMap { try? JSONDecoder().decode([HerdrPluginLog].self, from: $0) } ?? []
+                    .flatMap { try? JSONDecoder().decode([EnginePluginLog].self, from: $0) } ?? []
                 log = logs.filter { $0.actionId == actionId && $0.startedUnixMs >= started }
                     .max { $0.startedUnixMs < $1.startedUnixMs }
                 if let log, log.status != "running" { break }
@@ -737,7 +814,7 @@ final class HerdrStore: ObservableObject {
                         .compactMap { $0 }.first { !$0.isEmpty }
                     self.toasts.fail(handle, "\(title) failed", detail: detail.map { PluginCLI.lastLines($0) })
                 default:
-                    self.toasts.succeed(handle, "Started \(title)", detail: "Still running — see the plugin's logs")
+                    self.toasts.succeed(handle, "Started \(title)", detail: "Still running. See the plugin's logs.")
                 }
                 self.scheduleRefresh()
             }
@@ -746,7 +823,7 @@ final class HerdrStore: ObservableObject {
 
     func openPluginPane(pluginId: String, paneId: String, placement: String?, title: String) {
         var params: [String: Any] = ["plugin_id": pluginId, "entrypoint": paneId, "focus": true]
-        // Overlay and popup panes always attach to the active pane; herdr
+        // Overlay and popup panes always attach to the active pane; the session server
         // rejects an explicit target for them.
         if let pane = focusedPaneId, placement == "split" || placement == "tab" || placement == "zoomed" {
             params["target_pane_id"] = pane
@@ -781,11 +858,11 @@ final class HerdrStore: ObservableObject {
         )) { [weak self] _ in self?.refreshPlugins() }
     }
 
-    /// Downloads the plugin, shows herdr's install preview for confirmation,
+    /// Downloads the plugin, shows the session server's install preview for confirmation,
     /// then installs it — with a toast for each stage.
-    func installPlugin(repo: String, herdrPath: String, confirm: @escaping (String, @escaping (Bool) -> Void) -> Void) {
+    func installPlugin(repo: String, enginePath: String, confirm: @escaping (String, @escaping (Bool) -> Void) -> Void) {
         let handle = toasts.progress("Downloading \(repo)…", detail: "Fetching the install preview")
-        PluginCLI.preview(repo: repo, herdrPath: herdrPath) { [weak self] result in
+        PluginCLI.preview(repo: repo, enginePath: enginePath) { [weak self] result in
             guard let self else { return }
             switch result {
             case .failure(let error):
@@ -800,7 +877,7 @@ final class HerdrStore: ObservableObject {
                         return
                     }
                     let installing = self.toasts.progress("Installing \(name)…", detail: "Running the plugin's build steps")
-                    PluginCLI.install(repo: repo, herdrPath: herdrPath) { outcome in
+                    PluginCLI.install(repo: repo, enginePath: enginePath) { outcome in
                         if outcome.exitCode == 0 {
                             self.toasts.succeed(installing, "Installed \(name)\(version.map { " \($0)" } ?? "")")
                         } else {
@@ -813,10 +890,10 @@ final class HerdrStore: ObservableObject {
         }
     }
 
-    func uninstallPlugin(_ pluginId: String, herdrPath: String) {
+    func uninstallPlugin(_ pluginId: String, enginePath: String) {
         let name = pluginName(pluginId)
         let handle = toasts.progress("Removing \(name)…")
-        PluginCLI.uninstall(pluginId: pluginId, herdrPath: herdrPath) { [weak self] outcome in
+        PluginCLI.uninstall(pluginId: pluginId, enginePath: enginePath) { [weak self] outcome in
             guard let self else { return }
             if outcome.exitCode == 0 {
                 self.toasts.succeed(handle, "Removed \(name)")
@@ -827,14 +904,14 @@ final class HerdrStore: ObservableObject {
         }
     }
 
-    func pluginLogs(pluginId: String?, completion: @escaping ([HerdrPluginLog]) -> Void) {
+    func pluginLogs(pluginId: String?, completion: @escaping ([EnginePluginLog]) -> Void) {
         let client = self.client
         DispatchQueue.global(qos: .userInitiated).async {
             var params: [String: Any] = ["limit": 50]
             if let pluginId { params["plugin_id"] = pluginId }
             let logs = (try? client.call("plugin.log.list", params))
                 .flatMap { try? JSONSerialization.data(withJSONObject: $0["logs"] ?? []) }
-                .flatMap { try? JSONDecoder().decode([HerdrPluginLog].self, from: $0) } ?? []
+                .flatMap { try? JSONDecoder().decode([EnginePluginLog].self, from: $0) } ?? []
             DispatchQueue.main.async { completion(logs) }
         }
     }
@@ -842,8 +919,8 @@ final class HerdrStore: ObservableObject {
     // MARK: - Presentation helpers
 
     /// The most relevant agent in a set: blocked > working > done > idle.
-    func primaryAgent(in agents: [HerdrAgent]) -> HerdrAgent? {
-        let rank: [HerdrAgentStatus: Int] = [.blocked: 0, .working: 1, .done: 2, .idle: 3, .unknown: 4]
+    func primaryAgent(in agents: [EngineAgent]) -> EngineAgent? {
+        let rank: [EngineAgentStatus: Int] = [.blocked: 0, .working: 1, .done: 2, .idle: 3, .unknown: 4]
         return agents.min { (rank[$0.agentStatus] ?? 9) < (rank[$1.agentStatus] ?? 9) }
     }
 }

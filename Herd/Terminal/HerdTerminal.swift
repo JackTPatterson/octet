@@ -1,49 +1,55 @@
-// Herd-facing API over the embedded libghostty terminal.
+// Herd-facing API over the embedded terminal engine.
 //
 // Usage:
 //   HerdTerminalRuntime.configure(overrides: "background = 050505")   // once, at launch
 //   HerdTerminalView(command: "...", environment: [...], workingDirectory: ..., onTitleChange: ..., onExit: ...)
 //
-// The Ghostty glue in ./Ghostty is MIT-licensed code copied from Ghostty
-// (see Ghostty/LICENSE-ghostty).
+// The engine glue lives in ./Engine.
 
 import AppKit
 import GhosttyKit
 import SwiftUI
 
-/// Owns the process-wide libghostty app and configuration.
+/// Owns the process-wide terminal engine app and configuration.
 @MainActor
 final class HerdTerminalRuntime {
     static let shared = HerdTerminalRuntime()
 
     private var overrides: String = ""
-    private var didInitGhostty = false
-    private var ghosttyApp: Ghostty.App?
+    private var didInitEngine = false
+    private var engineApp: TerminalEngine.App?
 
     private init() {}
 
     /// Call once at launch, before any terminal view is created.
-    /// `overrides` uses Ghostty config-file syntax, one setting per line
-    /// (e.g. "background = 050505\nfont-size = 13"). The user's own Ghostty
+    /// `overrides` uses the renderer's config-file syntax, one setting per line
+    /// (e.g. "background = 050505\nfont-size = 13"). The user's own renderer
     /// config files are never loaded.
     static func configure(overrides: String) {
         let runtime = shared
-        precondition(runtime.ghosttyApp == nil, "HerdTerminalRuntime.configure must be called before any terminal is created")
+        precondition(runtime.engineApp == nil, "HerdTerminalRuntime.configure must be called before any terminal is created")
         runtime.overrides = overrides
-        runtime.initGhosttyIfNeeded()
-        runtime.ghosttyApp = Ghostty.App(overrides: overrides)
+        runtime.initEngineIfNeeded()
+        runtime.engineApp = TerminalEngine.App(overrides: overrides)
     }
 
     /// Replaces the overrides and applies them live to every surface.
     static func updateConfig(overrides: String) {
         let runtime = shared
         runtime.overrides = overrides
-        runtime.ghosttyApp?.updateConfig(overrides: overrides)
+        runtime.engineApp?.updateConfig(overrides: overrides)
     }
 
-    /// Applies (or clears) Ghostty's background blur on a window.
+    /// Tells programs in the terminal whether the theme is light or dark
+    /// (they can query it, and some pick colors from it).
+    static func setColorScheme(dark: Bool) {
+        guard let app = shared.engineApp?.app else { return }
+        ghostty_app_set_color_scheme(app, dark ? GHOSTTY_COLOR_SCHEME_DARK : GHOSTTY_COLOR_SCHEME_LIGHT)
+    }
+
+    /// Applies (or clears) the renderer's background blur on a window.
     static func applyBackgroundBlur(to window: NSWindow) {
-        shared.ghosttyApp?.applyBackgroundBlur(to: window)
+        shared.engineApp?.applyBackgroundBlur(to: window)
     }
 
     /// Where the terminal's cursor is, in the window's terminal view, plus
@@ -89,37 +95,40 @@ final class HerdTerminalRuntime {
         }
     }
 
-    private static func findSurface(in view: NSView) -> Ghostty.SurfaceView? {
-        if let surface = view as? Ghostty.SurfaceView { return surface }
+    private static func findSurface(in view: NSView) -> TerminalEngine.SurfaceView? {
+        if let surface = view as? TerminalEngine.SurfaceView { return surface }
         for sub in view.subviews {
             if let surface = findSurface(in: sub) { return surface }
         }
         return nil
     }
 
-    /// Config diagnostics (invalid override lines, etc.).
+    /// Config diagnostics (invalid override lines, etc.), including from
+    /// an update that was rejected outright.
     var configErrors: [String] {
-        app.config.errors
+        app.lastConfigErrors ?? app.config.errors
     }
 
-    fileprivate var app: Ghostty.App {
-        if let ghosttyApp { return ghosttyApp }
-        initGhosttyIfNeeded()
-        let created = Ghostty.App(overrides: overrides)
-        ghosttyApp = created
+    static var configErrors: [String] { shared.engineApp == nil ? [] : shared.configErrors }
+
+    fileprivate var app: TerminalEngine.App {
+        if let engineApp { return engineApp }
+        initEngineIfNeeded()
+        let created = TerminalEngine.App(overrides: overrides)
+        engineApp = created
         return created
     }
 
-    private func initGhosttyIfNeeded() {
-        guard !didInitGhostty else { return }
-        didInitGhostty = true
+    private func initEngineIfNeeded() {
+        guard !didInitEngine else { return }
+        didInitEngine = true
         if ghostty_init(UInt(CommandLine.argc), CommandLine.unsafeArgv) != GHOSTTY_SUCCESS {
-            Ghostty.logger.critical("ghostty_init failed")
+            TerminalEngine.logger.critical("ghostty_init failed")
         }
     }
 
     /// Create a terminal surface view running `command` (through the login shell,
-    /// `/bin/sh -c`-style, as Ghostty does). The returned view accepts first
+    /// `/bin/sh -c`-style). The returned view accepts first
     /// responder; make it first responder to type into it.
     func makeTerminalView(
         command: String,
@@ -133,15 +142,15 @@ final class HerdTerminalRuntime {
         command: String,
         environment: [String: String],
         workingDirectory: String?
-    ) -> Ghostty.SurfaceView {
+    ) -> TerminalEngine.SurfaceView {
         guard let cApp = app.app else {
-            fatalError("libghostty app failed to initialize")
+            fatalError("terminal engine app failed to initialize")
         }
-        var config = Ghostty.SurfaceConfiguration()
+        var config = TerminalEngine.SurfaceConfiguration()
         config.command = command.isEmpty ? nil : command
         config.environmentVariables = environment
         config.workingDirectory = workingDirectory
-        return Ghostty.SurfaceView(cApp, baseConfig: config)
+        return TerminalEngine.SurfaceView(cApp, baseConfig: config)
     }
 }
 
@@ -201,7 +210,10 @@ struct HerdTerminalView: NSViewRepresentable {
 
     @MainActor
     func updateNSView(_ nsView: NSView, context: Context) {
-        guard let view = (nsView as? Ghostty.SurfaceView)
+        // The band above bottom-anchored content shows this view's own
+        // background; follow theme changes, not just the theme at launch.
+        (nsView as? TopRowClippingView)?.refreshBackground()
+        guard let view = (nsView as? TerminalEngine.SurfaceView)
             ?? (nsView as? TopRowClippingView)?.surfaceView else { return }
         // Keep callbacks current (closures may capture fresh SwiftUI state).
         view.onTitleChange = onTitleChange
@@ -225,7 +237,7 @@ final class FlippedView: NSView {
 /// Hosts a surface taller than itself, shifted up so its first `hiddenRows`
 /// terminal rows sit above the visible bounds and are clipped away.
 final class TopRowClippingView: NSView {
-    let surfaceView: Ghostty.SurfaceView
+    let surfaceView: TerminalEngine.SurfaceView
     let hiddenRows: Int
     private var retryScheduled = false
     /// Blank rows below the cursor, so short output can sit at the bottom of
@@ -236,7 +248,7 @@ final class TopRowClippingView: NSView {
     private let anchor: TerminalAnchor
     private var lastCursorRow: UInt16 = .max
 
-    init(surfaceView: Ghostty.SurfaceView, hiddenRows: Int, anchor: TerminalAnchor) {
+    init(surfaceView: TerminalEngine.SurfaceView, hiddenRows: Int, anchor: TerminalAnchor) {
         self.surfaceView = surfaceView
         self.hiddenRows = hiddenRows
         self.anchor = anchor
@@ -319,6 +331,11 @@ final class TopRowClippingView: NSView {
         return CGFloat(size.cell_height_px) / scale * CGFloat(hiddenRows)
     }
 
+    func refreshBackground() {
+        let color = Theme.palette.nsColor(\.background).cgColor
+        if layer?.backgroundColor != color { layer?.backgroundColor = color }
+    }
+
     override func layout() {
         super.layout()
         let offset = hiddenHeight
@@ -331,7 +348,7 @@ final class TopRowClippingView: NSView {
         stage.layer?.masksToBounds = true
         stage.frame = NSRect(x: 0, y: drop, width: bounds.width, height: bounds.height)
         surfaceView.frame = NSRect(x: 0, y: -offset, width: bounds.width, height: bounds.height + offset)
-        layer?.backgroundColor = Theme.palette.nsColor(\.background).cgColor
+        refreshBackground()
         // The engine's chrome row rides down with the content; hand its
         // position to SwiftUI, which can paint over the terminal.
         let cover = drop > 0 ? CGRect(x: 0, y: drop - offset, width: bounds.width, height: offset) : nil

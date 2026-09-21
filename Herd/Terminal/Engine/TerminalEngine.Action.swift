@@ -1,13 +1,11 @@
-// Copied from Ghostty (https://github.com/ghostty-org/ghostty, commit 4a0e9e1) macOS sources.
-// MIT License, Copyright (c) 2024 Mitchell Hashimoto, Ghostty contributors. See LICENSE-ghostty.
 import SwiftUI
 import GhosttyKit
 
-extension Ghostty {
+extension TerminalEngine {
     struct Action {}
 }
 
-extension Ghostty.Action {
+extension TerminalEngine.Action {
     struct ColorChange {
         let kind: Kind
         let color: Color
@@ -167,7 +165,7 @@ extension Ghostty.Action {
 }
 
 // Putting the initializer in an extension preserves the automatic one.
-extension Ghostty.Action.ProgressReport {
+extension TerminalEngine.Action.ProgressReport {
     init(c: ghostty_action_progress_report_s) {
         self.state = State(c.state)
         self.progress = c.progress >= 0 ? UInt8(c.progress) : nil

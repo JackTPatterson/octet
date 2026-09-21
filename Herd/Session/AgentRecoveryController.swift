@@ -2,7 +2,7 @@ import AppKit
 import Foundation
 
 /// Journals every Claude/Codex (and integration-reported) agent session and,
-/// when a shutdown or herdr restart kills them, offers to resume them in
+/// when a shutdown or session server restart kills them, offers to resume them in
 /// their workspaces with `claude --resume <id>` / `codex resume <id>`.
 @MainActor
 final class AgentRecoveryController: ObservableObject {
@@ -11,26 +11,26 @@ final class AgentRecoveryController: ObservableObject {
     /// True when the panel was opened by hand (history), not after a restart.
     @Published private(set) var showingHistory = false
 
-    private let client: HerdrClient
+    private let client: EngineClient
     private let url: URL
     private var journal: AgentSessionJournal
     /// `lastObserved` from the previous run, consumed by the first check.
     private var pendingCheck: Date?
     private var lastInference = Date.distantPast
     private var lastSave = Date.distantPast
-    private var lastSnapshot: HerdrSnapshot = .empty
-    /// herdr's native resume needs a few seconds to relaunch agents.
+    private var lastSnapshot: EngineSnapshot = .empty
+    /// The session server's native resume needs a few seconds to relaunch agents.
     static let gracePeriod: TimeInterval = 8
     static let inferenceInterval: TimeInterval = 10
 
-    init(client: HerdrClient, url: URL = HerdrSession.supportDirectory.appendingPathComponent("agent-sessions.json")) {
+    init(client: EngineClient, url: URL = EngineSession.supportDirectory.appendingPathComponent("agent-sessions.json")) {
         self.client = client
         self.url = url
         journal = AgentSessionJournal.load(from: url)
         pendingCheck = journal.records.isEmpty ? nil : journal.lastObserved
     }
 
-    /// herdr went away and came back (crash, `server stop`, update handoff):
+    /// The session server went away and came back (crash, `server stop`, update handoff):
     /// check again against the last snapshot seen before the drop.
     func connectionLost() {
         guard pendingCheck == nil, !journal.records.isEmpty else { return }
@@ -46,7 +46,7 @@ final class AgentRecoveryController: ObservableObject {
         return Dictionary(journal.records.map { ($0.terminalId, $0.firstSeen) }, uniquingKeysWith: { first, _ in first })
     }
 
-    func observe(_ snapshot: HerdrSnapshot, inferred: [String: String], now: Date = Date()) {
+    func observe(_ snapshot: EngineSnapshot, inferred: [String: String], now: Date = Date()) {
         lastSnapshot = snapshot
         let before = journal.records
         // Record against the pre-restart journal only after the check has
@@ -144,8 +144,8 @@ final class AgentRecoveryController: ObservableObject {
 
     private nonisolated static func resume(
         _ record: AgentSessionRecord,
-        client: HerdrClient,
-        snapshot: HerdrSnapshot,
+        client: EngineClient,
+        snapshot: EngineSnapshot,
         shell: String,
         created: inout [String: String]
     ) throws {
@@ -172,7 +172,7 @@ final class AgentRecoveryController: ObservableObject {
 
     /// Running agents Herd can restart in place without losing the
     /// conversation: it knows their session id and their tab holds one pane.
-    func reloadableAgents() -> [(agent: HerdrAgent, record: AgentSessionRecord)] {
+    func reloadableAgents() -> [(agent: EngineAgent, record: AgentSessionRecord)] {
         let byTerminal = Dictionary(journal.records.map { ($0.terminalId, $0) }, uniquingKeysWith: { first, _ in first })
         return lastSnapshot.agents.compactMap { agent in
             guard let terminal = agent.terminalId, let record = byTerminal[terminal],
@@ -183,7 +183,7 @@ final class AgentRecoveryController: ObservableObject {
     }
 
     /// Agents that are running but can't be restarted in place, with why.
-    func unreloadableAgents() -> [(agent: HerdrAgent, reason: String)] {
+    func unreloadableAgents() -> [(agent: EngineAgent, reason: String)] {
         let byTerminal = Dictionary(journal.records.map { ($0.terminalId, $0) }, uniquingKeysWith: { first, _ in first })
         return lastSnapshot.agents.compactMap { agent in
             guard let terminal = agent.terminalId else { return nil }
@@ -199,7 +199,7 @@ final class AgentRecoveryController: ObservableObject {
 
     /// Restarts each agent in its own tab with `--resume`, so it picks up new
     /// MCP servers, plugins, or skills while keeping the conversation.
-    func reload(_ agents: [(agent: HerdrAgent, record: AgentSessionRecord)]) {
+    func reload(_ agents: [(agent: EngineAgent, record: AgentSessionRecord)]) {
         guard !agents.isEmpty else { return }
         let noun = agents.count == 1 ? "1 agent" : "\(agents.count) agents"
         let toast = ToastCenter.shared.progress("Reloading \(noun)…")

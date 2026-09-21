@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Lists agent sessions killed by a shutdown or herdr restart (or, from the
+/// Lists agent sessions killed by a shutdown or session server restart (or, from the
 /// palette, recent sessions that aren't running) and resumes the chosen ones.
 struct RecoveryPanel: View {
     @ObservedObject var recovery: AgentRecoveryController
@@ -12,8 +12,7 @@ struct RecoveryPanel: View {
 
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
-                Image(systemName: "arrow.counterclockwise.circle.fill")
-                    .font(.system(size: 14))
+                HerdIcon("arrow.counterclockwise.circle.fill", size: 19)
                     .foregroundStyle(Theme.accent)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(recovery.showingHistory ? "Recent Agent Sessions" : "Recover Agent Sessions")
@@ -51,13 +50,13 @@ struct RecoveryPanel: View {
             Rectangle().fill(Theme.divider).frame(height: 1)
 
             HStack {
+                // No Return/Esc shortcuts: the panel isn't modal, so those
+                // keys belong to the terminal you keep typing in.
                 Button(recovery.showingHistory ? "Close" : "Dismiss") { recovery.dismiss() }
-                    .keyboardShortcut(.cancelAction)
                 Spacer()
                 Button(selected.count == sessions.count && sessions.count > 1 ? "Resume All" : "Resume \(selected.count)") {
                     recovery.resume(selected)
                 }
-                .keyboardShortcut(.defaultAction)
                 .disabled(selected.isEmpty)
             }
             .controlSize(.small)
@@ -84,8 +83,7 @@ private struct RecoveryRow: View {
     var body: some View {
         let brand = AgentBrand.forAgent(record.agent)
         HStack(spacing: 8) {
-            Image(systemName: included ? "checkmark.square.fill" : "square")
-                .font(.system(size: 12))
+            HerdIcon(included ? "checkmark.square.fill" : "square", size: 16)
                 .foregroundStyle(included ? Theme.accent : Theme.textTertiary)
             if let brand { AgentLogo(brand: brand, size: 13) }
             VStack(alignment: .leading, spacing: 1) {
@@ -104,8 +102,7 @@ private struct RecoveryRow: View {
                 .font(Theme.captionFont)
                 .foregroundStyle(Theme.textTertiary)
             Button(action: copy) {
-                Image(systemName: "doc.on.doc")
-                    .font(.system(size: 10))
+                HerdIcon("doc.on.doc", size: 14)
                     .foregroundStyle(Theme.textSecondary)
                     .frame(width: 20, height: 20)
             }
@@ -129,6 +126,6 @@ private struct RecoveryRow: View {
 
     private var subtitle: String {
         let folder = record.cwd.replacingOccurrences(of: NSHomeDirectory(), with: "~")
-        return record.workspaceLabel.isEmpty ? folder : "\(record.workspaceLabel) — \(folder)"
+        return record.workspaceLabel.isEmpty ? folder : "\(record.workspaceLabel) · \(folder)"
     }
 }

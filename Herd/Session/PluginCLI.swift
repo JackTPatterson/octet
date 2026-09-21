@@ -1,6 +1,6 @@
 import Foundation
 
-/// Runs `herdr plugin …` commands in the background for install/uninstall,
+/// Runs the session server's `plugin …` commands in the background for install/uninstall,
 /// through an interactive login shell so plugin build steps see the user's
 /// PATH (nvm, Homebrew).
 enum PluginCLI {
@@ -12,11 +12,11 @@ enum PluginCLI {
     static let previewMarker = "Plugin install preview:"
     static let promptMarker = "Install this plugin? [y/N]"
 
-    /// Fetches a GitHub plugin and returns herdr's install preview without
-    /// installing. herdr only prints the preview on a terminal, so this runs
+    /// Fetches a GitHub plugin and returns the session server's install preview without
+    /// installing. The session server only prints the preview on a terminal, so this runs
     /// under `script` (a pty) and answers the prompt with "n".
-    static func preview(repo: String, herdrPath: String, completion: @escaping (Swift.Result<String, Error>) -> Void) {
-        let command = "exec \(shellQuote(herdrPath)) --session \(HerdrSession.name) plugin install \(shellQuote(repo))"
+    static func preview(repo: String, enginePath: String, completion: @escaping (Swift.Result<String, Error>) -> Void) {
+        let command = "exec \(shellQuote(enginePath)) --session \(EngineSession.name) plugin install \(shellQuote(repo))"
         run(
             executable: "/usr/bin/script",
             arguments: ["-q", "/dev/null", "/bin/zsh", "-lic", command],
@@ -34,12 +34,12 @@ enum PluginCLI {
         }
     }
 
-    static func install(repo: String, herdrPath: String, completion: @escaping (Result) -> Void) {
-        shell("\(shellQuote(herdrPath)) --session \(HerdrSession.name) plugin install \(shellQuote(repo)) --yes", completion: completion)
+    static func install(repo: String, enginePath: String, completion: @escaping (Result) -> Void) {
+        shell("\(shellQuote(enginePath)) --session \(EngineSession.name) plugin install \(shellQuote(repo)) --yes", completion: completion)
     }
 
-    static func uninstall(pluginId: String, herdrPath: String, completion: @escaping (Result) -> Void) {
-        shell("\(shellQuote(herdrPath)) --session \(HerdrSession.name) plugin uninstall \(shellQuote(pluginId))", completion: completion)
+    static func uninstall(pluginId: String, enginePath: String, completion: @escaping (Result) -> Void) {
+        shell("\(shellQuote(enginePath)) --session \(EngineSession.name) plugin uninstall \(shellQuote(pluginId))", completion: completion)
     }
 
     /// Parses `name:` and `version:` out of an install preview.

@@ -1,7 +1,7 @@
 import Foundation
 
-/// Errors from the herdr socket API.
-enum HerdrSocketError: Error, CustomStringConvertible {
+/// Errors from the session server's socket API.
+enum EngineSocketError: Error, CustomStringConvertible {
     case connectFailed(path: String, errno: Int32)
     case writeFailed
     case closed
@@ -20,21 +20,21 @@ enum HerdrSocketError: Error, CustomStringConvertible {
     }
 }
 
-/// A line-oriented connection to herdr's newline-delimited JSON socket.
-final class HerdrSocketConnection {
+/// A line-oriented connection to the session server's newline-delimited JSON socket.
+final class EngineSocketConnection {
     private let fd: Int32
     private var buffer = Data()
 
     init(path: String) throws {
         fd = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard fd >= 0 else { throw HerdrSocketError.connectFailed(path: path, errno: errno) }
+        guard fd >= 0 else { throw EngineSocketError.connectFailed(path: path, errno: errno) }
         var address = sockaddr_un()
         address.sun_family = sa_family_t(AF_UNIX)
         let pathBytes = Array(path.utf8)
         let capacity = MemoryLayout.size(ofValue: address.sun_path)
         guard pathBytes.count < capacity else {
             close(fd)
-            throw HerdrSocketError.connectFailed(path: path, errno: ENAMETOOLONG)
+            throw EngineSocketError.connectFailed(path: path, errno: ENAMETOOLONG)
         }
         withUnsafeMutableBytes(of: &address.sun_path) { raw in
             raw.copyBytes(from: pathBytes)
@@ -47,7 +47,7 @@ final class HerdrSocketConnection {
         guard result == 0 else {
             let err = errno
             close(fd)
-            throw HerdrSocketError.connectFailed(path: path, errno: err)
+            throw EngineSocketError.connectFailed(path: path, errno: err)
         }
         var noSigPipe: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
@@ -67,7 +67,7 @@ final class HerdrSocketConnection {
             }
             return offset
         }
-        guard written == data.count else { throw HerdrSocketError.writeFailed }
+        guard written == data.count else { throw EngineSocketError.writeFailed }
     }
 
     /// Blocks until one full line arrives.
@@ -80,7 +80,7 @@ final class HerdrSocketConnection {
             }
             var chunk = [UInt8](repeating: 0, count: 65536)
             let n = read(fd, &chunk, chunk.count)
-            guard n > 0 else { throw HerdrSocketError.closed }
+            guard n > 0 else { throw EngineSocketError.closed }
             buffer.append(chunk, count: n)
         }
     }
@@ -90,21 +90,22 @@ final class HerdrSocketConnection {
     }
 }
 
-/// Request/response access to the herdr socket API. Each call opens a short
+/// Request/response access to the session server's socket API. Each call opens a short
 /// connection, which keeps the client stateless and thread-safe.
-struct HerdrClient {
+struct EngineClient {
     let socketPath: String
 
-    /// Socket for a named herdr session (`~/.config/herdr/sessions/<name>/herdr.sock`).
+    /// Socket for a named session (`<state folder>/sessions/<name>/<socket file>`).
     static func socketPath(session: String?, home: String = NSHomeDirectory()) -> String {
-        let base = home + "/.config/herdr"
-        guard let session, !session.isEmpty else { return base + "/herdr.sock" }
-        return base + "/sessions/\(session)/herdr.sock"
+        let base = home + "/" + EngineProtocol.stateDirectory
+        let socket = EngineProtocol.socketFileName
+        guard let session, !session.isEmpty else { return base + "/" + socket }
+        return base + "/sessions/\(session)/" + socket
     }
 
     @discardableResult
     func call(_ method: String, _ params: [String: Any] = [:]) throws -> [String: Any] {
-        let connection = try HerdrSocketConnection(path: socketPath)
+        let connection = try EngineSocketConnection(path: socketPath)
         let id = "herd-\(UUID().uuidString.prefix(8))"
         try connection.send(["id": id, "method": method, "params": params])
         let line = try connection.readLine()
@@ -113,27 +114,27 @@ struct HerdrClient {
 
     static func parseResponse(_ line: Data) throws -> [String: Any] {
         guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else {
-            throw HerdrSocketError.malformedResponse(String(decoding: line, as: UTF8.self))
+            throw EngineSocketError.malformedResponse(String(decoding: line, as: UTF8.self))
         }
         if let error = object["error"] as? [String: Any] {
-            throw HerdrSocketError.server(
+            throw EngineSocketError.server(
                 code: error["code"] as? String ?? "unknown",
                 message: error["message"] as? String ?? ""
             )
         }
         guard let result = object["result"] as? [String: Any] else {
-            throw HerdrSocketError.malformedResponse(String(decoding: line, as: UTF8.self))
+            throw EngineSocketError.malformedResponse(String(decoding: line, as: UTF8.self))
         }
         return result
     }
 
-    func snapshot() throws -> HerdrSnapshot {
+    func snapshot() throws -> EngineSnapshot {
         let result = try call("session.snapshot")
         guard let raw = result["snapshot"] else {
-            throw HerdrSocketError.malformedResponse("session.snapshot without snapshot")
+            throw EngineSocketError.malformedResponse("session.snapshot without snapshot")
         }
         let data = try JSONSerialization.data(withJSONObject: raw)
-        return try JSONDecoder().decode(HerdrSnapshot.self, from: data)
+        return try JSONDecoder().decode(EngineSnapshot.self, from: data)
     }
 
     /// Event types Herd listens to; any of them triggers a snapshot refresh.
@@ -144,16 +145,16 @@ struct HerdrClient {
         "pane.created", "pane.updated", "pane.closed", "pane.focused", "pane.moved",
         "pane.exited", "pane.agent_detected", "layout.updated",
         // pane.agent_status_changed requires a pane_id; agent state is picked
-        // up by HerdrStore's periodic refresh instead.
+        // up by SessionStore's periodic refresh instead.
     ]
 
     /// Opens a subscription and calls `onEvent` with each pushed event's type
     /// until the connection closes or `connection.shutdownNow()` is called.
     func subscribe(
-        connectionCreated: (HerdrSocketConnection) -> Void,
+        connectionCreated: (EngineSocketConnection) -> Void,
         onEvent: (String) -> Void
     ) throws {
-        let connection = try HerdrSocketConnection(path: socketPath)
+        let connection = try EngineSocketConnection(path: socketPath)
         try connection.send([
             "id": "herd-events",
             "method": "events.subscribe",

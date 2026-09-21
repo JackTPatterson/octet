@@ -1,4 +1,3 @@
-// Trimmed from Ghostty's macos/Sources/Ghostty/GhosttyPackage.swift (MIT, see LICENSE-ghostty).
 import Foundation
 import GhosttyKit
 
@@ -10,7 +9,7 @@ extension ghostty_surface_t: @unchecked @retroactive Sendable {}
 
 // MARK: Swift Types for C Types
 
-extension Ghostty {
+extension TerminalEngine {
     class AllocatedString {
         private let cString: ghostty_string_s
 
@@ -30,7 +29,7 @@ extension Ghostty {
     }
 }
 
-extension Ghostty {
+extension TerminalEngine {
     struct ClipboardContent {
         let mime: String
         let data: String

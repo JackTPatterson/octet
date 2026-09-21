@@ -1,15 +1,13 @@
-// Copied from Ghostty (https://github.com/ghostty-org/ghostty, commit 4a0e9e1) macOS sources.
-// MIT License, Copyright (c) 2024 Mitchell Hashimoto, Ghostty contributors. See LICENSE-ghostty.
 import Cocoa
 import SwiftUI
 import GhosttyKit
 
-extension Ghostty {
+extension TerminalEngine {
     struct Input {}
 
     // MARK: Mods
 
-    /// Returns the event modifier flags set for the Ghostty mods enum.
+    /// Returns the event modifier flags set for the engine mods enum.
     static func eventModifierFlags(mods: ghostty_input_mods_e) -> NSEvent.ModifierFlags {
         var flags = NSEvent.ModifierFlags(rawValue: 0)
         if mods.rawValue & GHOSTTY_MODS_SHIFT.rawValue != 0 { flags.insert(.shift) }
@@ -19,8 +17,8 @@ extension Ghostty {
         return flags
     }
 
-    /// Translate event modifier flags to a ghostty mods enum.
-    static func ghosttyMods(_ flags: NSEvent.ModifierFlags) -> ghostty_input_mods_e {
+    /// Translate event modifier flags to an engine mods enum.
+    static func engineMods(_ flags: NSEvent.ModifierFlags) -> ghostty_input_mods_e {
         var mods: UInt32 = GHOSTTY_MODS_NONE.rawValue
 
         if flags.contains(.shift) { mods |= GHOSTTY_MODS_SHIFT.rawValue }
@@ -30,7 +28,7 @@ extension Ghostty {
         if flags.contains(.capsLock) { mods |= GHOSTTY_MODS_CAPS.rawValue }
 
         // Handle sided input. We can't tell that both are pressed in the
-        // Ghostty structure but that's okay -- we don't use that information.
+        // engine structure but that's okay -- we don't use that information.
         let rawFlags = flags.rawValue
         if rawFlags & UInt(NX_DEVICERSHIFTKEYMASK) != 0 { mods |= GHOSTTY_MODS_SHIFT_RIGHT.rawValue }
         if rawFlags & UInt(NX_DEVICERCTLKEYMASK) != 0 { mods |= GHOSTTY_MODS_CTRL_RIGHT.rawValue }
@@ -40,8 +38,8 @@ extension Ghostty {
         return ghostty_input_mods_e(mods)
     }
 
-    /// A map from the Ghostty key enum to the keyEquivalent string for shortcuts. Note that
-    /// not all ghostty key enum values are represented here because not all of them can be
+    /// A map from the engine key enum to the keyEquivalent string for shortcuts. Note that
+    /// not all engine key enum values are represented here because not all of them can be
     /// mapped to a KeyEquivalent.
     static let keyToEquivalent: [ghostty_input_key_e: KeyEquivalent] = [
         // Function keys
@@ -62,9 +60,9 @@ extension Ghostty {
     ]
 }
 
-// MARK: Ghostty.Input.BindingFlags
+// MARK: TerminalEngine.Input.BindingFlags
 
-extension Ghostty.Input {
+extension TerminalEngine.Input {
     /// `ghostty_binding_flags_e`
     struct BindingFlags: OptionSet, Sendable {
         let rawValue: UInt32
@@ -88,9 +86,9 @@ extension Ghostty.Input {
     }
 }
 
-// MARK: Ghostty.Input.KeyEvent
+// MARK: TerminalEngine.Input.KeyEvent
 
-extension Ghostty.Input {
+extension TerminalEngine.Input {
     /// `ghostty_input_key_s`
     struct KeyEvent {
         let action: Action
@@ -183,9 +181,9 @@ extension Ghostty.Input {
     }
 }
 
-// MARK: Ghostty.Input.Action
+// MARK: TerminalEngine.Input.Action
 
-extension Ghostty.Input {
+extension TerminalEngine.Input {
     /// `ghostty_input_action_e`
     enum Action: String, CaseIterable {
         case release
@@ -203,9 +201,9 @@ extension Ghostty.Input {
 }
 
 
-// MARK: Ghostty.Input.MouseEvent
+// MARK: TerminalEngine.Input.MouseEvent
 
-extension Ghostty.Input {
+extension TerminalEngine.Input {
     /// Represents a mouse input event with button state, button type, and modifier keys.
     struct MouseButtonEvent {
         let action: MouseState
@@ -288,9 +286,9 @@ extension Ghostty.Input {
     }
 }
 
-// MARK: Ghostty.Input.MouseState
+// MARK: TerminalEngine.Input.MouseState
 
-extension Ghostty.Input {
+extension TerminalEngine.Input {
     /// `ghostty_input_mouse_state_e`
     enum MouseState: String, CaseIterable {
         case release
@@ -306,9 +304,9 @@ extension Ghostty.Input {
 }
 
 
-// MARK: Ghostty.Input.MouseButton
+// MARK: TerminalEngine.Input.MouseButton
 
-extension Ghostty.Input {
+extension TerminalEngine.Input {
     /// `ghostty_input_mouse_button_e`
     enum MouseButton: String, CaseIterable {
         case unknown
@@ -363,9 +361,9 @@ extension Ghostty.Input {
 }
 
 
-// MARK: Ghostty.Input.ScrollMods
+// MARK: TerminalEngine.Input.ScrollMods
 
-extension Ghostty.Input {
+extension TerminalEngine.Input {
     /// `ghostty_input_scroll_mods_t` - Scroll event modifiers
     ///
     /// This is a packed bitmask that contains precision and momentum information
@@ -403,9 +401,9 @@ extension Ghostty.Input {
     }
 }
 
-// MARK: Ghostty.Input.Momentum
+// MARK: TerminalEngine.Input.Momentum
 
-extension Ghostty.Input {
+extension TerminalEngine.Input {
     /// `ghostty_input_mouse_momentum_e` - Momentum phase for scroll events
     enum Momentum: UInt8, CaseIterable {
         case none = 0
@@ -434,7 +432,7 @@ extension Ghostty.Input {
 #if canImport(AppKit)
 import AppKit
 
-extension Ghostty.Input.Momentum {
+extension TerminalEngine.Input.Momentum {
     /// Create a Momentum from an NSEvent.Phase
     init(_ phase: NSEvent.Phase) {
         switch phase {
@@ -450,9 +448,9 @@ extension Ghostty.Input.Momentum {
 }
 #endif
 
-// MARK: Ghostty.Input.Mods
+// MARK: TerminalEngine.Input.Mods
 
-extension Ghostty.Input {
+extension TerminalEngine.Input {
     /// `ghostty_input_mods_e`
     struct Mods: OptionSet {
         let rawValue: UInt32
@@ -481,18 +479,18 @@ extension Ghostty.Input {
         }
 
         init(nsFlags: NSEvent.ModifierFlags) {
-            self.init(cMods: Ghostty.ghosttyMods(nsFlags))
+            self.init(cMods: TerminalEngine.engineMods(nsFlags))
         }
 
         var nsFlags: NSEvent.ModifierFlags {
-            Ghostty.eventModifierFlags(mods: cMods)
+            TerminalEngine.eventModifierFlags(mods: cMods)
         }
     }
 }
 
-// MARK: Ghostty.Input.Key
+// MARK: TerminalEngine.Input.Key
 
-extension Ghostty.Input {
+extension TerminalEngine.Input {
     /// `ghostty_input_key_e`
     enum Key: String {
         // Writing System Keys
@@ -1089,9 +1087,9 @@ extension Ghostty.Input {
     }
 }
 
-extension Ghostty.Input.Key {
-    // Herd: from Ghostty's AppEnum conformance (AppIntents removed); used by init(keyCode:).
-    static var allCases: [Ghostty.Input.Key] {
+extension TerminalEngine.Input.Key {
+    // Key names (no AppIntents); used by init(keyCode:).
+    static var allCases: [TerminalEngine.Input.Key] {
         return [
             // Letters (A-Z)
             .a, .b, .c, .d, .e, .f, .g, .h, .i, .j, .k, .l, .m, .n, .o, .p, .q, .r, .s, .t, .u, .v, .w, .x, .y, .z,

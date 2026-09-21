@@ -1,9 +1,6 @@
-// Trimmed from Ghostty (https://github.com/ghostty-org/ghostty, commit 4a0e9e1)
-// macos/Sources/Ghostty/Ghostty.App.swift and Ghostty.Config.swift.
-// MIT License, Copyright (c) 2024 Mitchell Hashimoto, Ghostty contributors. See LICENSE-ghostty.
-//
-// Herd trims: a single app-wide config built from a string (user's Ghostty
-// config files are NOT loaded), and only the runtime actions Herd needs:
+// The app-wide terminal runtime: a single config built from a string (the
+// renderer's own user config files are NOT loaded), and only the runtime
+// actions Herd needs:
 // SET_TITLE, PWD, MOUSE_SHAPE, MOUSE_VISIBILITY, MOUSE_OVER_LINK, CELL_SIZE,
 // RENDERER_HEALTH, OPEN_URL, SHOW_CHILD_EXITED/CLOSE_*/QUIT (-> surface exit).
 // Every other action returns false (unhandled).
@@ -11,7 +8,7 @@
 import AppKit
 import GhosttyKit
 
-extension Ghostty {
+extension TerminalEngine {
     /// Maps to a `ghostty_config_t` and the various operations on that.
     class Config {
         private(set) var config: ghostty_config_t? {
@@ -39,7 +36,7 @@ extension Ghostty {
 
         /// Herd: build a config from defaults + the given config-file-syntax string.
         /// `ghostty_config_load_default_files` / CLI args are deliberately skipped so
-        /// the user's personal Ghostty configuration never leaks into Herd.
+        /// the user's personal terminal configuration files never leak into Herd.
         init(overrides: String) {
             self.config = Self.loadConfig(overrides: overrides)
         }
@@ -82,7 +79,7 @@ extension Ghostty {
         /// The global app configuration.
         private(set) var config: Config
 
-        /// The ghostty app instance.
+        /// The terminal engine app instance.
         private(set) var app: ghostty_app_t? {
             didSet {
                 guard let old = oldValue else { return }
@@ -94,12 +91,17 @@ extension Ghostty {
         /// every surface (fonts, colors, cursor, opacity, input options).
         func updateConfig(overrides: String) {
             let newConfig = Config(overrides: overrides)
+            // Kept even when the config is rejected, so Settings can say why.
+            lastConfigErrors = newConfig.config == nil ? ["The terminal rejected the new settings."] + newConfig.errors : newConfig.errors
             guard let app, let cfg = newConfig.config else { return }
             ghostty_app_update_config(app, cfg)
             config = newConfig
         }
 
-        /// Herd: applies Ghostty's background blur to a window.
+        /// Diagnostics from the most recent update; nil before the first.
+        private(set) var lastConfigErrors: [String]?
+
+        /// Applies the renderer's background blur to a window.
         func applyBackgroundBlur(to window: NSWindow) {
             guard let app else { return }
             ghostty_set_window_background_blur(app, Unmanaged.passUnretained(window).toOpaque())
@@ -109,7 +111,7 @@ extension Ghostty {
             self.config = Config(overrides: overrides)
             guard let cfg = self.config.config else { return }
 
-            // Create our "runtime" config. The "runtime" is the configuration that ghostty
+            // Create our "runtime" config. The "runtime" is the configuration that the engine
             // uses to interface with the application runtime environment.
             var runtime_cfg = ghostty_runtime_config_s(
                 userdata: Unmanaged.passUnretained(self).toOpaque(),
@@ -124,7 +126,7 @@ extension Ghostty {
                 tmux_control_cb: nil
             )
 
-            // Create the ghostty app.
+            // Create the engine app.
             guard let app = ghostty_app_new(&runtime_cfg, cfg) else {
                 logger.critical("ghostty_app_new failed")
                 return
@@ -167,7 +169,7 @@ extension Ghostty {
 
         // MARK: Notifications
 
-        // Called when the selected keyboard changes. We have to notify Ghostty so that
+        // Called when the selected keyboard changes. We have to notify the engine so that
         // it can reload the keyboard mapping for input.
         @objc private func keyboardSelectionDidChange(notification: NSNotification) {
             guard let app = self.app else { return }
@@ -186,7 +188,7 @@ extension Ghostty {
             ghostty_app_set_focus(app, false)
         }
 
-        // MARK: Ghostty Callbacks (macOS)
+        // MARK: Engine Callbacks (macOS)
 
         static func closeSurface(_ userdata: UnsafeMutableRawPointer?, processAlive: Bool) {
             let surface = self.surfaceUserdata(from: userdata)
@@ -202,7 +204,7 @@ extension Ghostty {
             guard let surface = surfaceView.surface else { return false }
 
             // Get our pasteboard
-            guard let pasteboard = NSPasteboard.ghostty(location) else { return false }
+            guard let pasteboard = NSPasteboard.terminal(location) else { return false }
 
             // Return false if there is no text-like clipboard content so
             // performable paste bindings can pass through to the terminal.
@@ -212,7 +214,7 @@ extension Ghostty {
             return true
         }
 
-        /// Herd: Ghostty shows a confirmation sheet for unsafe pastes and OSC 52
+        /// A full terminal app would show a confirmation sheet for unsafe pastes and OSC 52
         /// reads. Herd has no such UI, so a paste is completed (confirmed) and an
         /// OSC 52 read is denied by completing with an empty string.
         static func confirmReadClipboard(
@@ -250,16 +252,16 @@ extension Ghostty {
             len: Int,
             confirm: Bool
         ) {
-            guard let pasteboard = NSPasteboard.ghostty(location) else { return }
+            guard let pasteboard = NSPasteboard.terminal(location) else { return }
             guard let content = content, len > 0 else { return }
 
             // Convert the C array to Swift array
             let contentArray = (0..<len).compactMap { i in
-                Ghostty.ClipboardContent.from(content: content[i])
+                TerminalEngine.ClipboardContent.from(content: content[i])
             }
             guard !contentArray.isEmpty else { return }
 
-            // Herd: Ghostty asks for confirmation when `confirm` is set (OSC 52
+            // The engine asks for confirmation when `confirm` is set (OSC 52
             // writes under clipboard-write=ask). We have no prompt UI; with the
             // default config OSC 52 writes are allowed without confirmation, so a
             // confirm request is simply ignored.
@@ -312,7 +314,7 @@ extension Ghostty {
                 break
 
             default:
-                Ghostty.logger.warning("unknown action target=\(target.tag.rawValue, privacy: .public)")
+                TerminalEngine.logger.warning("unknown action target=\(target.tag.rawValue, privacy: .public)")
                 return false
             }
 
@@ -375,7 +377,7 @@ extension Ghostty {
                 return openURL(action.action.open_url)
 
             case GHOSTTY_ACTION_SHOW_CHILD_EXITED:
-                // Herd: the child (e.g. herdr) exited. Instead of Ghostty's
+                // The child (the session server) exited. Instead of the stock
                 // "Process exited" banner, report the exit to the host. Returning
                 // true suppresses the in-terminal "press any key" message.
                 guard let surfaceView = surfaceView(from: target) else { return false }
@@ -402,12 +404,12 @@ extension Ghostty {
         private static func openURL(
             _ v: ghostty_action_open_url_s
         ) -> Bool {
-            let action = Ghostty.Action.OpenURL(c: v)
+            let action = TerminalEngine.Action.OpenURL(c: v)
 
             // If the URL doesn't have a valid scheme we assume its a file path. The URL
             // initializer will gladly take invalid URLs (e.g. plain file paths) and turn
             // them into schema-less URLs, but these won't open properly in text editors.
-            // See: https://github.com/ghostty-org/ghostty/issues/8763
+
             let url: URL
             if let candidate = URL(string: action.url), candidate.scheme != nil {
                 url = candidate

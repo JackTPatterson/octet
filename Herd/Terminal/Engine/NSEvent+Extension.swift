@@ -1,17 +1,15 @@
-// Copied from Ghostty (https://github.com/ghostty-org/ghostty, commit 4a0e9e1) macOS sources.
-// MIT License, Copyright (c) 2024 Mitchell Hashimoto, Ghostty contributors. See LICENSE-ghostty.
 import Cocoa
 import GhosttyKit
 
 extension NSEvent {
-    /// Create a Ghostty key event for a given keyboard action.
+    /// Create a terminal engine key event for a given keyboard action.
     ///
     /// This will not set the "text" or "composing" fields since these can't safely be set
     /// with the information or lifetimes given.
     ///
     /// The translationMods should be set to the modifiers used for actual character
     /// translation if available.
-    func ghosttyKeyEvent(
+    func engineKeyEvent(
         _ action: ghostty_input_action_e,
         translationMods: NSEvent.ModifierFlags? = nil
     ) -> ghostty_input_key_s {
@@ -29,8 +27,8 @@ extension NSEvent {
         // producing text. We apply a simple heuristic here that has worked for years
         // so far: control and command never contribute to the translation of text,
         // assume everything else did.
-        key_ev.mods = Ghostty.ghosttyMods(modifierFlags)
-        key_ev.consumed_mods = Ghostty.ghosttyMods(
+        key_ev.mods = TerminalEngine.engineMods(modifierFlags)
+        key_ev.consumed_mods = TerminalEngine.engineMods(
             (translationMods ?? modifierFlags)
                 .subtracting([.control, .command]))
 
@@ -49,11 +47,11 @@ extension NSEvent {
         return key_ev
     }
 
-    /// Returns the text to set for a key event for Ghostty.
+    /// Returns the text to set for a key event for the engine.
     ///
     /// This namely contains logic to avoid control characters, since we handle control character
-    /// mapping manually within Ghostty.
-    var ghosttyCharacters: String? {
+    /// mapping manually within the engine.
+    var engineCharacters: String? {
         // If we have no characters associated with this event we do nothing.
         guard let characters else { return nil }
 
@@ -61,13 +59,13 @@ extension NSEvent {
            let scalar = characters.unicodeScalars.first {
             // If we have a single control character, then we return the characters
             // without control pressed. We do this because we handle control character
-            // encoding directly within Ghostty's KeyEncoder.
+            // encoding directly within the engine's key encoder.
             if scalar.value < 0x20 {
                 return self.characters(byApplyingModifiers: modifierFlags.subtracting(.control))
             }
 
             // If we have a single value in the PUA, then it's a function key and
-            // we don't want to send PUA ranges down to Ghostty.
+            // we don't want to send PUA ranges down to the engine.
             if scalar.value >= 0xF700 && scalar.value <= 0xF8FF {
                 return nil
             }

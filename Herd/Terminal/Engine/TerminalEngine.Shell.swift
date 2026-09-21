@@ -1,6 +1,4 @@
-// Copied from Ghostty (https://github.com/ghostty-org/ghostty, commit 4a0e9e1) macOS sources.
-// MIT License, Copyright (c) 2024 Mitchell Hashimoto, Ghostty contributors. See LICENSE-ghostty.
-extension Ghostty {
+extension TerminalEngine {
     enum Shell {
         // Characters to escape in the shell.
         private static let escapeCharacters = "\\ ()[]{}<>\"'`!#$&;|*?\t"

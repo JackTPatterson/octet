@@ -1,12 +1,10 @@
-// Copied from Ghostty (https://github.com/ghostty-org/ghostty, commit 4a0e9e1) macOS sources.
-// MIT License, Copyright (c) 2024 Mitchell Hashimoto, Ghostty contributors. See LICENSE-ghostty.
 import GhosttyKit
 
-extension Ghostty {
-    /// Represents a single surface within Ghostty.
+extension TerminalEngine {
+    /// Represents a single terminal surface.
     ///
-    /// NOTE(mitchellh): This is a work-in-progress class as part of a general refactor
-    /// of our Ghostty data model. At the time of writing there's still a ton of surface
+    /// NOTE: This is a work-in-progress class as part of a general refactor
+    /// of the terminal data model. At the time of writing there's still a ton of surface
     /// functionality that is not encapsulated in this class. It is planned to migrate that
     /// all over.
     ///
@@ -27,7 +25,7 @@ extension Ghostty {
 
         deinit {
             // deinit is not guaranteed to happen on the main actor and our API
-            // calls into libghostty must happen there so we capture the surface
+            // calls into the engine must happen there so we capture the surface
             // value so we don't capture `self` and then we detach it in a task.
             // We can't wait for the task to succeed so this will happen sometime
             // but that's okay.

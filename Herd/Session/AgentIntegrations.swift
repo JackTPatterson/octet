@@ -1,11 +1,12 @@
 import Foundation
 
-/// herdr's official agent integrations (`herdr integration …`). An installed
-/// integration reports accurate agent state and the agent's native session
-/// id, which is what lets herdr resume the conversation after a restart.
+/// The session server's official agent integrations (its `integration`
+/// command). An installed integration reports accurate agent state and the
+/// agent's native session id, which is what lets the session server resume
+/// the conversation after a restart.
 @MainActor
-final class HerdrIntegrations: ObservableObject {
-    static let shared = HerdrIntegrations()
+final class AgentIntegrations: ObservableObject {
+    static let shared = AgentIntegrations()
 
     struct Status: Identifiable, Equatable {
         let agent: String
@@ -21,10 +22,10 @@ final class HerdrIntegrations: ObservableObject {
     @Published private(set) var loading = false
 
     func refresh() {
-        guard let herdr = HerdrSession.locateHerdr() else { return }
+        guard let engine = EngineSession.locateEngine() else { return }
         loading = true
         DispatchQueue.global(qos: .userInitiated).async {
-            let output = Self.run(herdr, ["integration", "status"])
+            let output = Self.run(engine, ["integration", "status"])
             let parsed = Self.parse(output)
             DispatchQueue.main.async {
                 self.statuses = parsed
@@ -38,12 +39,12 @@ final class HerdrIntegrations: ObservableObject {
     }
 
     func install(_ agent: String) {
-        guard let herdr = HerdrSession.locateHerdr() else { return }
+        guard let engine = EngineSession.locateEngine() else { return }
         let name = AgentBrand.forAgent(agent)?.displayName ?? agent
         let toast = ToastCenter.shared.progress("Installing the \(name) integration…")
         DispatchQueue.global(qos: .userInitiated).async {
-            let output = Self.run(herdr, ["integration", "install", agent])
-            let installed = Self.parse(Self.run(herdr, ["integration", "status"])).first { $0.agent == agent }?.installed == true
+            let output = Self.run(engine, ["integration", "install", agent])
+            let installed = Self.parse(Self.run(engine, ["integration", "status"])).first { $0.agent == agent }?.installed == true
             DispatchQueue.main.async {
                 if installed {
                     ToastCenter.shared.succeed(toast, "Installed the \(name) integration",

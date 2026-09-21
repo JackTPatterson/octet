@@ -1,12 +1,12 @@
 import Foundation
 
-/// herdr's semantic agent state.
-enum HerdrAgentStatus: String, Codable, Equatable {
+/// The session server's semantic agent state.
+enum EngineAgentStatus: String, Codable, Equatable {
     case idle, working, blocked, done, unknown
 
     init(from decoder: Decoder) throws {
         let raw = try decoder.singleContainer().decode(String.self)
-        self = HerdrAgentStatus(rawValue: raw) ?? .unknown
+        self = EngineAgentStatus(rawValue: raw) ?? .unknown
     }
 }
 
@@ -14,7 +14,7 @@ private extension Decoder {
     func singleContainer() throws -> SingleValueDecodingContainer { try singleValueContainer() }
 }
 
-struct HerdrWorkspace: Codable, Equatable, Identifiable {
+struct EngineWorkspace: Codable, Equatable, Identifiable {
     let workspaceId: String
     let number: Int
     let label: String
@@ -22,8 +22,8 @@ struct HerdrWorkspace: Codable, Equatable, Identifiable {
     let paneCount: Int
     let tabCount: Int
     let activeTabId: String
-    let agentStatus: HerdrAgentStatus
-    let worktree: HerdrWorktree?
+    let agentStatus: EngineAgentStatus
+    let worktree: EngineWorktree?
 
     var id: String { workspaceId }
 
@@ -34,8 +34,8 @@ struct HerdrWorkspace: Codable, Equatable, Identifiable {
     }
 }
 
-/// Worktree provenance herdr attaches to workspaces opened from a repo.
-struct HerdrWorktree: Codable, Equatable {
+/// Worktree provenance the session server attaches to workspaces opened from a repo.
+struct EngineWorktree: Codable, Equatable {
     let repoRoot: String?
     let branch: String?
     let path: String?
@@ -45,14 +45,14 @@ struct HerdrWorktree: Codable, Equatable {
     }
 }
 
-struct HerdrTab: Codable, Equatable, Identifiable {
+struct EngineTab: Codable, Equatable, Identifiable {
     let tabId: String
     let workspaceId: String
     let number: Int
     let label: String
     let focused: Bool
     let paneCount: Int
-    let agentStatus: HerdrAgentStatus
+    let agentStatus: EngineAgentStatus
 
     var id: String { tabId }
 
@@ -62,14 +62,14 @@ struct HerdrTab: Codable, Equatable, Identifiable {
     }
 }
 
-struct HerdrPane: Codable, Equatable, Identifiable {
+struct EnginePane: Codable, Equatable, Identifiable {
     let paneId: String
     let tabId: String
     let workspaceId: String
     let focused: Bool
     let cwd: String?
     let foregroundCwd: String?
-    let agentStatus: HerdrAgentStatus
+    let agentStatus: EngineAgentStatus
     let terminalTitle: String?
     var terminalId: String? = nil
 
@@ -89,19 +89,19 @@ struct HerdrPane: Codable, Equatable, Identifiable {
     }
 }
 
-struct HerdrAgent: Codable, Equatable, Identifiable {
+struct EngineAgent: Codable, Equatable, Identifiable {
     let paneId: String
     let tabId: String?
     let workspaceId: String?
     let agent: String?
     let name: String?
     let displayAgent: String?
-    let agentStatus: HerdrAgentStatus
+    let agentStatus: EngineAgentStatus
     var stateChangeSeq: Int? = nil
     var cwd: String? = nil
     var foregroundCwd: String? = nil
     var terminalId: String? = nil
-    /// Native session reference reported by an official herdr integration.
+    /// Native session reference reported by an official session server integration.
     var agentSession: SessionReference? = nil
 
     struct SessionReference: Codable, Equatable {
@@ -130,16 +130,16 @@ struct HerdrAgent: Codable, Equatable, Identifiable {
     }
 }
 
-struct HerdrSnapshot: Codable, Equatable {
-    let workspaces: [HerdrWorkspace]
-    let tabs: [HerdrTab]
-    let panes: [HerdrPane]
-    let agents: [HerdrAgent]
+struct EngineSnapshot: Codable, Equatable {
+    let workspaces: [EngineWorkspace]
+    let tabs: [EngineTab]
+    let panes: [EnginePane]
+    let agents: [EngineAgent]
     let focusedWorkspaceId: String?
     let focusedTabId: String?
     let focusedPaneId: String?
 
-    static let empty = HerdrSnapshot(
+    static let empty = EngineSnapshot(
         workspaces: [], tabs: [], panes: [], agents: [],
         focusedWorkspaceId: nil, focusedTabId: nil, focusedPaneId: nil
     )
@@ -152,7 +152,7 @@ struct HerdrSnapshot: Codable, Equatable {
     }
 
     init(
-        workspaces: [HerdrWorkspace], tabs: [HerdrTab], panes: [HerdrPane], agents: [HerdrAgent],
+        workspaces: [EngineWorkspace], tabs: [EngineTab], panes: [EnginePane], agents: [EngineAgent],
         focusedWorkspaceId: String?, focusedTabId: String?, focusedPaneId: String?
     ) {
         self.workspaces = workspaces
@@ -166,24 +166,24 @@ struct HerdrSnapshot: Codable, Equatable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        workspaces = try c.decodeIfPresent([HerdrWorkspace].self, forKey: .workspaces) ?? []
-        tabs = try c.decodeIfPresent([HerdrTab].self, forKey: .tabs) ?? []
-        panes = try c.decodeIfPresent([HerdrPane].self, forKey: .panes) ?? []
-        agents = try c.decodeIfPresent([HerdrAgent].self, forKey: .agents) ?? []
+        workspaces = try c.decodeIfPresent([EngineWorkspace].self, forKey: .workspaces) ?? []
+        tabs = try c.decodeIfPresent([EngineTab].self, forKey: .tabs) ?? []
+        panes = try c.decodeIfPresent([EnginePane].self, forKey: .panes) ?? []
+        agents = try c.decodeIfPresent([EngineAgent].self, forKey: .agents) ?? []
         focusedWorkspaceId = try c.decodeIfPresent(String.self, forKey: .focusedWorkspaceId)
         focusedTabId = try c.decodeIfPresent(String.self, forKey: .focusedTabId)
         focusedPaneId = try c.decodeIfPresent(String.self, forKey: .focusedPaneId)
     }
 
-    func tabs(inWorkspace workspaceId: String) -> [HerdrTab] {
+    func tabs(inWorkspace workspaceId: String) -> [EngineTab] {
         tabs.filter { $0.workspaceId == workspaceId }.sorted { $0.number < $1.number }
     }
 
-    func agents(inTab tabId: String) -> [HerdrAgent] {
+    func agents(inTab tabId: String) -> [EngineAgent] {
         agents.filter { $0.tabId == tabId }
     }
 
-    func agents(inWorkspace workspaceId: String) -> [HerdrAgent] {
+    func agents(inWorkspace workspaceId: String) -> [EngineAgent] {
         agents.filter { $0.workspaceId == workspaceId }
     }
 
@@ -202,8 +202,8 @@ private extension Array where Element == String {
     }
 }
 
-/// An installed or linked herdr plugin (`plugin.list`).
-struct HerdrPlugin: Decodable, Equatable, Identifiable {
+/// An installed or linked plugin (`plugin.list`).
+struct EnginePlugin: Decodable, Equatable, Identifiable {
     struct Action: Decodable, Equatable {
         let id: String
         let title: String
@@ -254,7 +254,7 @@ struct HerdrPlugin: Decodable, Equatable, Identifiable {
 }
 
 /// One plugin command run (`plugin.log.list`).
-struct HerdrPluginLog: Decodable, Equatable, Identifiable {
+struct EnginePluginLog: Decodable, Equatable, Identifiable {
     let logId: String
     let pluginId: String
     let actionId: String?
