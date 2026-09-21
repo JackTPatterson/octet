@@ -173,6 +173,8 @@ struct HerdTerminalView: NSViewRepresentable {
     @ObservedObject var anchor: TerminalAnchor
     var onTitleChange: (String) -> Void = { _ in }
     var onExit: () -> Void = {}
+    /// Hands over the surface once made: the window sends its keys to it.
+    var onSurface: (TerminalEngine.SurfaceView) -> Void = { _ in }
 
     init(
         command: String,
@@ -181,7 +183,8 @@ struct HerdTerminalView: NSViewRepresentable {
         hiddenTopRows: Int = 0,
         anchor: TerminalAnchor,
         onTitleChange: @escaping (String) -> Void = { _ in },
-        onExit: @escaping () -> Void = {}
+        onExit: @escaping () -> Void = {},
+        onSurface: @escaping (TerminalEngine.SurfaceView) -> Void = { _ in }
     ) {
         self.command = command
         self.environment = environment
@@ -190,6 +193,7 @@ struct HerdTerminalView: NSViewRepresentable {
         self.anchor = anchor
         self.onTitleChange = onTitleChange
         self.onExit = onExit
+        self.onSurface = onSurface
     }
 
     @MainActor
@@ -201,6 +205,7 @@ struct HerdTerminalView: NSViewRepresentable {
         )
         view.onTitleChange = onTitleChange
         view.onExit = onExit
+        onSurface(view)
 
         // Grab keyboard focus once we're in a window.
         view.focusOnAttach = true
@@ -227,6 +232,23 @@ struct HerdTerminalView: NSViewRepresentable {
 @MainActor
 final class TerminalAnchor: ObservableObject {
     @Published var chromeCover: CGRect?
+    /// What the grid shows right now, below the engine's chrome row.
+    @Published var grid: TerminalGrid?
+}
+
+/// The terminal grid as the new-tab splash reads it: where the prompt is,
+/// and whether anything but a prompt has been printed.
+struct TerminalGrid: Equatable {
+    /// The cursor's row, counting from the first row under the engine's chrome.
+    let cursorRow: Int
+    /// Its column: it moves right as a command is typed at the prompt.
+    let cursorColumn: Int
+    /// Rows from the top through the cursor that hold any text.
+    let rowsInUse: Int
+    /// The cursor row's top and bottom in the terminal view, in points, so a
+    /// view laid over the terminal can keep clear of the prompt.
+    let cursorTop: CGFloat
+    let cursorBottom: CGFloat
 }
 
 /// A plain top-left-origin container.
@@ -280,6 +302,8 @@ final class TopRowClippingView: NSView {
 
     @MainActor
     private func updateBottomAnchor() {
+        let grid = measureGrid()
+        if anchor.grid != grid { anchor.grid = grid }
         let rows = SettingsStore.shared.values.textPosition == .bottom ? measureBlankRowsBelowCursor() : 0
         guard rows != blankRowsBelow else { return }
         blankRowsBelow = rows
@@ -310,6 +334,41 @@ final class TopRowClippingView: NSView {
         let tail = String(cString: text.text)
         guard tail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return 0 }
         return below
+    }
+
+    /// The grid from the first row under the engine's chrome through the
+    /// cursor: how many of those rows hold text, and where the cursor's row
+    /// sits in this view. Nil while the cursor is off screen or above the
+    /// hidden rows, when there is no prompt to speak of.
+    @MainActor
+    private func measureGrid() -> TerminalGrid? {
+        guard let surface = surfaceView.surface else { return nil }
+        var metrics = ghostty_surface_grid_metrics_s()
+        guard ghostty_surface_grid_metrics(surface, &metrics), metrics.cursor_in_viewport,
+              Int(metrics.cursor_row) >= hiddenRows, metrics.columns > 0 else { return nil }
+
+        var text = ghostty_text_s()
+        let selection = ghostty_selection_s(
+            top_left: ghostty_point_s(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_EXACT,
+                                      x: 0, y: UInt32(hiddenRows)),
+            bottom_right: ghostty_point_s(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_EXACT,
+                                          x: UInt32(metrics.columns) - 1, y: UInt32(metrics.cursor_row)),
+            rectangle: false
+        )
+        guard ghostty_surface_read_text(surface, selection, &text) else { return nil }
+        defer { ghostty_surface_free_text(surface, &text) }
+        let rowsInUse = String(cString: text.text)
+            .components(separatedBy: "\n")
+            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            .count
+
+        // In this view's coordinates, which is what SwiftUI overlays sit on:
+        // the stage shifts the surface down to bottom-anchor it.
+        let top = stage.frame.origin.y + surfaceView.frame.origin.y
+            + metrics.padding_top + Double(metrics.cursor_row) * metrics.cell_height
+        return TerminalGrid(cursorRow: Int(metrics.cursor_row) - hiddenRows, cursorColumn: Int(metrics.cursor_column),
+                            rowsInUse: rowsInUse,
+                            cursorTop: top, cursorBottom: top + metrics.cell_height)
     }
 
     required init?(coder: NSCoder) { fatalError("not supported") }

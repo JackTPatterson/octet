@@ -27,7 +27,10 @@ final class AgentDiscoveryStore: ObservableObject {
     /// one: agents are installed and updated rarely.
     func scanIfStale(after interval: TimeInterval = 86400) {
         guard let scannedAt else { return scan() }
-        if Date().timeIntervalSince(scannedAt) > interval { scan() }
+        // A scan saved before `onShellPath` existed would make the splash type
+        // full paths where a name would do, so it doesn't wait out the day.
+        let predatesPathCheck = agents.contains { $0.executablePath != nil && $0.onShellPath == nil }
+        if predatesPathCheck || Date().timeIntervalSince(scannedAt) > interval { scan() }
     }
 
     func scan() {

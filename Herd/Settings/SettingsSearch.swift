@@ -64,6 +64,7 @@ enum SettingsSearchIndex {
     private static let terminal: [SettingsSearchEntry] = [
         .init(.terminal, "Scrollback per pane", ["scrollback", "history", "buffer", "lines", "memory", "megabytes"]),
         .init(.terminal, "Terminal text", ["position", "top", "bottom", "align", "output"]),
+        .init(.terminal, "Start new tabs with shortcuts", ["splash", "welcome", "empty", "new tab", "start", "shortcuts", "recent"]),
         .init(.terminal, "Copy on select", ["copy", "clipboard", "selection", "mouse"]),
         .init(.terminal, "Confirm copies", ["copy", "clipboard", "toast"]),
         .init(.terminal, "Lines per scroll wheel notch", ["scroll", "mouse", "wheel", "speed", "trackpad"]),

@@ -17,6 +17,9 @@ struct DiscoveredAgent: Codable, Equatable, Identifiable {
     var configPath: String?
     /// The command as you would type it.
     var command: String
+    /// Whether that command resolves on the login shell's PATH, so a shell
+    /// can run it by name. Nil in scans saved before this was recorded.
+    var onShellPath: Bool?
 
     /// Found as an executable, config on disk, or both.
     var isPresent: Bool { executablePath != nil || configPath != nil }
@@ -66,7 +69,9 @@ enum AgentDiscovery {
     /// What every known agent looks like on this machine. `version` runs each
     /// CLI it found, so this belongs off the main thread.
     static func scan(home: String = NSHomeDirectory(), readVersions: Bool = true) -> [DiscoveredAgent] {
-        let directories = searchDirectories(shellPath: loginShellPath(), home: home)
+        let shellPath = loginShellPath()
+        let pathDirectories = (shellPath ?? "").components(separatedBy: ":").filter { !$0.isEmpty }
+        let directories = searchDirectories(shellPath: shellPath, home: home)
         let manager = FileManager.default
         return AgentHosts.all(home: home).map { host in
             let command = AgentHosts.executables[host.id] ?? host.cli
@@ -76,6 +81,9 @@ enum AgentDiscovery {
                                         configPath: manager.fileExists(atPath: host.home) ? host.home : nil,
                                         command: command)
             if readVersions, let path { agent.version = version(of: path) }
+            // A shell runs the first match on its PATH, so the bare name is
+            // safe only when that match is the one found here.
+            agent.onShellPath = path.map { locate(command: command, in: pathDirectories) == $0 }
             return agent
         }
         .filter(\.isPresent)

@@ -440,6 +440,15 @@ private struct TerminalSettings: View {
                 .frame(width: 150)
             }
             SettingsDivider()
+            SettingsRow(
+                title: "Start new tabs with shortcuts",
+                detail: "A new tab's empty rows offer your agents, recent folders and common shortcuts, until something runs in it."
+            ) {
+                Toggle("Start new tabs with shortcuts", isOn: $settings.values.newTabSplash)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+            }
+            SettingsDivider()
             SettingsRow(title: "Copy on select", detail: "Copy text as soon as you select it with the mouse.") {
                 Toggle("Copy on select", isOn: $settings.values.copyOnSelect).labelsHidden().toggleStyle(.switch)
             }
