@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// Warp-style vertical tabs: project groups with uppercase headers and
+/// Vertical tabs: project groups with uppercase headers and
 /// bordered workspace cards tinted by the running agent's vendor hue.
 struct SidebarView: View {
-    @ObservedObject var store: HerdrStore
+    @ObservedObject var store: SessionStore
+    var width: CGFloat = Theme.sidebarWidth
     @ObservedObject private var motion = MotionPreferences.shared
     @State private var collapsedGroups: Set<String> = []
 
@@ -12,20 +13,33 @@ struct SidebarView: View {
             controlBar
             Divider().overlay(Theme.divider)
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 10) {
+                LazyVStack(alignment: .leading, spacing: 8) {
                     ForEach(store.activeGroups) { group in
                         groupSection(group)
                     }
                     if store.snapshot.workspaces.isEmpty {
-                        Text(store.isConnected ? "No workspaces" : "Starting the terminal…")
-                            .font(Theme.uiFont)
-                            .foregroundStyle(Theme.textTertiary)
-                            .padding(.horizontal, 12)
-                            .padding(.top, 8)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(store.isConnected ? "No workspaces" : "Starting the terminal…")
+                                .font(Theme.uiFont)
+                                .foregroundStyle(Theme.textTertiary)
+                            if store.isConnected {
+                                Text("Press ⌘N or double-click here to start one.")
+                                    .font(Theme.captionFont)
+                                    .foregroundStyle(Theme.textMuted)
+                            }
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.top, 8)
                     }
                 }
                 .padding(.vertical, 8)
                 .animation(motion.animation(.sidebar), value: store.activeGroups)
+            }
+            // Double-click empty sidebar space for a new workspace.
+            .background {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture(count: 2) { store.newWorkspace() }
             }
             TipCard(store: store)
             if !store.idleWorkspaces.isEmpty {
@@ -34,17 +48,18 @@ struct SidebarView: View {
             }
         }
         .animation(motion.animation(.sidebar), value: store.idleWorkspaces.isEmpty)
-        .frame(width: Theme.sidebarWidth)
+        .frame(width: width)
         .background(Theme.sidebar)
     }
 
     private var controlBar: some View {
         HStack(spacing: 6) {
-            ControlButton(title: "New workspace", systemImage: "plus", shortcut: "⌘N") {
+            ControlButton(title: "New workspace", icon: "plus", shortcut: "⌘N") {
                 store.newWorkspace()
             }
         }
-        .padding(8)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
     }
 
     @ViewBuilder
@@ -64,10 +79,9 @@ struct SidebarView: View {
                         .lineLimit(1)
                     Spacer(minLength: 4)
                     Text(group.workspaces.count == 1 ? "1 space" : "\(group.workspaces.count) spaces")
-                        .font(Theme.uiFont)
+                        .font(Theme.captionFont)
                         .foregroundStyle(Theme.textTertiary)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 9, weight: .semibold))
+                    HerdIcon("chevron.down", size: 12)
                         .foregroundStyle(Theme.textTertiary)
                         .rotationEffect(.degrees(collapsed ? -90 : 0))
                 }
@@ -81,7 +95,7 @@ struct SidebarView: View {
                 // Workspaces on the same branch stack together under one chip.
                 ForEach(BranchRuns.make(group.workspaces, branch: { store.branches[$0.workspaceId] },
                                         worktree: { $0.worktree })) { run in
-                    VStack(spacing: 2) {
+                    VStack(spacing: 4) {
                         ForEach(run.workspaces) { workspace in
                             WorkspaceCard(store: store, workspace: workspace)
                         }
@@ -107,8 +121,7 @@ private struct BranchChip: View {
 
     var body: some View {
         HStack(spacing: 5) {
-            Image(systemName: run.worktreePath == nil ? "arrow.triangle.branch" : "square.stack.3d.up")
-                .font(.system(size: 9))
+            HerdIcon(run.worktreePath == nil ? "arrow.triangle.branch" : "square.stack.3d.up", size: 12)
                 .foregroundStyle(Theme.textTertiary)
             if let branch = run.branch {
                 Text(branch)
@@ -143,9 +156,10 @@ private struct BranchChip: View {
 }
 
 private struct WorkspaceCard: View {
-    @ObservedObject var store: HerdrStore
-    let workspace: HerdrWorkspace
+    @ObservedObject var store: SessionStore
+    let workspace: EngineWorkspace
     @State private var hovered = false
+    @State private var renaming = false
 
     var body: some View {
         let snapshot = store.snapshot
@@ -159,19 +173,26 @@ private struct WorkspaceCard: View {
             HStack(spacing: 6) {
                 AgentStateGlyph(status: agent?.agentStatus ?? workspace.agentStatus)
                     .frame(width: 12)
-                Text(workspace.label)
-                    .font(Theme.uiFontMedium)
-                    .foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1)
+                if renaming {
+                    InlineRenameField(initial: workspace.label, placeholder: "Workspace name") { label in
+                        renaming = false
+                        if let label, !label.isEmpty { store.renameWorkspace(workspace.workspaceId, to: label) }
+                    }
+                } else {
+                    Text(workspace.label)
+                        .font(Theme.uiFontMedium)
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                }
                 if store.isPinned(workspace.workspaceId) {
-                    Image(systemName: "pin.fill")
-                        .font(.system(size: 8))
+                    HerdIcon("pin.fill", size: 11)
                         .foregroundStyle(Theme.textTertiary)
                         .help("Pinned: never moves to Idle")
                 }
                 Spacer(minLength: 0)
             }
-            if let directory {
+            // The folder only earns a line when the name doesn't already say it.
+            if let directory, !Self.labelNamesFolder(workspace.label, directory) {
                 Text(abbreviateHome(directory))
                     .font(Theme.monoFont)
                     .foregroundStyle(Theme.textTertiary)
@@ -185,11 +206,10 @@ private struct WorkspaceCard: View {
                         .font(Theme.uiFont)
                         .foregroundStyle(Theme.textSecondary)
                         .lineLimit(1)
-                } else {
-                    Image(systemName: "terminal")
-                        .font(.system(size: 9))
+                } else if workspace.tabCount > 1 {
+                    HerdIcon("terminal", size: 12)
                         .foregroundStyle(Theme.textTertiary)
-                    Text(workspace.tabCount == 1 ? "Terminal" : "\(workspace.tabCount) tabs")
+                    Text("\(workspace.tabCount) tabs")
                         .font(Theme.uiFont)
                         .foregroundStyle(Theme.textTertiary)
                 }
@@ -201,34 +221,59 @@ private struct WorkspaceCard: View {
         .background(cardBackground(isSelected: isSelected, hue: brand?.hueHex))
         .overlay(
             RoundedRectangle(cornerRadius: Theme.rowRadius)
-                .strokeBorder(isSelected ? Theme.border.opacity(1.6) : Theme.border.opacity(hovered ? 1 : 0.6), lineWidth: 1)
+                .strokeBorder(isSelected || hovered ? Theme.border : Theme.border.opacity(0.6), lineWidth: 1)
         )
+        // A leading rail marks the focused workspace even under a hue tint.
+        .overlay(alignment: .leading) {
+            if isSelected {
+                Capsule()
+                    .fill(brand?.hueHex.map { Color(hex: $0) } ?? Theme.accent)
+                    .frame(width: 3)
+                    .padding(.vertical, 6)
+                    .padding(.leading, 2)
+            }
+        }
         .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
         .onTapGesture { store.focusWorkspace(workspace.workspaceId) }
+        .simultaneousGesture(TapGesture(count: 2).onEnded { renaming = true })
         .contextMenu {
+            Button("Rename Workspace…") { renaming = true }
+            Divider()
             WorkspaceOrganizeMenu(store: store, workspace: workspace)
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction { store.focusWorkspace(workspace.workspaceId) }
+        .accessibilityAction(named: "Rename") { renaming = true }
+        .accessibilityAction(named: "Close") { store.closeWorkspace(workspace.workspaceId) }
+    }
+
+    /// True when the label already is the folder ("~" for home, or its last
+    /// path component), so repeating the path adds nothing.
+    static func labelNamesFolder(_ label: String, _ directory: String) -> Bool {
+        let short = abbreviateHome(directory)
+        return label == short || label == (directory as NSString).lastPathComponent
     }
 
     private func cardBackground(isSelected: Bool, hue: String?) -> some View {
         ZStack {
             (isSelected ? Theme.cardSelected : (hovered ? Theme.hover : Theme.card))
             if let hue {
-                Color(hex: hue).opacity(hovered ? Theme.tabColorOpacity * 1.6 : Theme.tabColorOpacity)
+                Color(hex: hue).opacity(hovered ? Theme.tabColorHoverOpacity : Theme.tabColorOpacity)
             }
         }
     }
 
-    private func agentLine(agent: HerdrAgent?, brand: AgentBrand, count: Int) -> String {
+    private func agentLine(agent: EngineAgent?, brand: AgentBrand, count: Int) -> String {
         let status = agent.map { stateLabel($0.agentStatus) } ?? ""
         let extra = count > 1 ? " · \(count) agents" : ""
         return "\(brand.displayName) \(status)\(extra)"
     }
 }
 
-func stateLabel(_ status: HerdrAgentStatus) -> String {
+func stateLabel(_ status: EngineAgentStatus) -> String {
     switch status {
     case .working: return "working"
     case .blocked: return "needs input"
@@ -245,7 +290,7 @@ func abbreviateHome(_ path: String) -> String {
 
 struct ControlButton: View {
     let title: String
-    let systemImage: String
+    let icon: String
     var shortcut: String?
     let action: () -> Void
     @State private var hovered = false
@@ -253,7 +298,7 @@ struct ControlButton: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 6) {
-                Image(systemName: systemImage).font(.system(size: 11, weight: .medium))
+                HerdIcon(icon, size: 15)
                 Text(title).font(Theme.uiFontMedium)
                 if let shortcut {
                     Text(shortcut).font(Theme.uiFont).foregroundStyle(Theme.textTertiary)
@@ -261,8 +306,9 @@ struct ControlButton: View {
             }
             .foregroundStyle(Theme.textPrimary)
             .frame(maxWidth: .infinity)
-            .frame(height: 26)
+            .frame(height: 24)
             .background(hovered ? Theme.hover : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
             .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius).strokeBorder(Theme.border, lineWidth: 1))
             .contentShape(Rectangle())
         }
@@ -273,8 +319,8 @@ struct ControlButton: View {
 
 /// Context menu items shared by workspace cards and idle rows.
 struct WorkspaceOrganizeMenu: View {
-    @ObservedObject var store: HerdrStore
-    let workspace: HerdrWorkspace
+    @ObservedObject var store: SessionStore
+    let workspace: EngineWorkspace
 
     var body: some View {
         let id = workspace.workspaceId
@@ -299,7 +345,7 @@ struct WorkspaceOrganizeMenu: View {
 /// Bottom dock of workspaces that haven't been used in a while: compact
 /// one-line rows so active work stays in view.
 struct IdleDock: View {
-    @ObservedObject var store: HerdrStore
+    @ObservedObject var store: SessionStore
     @ObservedObject private var motion = MotionPreferences.shared
     @AppStorage("herd.idleDock.collapsed") private var collapsed = false
 
@@ -311,8 +357,7 @@ struct IdleDock: View {
                     motion.perform(.sidebar) { collapsed.toggle() }
                 } label: {
                     HStack(spacing: 4) {
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 9, weight: .semibold))
+                        HerdIcon("chevron.down", size: 12)
                             .rotationEffect(.degrees(collapsed ? -90 : 0))
                         Text("IDLE").font(Theme.headerFont).kerning(0.4)
                         Text("\(store.idleWorkspaces.count)")
@@ -330,7 +375,7 @@ struct IdleDock: View {
                 Button {
                     confirmCloseAll()
                 } label: {
-                    Image(systemName: "xmark.bin").font(.system(size: 10))
+                    HerdIcon("xmark.bin", size: 14)
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(Theme.textTertiary)
@@ -377,8 +422,8 @@ struct IdleDock: View {
 }
 
 private struct IdleRow: View {
-    @ObservedObject var store: HerdrStore
-    let workspace: HerdrWorkspace
+    @ObservedObject var store: SessionStore
+    let workspace: EngineWorkspace
     @State private var hovered = false
 
     var body: some View {
@@ -389,7 +434,7 @@ private struct IdleRow: View {
                 if let brand {
                     AgentLogo(brand: brand, size: 10).saturation(0.2).opacity(0.8)
                 } else {
-                    Image(systemName: "terminal").font(.system(size: 9))
+                    HerdIcon("terminal", size: 12)
                 }
             }
             .foregroundStyle(Theme.textTertiary)
@@ -410,7 +455,7 @@ private struct IdleRow: View {
                 Button {
                     store.closeWorkspace(workspace.workspaceId)
                 } label: {
-                    Image(systemName: "xmark").font(.system(size: 8, weight: .semibold))
+                    HerdIcon("xmark", size: 15)
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(Theme.textSecondary)

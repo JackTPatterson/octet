@@ -2,18 +2,22 @@ import AppKit
 import Foundation
 
 /// Every user setting, grouped by the layer that applies it. Nothing is
-/// duplicated across layers: Ghostty owns rendering and host input, herdr
-/// owns panes, shells, scrollback, notifications and sessions, and Herd owns
+/// duplicated across layers: the renderer owns drawing and host input, the
+/// session server owns panes, shells, scrollback, notifications and sessions, and Herd owns
 /// its own window, sidebar, and recovery.
 struct HerdSettings: Codable, Equatable {
-    // MARK: General (Herd + herdr)
+    // MARK: General (Herd + session server)
     var confirmQuit = true
     var newPaneDirectory: NewPaneDirectory = .follow
     var defaultShell = ""
     var shellMode: ShellMode = .auto
 
-    // MARK: Appearance (Ghostty + herdr panes)
+    // MARK: Appearance (renderer + session server panes)
     var themeName = "Dark"
+    /// Follow macOS light/dark, switching between these two themes.
+    var matchSystemAppearance = false
+    var lightThemeName = "Light"
+    var darkThemeName = "Dark"
     var fontFamily = ""
     var fontSize: Double = 13
     var lineHeightPercent: Double = 100
@@ -28,7 +32,7 @@ struct HerdSettings: Codable, Equatable {
     var paneGaps = true
     var paneScrollbars = true
 
-    // MARK: Terminal (Ghostty input + herdr panes)
+    // MARK: Terminal (renderer input + session server panes)
     var scrollbackMegabytes: Double = 10
     var copyOnSelect = true
     var clipboardToasts = true
@@ -39,12 +43,18 @@ struct HerdSettings: Codable, Equatable {
     var clipboardRead: ClipboardAccess = .ask
     var kittyGraphics = true
 
-    // MARK: Agents & recovery (herdr + Herd)
+    // MARK: Agents & recovery (session server + Herd)
     var notifications: NotificationDelivery = .banner
     var notificationDelaySeconds: Double = 1
     var agentSounds = true
     var resumeAgentsOnRestore = true
     var paneHistory = false
+    /// Read Claude's allowance from the account itself: the OAuth token Claude
+    /// Code keeps in the login keychain, sent to the endpoint Claude Code's own
+    /// usage display calls. Off by default because it touches another app's
+    /// credential and an endpoint Anthropic doesn't document; without it the
+    /// chip reads Claude Code's cache and any conversation Herd runs.
+    var readClaudeAccountUsage = false
     var offerRecovery = true
     var slashMenu = true
     var slashRunsCommands = true
@@ -53,13 +63,13 @@ struct HerdSettings: Codable, Equatable {
     var autoNameTabs = true
     var showTips = true
 
-    // MARK: Advanced (herdr)
+    // MARK: Advanced (session server)
     var worktreesDirectory = "~/.herd/worktrees"
     /// Where the engine used to put worktrees; kept when it holds any.
-    static let legacyWorktreesDirectory = "~/.herdr/worktrees"
-    var checkForHerdrUpdates = true
+    static let legacyWorktreesDirectory = EngineProtocol.legacyWorktreesDirectory
+    var checkForEngineUpdates = true
     var updateChannel: UpdateChannel = .stable
-    var allowNestedHerdr = false
+    var allowNestedSessions = false
 
     enum NewPaneDirectory: String, Codable, CaseIterable { case follow, home, current }
     enum ShellMode: String, Codable, CaseIterable { case auto, login, nonLogin = "non_login" }
@@ -77,7 +87,21 @@ struct HerdSettings: Codable, Equatable {
         case off
         case system
         /// Herd's own banner in the window's top right.
-        case banner = "herdr"
+        case banner
+
+        /// Reads a stored value, including the name earlier versions saved
+        /// for `banner`.
+        init?(stored raw: String) {
+            if let value = Self(rawValue: raw) {
+                self = value
+            } else if raw == Self.legacyBannerValue {
+                self = .banner
+            } else {
+                return nil
+            }
+        }
+
+        private static let legacyBannerValue = "herdr"
 
         var title: String {
             switch self {
@@ -109,6 +133,9 @@ struct HerdSettings: Codable, Equatable {
         defaultShell = value("defaultShell", defaults.defaultShell)
         shellMode = value("shellMode", defaults.shellMode)
         themeName = value("themeName", defaults.themeName)
+        matchSystemAppearance = value("matchSystemAppearance", defaults.matchSystemAppearance)
+        lightThemeName = value("lightThemeName", defaults.lightThemeName)
+        darkThemeName = value("darkThemeName", defaults.darkThemeName)
         fontFamily = value("fontFamily", defaults.fontFamily)
         fontSize = value("fontSize", defaults.fontSize)
         lineHeightPercent = value("lineHeightPercent", defaults.lineHeightPercent)
@@ -131,7 +158,8 @@ struct HerdSettings: Codable, Equatable {
         pasteProtection = value("pasteProtection", defaults.pasteProtection)
         clipboardRead = value("clipboardRead", defaults.clipboardRead)
         kittyGraphics = value("kittyGraphics", defaults.kittyGraphics)
-        notifications = value("notifications", defaults.notifications)
+        notifications = NotificationDelivery(stored: value("notifications", ""))
+            ?? defaults.notifications
         version = value("version", 1)
         if version < 2 {
             // "system" used to be the default, before Herd drew its own
@@ -143,6 +171,7 @@ struct HerdSettings: Codable, Equatable {
         agentSounds = value("agentSounds", defaults.agentSounds)
         resumeAgentsOnRestore = value("resumeAgentsOnRestore", defaults.resumeAgentsOnRestore)
         paneHistory = value("paneHistory", defaults.paneHistory)
+        readClaudeAccountUsage = value("readClaudeAccountUsage", defaults.readClaudeAccountUsage)
         offerRecovery = value("offerRecovery", defaults.offerRecovery)
         slashMenu = value("slashMenu", defaults.slashMenu)
         slashRunsCommands = value("slashRunsCommands", defaults.slashRunsCommands)
@@ -156,10 +185,15 @@ struct HerdSettings: Codable, Equatable {
            !FileManager.default.fileExists(atPath: NSString(string: Self.legacyWorktreesDirectory).expandingTildeInPath) {
             worktreesDirectory = defaults.worktreesDirectory
         }
-        checkForHerdrUpdates = value("checkForHerdrUpdates", defaults.checkForHerdrUpdates)
+        checkForEngineUpdates = value("checkForEngineUpdates", value(Self.legacyUpdateCheckKey, defaults.checkForEngineUpdates))
         updateChannel = value("updateChannel", defaults.updateChannel)
-        allowNestedHerdr = value("allowNestedHerdr", defaults.allowNestedHerdr)
+        allowNestedSessions = value("allowNestedSessions", value(Self.legacyNestedKey, defaults.allowNestedSessions))
     }
+
+    /// Keys earlier versions stored these two settings under; read once so
+    /// saved choices survive, then written back under the new names.
+    private static let legacyUpdateCheckKey = "checkForHerdrUpdates"
+    private static let legacyNestedKey = "allowNestedHerdr"
 
     private struct DynamicKey: CodingKey {
         let stringValue: String
@@ -169,10 +203,20 @@ struct HerdSettings: Codable, Equatable {
         init?(intValue: Int) { nil }
     }
 
+    /// Reduce Transparency in System Settings wins over Herd's opacity.
+    var effectiveBackgroundOpacity: Double { SystemDisplay.reduceTransparency ? 1 : backgroundOpacity }
+    var effectiveBackgroundBlur: Bool { backgroundBlur && effectiveBackgroundOpacity < 1 }
+
+    /// The theme that should be showing now.
+    func resolvedThemeName(systemIsDark: Bool) -> String {
+        guard matchSystemAppearance else { return themeName }
+        return systemIsDark ? darkThemeName : lightThemeName
+    }
+
     // MARK: - Generated configs
 
-    /// Ghostty config lines for the embedded renderer.
-    var ghosttyConfig: String {
+    /// Config lines for the embedded renderer.
+    var rendererConfig: String {
         let theme = TerminalTheme.named(themeName)
         let padding: (Int, Int) = switch windowPadding {
         case .compact: (4, 2)
@@ -190,10 +234,10 @@ struct HerdSettings: Codable, Equatable {
             "adjust-cell-height = \(Int(lineHeightPercent) - 100)%",
             "cursor-style = \(cursorStyle.rawValue)",
             "cursor-style-blink = \(cursorBlink)",
-            "background-opacity = \(String(format: "%.2f", backgroundOpacity))",
-            "background-blur = \(backgroundBlur && backgroundOpacity < 1)",
+            "background-opacity = \(String(format: "%.2f", effectiveBackgroundOpacity))",
+            "background-blur = \(effectiveBackgroundBlur)",
             "window-padding-x = \(padding.0)",
-            // Top padding stays 0: Herd clips herdr's tab row from the top edge.
+            // Top padding stays 0: Herd clips the session server's tab row from the top edge.
             "window-padding-y = 0,\(padding.1)",
             "macos-option-as-alt = \(optionAsAlt == .off ? "false" : optionAsAlt.rawValue == "both" ? "true" : optionAsAlt.rawValue)",
             "mouse-hide-while-typing = \(hideMouseWhileTyping)",
@@ -207,14 +251,13 @@ struct HerdSettings: Codable, Equatable {
         return lines.joined(separator: "\n")
     }
 
-    /// herdr config for Herd's session. Herd's chrome replaces herdr's
-    /// sidebar and tab row, so those stay fixed.
-    var herdrConfig: String {
+    /// Session server config for Herd's session. Herd's chrome replaces the
+    /// server's own sidebar and tab row, so those stay fixed.
+    var sessionConfig: String {
         let scrollbackBytes = Int(scrollbackMegabytes * 1_000_000)
         let theme = TerminalTheme.named(themeName)
         return """
-        # Managed by Herd from Settings. Rewritten on launch and on every change;
-        # edit ~/.config/herdr/config.toml for a standalone herdr instead.
+        # Managed by Herd from Settings. Rewritten on launch and on every change.
         onboarding = false
 
         [theme]
@@ -228,7 +271,7 @@ struct HerdSettings: Codable, Equatable {
 
         [update]
         channel = "\(updateChannel.rawValue)"
-        version_check = \(checkForHerdrUpdates)
+        version_check = \(checkForEngineUpdates)
 
         [ui]
         sidebar_start_collapsed = true
@@ -269,7 +312,7 @@ struct HerdSettings: Codable, Equatable {
 
         [experimental]
         pane_history = \(paneHistory)
-        allow_nested = \(allowNestedHerdr)
+        allow_nested = \(allowNestedSessions)
         """
     }
 
@@ -287,16 +330,32 @@ final class SettingsStore: ObservableObject {
     @Published var values: HerdSettings {
         didSet {
             guard values != oldValue else { return }
+            // Match system: the showing theme follows the light/dark picks.
+            let resolved = values.resolvedThemeName(systemIsDark: SystemDisplay.isDark)
+            if values.themeName != resolved {
+                values.themeName = resolved
+                return
+            }
             save()
             apply(from: oldValue)
         }
     }
 
-    /// Set by the app once the herdr session is known.
-    var herdrConfigPath: String?
-    var reloadHerdr: (() -> Void)?
+    /// Changes whenever chrome colors must be recomputed: theme, Increase
+    /// Contrast, Reduce Transparency. Views re-identify on it.
+    @Published private(set) var themeKey = ""
+    private var systemObservers: [NSObjectProtocol] = []
 
-    private var pendingHerdrReload: DispatchWorkItem?
+    /// Terminal config lines that were rejected, and a config file that
+    /// couldn't be written; Settings shows these rather than failing silently.
+    @Published private(set) var configProblems: [String] = []
+    private var sessionConfigWriteProblem: String?
+
+    /// Set by the app once the session is known.
+    var sessionConfigPath: String?
+    var reloadSession: (() -> Void)?
+
+    private var pendingSessionReload: DispatchWorkItem?
 
     private init() {
         if let data = UserDefaults.standard.data(forKey: Self.key),
@@ -305,16 +364,84 @@ final class SettingsStore: ObservableObject {
         } else {
             values = HerdSettings()
         }
+        values.themeName = values.resolvedThemeName(systemIsDark: SystemDisplay.isDark)
         Theme.palette = ThemePalette(theme: .named(values.themeName))
+        themeKey = Self.makeThemeKey(values.themeName)
+        observeSystem()
+        // Rewrites settings read under older key names with the current ones.
+        save()
+    }
+
+    private static func makeThemeKey(_ themeName: String) -> String {
+        "\(themeName)|\(SystemDisplay.increaseContrast)|\(SystemDisplay.reduceTransparency)"
+    }
+
+    /// macOS light/dark switches and the accessibility display options.
+    private func observeSystem() {
+        let refresh: (Notification) -> Void = { [weak self] _ in
+            DispatchQueue.main.async { self?.systemAppearanceChanged() }
+        }
+        systemObservers = [
+            DistributedNotificationCenter.default().addObserver(
+                forName: Notification.Name("AppleInterfaceThemeChangedNotification"), object: nil, queue: .main, using: refresh),
+            NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil, queue: .main, using: refresh),
+        ]
+    }
+
+    private func systemAppearanceChanged() {
+        let resolved = values.resolvedThemeName(systemIsDark: SystemDisplay.isDark)
+        if values.themeName != resolved {
+            values.themeName = resolved   // applies everything through didSet
+        } else {
+            refreshAppearance(configChanged: true)
+        }
+    }
+
+    /// Rebuilds the palette and pushes terminal config after a system
+    /// display option changed without the theme changing.
+    private func refreshAppearance(configChanged: Bool) {
+        Theme.palette = ThemePalette(theme: .named(values.themeName))
+        themeKey = Self.makeThemeKey(values.themeName)
+        if configChanged {
+            HerdTerminalRuntime.updateConfig(overrides: values.rendererConfig + "\n" + Theme.herdShortcutUnbinds)
+            refreshConfigProblems()
+        }
+        HerdTerminalRuntime.setColorScheme(dark: !TerminalTheme.named(values.themeName).isLight)
     }
 
     func resetToDefaults() {
         values = HerdSettings()
     }
 
-    func writeHerdrConfig() {
-        guard let herdrConfigPath else { return }
-        try? values.herdrConfig.write(toFile: herdrConfigPath, atomically: true, encoding: .utf8)
+    /// The range the Font size stepper and the View menu share.
+    static let fontSizeRange: ClosedRange<Double> = 8...32
+
+    /// View › Increase/Decrease Font Size: whole points, kept in range.
+    func adjustFontSize(by delta: Double) {
+        let size = (values.fontSize + delta).rounded()
+        values.fontSize = min(max(size, Self.fontSizeRange.lowerBound), Self.fontSizeRange.upperBound)
+    }
+
+    func resetFontSize() {
+        values.fontSize = HerdSettings().fontSize
+    }
+
+    func writeSessionConfig() {
+        guard let sessionConfigPath else { return }
+        do {
+            try values.sessionConfig.write(toFile: sessionConfigPath, atomically: true, encoding: .utf8)
+            sessionConfigWriteProblem = nil
+        } catch {
+            sessionConfigWriteProblem = "Couldn't write \(sessionConfigPath): \(error.localizedDescription)"
+        }
+        refreshConfigProblems()
+    }
+
+    /// Re-reads what the terminal engine rejected.
+    func refreshConfigProblems() {
+        let problems = HerdTerminalRuntime.configErrors + [sessionConfigWriteProblem].compactMap { $0 }
+        if problems != configProblems { configProblems = problems }
     }
 
     private func save() {
@@ -326,16 +453,19 @@ final class SettingsStore: ObservableObject {
     private func apply(from old: HerdSettings) {
         if values.themeName != old.themeName {
             Theme.palette = ThemePalette(theme: .named(values.themeName))
+            themeKey = Self.makeThemeKey(values.themeName)
+            HerdTerminalRuntime.setColorScheme(dark: !TerminalTheme.named(values.themeName).isLight)
         }
-        if values.ghosttyConfig != old.ghosttyConfig {
-            HerdTerminalRuntime.updateConfig(overrides: values.ghosttyConfig + "\n" + Theme.herdShortcutUnbinds)
+        if values.rendererConfig != old.rendererConfig {
+            HerdTerminalRuntime.updateConfig(overrides: values.rendererConfig + "\n" + Theme.herdShortcutUnbinds)
+            refreshConfigProblems()
         }
-        if values.herdrConfig != old.herdrConfig {
-            writeHerdrConfig()
+        if values.sessionConfig != old.sessionConfig {
+            writeSessionConfig()
             // Coalesce slider drags into one reload.
-            pendingHerdrReload?.cancel()
-            let work = DispatchWorkItem { [weak self] in self?.reloadHerdr?() }
-            pendingHerdrReload = work
+            pendingSessionReload?.cancel()
+            let work = DispatchWorkItem { [weak self] in self?.reloadSession?() }
+            pendingSessionReload = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
         }
     }

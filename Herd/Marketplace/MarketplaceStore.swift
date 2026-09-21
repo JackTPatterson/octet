@@ -28,7 +28,10 @@ final class MarketplaceStore: ObservableObject {
         }
     }
 
-    @Published var section: Section = .mcp
+    /// A query belongs to the list it was typed over, so switching clears it.
+    @Published var section: Section = .mcp {
+        didSet { if section != oldValue { query = "" } }
+    }
     @Published var query = ""
     @Published private(set) var hosts: [AgentHost] = []
     @Published private(set) var plugins: [MarketplaceEntry] = []
@@ -37,27 +40,36 @@ final class MarketplaceStore: ObservableObject {
     @Published private(set) var prompts: [AgentLibrary.Item] = []
     @Published private(set) var marketplaces: [String: [String]] = [:]
     @Published private(set) var loading: Set<Section> = []
+    /// Sections that have finished at least one load, so an empty list
+    /// means empty rather than not fetched yet.
+    @Published private(set) var loaded: Set<Section> = []
+    /// Why the last load of a section failed, from CLI exit codes.
+    @Published private(set) var loadErrors: [Section: String] = [:]
+    /// `busyKey(entry, host)` for every install or removal still running.
+    @Published private(set) var busy: Set<String> = []
     /// Set after a change that running agents only pick up on restart.
     @Published private(set) var pendingReload = false
 
     private let recovery: AgentRecoveryController
-    private unowned let herdr: HerdrStore
+    private unowned let session: SessionStore
     private var catalogLoadedAt = Date.distantPast
-    private static let catalogURL = HerdrSession.supportDirectory.appendingPathComponent("plugin-catalog.json")
+    private static let catalogURL = EngineSession.supportDirectory.appendingPathComponent("plugin-catalog.json")
     /// The plugin catalogs take tens of seconds to fetch, so they're cached.
     static let catalogLifetime: TimeInterval = 6 * 3600
+    /// Rows the plugin list renders at once; a search narrows the rest.
+    static let pluginDisplayLimit = 400
 
-    init(herdr: HerdrStore) {
-        self.herdr = herdr
-        recovery = herdr.recovery
+    init(session: SessionStore) {
+        self.session = session
+        recovery = session.recovery
         hosts = AgentHosts.installed()
     }
 
     /// The agent a prompt would run in: the focused pane's, else the only one.
-    var promptTarget: HerdrAgent? {
-        let agents = herdr.snapshot.agents
-        return agents.first { $0.paneId == herdr.snapshot.focusedPaneId }
-            ?? agents.first { $0.tabId == herdr.snapshot.focusedTabId }
+    var promptTarget: EngineAgent? {
+        let agents = session.snapshot.agents
+        return agents.first { $0.paneId == session.snapshot.focusedPaneId }
+            ?? agents.first { $0.tabId == session.snapshot.focusedTabId }
             ?? (agents.count == 1 ? agents.first : nil)
     }
 
@@ -75,7 +87,7 @@ final class MarketplaceStore: ObservableObject {
         }
         let name = AgentBrand.forAgent(agent.agent)?.displayName ?? "the agent"
         let toast = ToastCenter.shared.progress("Sending \(item.name) to \(name)…")
-        let client = herdr.client
+        let client = session.client
         DispatchQueue.global(qos: .userInitiated).async {
             let outcome = Result { try client.call("agent.prompt", ["target": agent.paneId, "text": body]) }
             DispatchQueue.main.async {
@@ -120,18 +132,23 @@ final class MarketplaceStore: ObservableObject {
     func loadLibrary() {
         skills = AgentLibrary.items(.skill, hosts: hosts)
         prompts = AgentLibrary.items(.prompt, hosts: hosts)
+        loaded.formUnion([.skills, .prompts])
     }
 
     func loadServers() {
         guard !loading.contains(.mcp) else { return }
         loading.insert(.mcp)
         let hosts = self.hosts.filter(\.supportsMCP)
-        run(hosts.map { "\($0.cli) mcp list" }, timeout: 120) { [weak self] outputs in
+        run(hosts.map { "\($0.cli) mcp list" }, timeout: 120) { [weak self] results in
             guard let self else { return }
-            let lists = zip(hosts, outputs).map { host, output in
-                host.id == "codex" ? MarketplaceCatalog.codexMCP(output) : MarketplaceCatalog.claudeMCP(output)
+            // A host whose CLI failed would otherwise read as having no servers.
+            let succeeded = zip(hosts, results).filter { $0.1.exitCode == 0 }
+            let lists = succeeded.map { host, result in
+                host.id == "codex" ? MarketplaceCatalog.codexMCP(result.output) : MarketplaceCatalog.claudeMCP(result.output)
             }
             self.servers = MarketplaceCatalog.merge(lists).sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            self.loadErrors[.mcp] = Self.failureSummary(hosts: hosts, results: results)
+            self.loaded.insert(.mcp)
             self.loading.remove(.mcp)
         }
     }
@@ -141,29 +158,39 @@ final class MarketplaceStore: ObservableObject {
         if !force, plugins.isEmpty, let cached = Self.loadCachedCatalog() {
             plugins = cached.entries
             catalogLoadedAt = cached.date
+            loaded.insert(.plugins)
         }
         guard force || Date().timeIntervalSince(catalogLoadedAt) > Self.catalogLifetime else { return }
         loading.insert(.plugins)
         let hosts = self.hosts.filter(\.supportsPlugins)
         // --available pulls every configured marketplace, which is slow.
-        run(hosts.map { "\($0.cli) plugin list --json --available" }, timeout: 300) { [weak self] outputs in
+        run(hosts.map { "\($0.cli) plugin list --json --available" }, timeout: 300) { [weak self] results in
             guard let self else { return }
-            let lists = zip(hosts, outputs).map { host, output in
-                MarketplaceCatalog.plugins(json: Data(Self.jsonBody(output).utf8), hostId: host.id)
+            let succeeded = zip(hosts, results).filter { $0.1.exitCode == 0 }
+            let lists = succeeded.map { host, result in
+                MarketplaceCatalog.plugins(json: Data(Self.jsonBody(result.output).utf8), hostId: host.id)
             }
             let merged = MarketplaceCatalog.merge(lists)
-            if !merged.isEmpty {
+            let failure = Self.failureSummary(hosts: hosts, results: results)
+            if failure == nil {
                 self.plugins = merged
                 self.catalogLoadedAt = Date()
-                Self.cacheCatalog(outputs: zip(hosts.map(\.id), outputs).map { ($0, $1) })
+                if !merged.isEmpty {
+                    Self.cacheCatalog(outputs: zip(hosts.map(\.id), results.map(\.output)).map { ($0, $1) })
+                }
+            } else if self.plugins.isEmpty {
+                // Partial results beat nothing; the error says what's missing.
+                self.plugins = merged
             }
+            self.loadErrors[.plugins] = failure
+            self.loaded.insert(.plugins)
             self.loading.remove(.plugins)
         }
-        run(hosts.map { "\($0.cli) plugin marketplace list" }, timeout: 120) { [weak self] outputs in
+        run(hosts.map { "\($0.cli) plugin marketplace list" }, timeout: 120) { [weak self] results in
             guard let self else { return }
             var result: [String: [String]] = [:]
-            for (host, output) in zip(hosts, outputs) {
-                result[host.id] = MarketplaceCatalog.marketplaces(output).map(\.name)
+            for (host, output) in zip(hosts, results) where output.exitCode == 0 {
+                result[host.id] = MarketplaceCatalog.marketplaces(output.output).map(\.name)
             }
             self.marketplaces = result
         }
@@ -172,34 +199,40 @@ final class MarketplaceStore: ObservableObject {
     // MARK: - Actions
 
     func installPlugin(_ entry: MarketplaceEntry, into hosts: [AgentHost]) {
+        let hosts = idle(entry.id, hosts)
         perform(
             hosts.map { "\($0.cli) plugin install \(PluginCLI.quote(entry.identifier))" },
+            busy: hosts.map { Self.busyKey(entry.id, $0) },
             progress: "Installing \(entry.name)…",
             success: "Installed \(entry.name)",
             failure: "Couldn't install \(entry.name)",
             reloadAgents: true
-        ) { [weak self] in self?.loadPlugins(force: true) }
+        ) { [weak self] _ in self?.loadPlugins(force: true) }
     }
 
     func uninstallPlugin(_ entry: MarketplaceEntry, from hosts: [AgentHost]) {
+        let hosts = idle(entry.id, hosts)
         perform(
             hosts.map { "\($0.cli) plugin uninstall \(PluginCLI.quote(entry.identifier))" },
+            busy: hosts.map { Self.busyKey(entry.id, $0) },
             progress: "Removing \(entry.name)…",
             success: "Removed \(entry.name)",
             failure: "Couldn't remove \(entry.name)",
             reloadAgents: true
-        ) { [weak self] in self?.loadPlugins(force: true) }
+        ) { [weak self] _ in self?.loadPlugins(force: true) }
     }
 
     func setPluginEnabled(_ entry: MarketplaceEntry, in host: AgentHost, enabled: Bool) {
+        guard !isBusy(entry, host) else { return }
         let verb = enabled ? "enable" : "disable"
         perform(
             ["\(host.cli) plugin \(verb) \(PluginCLI.quote(entry.identifier))"],
+            busy: [Self.busyKey(entry.id, host)],
             progress: "\(enabled ? "Enabling" : "Disabling") \(entry.name)…",
             success: "\(enabled ? "Enabled" : "Disabled") \(entry.name)",
             failure: "Couldn't \(verb) \(entry.name)",
             reloadAgents: true
-        ) { [weak self] in self?.loadPlugins(force: true) }
+        ) { [weak self] _ in self?.loadPlugins(force: true) }
     }
 
     func addMarketplace(_ source: String, to hosts: [AgentHost]) {
@@ -209,12 +242,18 @@ final class MarketplaceStore: ObservableObject {
             success: "Added marketplace \(source)",
             failure: "Couldn't add \(source)",
             reloadAgents: false
-        ) { [weak self] in self?.loadPlugins(force: true) }
+        ) { [weak self] _ in self?.loadPlugins(force: true) }
     }
 
     /// Adds an MCP server from one definition, in each host's own syntax.
-    func addServer(name: String, command: String, into hosts: [AgentHost]) {
-        let hosts = hosts.filter(\.supportsMCP)
+    /// `completion` gets nil on success, else what went wrong.
+    func addServer(name: String, command: String, into hosts: [AgentHost], completion: ((String?) -> Void)? = nil) {
+        let entryId = "\(MarketplaceEntry.Kind.mcp.rawValue):\(name)"
+        let hosts = idle(entryId, hosts.filter(\.supportsMCP))
+        guard !hosts.isEmpty else {
+            completion?("No agent to add it to")
+            return
+        }
         let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
         let isURL = trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://")
         let commands = hosts.map { host -> String in
@@ -229,18 +268,24 @@ final class MarketplaceStore: ObservableObject {
                     : "\(host.cli) mcp add \(PluginCLI.quote(name)) -- \(trimmed)"
             }
         }
-        perform(commands, progress: "Adding \(name)…", success: "Added MCP server \(name)",
-                failure: "Couldn't add \(name)", reloadAgents: true) { [weak self] in self?.loadServers() }
+        perform(commands, busy: hosts.map { Self.busyKey(entryId, $0) },
+                progress: "Adding \(name)…", success: "Added MCP server \(name)",
+                failure: "Couldn't add \(name)", reloadAgents: true) { [weak self] error in
+            self?.loadServers()
+            completion?(error)
+        }
     }
 
     func removeServer(_ entry: MarketplaceEntry, from hosts: [AgentHost]) {
+        let hosts = idle(entry.id, hosts.filter(\.supportsMCP))
         perform(
-            hosts.filter(\.supportsMCP).map { "\($0.cli) mcp remove \(PluginCLI.quote(entry.identifier))" },
+            hosts.map { "\($0.cli) mcp remove \(PluginCLI.quote(entry.identifier))" },
+            busy: hosts.map { Self.busyKey(entry.id, $0) },
             progress: "Removing \(entry.name)…",
             success: "Removed MCP server \(entry.name)",
             failure: "Couldn't remove \(entry.name)",
             reloadAgents: true
-        ) { [weak self] in self?.loadServers() }
+        ) { [weak self] _ in self?.loadServers() }
     }
 
     /// Adds an entry to hosts it isn't in yet. For an MCP server this copies
@@ -257,6 +302,24 @@ final class MarketplaceStore: ObservableObject {
         case .plugin: uninstallPlugin(entry, from: hosts)
         case .mcp: removeServer(entry, from: hosts)
         }
+    }
+
+    // MARK: Busy state
+
+    static func busyKey(_ entryId: String, _ host: AgentHost) -> String { "\(entryId)|\(host.id)" }
+
+    func isBusy(_ entry: MarketplaceEntry, _ host: AgentHost) -> Bool {
+        busy.contains(Self.busyKey(entry.id, host))
+    }
+
+    func isBusy(_ entry: MarketplaceEntry) -> Bool {
+        hosts.contains { isBusy(entry, $0) }
+    }
+
+    /// Drops hosts that already have a change running for this entry, so a
+    /// second click can't submit the same command twice.
+    private func idle(_ entryId: String, _ hosts: [AgentHost]) -> [AgentHost] {
+        hosts.filter { !busy.contains(Self.busyKey(entryId, $0)) }
     }
 
     // MARK: Library (skills and prompts)
@@ -392,32 +455,48 @@ final class MarketplaceStore: ObservableObject {
 
     // MARK: - Running CLIs
 
-    /// Runs commands in parallel and delivers their outputs in order.
-    private func run(_ commands: [String], timeout: TimeInterval, completion: @escaping ([String]) -> Void) {
+    /// Runs commands in parallel and delivers their results in order.
+    private func run(_ commands: [String], timeout: TimeInterval, completion: @escaping ([PluginCLI.Result]) -> Void) {
         guard !commands.isEmpty else {
             completion([])
             return
         }
-        var outputs = [String?](repeating: nil, count: commands.count)
+        var results = [PluginCLI.Result?](repeating: nil, count: commands.count)
         var remaining = commands.count
         for (index, command) in commands.enumerated() {
             PluginCLI.runShell(command, timeout: timeout) { result in
-                outputs[index] = result.output
+                results[index] = result
                 remaining -= 1
-                if remaining == 0 { completion(outputs.map { $0 ?? "" }) }
+                if remaining == 0 {
+                    completion(results.map { $0 ?? PluginCLI.Result(exitCode: -1, output: "No output") })
+                }
             }
         }
     }
 
+    /// One line per host whose command failed, or nil when all succeeded.
+    private static func failureSummary(hosts: [AgentHost], results: [PluginCLI.Result]) -> String? {
+        let lines = zip(hosts, results).compactMap { host, result -> String? in
+            guard result.exitCode != 0 else { return nil }
+            let tail = PluginCLI.lastLines(result.output, count: 2)
+            return "\(host.displayName): \(tail.isEmpty ? "exited with status \(result.exitCode)" : tail)"
+        }
+        return lines.isEmpty ? nil : lines.joined(separator: "\n")
+    }
+
+    /// Runs change commands, marking `busy` keys for their duration, and
+    /// hands `then` nil on success or the failure detail.
     private func perform(
         _ commands: [String],
+        busy keys: [String] = [],
         progress: String,
         success: String,
         failure: String,
         reloadAgents: Bool,
-        then: @escaping () -> Void
+        then: @escaping (String?) -> Void
     ) {
         guard !commands.isEmpty else { return }
+        busy.formUnion(keys)
         let toast = ToastCenter.shared.progress(progress)
         var failures: [String] = []
         var remaining = commands.count
@@ -426,13 +505,15 @@ final class MarketplaceStore: ObservableObject {
                 if result.exitCode != 0 { failures.append(PluginCLI.lastLines(result.output)) }
                 remaining -= 1
                 guard remaining == 0, let self else { return }
+                self.busy.subtract(keys)
+                let detail = failures.prefix(2).joined(separator: "\n")
                 if failures.isEmpty {
                     ToastCenter.shared.succeed(toast, success)
                     if reloadAgents { self.markPendingReload() }
                 } else {
-                    ToastCenter.shared.fail(toast, failure, detail: failures.prefix(2).joined(separator: "\n"))
+                    ToastCenter.shared.fail(toast, failure, detail: detail)
                 }
-                then()
+                then(failures.isEmpty ? nil : (detail.isEmpty ? failure : detail))
             }
         }
     }

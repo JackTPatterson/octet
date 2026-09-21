@@ -1,7 +1,7 @@
 import Foundation
 
 /// A durable record of an agent session Herd has seen running, so it can be
-/// resumed after herdr restarts (a Mac shutdown kills every pane).
+/// resumed after the session server restarts (a Mac shutdown kills every pane).
 struct AgentSessionRecord: Codable, Equatable, Identifiable {
     var agent: String
     var sessionId: String?
@@ -27,7 +27,7 @@ struct AgentSessionRecord: Codable, Equatable, Identifiable {
 }
 
 enum AgentRecovery {
-    /// Resume commands from herdr's native session restore table.
+    /// Resume commands from the session server's native session restore table.
     static func resumeCommand(agent: String, sessionId: String) -> String? {
         let id = shellQuoted(sessionId)
         switch AgentBrand.forAgent(agent)?.id ?? agent {
@@ -47,7 +47,7 @@ enum AgentRecovery {
         }
     }
 
-    /// Agents whose sessions Herd can find without a herdr integration.
+    /// Agents whose sessions Herd can find without a session server integration.
     static let inferable: Set<String> = ["claude", "codex"]
 
     private static func shellQuoted(_ value: String) -> String {
@@ -59,10 +59,10 @@ enum AgentRecovery {
     /// Updates the journal from a snapshot. `sessionIdFor` resolves a session
     /// id for an agent (integration report or file inference).
     static func record(
-        _ snapshot: HerdrSnapshot,
+        _ snapshot: EngineSnapshot,
         into journal: [AgentSessionRecord],
         now: Date = Date(),
-        sessionIdFor: (HerdrAgent, AgentSessionRecord?) -> String?
+        sessionIdFor: (EngineAgent, AgentSessionRecord?) -> String?
     ) -> [AgentSessionRecord] {
         var byTerminal = Dictionary(journal.map { ($0.terminalId, $0) }, uniquingKeysWith: { _, last in last })
         let workspaceLabels = Dictionary(snapshot.workspaces.map { ($0.workspaceId, $0.label) }, uniquingKeysWith: { first, _ in first })
@@ -92,13 +92,13 @@ enum AgentRecovery {
         return byTerminal.values.filter { $0.lastSeen >= cutoff }.sorted { $0.lastSeen > $1.lastSeen }
     }
 
-    /// Sessions that were still running when Herd last observed herdr
+    /// Sessions that were still running when Herd last observed the session server
     /// (`lastObserved`) and aren't running now: killed by a shutdown, crash,
-    /// or herdr restart rather than exited by the user while Herd watched.
+    /// or session server restart rather than exited by the user while Herd watched.
     static func lostSessions(
         journal: [AgentSessionRecord],
         lastObserved: Date,
-        current snapshot: HerdrSnapshot,
+        current snapshot: EngineSnapshot,
         liveSessionIds: Set<String> = []
     ) -> [AgentSessionRecord] {
         let liveTerminals = Set(snapshot.agents.compactMap(\.terminalId))
@@ -138,7 +138,7 @@ enum AgentRecovery {
     }
 
     /// Past sessions that aren't running now, for recovering by hand.
-    static func history(journal: [AgentSessionRecord], current snapshot: HerdrSnapshot) -> [AgentSessionRecord] {
+    static func history(journal: [AgentSessionRecord], current snapshot: EngineSnapshot) -> [AgentSessionRecord] {
         let liveTerminals = Set(snapshot.agents.compactMap(\.terminalId))
         var seen = Set<String>()
         return journal.filter { record in
@@ -176,7 +176,7 @@ struct AgentSessionJournal: Codable, Equatable {
     }
 }
 
-/// Finds agent session ids from the agents' own files when no herdr
+/// Finds agent session ids from the agents' own files when no session server
 /// integration reports them.
 enum AgentSessionFiles {
     /// Claude: newest `~/.claude/projects/<cwd>/<session>.jsonl` modified
@@ -219,7 +219,7 @@ enum AgentSessionFiles {
     /// Session ids for every Claude/Codex agent without an integration
     /// report, newest-started agent first so each claims a distinct session.
     static func infer(
-        agents: [HerdrAgent],
+        agents: [EngineAgent],
         firstSeen: [String: Date],
         now: Date = Date()
     ) -> [String: String] {

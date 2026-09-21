@@ -9,7 +9,7 @@ final class MotionPreferences: ObservableObject {
     static let shared = MotionPreferences()
 
     enum Area: String, CaseIterable, Identifiable {
-        case sidebar, tabs, palette, toasts, agentStatus
+        case sidebar, tabs, palette, toasts, approvals, agentStatus
 
         var id: String { rawValue }
 
@@ -19,6 +19,7 @@ final class MotionPreferences: ObservableObject {
             case .tabs: return "Tab bar"
             case .palette: return "Command palette"
             case .toasts: return "Toasts"
+            case .approvals: return "Approval prompts"
             case .agentStatus: return "Agent status spinner"
             }
         }
@@ -29,6 +30,7 @@ final class MotionPreferences: ObservableObject {
             case .tabs: return "Tabs opening and closing, the active tab indicator sliding"
             case .palette: return "Palette opening and closing, the selection highlight"
             case .toasts: return "Toasts sliding in and out"
+            case .approvals: return "An agent's permission request fading up above the composer"
             case .agentStatus: return "The spinning indicator for working agents"
             }
         }

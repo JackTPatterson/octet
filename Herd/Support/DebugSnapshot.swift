@@ -35,8 +35,8 @@ enum DebugSnapshot {
         RunLoop.main.add(timer, forMode: .common)
     }
 
-    private static func findSurface(in view: NSView) -> Ghostty.SurfaceView? {
-        if let surface = view as? Ghostty.SurfaceView { return surface }
+    private static func findSurface(in view: NSView) -> TerminalEngine.SurfaceView? {
+        if let surface = view as? TerminalEngine.SurfaceView { return surface }
         for sub in view.subviews { if let surface = findSurface(in: sub) { return surface } }
         return nil
     }

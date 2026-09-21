@@ -1,30 +1,24 @@
 # Herd
 
-A native macOS app for [herdr](https://herdr.dev): herdr's persistent server
-runs every terminal and agent, libghostty renders the herdr client, and Herd
-draws Warp-style native chrome (project sidebar, top tabs, agent state and
-vendor hues). Claude Code subagents open as named background tabs showing
+A native macOS terminal for running coding agents side by side: Herd's
+persistent session server runs every terminal and agent, a GPU terminal engine
+renders it, and Herd draws native chrome (project sidebar, top tabs, agent
+state and vendor hues). Claude Code subagents open as named background tabs showing
 their live transcript. Design and scope: [docs/PLAN.md](docs/PLAN.md).
-
-## Naming
-
-Herd never shows the engine's name in its own UI: the title bar reads
-`ready`, toasts and settings talk about "the terminal", and Herd's generated
-config is `~/Library/Application Support/Herd/terminal.toml`. The engine is
-still named where naming it is the point — the install command on the
-missing-engine screen, its executable paths, its socket, and the attribution
-below.
 
 ## Requirements
 
 - macOS 14+, Xcode 26/27, `xcodegen` (`brew install xcodegen`)
-- herdr 0.9+ (`brew install herdr`)
-- `Vendor/GhosttyKit.xcframework`: a prebuilt libghostty. Currently a symlink to
-  the cmux build cache (`~/.cache/cmux/ghosttykit/*/GhosttyKit.xcframework`).
+- The terminal engine framework in `Vendor/` (prebuilt, not checked in).
+- The session server binary in `Vendor/engine/herd-engine`, copied there by
+  `scripts/fetch-engine.sh` (from the Homebrew install by default, or from a
+  path you pass). The build bundles it into Herd.app as
+  `Contents/MacOS/herd-engine`, so users install nothing else.
 
 ## Build and run
 
 ```sh
+scripts/fetch-engine.sh
 xcodegen generate
 xcodebuild -project Herd.xcodeproj -scheme Herd -configuration Debug -derivedDataPath build/DerivedData build
 open build/DerivedData/Build/Products/Debug/Herd.app
@@ -32,16 +26,17 @@ open build/DerivedData/Build/Products/Debug/Herd.app
 
 Tests: `xcodebuild -project Herd.xcodeproj -scheme HerdCore -derivedDataPath build/DerivedData test`
 
-Herd runs its own herdr session (`herdr --session herd`) with a managed config
-in `~/Library/Application Support/Herd/herdr-config.toml`, so a plain `herdr`
-elsewhere is unaffected. Workspaces persist in that session across relaunches.
+Herd runs its own named session (`herd-engine --session herd`) with a managed
+config in `~/Library/Application Support/Herd/terminal.toml`, so a standalone
+session elsewhere is unaffected. Workspaces persist in that session across
+relaunches.
 
 ## Subagent tabs
 
-Menu **Herd → Install Subagent Tabs Hook** (or
+The palette action **Install Subagent Tabs Hook** (or
 `Herd.app/Contents/MacOS/herd-cli install-subagent-hook [agent]`) adds a
-`PreToolUse` hook for `Agent|Task` to each installed agent's own config —
-`~/.claude/settings.json`, `~/.codex/hooks.json` — keeping a
+`PreToolUse` hook for `Agent|Task` to each installed agent's own config
+(`~/.claude/settings.json`, `~/.codex/hooks.json`), keeping a
 `.herd-backup` beside it. Agents share the hook format, so supporting another
 one is a row in `SubagentHookInstaller.specs`. The hook does nothing outside
 Herd panes. Reinstall after moving Herd.app, since it stores the herd-cli path.
@@ -57,17 +52,17 @@ capability flag decides whether Herd drives its `mcp` and `plugin` CLIs.
 
 ## Command palette
 
-⌘P (or ⌘⇧P, or click the title bar search) opens a Warp-style palette that
+⌘P (or ⌘⇧P, or click the title bar search) opens a palette that
 fuzzy-searches everything:
 
 | Filter | Prefix | Contents |
 | --- | --- | --- |
-| Actions | `>` | every command (tabs, panes, workspaces, worktrees, sidebar, herdr config, Claude hook), with shortcuts |
+| Actions | `>` | every command (tabs, panes, workspaces, worktrees, sidebar, terminal config, Claude hook), with shortcuts |
 | Workspaces | `%` | all workspaces with project, branch, and agent state |
 | Tabs | `#` | tabs across all workspaces, including subagent tabs |
 | Agents | `@` | running agents; jumps to their pane |
 | Projects | `/` | folders under ~/Developer, ~/Projects, ~/code, ~/src; opens or focuses a workspace |
-| Plugins | `!` | herdr plugin actions and panes, enable/disable, logs, unlink/uninstall, install from GitHub, link a local folder, marketplace |
+| Plugins | `!` | session plugin actions and panes, enable/disable, logs, unlink/uninstall, install from GitHub, link a local folder |
 
 ↑↓ or ⌃N/⌃P to move, ↩ to run, ⇥ to cycle filters, esc to close. With an empty
 query it shows your 3 most recent picks first. Rename Tab/Workspace and New
@@ -75,24 +70,25 @@ Worktree ask for text inline.
 
 ## Plugins
 
-Herd runs herdr plugins (event hooks, startup commands, panes, link handlers)
-unchanged, since herdr's server owns them. The palette's `!` filter adds what
-herdr's hidden UI would otherwise provide: invoke plugin actions (with the
-focused workspace/tab/pane as context), open plugin panes, enable/disable,
-browse run logs, and install from GitHub after reviewing herdr's install preview in a
-confirmation dialog. Plugins that only render into herdr's text sidebar
-(e.g. herdr-radar) have no effect in Herd; Herd's native sidebar covers that.
+Herd runs session plugins (event hooks, startup commands, panes, link
+handlers) unchanged, since the session server owns them. The palette's `!`
+filter adds what the server's hidden text UI would otherwise provide: invoke
+plugin actions (with the focused workspace/tab/pane as context), open plugin
+panes, enable/disable, browse run logs, and install from GitHub after
+reviewing the install preview in a confirmation dialog. Plugins that only
+render into the server's text sidebar have no effect in Herd; Herd's native
+sidebar covers that.
 
 ## Session recovery
 
 Herd journals every agent pane it sees (agent, session id, working folder,
 workspace and tab labels) to `~/Library/Application Support/Herd/agent-sessions.json`.
-Session ids come from herdr's own integration when one is installed
+Session ids come from the session server's integration when one is installed
 (Settings → Agents & Recovery), and otherwise from the agents' own files:
 Claude's transcripts under `~/.claude/projects`, Codex's `session_meta`
 rollouts under `~/.codex/sessions`.
 
-When a shutdown, crash, or herdr restart kills sessions that were running the
+When a shutdown, crash, or session server restart kills sessions that were running the
 last time Herd looked, a panel in the bottom right lists them and resumes the
 ones you pick with `claude --resume <id>` / `codex resume <id>` in their own
 workspaces, recreating a workspace that is gone. Each row can also copy its
@@ -116,7 +112,7 @@ removes it there. Skills and prompts are vendor-neutral: they live once in the
 shared library and are linked into each agent, so an edit reaches all of them.
 Herd can adopt skills and prompts an agent already had, import a folder of
 prompt files, and send a prompt straight to a running agent
-(herdr's `agent.prompt`).
+(the session server's `agent.prompt`).
 
 ### Hot swap
 
@@ -169,17 +165,17 @@ text pastes are untouched.
 
 ## Herd's command line
 
-At a bare shell prompt, Herd takes the keyboard and edits the line itself,
-the way Warp does: the command is highlighted as you type, a greyed-out
+At a bare shell prompt, Herd takes the keyboard and edits the line itself:
+the command is highlighted as you type, a greyed-out
 suggestion from your history follows the caret, and the finished line goes to
-the shell on Return. Everything a shell's own editor offers is here — word
+the shell on Return. Everything a shell's own editor offers is here: word
 moves and deletes (⌥←/→, ⌥⌫), ⌃A/⌃E, ⌃U/⌃K/⌃W, ↑/↓ through matching history,
 → or ⌃F to take the suggestion, ⌥→ for one word of it.
 
 It only ever runs while the pane's foreground process is its own shell, which
 Herd reads from the engine rather than guessing, so an agent, an editor or a
-pager always gets your keys. Anything Herd doesn't handle — Tab, a control
-key it has no meaning for, Escape, losing the window — hands what you typed
+pager always gets your keys. Anything Herd doesn't handle (Tab, a control
+key it has no meaning for, Escape, losing the window) hands what you typed
 straight to the shell and steps aside, so nothing can be trapped in it.
 Settings → Agents turns it off.
 
@@ -199,9 +195,9 @@ shell so its own completion still works.
 all instant: command specs (subcommands, options and their descriptions),
 this folder's own scripts and targets (`package.json`, `Makefile`,
 `justfile`, compose services, your shell and git aliases), your history
-ranked by frecency, and what usually follows what — a sequence table built
+ranked by frecency, and what usually follows what: a sequence table built
 from history, so after `git add .` the line already reads your usual commit.
-Values that have to be live — branches, npm scripts, running containers —
+Values that have to be live (branches, npm scripts, running containers)
 come from short generator commands whose output is cached per folder, so
 typing never waits on a process.
 
@@ -217,8 +213,7 @@ notice are written beside it. Everything else works without it.
 ## Terminal text position
 
 Settings → Terminal chooses where a pane's output sits while it doesn't fill
-the pane: **Bottom** keeps the prompt at the foot of the pane, the way Warp
-does, and **Top** is how a terminal normally fills from the first row. Herd
+the pane: **Bottom** keeps the prompt at the foot of the pane, and **Top** is how a terminal normally fills from the first row. Herd
 bottom-anchors by moving the surface, never by resizing the grid, so the
 shell never reflows; the drop only applies while every row below the cursor
 is blank, which also leaves split panes alone.
@@ -226,13 +221,13 @@ is blank, which also leaves split panes alone.
 ## Branches in the sidebar
 
 A workspace card shows the space and what is running in it; the branch sits
-in its own small chip below. Spaces that share a branch — or a worktree —
+in its own small chip below. Spaces that share a branch (or a worktree)
 stack together under one chip rather than repeating it, with a count when
 there are several.
 
 ## Agent notices
 
-When an agent stops working — it finished, or it is waiting on you — Herd
+When an agent stops working (it finished, or it is waiting on you), Herd
 slides a notice into the window's top right, tinted with that agent's colour
 and naming the tab, how long it worked, and which agent it was. Click one to
 jump to that pane; they stack up to three and fade after eight seconds. Work
@@ -243,12 +238,13 @@ between Herd's notices, system notifications, and none.
 ## Clipboard
 
 Copying looks identical whether or not it worked, so Herd confirms it in its
-own toast with a line of what landed there. herdr publishes no clipboard
-event, so Herd watches the pasteboard while it is the active app, which
-catches every route: copy-on-select, ⌘C, herdr's copy mode, and plugins.
+own toast with a line of what landed there. The session server publishes no
+clipboard event, so Herd watches the pasteboard while it is the active app,
+which catches every route: copy-on-select, ⌘C, copy mode, and plugins.
 Settings → Terminal turns it off. (If your agent notifications are set to
-"system", herdr may also post its own notification for copies made in its
-copy mode; setting notifications to Herd or off leaves only this toast.)
+"system", the session server may also post its own notification for copies
+made in copy mode; setting notifications to Herd or off leaves only this
+toast.)
 
 ## Toasts
 
@@ -256,7 +252,7 @@ Actions whose result isn't immediately visible or that take time show a
 progress toast (after 200 ms) and a confirmation or failure toast: plugin
 install (download → preview dialog → install), uninstall (with confirmation),
 enable/disable, link/unlink, plugin action runs (tracked until the command
-finishes), new worktree, herdr config reload, and the Claude hook. Instant,
+finishes), new worktree, terminal config reload, and the Claude hook. Instant,
 visible actions (tabs, panes, workspaces, renames) stay silent unless they fail.
 
 ## Shortcuts
@@ -277,17 +273,8 @@ visible actions (tabs, panes, workspaces, renames) stay silent unless they fail.
 
 ## License
 
-MIT — see `LICENSE`. Herd bundles and derives from other MIT-licensed work,
-credited below; those license files live under `docs/`.
-
-## Borrowed code and assets
-
-- Ghostty macOS surface view — MIT (`Herd/Terminal/Ghostty/LICENSE-ghostty`)
-- herdr-radar vendor hues, display names, logo and state SVGs — MIT (`docs/LICENSE-herdr-radar`)
-- Warp Dark theme values and vertical-tab metrics (`warpdotdev/Warp`, MIT UI crates)
-- Command completion specs — MIT (`withfig/autocomplete`), fetched on request
-  into `~/Library/Application Support/Herd/completions` with its licence
-- Transcript renderer and project-root resolver from the author's cmux fork
+MIT, see `LICENSE`. Third-party notices: `Herd/Resources/ThirdPartyNotices.txt`
+(bundled in the app as `Contents/Resources/ThirdPartyNotices.txt`).
 
 ## Debugging
 

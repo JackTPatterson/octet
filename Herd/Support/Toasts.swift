@@ -97,20 +97,23 @@ final class ToastCenter: ObservableObject {
     }
 }
 
-/// Toast stack, bottom-right, Warp card styling.
+/// Toast stack, bottom-right, card styling.
 struct ToastStack: View {
     @ObservedObject var center: ToastCenter
     @ObservedObject private var motion = MotionPreferences.shared
+    @StateObject private var host = HostWindow()
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 8) {
-            ForEach(center.visibleToasts) { toast in
+            // Toasts follow you: they show in whichever Herd window is in front.
+            ForEach(host.isFront ? center.visibleToasts : []) { toast in
                 ToastCard(toast: toast) { center.dismiss(toast.id) }
                     .transition(motion.animates(.toasts) ? .move(edge: .trailing).combined(with: .opacity) : .identity)
             }
         }
         .animation(motion.animation(.toasts, .easeOut(duration: 0.18)), value: center.visibleToasts)
         .padding(16)
+        .background(HostWindowReader(host: host))
     }
 }
 
@@ -136,7 +139,7 @@ private struct ToastCard: View {
             .frame(maxWidth: 320, alignment: .leading)
             if toast.style != .progress {
                 Button(action: dismiss) {
-                    Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
+                    HerdIcon("xmark", size: 16)
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(Theme.textTertiary)
@@ -172,13 +175,13 @@ private struct ToastCard: View {
     private var icon: some View {
         switch toast.style {
         case .progress:
-            ProgressView().controlSize(.small).tint(Theme.accent)
+            LoadingLine(width: 16)
         case .success:
-            Image(systemName: "checkmark.circle.fill").foregroundStyle(accent)
+            HerdIcon("checkmark.circle.fill", size: 16).foregroundStyle(accent)
         case .failure:
-            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(accent)
+            HerdIcon("exclamationmark.triangle.fill", size: 16).foregroundStyle(accent)
         case .info:
-            Image(systemName: "info.circle.fill").foregroundStyle(accent)
+            HerdIcon("info.circle.fill", size: 16).foregroundStyle(accent)
         }
     }
 }

@@ -1,9 +1,9 @@
 import SwiftUI
 
-/// herdr agent state glyph, drawn the way herdr-radar does: shape carries the
+/// Agent state glyph: shape carries the
 /// state (spinner, tick, question mark, dot); color stays semantic.
 struct AgentStateGlyph: View {
-    let status: HerdrAgentStatus
+    let status: EngineAgentStatus
     var size: CGFloat = 10
 
     var body: some View {
@@ -23,8 +23,7 @@ struct AgentStateGlyph: View {
                 .frame(width: size + 2, height: size + 2)
                 .foregroundStyle(Color(hex: AgentStateColor.blocked))
         case .done:
-            Image(systemName: "checkmark")
-                .font(.system(size: size - 1, weight: .bold))
+            HerdIcon("checkmark", size: (size - 1) * 1.35)
                 .foregroundStyle(Color(hex: AgentStateColor.done))
         case .idle:
             Circle().fill(Theme.textTertiary).frame(width: size - 4, height: size - 4)
@@ -49,7 +48,7 @@ private struct SpinnerArc: View {
     }
 }
 
-/// Vendor mark from herdr-radar, tinted with the vendor hue (or neutral ink).
+/// Vendor mark, tinted with the vendor hue (or neutral ink).
 struct AgentLogo: View {
     let brand: AgentBrand
     var size: CGFloat = 12
@@ -59,7 +58,7 @@ struct AgentLogo: View {
             if let asset = brand.logoAssetName {
                 Image(asset).resizable().aspectRatio(contentMode: .fit)
             } else {
-                Image(systemName: "sparkle").resizable().aspectRatio(contentMode: .fit)
+                HerdIcon("sparkle", size: size)
             }
         }
         .frame(width: size, height: size)

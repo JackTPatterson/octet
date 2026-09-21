@@ -9,19 +9,20 @@ final class SlashController: ObservableObject {
     @Published private(set) var commands: [SlashCommand] = []
     /// Submenus the user has opened, e.g. `/model` then a model's efforts.
     @Published private(set) var path: [SlashCommand] = []
-    @Published var query = ""
+    /// A new query re-ranks the list, so the highlight goes back to the best match.
+    @Published var query = "" { didSet { if query != oldValue { selection = 0 } } }
     @Published var selection = 0
     /// The pane the menu is typing into; nil when closed.
     @Published private(set) var paneId: String?
     @Published private(set) var agentName = ""
     private var agentKind = ""
 
-    private unowned let store: HerdrStore
+    private unowned let store: SessionStore
     /// Characters typed into each pane since its prompt was last submitted,
     /// so `/` only opens the menu at the start of an empty prompt.
     private var typed: [String: String] = [:]
 
-    init(store: HerdrStore) {
+    init(store: SessionStore) {
         self.store = store
     }
 
@@ -171,6 +172,14 @@ final class SlashController: ObservableObject {
         let typeOnly = insert || !SettingsStore.shared.values.slashRunsCommands || !picked.argumentHint.isEmpty
         send(text: picked.insertion + (typeOnly ? " " : ""), to: paneId, submit: !typeOnly)
         close()
+    }
+
+    /// Backspace on an empty query: leaves the submenu, or at the root
+    /// deletes the `/` itself by closing without typing anything.
+    func backspaceOnEmpty() {
+        guard path.isEmpty else { return ascend() }
+        close()
+        HerdTerminalRuntime.focusTerminal()
     }
 
     /// Escape: closes the menu and passes on what was typed, so nothing the

@@ -2,9 +2,9 @@ import AppKit
 import Foundation
 
 /// Copying is invisible — the text looks the same whether or not it landed on
-/// the clipboard — so Herd confirms it in its own toast. herdr has no
+/// the clipboard — so Herd confirms it in its own toast. The session server has no
 /// clipboard event, so this watches the pasteboard instead, which catches
-/// every route: the terminal's copy-on-select and ⌘C, herdr's copy mode, and
+/// every route: the terminal's copy-on-select and ⌘C, the session server's copy mode, and
 /// anything a plugin copies.
 @MainActor
 final class ClipboardWatcher {

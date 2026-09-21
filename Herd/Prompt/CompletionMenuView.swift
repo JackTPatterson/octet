@@ -49,8 +49,7 @@ private struct CompletionRow: View {
 
     var body: some View {
         HStack(spacing: 7) {
-            Image(systemName: completion.kind.symbol)
-                .font(.system(size: 9))
+            HerdIcon(completion.kind.symbol, size: 12)
                 .foregroundStyle(selected ? Theme.accent : Theme.textTertiary)
                 .frame(width: 12)
             Text(completion.value)

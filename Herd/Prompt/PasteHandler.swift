@@ -15,7 +15,7 @@ enum PasteHandler {
 
     /// Handles the key when the clipboard holds an image. Returns false for
     /// everything else, so ordinary paste behaves as it always did.
-    static func handleCommandV(store: HerdrStore) -> Bool {
+    static func handleCommandV(store: SessionStore) -> Bool {
         guard SettingsStore.shared.values.pasteImagesAsFiles else { return false }
         let pasteboard = NSPasteboard.general
         // A file the user copied in Finder already has a path: paste that.
@@ -52,7 +52,7 @@ enum PasteHandler {
     }
 
     /// Types the path into the focused pane.
-    private static func send(path: String, store: HerdrStore, copied: Bool) -> Bool {
+    private static func send(path: String, store: SessionStore, copied: Bool) -> Bool {
         let snapshot = store.snapshot
         guard let paneId = snapshot.focusedPaneId ?? snapshot.panes.first(where: \.focused)?.paneId else { return false }
         let client = store.client

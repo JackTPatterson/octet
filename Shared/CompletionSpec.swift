@@ -1,7 +1,6 @@
 import Foundation
 
-/// How a command completes, as data rather than code — the shape Warp's
-/// engine uses: subcommands, options, and arguments that name where their
+/// How a command completes, as data rather than code: subcommands, options, and arguments that name where their
 /// values come from. Dynamic values (branches, npm scripts, containers) come
 /// from a generator: one short command whose output is cached, so typing
 /// never waits on a process.

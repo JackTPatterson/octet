@@ -19,9 +19,11 @@ struct MarketplaceView: View {
             }
         }
         .frame(minWidth: 820, minHeight: 540)
+        .overlay(alignment: .bottomTrailing) { ToastStack(center: ToastCenter.shared) }
+        .overlay { ConfirmDialog(center: ConfirmCenter.shared) }
         .background(Theme.chrome)
         .background(DarkTransparentTitleBar())
-        .background(ThemedWindow(themeName: SettingsStore.shared.values.themeName))
+        .background(ThemedWindow(themeName: SettingsStore.shared.themeKey))
         .preferredColorScheme(Theme.colorScheme)
         .onAppear {
             store.refreshAll()
@@ -52,7 +54,7 @@ struct MarketplaceView: View {
                 SidebarRow(
                     title: section.title,
                     symbol: section.symbol,
-                    count: count(of: section),
+                    count: countLabel(of: section),
                     selected: store.section == section,
                     loading: store.loading.contains(section)
                 ) { store.section = section }
@@ -83,8 +85,7 @@ struct MarketplaceView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 11))
+            HerdIcon("magnifyingglass", size: 15)
                 .foregroundStyle(Theme.textTertiary)
             TextField("Search \(store.section.title)", text: $store.query)
                 .textFieldStyle(.plain)
@@ -103,7 +104,7 @@ struct MarketplaceView: View {
                 case .prompts: editing = LibraryDraft(kind: .prompt)
                 }
             } label: {
-                Label(addTitle, systemImage: "plus")
+                Label { Text(addTitle) } icon: { HerdIcon("plus", size: 13) }
             }
             .controlSize(.small)
             if store.section == .prompts {
@@ -114,7 +115,7 @@ struct MarketplaceView: View {
             Button {
                 store.section == .plugins ? store.loadPlugins(force: true) : store.refreshAll()
             } label: {
-                Image(systemName: "arrow.clockwise")
+                HerdIcon("arrow.clockwise", size: 13)
             }
             .controlSize(.small)
             .help("Refresh")
@@ -142,31 +143,72 @@ struct MarketplaceView: View {
         }
     }
 
-    private func count(of section: MarketplaceStore.Section) -> Int {
+    /// Plugins count as installed out of available; the rest count all.
+    private func countLabel(of section: MarketplaceStore.Section) -> String? {
+        let total = totalCount(of: section)
+        guard total > 0 else { return nil }
+        guard section == .plugins else { return "\(total)" }
+        return "\(store.plugins.filter(\.isInstalled).count) / \(total)"
+    }
+
+    private func totalCount(of section: MarketplaceStore.Section) -> Int {
         switch section {
         case .mcp: store.servers.count
-        case .plugins: store.plugins.filter(\.isInstalled).count
+        case .plugins: store.plugins.count
         case .skills: store.skills.count
         case .prompts: store.prompts.count
         }
     }
 
+    private func retry(_ section: MarketplaceStore.Section) {
+        switch section {
+        case .mcp: store.loadServers()
+        case .plugins: store.loadPlugins(force: true)
+        case .skills, .prompts: store.loadLibrary()
+        }
+    }
+
     @ViewBuilder
     private var content: some View {
+        let section = store.section
         ScrollView {
             LazyVStack(spacing: 4) {
-                switch store.section {
+                let total = totalCount(of: section)
+                if let error = store.loadErrors[section], total > 0 {
+                    LoadErrorBanner(message: error, retrying: store.loading.contains(section)) { retry(section) }
+                }
+                switch section {
                 case .mcp:
-                    ForEach(store.filteredServers()) { entry in
+                    let servers = store.filteredServers()
+                    if let state = emptyState(section, total: total, visible: servers.count) {
+                        state
+                    }
+                    ForEach(servers) { entry in
                         EntryRow(store: store, entry: entry)
                     }
                 case .plugins:
-                    ForEach(store.filteredPlugins().prefix(400)) { entry in
+                    let plugins = store.filteredPlugins()
+                    let limit = MarketplaceStore.pluginDisplayLimit
+                    if let state = emptyState(section, total: total, visible: plugins.count) {
+                        state
+                    }
+                    ForEach(plugins.prefix(limit)) { entry in
                         EntryRow(store: store, entry: entry)
                     }
+                    if plugins.count > limit {
+                        Text("Showing \(limit) of \(plugins.count). Refine your search.")
+                            .font(Theme.captionFont)
+                            .foregroundStyle(Theme.textTertiary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                    }
                 case .skills, .prompts:
-                    let kind: AgentLibrary.Kind = store.section == .skills ? .skill : .prompt
-                    ForEach(store.filteredLibrary(kind)) { item in
+                    let kind: AgentLibrary.Kind = section == .skills ? .skill : .prompt
+                    let items = store.filteredLibrary(kind)
+                    if let state = emptyState(section, total: total, visible: items.count) {
+                        state
+                    }
+                    ForEach(items) { item in
                         LibraryRow(store: store, item: item) {
                             editing = LibraryDraft(item: item, text: store.text(of: item))
                         }
@@ -178,6 +220,153 @@ struct MarketplaceView: View {
         }
         .background(Theme.terminalBackground)
     }
+
+    /// What to show in place of an empty list, or nil when rows are showing.
+    private func emptyState(_ section: MarketplaceStore.Section, total: Int, visible: Int) -> MarketplaceEmptyState? {
+        guard visible == 0 else { return nil }
+        let needsAgent = section == .mcp || section == .plugins
+        let capable = store.hosts.contains { section == .mcp ? $0.supportsMCP : $0.supportsPlugins }
+        if total == 0, store.loading.contains(section) || !store.loaded.contains(section) {
+            return MarketplaceEmptyState(
+                symbol: nil,
+                title: "Loading \(section.title)",
+                message: section == .plugins
+                    ? "Fetching every configured marketplace. This can take a while the first time."
+                    : "Asking each agent for its list."
+            )
+        }
+        if total == 0, needsAgent, !capable {
+            return MarketplaceEmptyState(
+                symbol: "person.crop.circle.badge.questionmark",
+                title: "No agents installed",
+                message: "Herd found no agent on this Mac that manages \(section.title.lowercased()). Install Claude Code or Codex, then refresh."
+            )
+        }
+        if total == 0, let error = store.loadErrors[section] {
+            return MarketplaceEmptyState(
+                symbol: "exclamationmark.triangle",
+                title: "Couldn't load \(section.title)",
+                message: error,
+                actionTitle: "Retry"
+            ) { retry(section) }
+        }
+        if total == 0 {
+            switch section {
+            case .mcp:
+                return MarketplaceEmptyState(
+                    symbol: section.symbol,
+                    title: "No MCP servers yet",
+                    message: "Add a server once and Herd installs it into each agent in its own syntax.",
+                    actionTitle: "Add Server"
+                ) { addingServer = true }
+            case .plugins:
+                return MarketplaceEmptyState(
+                    symbol: section.symbol,
+                    title: "No plugins available",
+                    message: "Add a plugin marketplace to browse what it offers.",
+                    actionTitle: "Add Marketplace"
+                ) { editing = LibraryDraft(kind: .prompt, marketplaceSource: true) }
+            case .skills:
+                return MarketplaceEmptyState(
+                    symbol: section.symbol,
+                    title: "No skills yet",
+                    message: "Skills in your library are linked into every agent you pick.",
+                    actionTitle: "New Skill"
+                ) { editing = LibraryDraft(kind: .skill) }
+            case .prompts:
+                return MarketplaceEmptyState(
+                    symbol: section.symbol,
+                    title: "No prompts yet",
+                    message: "Prompts in your library become slash commands in every agent you pick.",
+                    actionTitle: "New Prompt"
+                ) { editing = LibraryDraft(kind: .prompt) }
+            }
+        }
+        return MarketplaceEmptyState(
+            symbol: "magnifyingglass",
+            title: "No matches",
+            message: "Nothing in \(section.title) matches \u{201C}\(store.query.trimmingCharacters(in: .whitespaces))\u{201D}.",
+            actionTitle: "Clear Search"
+        ) { store.query = "" }
+    }
+}
+
+// MARK: - States
+
+/// Stands in for an empty list: loading, failed, empty, or no matches.
+private struct MarketplaceEmptyState: View {
+    /// nil shows a spinner.
+    let symbol: String?
+    let title: String
+    let message: String
+    var actionTitle: String?
+    var action: (() -> Void)?
+
+    var body: some View {
+        VStack(spacing: 10) {
+            if let symbol {
+                HerdIcon(symbol, size: 35)
+                    .foregroundStyle(Theme.textTertiary)
+            } else {
+                LoadingLine(width: 48, thickness: 3)
+            }
+            Text(title)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary)
+            Text(message)
+                .font(Theme.uiFont)
+                .foregroundStyle(Theme.textSecondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+                .frame(maxWidth: 420)
+            if let actionTitle, let action {
+                Button(actionTitle, action: action)
+                    .controlSize(.small)
+                    .padding(.top, 2)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 70)
+        .padding(.bottom, 30)
+        .padding(.horizontal, 20)
+        .accessibilityElement(children: .contain)
+    }
+}
+
+/// A failed refresh over a list that still shows its previous rows.
+private struct LoadErrorBanner: View {
+    let message: String
+    let retrying: Bool
+    let retry: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            HerdIcon("exclamationmark.triangle.fill", size: 16)
+                .foregroundStyle(Theme.danger)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Couldn't refresh; showing what loaded before")
+                    .font(Theme.uiFontMedium)
+                    .foregroundStyle(Theme.textPrimary)
+                Text(message)
+                    .font(Theme.captionFont)
+                    .foregroundStyle(Theme.textSecondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            if retrying {
+                LoadingLine(width: 18)
+            } else {
+                Button("Retry", action: retry).controlSize(.small)
+            }
+        }
+        .padding(10)
+        .background(Theme.danger.opacity(0.12))
+        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.danger.opacity(0.5), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .padding(.bottom, 4)
+    }
 }
 
 // MARK: - Rows
@@ -185,7 +374,7 @@ struct MarketplaceView: View {
 private struct SidebarRow: View {
     let title: String
     let symbol: String
-    let count: Int
+    let count: String?
     let selected: Bool
     let loading: Bool
     let action: () -> Void
@@ -194,16 +383,15 @@ private struct SidebarRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 8) {
-                Image(systemName: symbol)
-                    .font(.system(size: 11))
+                HerdIcon(symbol, size: 15)
                     .frame(width: 14)
                 Text(title)
                     .font(selected ? Theme.uiFontMedium : Theme.uiFont)
                 Spacer(minLength: 4)
                 if loading {
-                    ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 14, height: 14)
-                } else if count > 0 {
-                    Text("\(count)")
+                    LoadingLine(width: 14)
+                } else if let count {
+                    Text(count)
                         .font(Theme.captionFont)
                         .foregroundStyle(Theme.textTertiary)
                 }
@@ -217,6 +405,7 @@ private struct SidebarRow: View {
         .buttonStyle(.plain)
         .onHover { hovered = $0 }
         .padding(.horizontal, 6)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 
@@ -228,8 +417,7 @@ private struct EntryRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: entry.kind == .mcp ? "point.3.connected.trianglepath.dotted" : "puzzlepiece.extension")
-                .font(.system(size: 12))
+            HerdIcon(entry.kind == .mcp ? "point.3.connected.trianglepath.dotted" : "puzzlepiece.extension", size: 16)
                 .foregroundStyle(entry.isInstalled ? Theme.accent : Theme.textTertiary)
                 .frame(width: 16)
                 .padding(.top, 2)
@@ -238,6 +426,9 @@ private struct EntryRow: View {
                     Text(entry.name)
                         .font(Theme.uiFontMedium)
                         .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .layoutPriority(1)
                     if !entry.version.isEmpty {
                         Text(entry.version).font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
                     }
@@ -260,7 +451,8 @@ private struct EntryRow: View {
                             host: host,
                             installed: entry.installedIn.contains(host.id),
                             enabled: entry.enabledIn.contains(host.id),
-                            status: entry.status[host.id]
+                            status: entry.status[host.id],
+                            busy: store.isBusy(entry, host)
                         ) {
                             toggle(host)
                         }
@@ -270,10 +462,17 @@ private struct EntryRow: View {
             Spacer(minLength: 8)
             if entry.isInstalled {
                 Button("Remove") {
-                    store.remove(entry, from: store.hosts.filter { entry.installedIn.contains($0.id) })
+                    let hosts = store.hosts.filter { entry.installedIn.contains($0.id) }
+                    ConfirmCenter.shared.ask(
+                        title: "Remove \(entry.name)?",
+                        message: "Removes it from \(hosts.map(\.displayName).joined(separator: ", ")).",
+                        confirmTitle: "Remove",
+                        destructive: true
+                    ) { _ in store.remove(entry, from: hosts) }
                 }
                 .controlSize(.small)
                 .opacity(hovered ? 1 : 0.5)
+                .disabled(store.isBusy(entry))
             }
         }
         .padding(10)
@@ -297,22 +496,25 @@ private struct HostChip: View {
     let installed: Bool
     var enabled = true
     var status: String?
+    /// A change for this host is running: spin and ignore clicks.
+    var busy = false
     let toggle: () -> Void
     @State private var hovered = false
 
     var body: some View {
         Button(action: toggle) {
             HStack(spacing: 4) {
-                if let brand = AgentBrand.forAgent(host.id) {
+                if busy {
+                    LoadingLine(width: 10)
+                } else if let brand = AgentBrand.forAgent(host.id) {
                     AgentLogo(brand: brand, size: 10)
                 } else {
-                    Image(systemName: "terminal").font(.system(size: 9))
+                    HerdIcon("terminal", size: 12)
                 }
                 Text(host.displayName)
                     .font(Theme.captionFont)
                 if let status, status.contains("✘") || status == "disabled" {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 8))
+                    HerdIcon("exclamationmark.triangle.fill", size: 11)
                         .foregroundStyle(.orange)
                 }
             }
@@ -329,8 +531,11 @@ private struct HostChip: View {
             .opacity(hovered ? 0.85 : 1)
         }
         .buttonStyle(.plain)
+        .disabled(busy)
         .onHover { hovered = $0 }
-        .help(status ?? (installed ? "Installed in \(host.displayName)" : "Add to \(host.displayName)"))
+        .help(busy ? "Updating \(host.displayName)…" : status ?? (installed ? "Installed in \(host.displayName)" : "Add to \(host.displayName)"))
+        .accessibilityLabel(host.displayName)
+        .accessibilityValue(busy ? "Updating" : installed ? "Installed" : "Not installed")
     }
 }
 
@@ -342,8 +547,7 @@ private struct LibraryRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: item.kind == .skill ? "graduationcap" : "text.bubble")
-                .font(.system(size: 12))
+            HerdIcon(item.kind == .skill ? "graduationcap" : "text.bubble", size: 16)
                 .foregroundStyle(item.installedIn.isEmpty ? Theme.textTertiary : Theme.accent)
                 .frame(width: 16)
                 .padding(.top, 2)
@@ -373,7 +577,15 @@ private struct LibraryRow: View {
                         .help("Send this prompt to \(AgentBrand.forAgent(agent.agent)?.displayName ?? "the focused agent")")
                 }
                 Button("Edit", action: edit).controlSize(.small)
-                Button("Delete") { store.deleteLibraryItem(item) }.controlSize(.small)
+                Button("Delete") {
+                    ConfirmCenter.shared.ask(
+                        title: "Delete \(item.name)?",
+                        message: "Deletes it from the library and uninstalls it from every agent that has it. This can't be undone.",
+                        confirmTitle: "Delete",
+                        destructive: true
+                    ) { _ in store.deleteLibraryItem(item) }
+                }
+                .controlSize(.small)
             }
             .opacity(hovered ? 1 : 0.5)
         }
@@ -527,6 +739,8 @@ private struct ServerEditor: View {
     @State private var name = ""
     @State private var command = ""
     @State private var hosts: Set<String> = []
+    @State private var submitting = false
+    @State private var error: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -534,9 +748,11 @@ private struct ServerEditor: View {
             Text("A command to run, or an HTTP URL. Herd adds it in each agent's own syntax.")
                 .font(Theme.captionFont).foregroundStyle(Theme.textSecondary)
             TextField("name", text: $name).textFieldStyle(.roundedBorder)
+                .disabled(submitting)
             TextField("npx -y @acme/mcp-server  ·  https://mcp.example.com/mcp", text: $command)
                 .textFieldStyle(.roundedBorder)
                 .font(Theme.monoFont)
+                .disabled(submitting)
             HStack(spacing: 8) {
                 Text("Add to").font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
                 ForEach(store.hosts) { host in
@@ -545,23 +761,53 @@ private struct ServerEditor: View {
                     }
                 }
             }
+            .disabled(submitting)
+            if let error {
+                HStack(alignment: .top, spacing: 6) {
+                    HerdIcon("exclamationmark.triangle.fill", size: 14)
+                        .foregroundStyle(Theme.danger)
+                    Text(error)
+                        .font(Theme.captionFont)
+                        .foregroundStyle(Theme.danger)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .accessibilityElement(children: .combine)
+            }
             HStack {
                 Button("Cancel", action: close).keyboardShortcut(.cancelAction)
                 Spacer()
-                Button("Add") {
-                    let targets = store.hosts.filter { hosts.contains($0.id) }
-                    store.addServer(name: name.trimmingCharacters(in: .whitespaces),
-                                    command: command,
-                                    into: targets.isEmpty ? store.hosts : targets)
-                    close()
+                if submitting {
+                    LoadingLine(width: 18)
+                    Text("Adding…").font(Theme.captionFont).foregroundStyle(Theme.textSecondary)
                 }
-                .keyboardShortcut(.defaultAction)
-                .disabled(name.isEmpty || command.isEmpty)
+                Button("Add", action: add)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(submitting || name.trimmingCharacters(in: .whitespaces).isEmpty
+                        || command.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
         .padding(16)
         .frame(width: 520)
         .background(Theme.chrome)
         .onAppear { hosts = Set(store.hosts.map(\.id)) }
+    }
+
+    /// Stays open until the agents answer, so a failed command can be fixed
+    /// instead of retyped.
+    private func add() {
+        let targets = store.hosts.filter { hosts.contains($0.id) }
+        submitting = true
+        error = nil
+        store.addServer(name: name.trimmingCharacters(in: .whitespaces),
+                        command: command,
+                        into: targets.isEmpty ? store.hosts : targets) { failure in
+            submitting = false
+            if let failure {
+                error = failure
+            } else {
+                close()
+            }
+        }
     }
 }

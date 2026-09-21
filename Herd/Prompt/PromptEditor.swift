@@ -1,7 +1,7 @@
 import AppKit
 import Foundation
 
-/// Herd's own command line, the way Warp works: while a pane sits at a bare
+/// Herd's own command line: while a pane sits at a bare
 /// shell prompt, Herd takes the keystrokes, draws and edits the line itself
 /// — highlighted, with a suggestion from history — and hands the finished
 /// command to the shell on Return. Anything Herd doesn't handle flushes what
@@ -22,7 +22,7 @@ final class PromptEditor: ObservableObject {
     @Published private(set) var isSearchingHistory = false
     var completionsOpen: Bool { !completions.isEmpty }
 
-    private unowned let store: HerdrStore
+    private unowned let store: SessionStore
     private var history = CommandHistory()
     private var historyLoadedAt = Date.distantPast
     /// The pane being typed into; the editor closes if focus moves.
@@ -38,7 +38,7 @@ final class PromptEditor: ObservableObject {
     /// The command submitted last, which drives the prediction.
     private var lastCommand: String?
 
-    init(store: HerdrStore) {
+    init(store: SessionStore) {
         self.store = store
         // Losing the window means the line is stale: hand it back rather
         // than keeping half a command no one can see.
@@ -73,6 +73,15 @@ final class PromptEditor: ObservableObject {
         guard isActive || store.focusedPaneAtPrompt else {
             log("ignored key, atPrompt=\(store.focusedPaneAtPrompt) process=\(String(describing: store.focusedProcess))")
             return false
+        }
+        // The shell being in front isn't enough: `read -s` is the shell too.
+        // Only a live line editor means this is a command line, not a secret.
+        if !isActive {
+            guard let pid = store.focusedProcess?.shellPid,
+                  ShellPrompt.lineEditorActive(shellPid: pid) == true else {
+                log("ignored key, shell not in its line editor")
+                return false
+            }
         }
         guard let characters = event.charactersIgnoringModifiers, !characters.isEmpty else { return false }
 
@@ -200,7 +209,8 @@ final class PromptEditor: ObservableObject {
         refreshSuggestion()
         // A menu that is open follows what is being typed.
         if completionsOpen { openCompletions() }
-        log("text=\(line.text) suggestion=\(suggestion ?? "-") active=\(isActive) anchor=\(anchor != nil)")
+        // Never log the typed text itself.
+        log("length=\(line.text.count) suggestion=\(suggestion != nil) active=\(isActive) anchor=\(anchor != nil)")
         return true
     }
 

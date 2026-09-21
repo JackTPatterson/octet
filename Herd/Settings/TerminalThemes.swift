@@ -1,5 +1,4 @@
-// Generated from warpdotdev/Warp app/src/themes/default_themes.rs (solid-color
-// built-in themes; image and gradient themes are omitted).
+// Built-in solid-color terminal themes (no image or gradient themes).
 
 /// A terminal color theme: background, foreground, accent, and the 16 ANSI colors.
 struct TerminalTheme: Identifiable, Equatable {

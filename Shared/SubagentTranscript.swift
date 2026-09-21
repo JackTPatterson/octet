@@ -1,7 +1,5 @@
 import Foundation
 
-// Ported from the author's cmux fork (CLI/CMUXCLI+ClaudeHookSettings.swift).
-
 /// Finds `agent-<id>.jsonl` for a tool call by its sibling `.meta.json`.
 struct SubagentTranscriptLocator {
     let directory: String

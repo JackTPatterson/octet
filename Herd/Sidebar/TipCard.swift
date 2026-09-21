@@ -4,7 +4,7 @@ import SwiftUI
 /// is easy to miss. It only offers tips that fit the session, steps forward
 /// when clicked, and can be turned off for good.
 struct TipCard: View {
-    @ObservedObject var store: HerdrStore
+    @ObservedObject var store: SessionStore
     @ObservedObject private var settings = SettingsStore.shared
     @ObservedObject private var motion = MotionPreferences.shared
     @State private var hovered = false
@@ -13,8 +13,7 @@ struct TipCard: View {
         if settings.values.showTips, let tip = store.currentTip {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
-                    Image(systemName: "lightbulb")
-                        .font(.system(size: 9.5))
+                    HerdIcon("lightbulb", size: 13)
                         .foregroundStyle(Theme.accent)
                     Text(tip.title)
                         .font(Theme.uiFontMedium)
@@ -35,8 +34,7 @@ struct TipCard: View {
                             .foregroundStyle(Theme.textTertiary)
                     }
                     Button { store.dismissTips() } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 8, weight: .semibold))
+                        HerdIcon("xmark", size: 15)
                             .foregroundStyle(Theme.textTertiary)
                             .frame(width: 14, height: 14)
                             .contentShape(Rectangle())

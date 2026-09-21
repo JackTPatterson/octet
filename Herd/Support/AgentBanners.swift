@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Warp-style notices in the top-right of the window: an agent finished, or
+/// Notices in the top-right of the window: an agent finished, or
 /// it is waiting on you. Click one to jump to that pane.
 @MainActor
 final class AgentBannerCenter: ObservableObject {
@@ -78,7 +78,7 @@ private struct AgentBannerCard: View {
                 if let brand {
                     AgentLogo(brand: brand, size: 12)
                 } else {
-                    Image(systemName: "sparkle").font(.system(size: 10)).foregroundStyle(tint)
+                    HerdIcon("sparkle", size: 14).foregroundStyle(tint)
                 }
             }
             VStack(alignment: .leading, spacing: 1) {
@@ -100,8 +100,7 @@ private struct AgentBannerCard: View {
             }
             Spacer(minLength: 6)
             Button(action: dismiss) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 8.5, weight: .semibold))
+                HerdIcon("xmark", size: 15)
                     .foregroundStyle(Theme.textTertiary)
                     .frame(width: 18, height: 18)
                     .contentShape(Rectangle())

@@ -28,7 +28,7 @@ struct AgentEvent: Identifiable, Equatable {
 /// interrupting someone for.
 struct AgentActivityWatcher {
     /// Per pane: the last status seen, and when it started working.
-    private var states: [String: (status: HerdrAgentStatus, startedWorking: Date?)] = [:]
+    private var states: [String: (status: EngineAgentStatus, startedWorking: Date?)] = [:]
     /// Panes seen for the first time don't fire; their state is only recorded.
     private var primed = false
 
@@ -37,12 +37,12 @@ struct AgentActivityWatcher {
     /// Transitions since the previous snapshot. `isVisible` suppresses a
     /// notice for work you are already looking at.
     mutating func events(
-        in snapshot: HerdrSnapshot,
+        in snapshot: EngineSnapshot,
         now: Date = Date(),
-        isVisible: (HerdrAgent) -> Bool = { _ in false }
+        isVisible: (EngineAgent) -> Bool = { _ in false }
     ) -> [AgentEvent] {
         var events: [AgentEvent] = []
-        var next: [String: (status: HerdrAgentStatus, startedWorking: Date?)] = [:]
+        var next: [String: (status: EngineAgentStatus, startedWorking: Date?)] = [:]
         let labels = Dictionary(snapshot.tabs.map { ($0.tabId, $0.label) }, uniquingKeysWith: { first, _ in first })
 
         for agent in snapshot.agents {
@@ -76,7 +76,7 @@ struct AgentActivityWatcher {
 
     /// Only a transition out of work is worth a notice: everything else is
     /// either noise or something the user just did.
-    private func kind(from previous: HerdrAgentStatus, to current: HerdrAgentStatus) -> AgentEvent.Kind? {
+    private func kind(from previous: EngineAgentStatus, to current: EngineAgentStatus) -> AgentEvent.Kind? {
         switch (previous, current) {
         case (.working, .done), (.working, .idle): .finished
         case (.working, .blocked), (.idle, .blocked), (.done, .blocked): .needsInput

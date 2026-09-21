@@ -68,8 +68,13 @@ struct SlashPaletteView: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.border, lineWidth: 1))
         .shadow(color: .black.opacity(0.4), radius: 22, y: 10)
-        .onAppear { focused = true }
+        .onAppear { DispatchQueue.main.async { focused = true } }
         .onExitCommand { slash.cancel() }
+        // Clicking the terminal, opening the palette, or switching windows
+        // takes focus away: close rather than keep eating arrow keys.
+        .onChange(of: focused) { _, isFocused in
+            if !isFocused && slash.isOpen { slash.close() }
+        }
         .background {
             // Arrow keys and ⌘↩ while the field holds focus.
             KeyCatcher(
@@ -77,8 +82,21 @@ struct SlashPaletteView: View {
                 up: { slash.moveSelection(-1) },
                 down: { slash.moveSelection(1) },
                 submitRunning: { slash.choose(insert: true) },
-                right: { slash.openSelected() },
-                back: { slash.query.isEmpty ? slash.ascend() : nil }
+                right: {
+                    guard slash.selectedHasChildren else { return false }
+                    slash.openSelected()
+                    return true
+                },
+                back: {
+                    guard slash.query.isEmpty else { return false }
+                    slash.ascend()
+                    return true
+                },
+                backspace: {
+                    guard slash.query.isEmpty else { return false }
+                    slash.backspaceOnEmpty()
+                    return true
+                }
             )
         }
     }
@@ -111,8 +129,7 @@ private struct CommandRow: View {
                 Text("\(command.children.count)")
                     .font(Theme.captionFont)
                     .foregroundStyle(Theme.textTertiary)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 8, weight: .semibold))
+                HerdIcon("chevron.right", size: 11)
                     .foregroundStyle(Theme.textTertiary)
             }
             if !command.origin.label.isEmpty {
@@ -159,20 +176,24 @@ private struct KeyCatcher: NSViewRepresentable {
     let up: () -> Void
     let down: () -> Void
     let submitRunning: () -> Void
-    /// → opens the highlighted submenu, ← (or ⌫ on an empty query) goes back.
-    let right: () -> Void
-    let back: () -> Void
+    /// → opens the highlighted submenu and ← goes back; each returns false
+    /// when it doesn't apply, so the key moves the caret instead.
+    let right: () -> Bool
+    let back: () -> Bool
+    /// ⌫ on an empty query; false lets the field delete a character.
+    let backspace: () -> Bool
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
+        context.coordinator.host = view
         context.coordinator.install(isActive: isActive, up: up, down: down, submitRunning: submitRunning,
-                                    right: right, back: back)
+                                    right: right, back: back, backspace: backspace)
         return view
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
         context.coordinator.install(isActive: isActive, up: up, down: down, submitRunning: submitRunning,
-                                    right: right, back: back)
+                                    right: right, back: back, backspace: backspace)
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -183,16 +204,20 @@ private struct KeyCatcher: NSViewRepresentable {
         private var up: (() -> Void)?
         private var down: (() -> Void)?
         private var submitRunning: (() -> Void)?
-        private var right: (() -> Void)?
-        private var back: (() -> Void)?
+        private var right: (() -> Bool)?
+        private var back: (() -> Bool)?
+        private var backspace: (() -> Bool)?
+        /// Only keys aimed at the menu's own window count.
+        weak var host: NSView?
 
         func install(
             isActive: @escaping () -> Bool,
             up: @escaping () -> Void,
             down: @escaping () -> Void,
             submitRunning: @escaping () -> Void,
-            right: @escaping () -> Void,
-            back: @escaping () -> Void
+            right: @escaping () -> Bool,
+            back: @escaping () -> Bool,
+            backspace: @escaping () -> Bool
         ) {
             self.isActive = isActive
             self.up = up
@@ -200,9 +225,11 @@ private struct KeyCatcher: NSViewRepresentable {
             self.submitRunning = submitRunning
             self.right = right
             self.back = back
+            self.backspace = backspace
             guard monitor == nil else { return }
             monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-                guard let self, self.isActive?() == true else { return event }
+                guard let self, self.isActive?() == true,
+                      let window = self.host?.window, event.window === window else { return event }
                 switch event.keyCode {
                 case 126: self.up?(); return nil
                 case 125: self.down?(); return nil
@@ -212,11 +239,9 @@ private struct KeyCatcher: NSViewRepresentable {
                         return nil
                     }
                     return event
-                case 124: self.right?(); return nil
-                case 123: self.back?(); return nil
-                case 51: // Backspace on an empty query leaves the submenu.
-                    self.back?()
-                    return event
+                case 124: return self.right?() == true ? nil : event
+                case 123: return self.back?() == true ? nil : event
+                case 51: return self.backspace?() == true ? nil : event
                 case 48: // Tab completes like ↩ without running.
                     return event
                 default: return event

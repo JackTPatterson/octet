@@ -23,6 +23,9 @@ final class ConfirmCenter: ObservableObject {
         var suppressTitle: String?
         var onConfirm: (_ suppress: Bool) -> Void
         var onCancel: () -> Void = {}
+        /// The window that was in front when this was asked; it draws the
+        /// dialog. nil (or closed since) falls back to the terminal window.
+        weak var window: NSWindow? = NSApp.keyWindow
     }
 
     static let shared = ConfirmCenter()
@@ -87,10 +90,11 @@ final class ConfirmCenter: ObservableObject {
 struct ConfirmDialog: View {
     @ObservedObject var center: ConfirmCenter
     @ObservedObject private var motion = MotionPreferences.shared
+    @StateObject private var host = HostWindow()
 
     var body: some View {
         ZStack {
-            if let request = center.request {
+            if let request = center.request, host.owns(request.window) {
                 Color.black.opacity(0.35)
                     .ignoresSafeArea()
                     .onTapGesture { center.cancel() }
@@ -101,6 +105,7 @@ struct ConfirmDialog: View {
             }
         }
         .animation(motion.animation(.palette, .smooth(duration: 0.16)), value: center.request?.id)
+        .background(HostWindowReader(host: host))
     }
 
     private func card(_ request: ConfirmCenter.Request) -> some View {
@@ -201,14 +206,16 @@ private struct DialogButton: View {
     private var foreground: Color {
         switch kind {
         case .secondary: Theme.textSecondary
-        default: .white
+        case .primary: Theme.onAccent
+        case .destructive: .white
         }
     }
 
     private var background: Color {
         switch kind {
         case .primary: Theme.accent.opacity(hovered ? 0.85 : 1)
-        case .destructive: Color(hex: "e5484d").opacity(hovered ? 0.85 : 1)
+        // Dark enough for white text on light and dark themes alike.
+        case .destructive: Color(hex: "c62a2f").opacity(hovered ? 0.85 : 1)
         case .secondary: hovered ? Theme.hover : Color.clear
         }
     }

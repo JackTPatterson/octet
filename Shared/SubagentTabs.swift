@@ -1,12 +1,12 @@
 import Foundation
 
-/// Opens a herdr tab for each Claude Code subagent (Agent/Task tool call),
+/// Opens a session server tab for each Claude Code subagent (Agent/Task tool call),
 /// named after the subagent and running `herd-cli agent-watch`.
 enum SubagentHook {
     static let maxLabelLength = 48
 
     /// Builds the `layout.apply` params for a subagent tab, or nil when the
-    /// payload is not a subagent launch inside a herdr pane.
+    /// payload is not a subagent launch inside a session server pane.
     static func tabRequest(
         payload: [String: Any],
         environment: [String: String],
@@ -15,7 +15,7 @@ enum SubagentHook {
     ) -> [String: Any]? {
         guard let toolName = payload["tool_name"] as? String,
               toolName == "Agent" || toolName == "Task",
-              let workspaceId = environment["HERDR_WORKSPACE_ID"], !workspaceId.isEmpty,
+              let workspaceId = environment[EngineProtocol.workspaceIdVariable], !workspaceId.isEmpty,
               let transcriptPath = payload["transcript_path"] as? String,
               transcriptPath.hasSuffix(".jsonl") else { return nil }
 
@@ -58,9 +58,9 @@ enum SubagentHook {
     static func handlePreToolUse(payload data: Data, environment: [String: String], cliPath: String) {
         guard environment["HERD_SUBAGENT_TABS"] != "0",
               let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let socketPath = environment["HERDR_SOCKET_PATH"], !socketPath.isEmpty,
+              let socketPath = environment[EngineProtocol.socketPathVariable], !socketPath.isEmpty,
               let request = tabRequest(payload: payload, environment: environment, cliPath: cliPath) else { return }
-        _ = try? HerdrClient(socketPath: socketPath).call("layout.apply", request)
+        _ = try? EngineClient(socketPath: socketPath).call("layout.apply", request)
     }
 }
 
@@ -98,15 +98,15 @@ enum SubagentWatch {
     }
 }
 
-/// Reports a viewer pane's state to herdr so tabs and the sidebar show the
+/// Reports a viewer pane's state to the session server so tabs and the sidebar show the
 /// subagent as a working/idle Claude agent.
 struct PaneAgentReporter {
-    let client: HerdrClient?
+    let client: EngineClient?
     let paneId: String?
 
     init(environment: [String: String]) {
-        paneId = environment["HERDR_PANE_ID"]
-        client = environment["HERDR_SOCKET_PATH"].map(HerdrClient.init(socketPath:))
+        paneId = environment[EngineProtocol.paneIdVariable]
+        client = environment[EngineProtocol.socketPathVariable].map(EngineClient.init(socketPath:))
     }
 
     func report(state: String, message: String) {

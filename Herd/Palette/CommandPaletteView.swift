@@ -20,9 +20,20 @@ final class PaletteModel: ObservableObject {
         set { UserDefaults.standard.set(newValue, forKey: Self.recentsKey) }
     }
 
+    /// Reloads while open (agent state changes do this), keeping the
+    /// highlight on the same item so Return runs what you see.
     func reload(items: [PaletteItem]) {
+        let before = results
+        let selectedId = before.indices.contains(selection) ? before[selection].item.id : nil
+        objectWillChange.send()
         self.items = items
         itemsById = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let after = results
+        if let selectedId, let index = after.firstIndex(where: { $0.item.id == selectedId }) {
+            selection = index
+        } else {
+            selection = min(selection, max(0, after.count - 1))
+        }
     }
 
     func reset() {
@@ -85,7 +96,7 @@ final class PaletteModel: ObservableObject {
     }
 }
 
-/// Warp-style command palette: floating panel, search field, filter chips,
+/// Command palette: floating panel, search field, filter chips,
 /// sectioned results with fuzzy-match highlighting and shortcut keycaps.
 struct CommandPaletteView: View {
     @ObservedObject var model: PaletteModel
@@ -131,8 +142,7 @@ struct CommandPaletteView: View {
 
     private var searchField: some View {
         HStack(spacing: 10) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 14))
+            HerdIcon("magnifyingglass", size: 19)
                 .foregroundStyle(Theme.textSecondary)
             TextField(
                 model.subList.map { "Filter \($0.title.lowercased())…" } ?? "Search actions, workspaces, tabs, agents, projects, plugins…",
@@ -302,12 +312,12 @@ struct CommandPaletteView: View {
                 model.query = ""
                 fieldFocused = true
             } label: {
-                Image(systemName: "chevron.left").font(.system(size: 12, weight: .semibold))
+                HerdIcon("chevron.left", size: 16)
             }
             .buttonStyle(.plain)
             .foregroundStyle(Theme.textSecondary)
             Text(title).font(Theme.uiFontMedium).foregroundStyle(Theme.textSecondary)
-            if loading { ProgressView().controlSize(.mini) }
+            if loading { LoadingLine(width: 18) }
             Spacer()
         }
         .padding(.horizontal, 16)
@@ -323,7 +333,7 @@ struct CommandPaletteView: View {
                     model.prompt = nil
                     fieldFocused = true
                 } label: {
-                    Image(systemName: "chevron.left").font(.system(size: 12, weight: .semibold))
+                    HerdIcon("chevron.left", size: 16)
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(Theme.textSecondary)
@@ -434,8 +444,7 @@ private struct PaletteRow: View {
     private var icon: some View {
         switch item.icon {
         case .symbol(let name):
-            Image(systemName: name)
-                .font(.system(size: 12))
+            HerdIcon(name, size: 16)
                 .foregroundStyle(selected ? Theme.textPrimary : Theme.textSecondary)
         case .agent(let brand):
             AgentLogo(brand: brand, size: 13)

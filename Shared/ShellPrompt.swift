@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// Whether a pane is sitting at its shell's prompt, which is the only time
@@ -40,6 +41,31 @@ enum ShellPrompt {
             let isShell = shells.contains(name) || shells.contains(process.name)
             return isShell && (info.shellPid == nil || process.pid == info.shellPid)
         }
+    }
+
+    /// Whether the shell's line editor (zsh's ZLE, readline, fish) owns the
+    /// terminal right now. Line editors switch the tty to non-canonical mode
+    /// and echo keys themselves; `read`, and `read -s` for a password, keep
+    /// canonical mode. So a shell in the foreground is not enough to know
+    /// it's safe to take the keyboard: this is the check that keeps a secret
+    /// out of Herd's line and history. nil when the tty can't be read.
+    static func lineEditorActive(shellPid pid: Int) -> Bool? {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(Int32(pid), PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
+        // A program started from the prompt (a REPL, ssh, a password
+        // prompt) shares the tty and may set the same mode; only the shell
+        // owning the tty's foreground process group means it's the shell's
+        // line editor. Checked live, so it can't lag behind like a snapshot.
+        guard info.e_tpgid == info.pbi_pgid else { return false }
+        guard info.e_tdev != UInt32.max,
+              let name = devname(dev_t(bitPattern: info.e_tdev), S_IFCHR) else { return nil }
+        let fd = open("/dev/" + String(cString: name), O_RDONLY | O_NOCTTY | O_NONBLOCK)
+        guard fd >= 0 else { return nil }
+        defer { close(fd) }
+        var mode = termios()
+        guard tcgetattr(fd, &mode) == 0 else { return nil }
+        return mode.c_lflag & tcflag_t(ICANON) == 0
     }
 
     /// The shell's own name, for history and quoting decisions.

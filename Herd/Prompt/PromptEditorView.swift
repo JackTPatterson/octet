@@ -63,11 +63,11 @@ struct PromptEditorView: View {
     private func color(for role: ShellSyntax.Role) -> Color {
         switch role {
         case .command: Theme.accent
-        case .builtin: Color(hex: "7dcfff")
-        case .flag: Color(hex: "bb9af7")
-        case .string: Color(hex: "9ece6a")
-        case .path: Color(hex: "7aa2f7")
-        case .variable: Color(hex: "e0af68")
+        case .builtin: Theme.palette.color(\.syntaxBuiltin)
+        case .flag: Theme.palette.color(\.syntaxFlag)
+        case .string: Theme.palette.color(\.syntaxString)
+        case .path: Theme.palette.color(\.syntaxPath)
+        case .variable: Theme.palette.color(\.syntaxVariable)
         case .redirect, .separator: Theme.textSecondary
         case .comment: Theme.textTertiary
         case .argument: Theme.textPrimary
