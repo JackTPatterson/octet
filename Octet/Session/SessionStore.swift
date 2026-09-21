@@ -213,6 +213,7 @@ final class SessionStore: ObservableObject {
         observeActivity(snapshot)
         autoNameTabs(in: snapshot)
         notifyAgentActivity(in: snapshot)
+        AgentOfferCenter.shared.observe(snapshot)
         refreshTip()
         if branches != self.branches { self.branches = branches }
         guard snapshot != self.snapshot || groups.isEmpty else { return }

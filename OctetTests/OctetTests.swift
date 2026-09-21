@@ -1985,3 +1985,52 @@ final class PublishedCommandTests: XCTestCase {
     }
 
 }
+
+final class AgentOfferTests: XCTestCase {
+    private func agent(_ kind: String, pane: String = "w1:p1", tab: String? = "w1:t1") -> EngineAgent {
+        EngineAgent(paneId: pane, tabId: tab, workspaceId: "w1", agent: kind, name: nil, displayAgent: nil, agentStatus: .idle)
+    }
+
+    func testOnlyABareAgentCommandIsCaught() {
+        XCTAssertEqual(AgentLaunch.agent(inCommandLine: "claude"), "claude")
+        XCTAssertEqual(AgentLaunch.agent(inCommandLine: "  codex  "), "codex")
+        XCTAssertEqual(AgentLaunch.agent(inCommandLine: "opencode"), "opencode")
+        // Anything asked of it runs in the terminal as typed.
+        XCTAssertNil(AgentLaunch.agent(inCommandLine: "claude --resume abc"))
+        XCTAssertNil(AgentLaunch.agent(inCommandLine: "claude \"fix the bug\""))
+        XCTAssertNil(AgentLaunch.agent(inCommandLine: "codex exec ls"))
+        XCTAssertNil(AgentLaunch.agent(inCommandLine: "claude | tee out"))
+        XCTAssertNil(AgentLaunch.agent(inCommandLine: "sudo claude"))
+        XCTAssertNil(AgentLaunch.agent(inCommandLine: "./claude"))
+        XCTAssertNil(AgentLaunch.agent(inCommandLine: "gemini"))
+        XCTAssertNil(AgentLaunch.agent(inCommandLine: ""))
+    }
+
+    func testTheBannerOffersOnlyAgentsOctetCanConverseWith() {
+        XCTAssertEqual(AgentOffer.candidate(in: [agent("claude")], dismissed: [])?.paneId, "w1:p1")
+        XCTAssertNotNil(AgentOffer.candidate(in: [agent("codex")], dismissed: []))
+        XCTAssertNotNil(AgentOffer.candidate(in: [agent("opencode")], dismissed: []))
+        XCTAssertNil(AgentOffer.candidate(in: [agent("gemini")], dismissed: []))
+        XCTAssertNil(AgentOffer.candidate(in: [], dismissed: []))
+        // The vendor's own names for it count too.
+        XCTAssertNotNil(AgentOffer.candidate(in: [agent("claude_code")], dismissed: []))
+    }
+
+    func testDismissingSilencesOnlyThatAgentInThatPane() {
+        let first = agent("claude", pane: "w1:p1")
+        let second = agent("codex", pane: "w1:p2")
+        let dismissed: Set<String> = [AgentOffer.key(first)]
+        XCTAssertEqual(AgentOffer.candidate(in: [first, second], dismissed: dismissed)?.paneId, "w1:p2")
+        XCTAssertNil(AgentOffer.candidate(in: [first], dismissed: dismissed))
+    }
+
+    func testADismissalEndsWithTheAgent() {
+        let running = agent("claude", pane: "w1:p1")
+        let dismissed: Set<String> = [AgentOffer.key(running), AgentOffer.key(agent("codex", pane: "w1:p9"))]
+        // The Codex in pane 9 exited; Claude in pane 1 still runs.
+        XCTAssertEqual(AgentOffer.remaining(dismissed, agents: [running]), [AgentOffer.key(running)])
+        // Once Claude exits too, the next one launched there gets its banner.
+        XCTAssertTrue(AgentOffer.remaining(dismissed, agents: []).isEmpty)
+    }
+
+}

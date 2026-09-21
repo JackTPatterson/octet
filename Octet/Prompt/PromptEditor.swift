@@ -401,7 +401,23 @@ final class PromptEditor: ObservableObject {
     /// Return: hand the finished command to the shell.
     private func submit() {
         let command = line.text
+        // A bare `claude`, `codex` or `opencode` opens Octet's conversation
+        // view instead, when that's what the setting says. Nothing has gone
+        // to the shell, so its prompt is left as it was.
+        if SettingsStore.shared.values.agentOpening == .octet,
+           let agent = AgentLaunch.agent(inCommandLine: command),
+           store.keyWindow?.openAgentConversation(agent, inPane: paneId) == true {
+            remember(command)
+            deactivate()
+            return
+        }
         send(command + "\r")
+        remember(command)
+        deactivate()
+    }
+
+    /// History and the sequences it learns from, for a command that was run.
+    private func remember(_ command: String) {
         if !command.trimmingCharacters(in: .whitespaces).isEmpty {
             history.add(.init(command: command, at: Date()))
             // Learn the pair, so next time the line starts where you left off.
@@ -411,7 +427,6 @@ final class PromptEditor: ObservableObject {
             sequences.add(command: command, in: cwd)
             lastCommand = command
         }
-        deactivate()
     }
 
     /// Escape, Tab, or a key Octet doesn't handle: give the shell what was

@@ -303,10 +303,92 @@ final class WindowContext: ObservableObject, Identifiable {
         create("pane.move", ["pane_id": pane, "destination": ["type": "new_tab"]], failure: "Couldn't move the pane to a new tab")
     }
 
-    func newConversation(engine: AgentSession.Engine = .claude) {
+    func newConversation(engine: AgentSession.Engine = .claude, cwd: String? = nil) {
         guard let workspace = focusedWorkspace else { return }
-        let cwd = store.snapshot.directory(ofWorkspace: workspace.workspaceId) ?? NSHomeDirectory()
-        AgentCenter.shared.newConversation(workspaceId: workspace.workspaceId, cwd: cwd, engine: engine)
+        let folder = cwd ?? store.snapshot.directory(ofWorkspace: workspace.workspaceId) ?? NSHomeDirectory()
+        AgentCenter.shared.newConversation(workspaceId: workspace.workspaceId, cwd: folder, engine: engine)
+    }
+
+    // MARK: - Agents in the terminal or in Octet
+
+    /// Opens a conversation in the folder `pane` is in, for an agent typed at
+    /// its prompt. False when Octet can't converse with that agent, which
+    /// leaves the command to run in the terminal.
+    @discardableResult
+    func openAgentConversation(_ agent: String, inPane paneId: String?) -> Bool {
+        guard let engine = AgentSession.Engine(rawValue: agent) else { return false }
+        let cwd = store.snapshot.panes.first { $0.paneId == paneId }?.effectiveCwd
+        newConversation(engine: engine, cwd: cwd)
+        return true
+    }
+
+    /// Starts `agent` here, as the setting says: Octet's conversation view,
+    /// or its own interface typed into the focused pane.
+    func startAgent(_ agent: DiscoveredAgent) {
+        if SettingsStore.shared.values.agentOpening == .octet, openAgentConversation(agent.id, inPane: focusedPaneId) { return }
+        runInFocusedPane(agent)
+    }
+
+    /// The banner's "Open in Octet": moves an agent running in a terminal
+    /// pane into a conversation, continuing its session when Octet knows the
+    /// id. Two processes never write one session, so the terminal one ends.
+    func continueInOctet(_ agent: EngineAgent) {
+        guard let id = AgentOffer.agentId(agent), let engine = AgentSession.Engine(rawValue: id) else { return }
+        let name = AgentBrand.forAgent(agent.agent)?.displayName ?? engine.displayName
+        let proceed: () -> Void = { [weak self] in self?.moveToOctet(agent, engine: engine) }
+        guard agent.agentStatus == .working else {
+            proceed()
+            return
+        }
+        ConfirmCenter.shared.ask(
+            title: "\(name) is working",
+            message: "Opening it in Octet ends this terminal session and continues from what \(name) has saved, so the turn in progress stops.",
+            confirmTitle: "Open in Octet"
+        ) { _ in proceed() }
+    }
+
+    private func moveToOctet(_ agent: EngineAgent, engine: AgentSession.Engine) {
+        guard let workspaceId = agent.workspaceId ?? focusedWorkspace?.workspaceId else { return }
+        let snapshot = store.snapshot
+        let cwd = agent.effectiveCwd ?? snapshot.directory(ofWorkspace: workspaceId) ?? NSHomeDirectory()
+        let sessionId = agent.sessionReference ?? agent.terminalId.flatMap { store.recovery.sessionId(forTerminal: $0) }
+        let label = snapshot.tabs.first { $0.tabId == agent.tabId }.map { TabAutoName.display(label: $0.label, number: $0.number) }
+        let title = label.flatMap { TabAutoName.isUnnamed($0) ? nil : $0 }
+        AgentOfferCenter.shared.dismiss(agent)
+        endTerminalAgent(agent, workspaceId: workspaceId) {
+            // The process needs a moment to let go of its session.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                if let sessionId {
+                    AgentCenter.shared.resume(engine: engine, sessionId: sessionId, cwd: cwd, workspaceId: workspaceId, title: title)
+                } else {
+                    AgentCenter.shared.newConversation(workspaceId: workspaceId, cwd: cwd, engine: engine)
+                    ToastCenter.shared.info("Started a new \(engine.displayName) conversation",
+                                            detail: "Octet couldn't tell which session the terminal was on. Its history stays in \(engine.displayName).")
+                }
+            }
+        }
+    }
+
+    /// Closes the terminal the agent runs in (its pane in a split, else its
+    /// tab), leaving the workspace a terminal: a workspace with no tab closes,
+    /// and a conversation belongs to its workspace.
+    private func endTerminalAgent(_ agent: EngineAgent, workspaceId: String, then done: @escaping () -> Void) {
+        let snapshot = store.snapshot
+        let panesInTab = snapshot.panes.filter { $0.tabId == agent.tabId }.count
+        let close: () -> Void = { [store] in
+            if panesInTab > 1 || agent.tabId == nil {
+                store.call("pane.close", ["pane_id": agent.paneId], failure: "Couldn't close the terminal") { _ in done() }
+            } else if let tab = agent.tabId {
+                store.call("tab.close", ["tab_id": tab], failure: "Couldn't close the terminal") { _ in done() }
+            }
+        }
+        guard panesInTab <= 1, snapshot.tabs(inWorkspace: workspaceId).count <= 1 else {
+            close()
+            return
+        }
+        var params: [String: Any] = ["workspace_id": workspaceId, "focus": false]
+        if let cwd = snapshot.directory(ofWorkspace: workspaceId) { params["cwd"] = cwd }
+        store.call("tab.create", params, failure: "Couldn't open a terminal") { _ in close() }
     }
 
     /// ⌘⇧A: this window's agents board, for the agent in its tab.

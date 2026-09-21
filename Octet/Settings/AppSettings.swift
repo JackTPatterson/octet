@@ -59,6 +59,12 @@ struct OctetSettings: Codable, Equatable {
     /// chip reads Claude Code's cache and any conversation Octet runs.
     var readClaudeAccountUsage = false
     var offerRecovery = true
+    /// What typing `claude`, `codex` or `opencode` on its own at a prompt
+    /// opens: the agent's interface in the terminal, or Octet's conversation.
+    var agentOpening: AgentOpening = .terminal
+    /// A banner over an agent running in the terminal, offering Octet's
+    /// conversation view.
+    var agentBanner = true
     var promptEditor = true
     var pasteImagesAsFiles = true
     var autoNameTabs = true
@@ -113,6 +119,20 @@ struct OctetSettings: Codable, Equatable {
         }
     }
     enum UpdateChannel: String, Codable, CaseIterable { case stable, preview }
+
+    enum AgentOpening: String, Codable, CaseIterable {
+        /// The agent's own interface, in the terminal.
+        case terminal
+        /// Octet's conversation view.
+        case octet
+
+        var title: String {
+            switch self {
+            case .terminal: "Its own interface"
+            case .octet: "Octet"
+            }
+        }
+    }
 
     /// Bumped when a stored value needs reinterpreting; see `init(from:)`.
     static let currentVersion = 2
@@ -175,6 +195,8 @@ struct OctetSettings: Codable, Equatable {
         paneHistory = value("paneHistory", defaults.paneHistory)
         readClaudeAccountUsage = value("readClaudeAccountUsage", defaults.readClaudeAccountUsage)
         offerRecovery = value("offerRecovery", defaults.offerRecovery)
+        agentOpening = value("agentOpening", defaults.agentOpening)
+        agentBanner = value("agentBanner", defaults.agentBanner)
         promptEditor = value("promptEditor", defaults.promptEditor)
         pasteImagesAsFiles = value("pasteImagesAsFiles", defaults.pasteImagesAsFiles)
         autoNameTabs = value("autoNameTabs", defaults.autoNameTabs)

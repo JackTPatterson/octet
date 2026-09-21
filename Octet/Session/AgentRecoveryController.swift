@@ -77,6 +77,12 @@ final class AgentRecoveryController: ObservableObject {
         offered = lost
     }
 
+    /// The session a running agent's terminal is on, once Octet has seen its
+    /// id: from the agent's own report, or its session files.
+    func sessionId(forTerminal terminalId: String) -> String? {
+        journal.records.first { $0.terminalId == terminalId }?.sessionId
+    }
+
     /// Past sessions with a known id, newest first, for a resume menu.
     func resumableSessions() -> [AgentSessionRecord] {
         AgentRecovery.history(journal: journal.records, current: lastSnapshot)

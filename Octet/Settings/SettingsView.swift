@@ -592,6 +592,27 @@ private struct AgentSettings: View {
             }
             SettingsDivider()
             SettingsRow(
+                title: "When you run an agent in a terminal",
+                detail: "Typing claude, codex or opencode on its own at a prompt opens the agent's own interface in the terminal, or Octet's conversation view. With a flag or a prompt it always runs in the terminal as typed. Octet's view needs Octet's command line, below."
+            ) {
+                Picker("When you run an agent in a terminal", selection: $settings.values.agentOpening) {
+                    ForEach(OctetSettings.AgentOpening.allCases, id: \.self) { opening in
+                        Text(opening.title).tag(opening)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .frame(width: 190)
+            }
+            SettingsDivider()
+            SettingsRow(
+                title: "Offer Octet's view over a running agent",
+                detail: "A banner above the terminal, while an agent runs in its own interface, offers to continue its session in Octet's conversation view."
+            ) {
+                Toggle("Offer Octet's view over a running agent", isOn: $settings.values.agentBanner).labelsHidden().toggleStyle(.switch)
+            }
+            SettingsDivider()
+            SettingsRow(
                 title: "Octet's command line",
                 detail: "At a shell prompt, Octet edits the line itself: highlighted as you type, with a suggestion from your history. Anything it doesn't handle goes straight to the shell."
             ) {

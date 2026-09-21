@@ -16,6 +16,7 @@ struct RootView: View {
     /// The panes of the tab showing, fetched when a tab drag starts.
     @State private var dropLayout: PaneLayout?
     @ObservedObject private var agents = AgentCenter.shared
+    @ObservedObject private var offers = AgentOfferCenter.shared
     /// This window: what it shows, and how it moves.
     @EnvironmentObject private var window: WindowContext
 
@@ -67,6 +68,25 @@ struct RootView: View {
 
     /// The window's layout with everything drawn over it; `body` adds what
     /// it reacts to. Two halves so the compiler can check each in time.
+    /// The agent to offer Octet's view for: one running in its own interface
+    /// in the tab showing, while the terminal is what's showing.
+    private var agentOffer: EngineAgent? {
+        guard settings.values.agentBanner, boardHere == nil,
+              agents.active(in: window.focusedWorkspace?.workspaceId) == nil,
+              let tab = window.displayedFocusedTabId else { return nil }
+        return AgentOffer.candidate(in: store.snapshot.agents(inTab: tab), dismissed: offers.dismissed)
+    }
+
+    /// Where the terminal begins, under the title bar, tab bar and any banner.
+    private var contentTop: CGFloat {
+        Theme.titleBarHeight + Theme.tabBarHeight + (agentOffer == nil ? 0 : AgentOfferBanner.height)
+    }
+
+    private func turnOffAgentBanner() {
+        settings.values.agentBanner = false
+        ToastCenter.shared.info("Banner turned off", detail: "Settings › Agents & Recovery brings it back.")
+    }
+
     private var layered: some View {
         VStack(spacing: 0) {
             // Chrome views are re-identified per theme so every color
@@ -86,6 +106,14 @@ struct RootView: View {
                 VStack(spacing: 0) {
                     TabBarView(store: store)
                         .id(settings.themeKey)
+                    if let offer = agentOffer {
+                        AgentOfferBanner(agent: offer,
+                                         open: { window.continueInOctet(offer) },
+                                         dismiss: { offers.dismiss(offer) },
+                                         never: turnOffAgentBanner)
+                            // Keyed by agent, so each one's banner arrives afresh.
+                            .id(AgentOffer.key(offer))
+                    }
                     terminal
                         .overlay { terminalOverlay }
                 }
@@ -95,7 +123,7 @@ struct RootView: View {
             AgentBannerStack(center: AgentBannerCenter.shared) { event in
                 window.focus(event)
             }
-            .padding(.top, Theme.titleBarHeight + Theme.tabBarHeight)
+            .padding(.top, contentTop)
         }
         .overlay(alignment: .bottomTrailing) {
             // Toasts sit above the recovery panel, both anchored bottom-right.
@@ -254,13 +282,13 @@ struct RootView: View {
                 PromptEditorView(editor: prompt)
                     .frame(width: max(120, CGFloat(anchor.columnsRemaining) * anchor.cellWidth))
                     .offset(x: sidebarInset + anchor.origin.x,
-                            y: Theme.titleBarHeight + Theme.tabBarHeight + anchor.origin.y)
+                            y: contentTop + anchor.origin.y)
                     .allowsHitTesting(false)
             }
             if prompt.isActive, prompt.completionsOpen, let anchor = prompt.anchor {
                 // Under the word being completed, or above it near the foot
                 // of the window.
-                let top = Theme.titleBarHeight + Theme.tabBarHeight + anchor.origin.y
+                let top = contentTop + anchor.origin.y
                 let below = top + anchor.cellHeight + 4
                 let fitsBelow = below + 240 < windowHeight
                 CompletionMenuView(editor: prompt)
@@ -281,7 +309,7 @@ struct RootView: View {
                 Color(hex: TerminalTheme.named(settings.values.themeName).background)
                     .frame(width: cover.width, height: cover.height)
                     .offset(x: sidebarInset + cover.minX,
-                            y: Theme.titleBarHeight + Theme.tabBarHeight + cover.minY)
+                            y: contentTop + cover.minY)
                     .allowsHitTesting(false)
             }
         }
@@ -343,7 +371,7 @@ struct RootView: View {
             let height = max(0, max(above, below))
             NewTabSplash(
                 currentDirectory: store.snapshot.panes.first { $0.paneId == window.focusedPaneId }?.effectiveCwd,
-                runAgent: { window.runInFocusedPane($0) },
+                runAgent: { window.startAgent($0) },
                 openFolder: { window.runInFocusedPane("cd " + shellQuote($0)) },
                 shortcuts: [
                     .init(title: "Command Palette", keys: OctetShortcut.palette.display) { ui.paletteVisible = true },

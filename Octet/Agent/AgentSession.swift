@@ -169,7 +169,10 @@ final class AgentSession: ObservableObject, Identifiable {
     /// Messages sent before the thread was open, in order.
     private var queuedTurns: [String] = []
 
-    init(workspaceId: String, cwd: String, engine: Engine = .claude, model: String = "claude-sonnet-5",
+    /// The model a conversation starts on until one is picked.
+    static let defaultModel = "claude-sonnet-5"
+
+    init(workspaceId: String, cwd: String, engine: Engine = .claude, model: String = AgentSession.defaultModel,
          permissionMode: PermissionMode = .auto, sessionId: String = UUID().uuidString, threadId: String? = nil) {
         self.workspaceId = workspaceId
         self.cwd = cwd
@@ -1275,6 +1278,24 @@ final class AgentCenter: ObservableObject {
     @discardableResult
     func newConversation(workspaceId: String, cwd: String, engine: AgentSession.Engine = .claude) -> AgentSession {
         let session = AgentSession(workspaceId: workspaceId, cwd: cwd, engine: engine)
+        sessions.append(session)
+        setActive(session.id, in: workspaceId)
+        session.prewarm()
+        save()
+        return session
+    }
+
+    /// A conversation continuing a session an agent already has, by the id it
+    /// reported: Claude Code's session, Codex's thread, or OpenCode's session.
+    @discardableResult
+    func resume(engine: AgentSession.Engine, sessionId: String, cwd: String, workspaceId: String,
+                title: String? = nil) -> AgentSession {
+        let saved = AgentSession.Saved(
+            sessionId: engine == .claude ? sessionId : UUID().uuidString,
+            cwd: cwd, title: title ?? engine.displayName, model: AgentSession.defaultModel, effort: nil,
+            permissionMode: AgentSession.PermissionMode.auto.rawValue, hasTurns: true, engine: engine,
+            threadId: engine == .claude ? nil : sessionId, permissionProfile: nil, agent: nil)
+        let session = AgentSession.restore(saved, workspaceId: workspaceId)
         sessions.append(session)
         setActive(session.id, in: workspaceId)
         session.prewarm()
