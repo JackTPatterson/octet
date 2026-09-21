@@ -64,4 +64,13 @@ spctl --assess --type execute --verbose=2 "$app"
 # The ticket is stapled into the app, so zip it again for shipping.
 ditto -c -k --keepParent "$app" "$out/Herd.zip"
 rm -f "$out/Herd-notarize.zip"
-echo "==> Ready: $out/Herd.zip"
+
+# The disk image is what people download. It holds the stapled app, and is
+# notarized and stapled itself so it opens cleanly on a Mac that is offline.
+"$root/scripts/make-dmg.sh" "$app" "$out/Herd.dmg"
+echo "==> Notarizing the disk image"
+xcrun notarytool submit "$out/Herd.dmg" --keychain-profile "$profile" --wait
+xcrun stapler staple "$out/Herd.dmg"
+spctl --assess --type open --context context:primary-signature --verbose=2 "$out/Herd.dmg"
+
+echo "==> Ready: $out/Herd.dmg (and $out/Herd.zip)"

@@ -31,6 +31,17 @@ config in `~/Library/Application Support/Herd/terminal.toml`, so a standalone
 session elsewhere is unaffected. Workspaces persist in that session across
 relaunches.
 
+## Releasing
+
+`scripts/release.sh` builds Release, signs it with Developer ID, notarizes and
+staples the app, then packs it into `build/release/Herd.dmg`: a disk image
+whose window shows Herd beside the Applications folder, itself signed,
+notarized and stapled. The one-time setup (certificate, notarization
+credentials) is described at the top of the script.
+
+`scripts/make-dmg.sh <app> <out.dmg>` builds the disk image alone, and
+`scripts/make-icon.swift` redraws the app icon into the asset catalog.
+
 ## Subagent tabs
 
 The palette action **Install Subagent Tabs Hook** (or
