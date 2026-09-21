@@ -1,0 +1,475 @@
+import Foundation
+
+/// A live conversation with an agent Herd drives headless, built from the
+/// agent's stream-json events (`claude -p --output-format stream-json
+/// --include-partial-messages`). Pure data: the driver feeds events in, the
+/// native view draws `items`.
+struct AgentConversation: Equatable {
+    var sessionId: String?
+    var model: String?
+    var permissionMode: String?
+    var cwd: String?
+    var slashCommands: [String] = []
+    var items: [AgentItem] = []
+    /// A turn is in flight: from sending a message until its `result`.
+    var isRunning = false
+    /// Cumulative, at list price, as the agent reports it.
+    var costUSD: Double?
+    /// Tokens the model saw on its latest call, and its window size.
+    var contextUsed: Int?
+    var contextWindow: Int?
+    var lastError: String?
+    /// Plan allowance, when the account is a subscription.
+    var usageWindows: [UsageWindow] = []
+
+    /// Messages that arrived as deltas; their final `assistant` copies only
+    /// add tool calls, so text isn't drawn twice.
+    private var streamedMessages: Set<String> = []
+    /// Content block index to item id, for the message streaming now.
+    private var openBlocks: [Int: String] = [:]
+    private var currentMessageId: String?
+    private var currentParent: String?
+
+    mutating func appendUser(_ text: String, images: [Data] = []) {
+        items.append(AgentItem(id: UUID().uuidString, kind: .user(text), images: images))
+        isRunning = true
+        lastError = nil
+    }
+
+    /// Applies one stream-json line (already decoded).
+    mutating func apply(_ event: [String: Any]) {
+        let parent = event["parent_tool_use_id"] as? String
+        switch event["type"] as? String {
+        case "system":
+            applySystem(event)
+        case "stream_event":
+            guard let inner = event["event"] as? [String: Any] else { return }
+            applyStreamEvent(inner, parent: parent)
+        case "assistant":
+            guard let message = event["message"] as? [String: Any] else { return }
+            applyAssistant(message, parent: parent)
+        case "user":
+            guard let message = event["message"] as? [String: Any] else { return }
+            applyToolResults(message)
+        case "result":
+            applyResult(event)
+        case "rate_limit_event":
+            if let info = event["rate_limit_info"] as? [String: Any] {
+                let windows = AgentAccounts.claudeWindows(rateLimitInfo: info)
+                if !windows.isEmpty { usageWindows = windows }
+            }
+        default:
+            break
+        }
+    }
+
+    // MARK: - Event kinds
+
+    private mutating func applySystem(_ event: [String: Any]) {
+        guard event["subtype"] as? String == "init" else { return }
+        sessionId = event["session_id"] as? String ?? sessionId
+        model = event["model"] as? String ?? model
+        permissionMode = event["permissionMode"] as? String ?? permissionMode
+        cwd = event["cwd"] as? String ?? cwd
+        if let commands = event["slash_commands"] as? [String] { slashCommands = commands }
+    }
+
+    private mutating func applyStreamEvent(_ event: [String: Any], parent: String?) {
+        switch event["type"] as? String {
+        case "message_start":
+            let message = event["message"] as? [String: Any]
+            currentMessageId = message?["id"] as? String ?? UUID().uuidString
+            currentParent = parent
+            openBlocks = [:]
+            if let id = currentMessageId { streamedMessages.insert(id) }
+            if let usage = message?["usage"] as? [String: Any] { noteContext(usage) }
+        case "content_block_start":
+            guard let index = event["index"] as? Int,
+                  let block = event["content_block"] as? [String: Any] else { return }
+            let messageId = currentMessageId ?? "message"
+            switch block["type"] as? String {
+            case "text":
+                let id = "\(messageId):\(index)"
+                items.append(AgentItem(id: id, kind: .text(block["text"] as? String ?? ""), parent: currentParent))
+                openBlocks[index] = id
+            case "thinking":
+                let id = "\(messageId):\(index)"
+                items.append(AgentItem(id: id, kind: .thinking(block["thinking"] as? String ?? ""), parent: currentParent))
+                openBlocks[index] = id
+            case "tool_use":
+                let toolId = block["id"] as? String ?? "\(messageId):\(index)"
+                upsertTool(id: toolId, name: block["name"] as? String ?? "Tool", input: nil, parent: currentParent)
+                openBlocks[index] = toolId
+            default:
+                break
+            }
+        case "content_block_delta":
+            guard let index = event["index"] as? Int, let id = openBlocks[index],
+                  let delta = event["delta"] as? [String: Any],
+                  let position = items.firstIndex(where: { $0.id == id }) else { return }
+            switch (delta["type"] as? String, items[position].kind) {
+            case ("text_delta", .text(let text)):
+                items[position].kind = .text(text + (delta["text"] as? String ?? ""))
+            case ("thinking_delta", .thinking(let text)):
+                items[position].kind = .thinking(text + (delta["thinking"] as? String ?? ""))
+            default:
+                break
+            }
+        case "message_stop":
+            openBlocks = [:]
+        default:
+            break
+        }
+    }
+
+    private mutating func applyAssistant(_ message: [String: Any], parent: String?) {
+        let messageId = message["id"] as? String ?? UUID().uuidString
+        if let usage = message["usage"] as? [String: Any] { noteContext(usage) }
+        let streamed = streamedMessages.contains(messageId)
+        let blocks = message["content"] as? [[String: Any]] ?? []
+        for (index, block) in blocks.enumerated() {
+            switch block["type"] as? String {
+            case "tool_use":
+                upsertTool(id: block["id"] as? String ?? "\(messageId):t\(index)",
+                           name: block["name"] as? String ?? "Tool",
+                           input: block["input"] as? [String: Any], parent: parent)
+            case "text" where !streamed:
+                items.append(AgentItem(id: "\(messageId):a\(index)", kind: .text(block["text"] as? String ?? ""), parent: parent))
+            case "thinking" where !streamed:
+                items.append(AgentItem(id: "\(messageId):a\(index)", kind: .thinking(block["thinking"] as? String ?? ""), parent: parent))
+            default:
+                break
+            }
+        }
+    }
+
+    private mutating func applyToolResults(_ message: [String: Any]) {
+        guard let blocks = message["content"] as? [[String: Any]] else { return }
+        for block in blocks where block["type"] as? String == "tool_result" {
+            guard let toolId = block["tool_use_id"] as? String,
+                  let position = items.firstIndex(where: { $0.id == toolId }),
+                  case .tool(var call) = items[position].kind else { continue }
+            call.result = Self.resultText(block["content"])
+            call.resultImages = Self.images(in: block["content"])
+            call.isError = block["is_error"] as? Bool ?? false
+            items[position].kind = .tool(call)
+        }
+    }
+
+    private mutating func applyResult(_ event: [String: Any]) {
+        isRunning = false
+        openBlocks = [:]
+        costUSD = event["total_cost_usd"] as? Double ?? costUSD
+        if let usage = event["modelUsage"] as? [String: [String: Any]],
+           let window = usage.values.compactMap({ $0["contextWindow"] as? Int }).max() {
+            contextWindow = window
+        }
+        let subtype = event["subtype"] as? String ?? "success"
+        switch subtype {
+        case "success":
+            break
+        case "error_during_execution":
+            items.append(AgentItem(id: UUID().uuidString, kind: .notice("Stopped")))
+        default:
+            let errors = (event["errors"] as? [String])?.joined(separator: "\n")
+            lastError = errors ?? subtype.replacingOccurrences(of: "_", with: " ")
+            items.append(AgentItem(id: UUID().uuidString, kind: .notice(lastError ?? "Error")))
+        }
+    }
+
+    // MARK: - Helpers
+
+    private mutating func upsertTool(id: String, name: String, input: [String: Any]?, parent: String?) {
+        let summary = input.map { Self.toolSummary(name: name, input: $0) } ?? ""
+        let detail = input.flatMap(Self.prettyJSON) ?? ""
+        if let position = items.firstIndex(where: { $0.id == id }), case .tool(var call) = items[position].kind {
+            if let input {
+                call.summary = summary
+                call.input = detail
+                call.inputData = try? JSONSerialization.data(withJSONObject: input)
+            }
+            items[position].kind = .tool(call)
+        } else {
+            let data = input.flatMap { try? JSONSerialization.data(withJSONObject: $0) }
+            items.append(AgentItem(id: id, kind: .tool(AgentToolCall(name: name, summary: summary, input: detail, inputData: data)), parent: parent))
+        }
+    }
+
+    /// Context in use: everything the model read on its latest call.
+    private mutating func noteContext(_ usage: [String: Any]) {
+        let total = ["input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"]
+            .compactMap { usage[$0] as? Int }.reduce(0, +)
+        if total > 0 { contextUsed = total }
+    }
+
+    /// One line saying what a tool call does.
+    static func toolSummary(name: String, input: [String: Any]) -> String {
+        // A search's pattern says more than the folder it searched.
+        for key in ["command", "file_path", "pattern", "query", "url", "path", "description", "jql", "prompt"] {
+            if let value = input[key] as? String, !value.isEmpty {
+                let line = value.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? value
+                return line.count > 160 ? String(line.prefix(160)) + "…" : line
+            }
+        }
+        return ""
+    }
+
+    /// Base64 image blocks in message or tool-result content, decoded.
+    static func images(in content: Any?) -> [Data] {
+        guard let blocks = content as? [[String: Any]] else { return [] }
+        return blocks.compactMap { block in
+            guard block["type"] as? String == "image",
+                  let source = block["source"] as? [String: Any], source["type"] as? String == "base64",
+                  let encoded = source["data"] as? String else { return nil }
+            return Data(base64Encoded: encoded)
+        }
+    }
+
+    /// Claude Code writes "[Image #1]" where an image was pasted; with the
+    /// image itself drawn, the marker is noise.
+    static func strippingImageMarkers(_ text: String) -> String {
+        text.replacingOccurrences(of: #"\[Image #\d+\]"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func resultText(_ content: Any?) -> String {
+        if let text = content as? String { return text }
+        if let blocks = content as? [[String: Any]] {
+            return blocks.compactMap { $0["text"] as? String }.joined(separator: "\n")
+        }
+        return ""
+    }
+
+    static func prettyJSON(_ object: [String: Any]) -> String? {
+        guard JSONSerialization.isValidJSONObject(object),
+              let data = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]) else { return nil }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    static func == (lhs: AgentConversation, rhs: AgentConversation) -> Bool {
+        lhs.sessionId == rhs.sessionId && lhs.model == rhs.model && lhs.permissionMode == rhs.permissionMode
+            && lhs.items == rhs.items && lhs.isRunning == rhs.isRunning && lhs.costUSD == rhs.costUSD
+            && lhs.contextUsed == rhs.contextUsed && lhs.contextWindow == rhs.contextWindow && lhs.lastError == rhs.lastError
+    }
+}
+
+struct AgentItem: Identifiable, Equatable {
+    enum Kind: Equatable {
+        case user(String)
+        case text(String)
+        case thinking(String)
+        case tool(AgentToolCall)
+        /// Something Herd says about the conversation (stopped, errors).
+        case notice(String)
+    }
+
+    let id: String
+    var kind: Kind
+    /// Set on a subagent's items: the tool call that spawned it.
+    var parent: String?
+    /// Images the person attached to a message, as sent.
+    var images: [Data] = []
+}
+
+struct AgentToolCall: Equatable {
+    var name: String
+    var summary: String
+    /// Pretty-printed input, once the full call has arrived.
+    var input: String
+    /// The same input as JSON, for views that draw it (diffs for edits).
+    var inputData: Data?
+    var result: String?
+    /// Images a tool returned, e.g. a screenshot Claude read.
+    var resultImages: [Data] = []
+    var isError = false
+}
+
+/// A permission prompt the agent's permission tool relays to Herd.
+struct AgentPermissionRequest: Identifiable, Equatable {
+    let id: String
+    let toolName: String
+    let summary: String
+    let input: String
+    /// The input exactly as sent, echoed back as `updatedInput` on allow.
+    let rawInput: Data
+
+    init?(json: [String: Any]) {
+        guard let tool = json["tool_name"] as? String else { return nil }
+        let input = json["input"] as? [String: Any] ?? [:]
+        id = json["tool_use_id"] as? String ?? UUID().uuidString
+        toolName = tool
+        summary = AgentConversation.toolSummary(name: tool, input: input)
+        self.input = AgentConversation.prettyJSON(input) ?? ""
+        rawInput = (try? JSONSerialization.data(withJSONObject: input)) ?? Data("{}".utf8)
+    }
+
+    var inputObject: [String: Any] {
+        (try? JSONSerialization.jsonObject(with: rawInput)) as? [String: Any] ?? [:]
+    }
+
+    /// The permission tool's answer, in the shape the agent expects.
+    static func decision(allow: Bool, input: [String: Any], message: String?) -> [String: Any] {
+        allow ? ["behavior": "allow", "updatedInput": input]
+            : ["behavior": "deny", "message": message?.isEmpty == false ? message! : "The user declined this in Herd."]
+    }
+}
+
+extension AgentToolCall {
+    var inputObject: [String: Any]? {
+        inputData.flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] }
+    }
+
+    var filePath: String? { inputObject?["file_path"] as? String }
+
+    /// Where the change sits in its file now (the call has run), read off
+    /// the main thread.
+    func fileStartLine() async -> Int? {
+        guard let input = inputObject else { return nil }
+        let tool = name
+        return await Task.detached(priority: .utility) {
+            AgentToolCall.startLine(tool: tool, input: input, applied: true)
+        }.value
+    }
+
+    /// The file line a diff's first shown line corresponds to. `applied`
+    /// says whether to look for the new text (after the edit) or the old.
+    static func startLine(tool: String, input: [String: Any], applied: Bool) -> Int? {
+        guard tool == "Edit", let path = input["file_path"] as? String,
+              let old = input["old_string"] as? String, let new = input["new_string"] as? String,
+              let file = try? String(contentsOfFile: path, encoding: .utf8),
+              let start = LineDiff.startLine(of: applied ? new : old, in: file) else { return tool == "Write" ? 1 : nil }
+        // The diff's first line is its leading context, not the snippet's first line.
+        let lines = LineDiff.lines(old: old, new: new)
+        let firstShown = lines.first.flatMap { applied ? $0.newNumber : $0.oldNumber } ?? 1
+        return start + firstShown - 1
+    }
+
+    /// The change an Edit, MultiEdit or Write call makes, as diff lines.
+    var diff: [LineDiff.Line]? {
+        guard let inputData, let input = (try? JSONSerialization.jsonObject(with: inputData)) as? [String: Any] else { return nil }
+        return AgentToolCall.diff(tool: name, input: input)
+    }
+
+    static func diff(tool: String, input: [String: Any]) -> [LineDiff.Line]? {
+        switch tool {
+        case "Edit":
+            guard let old = input["old_string"] as? String, let new = input["new_string"] as? String else { return nil }
+            return LineDiff.lines(old: old, new: new)
+        case "MultiEdit":
+            guard let edits = input["edits"] as? [[String: Any]] else { return nil }
+            return edits.flatMap { edit in
+                LineDiff.lines(old: edit["old_string"] as? String ?? "", new: edit["new_string"] as? String ?? "")
+            }
+        case "Write":
+            guard let content = input["content"] as? String else { return nil }
+            return LineDiff.added(content)
+        default:
+            return nil
+        }
+    }
+}
+
+extension AgentConversation {
+    /// Rebuilds a conversation from the agent's own session log (Claude
+    /// Code's `~/.claude/projects/<folder>/<session>.jsonl`), whose `user`
+    /// and `assistant` records share the stream's shape. Bookkeeping lines,
+    /// meta messages and slash-command echoes are skipped.
+    static func replay(lines: [String]) -> AgentConversation {
+        var conversation = AgentConversation()
+        for line in lines {
+            guard let data = line.data(using: .utf8),
+                  let record = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                  record["isMeta"] as? Bool != true, record["isSidechain"] as? Bool != true else { continue }
+            switch record["type"] as? String {
+            case "assistant":
+                conversation.apply(record)
+            case "user":
+                guard let message = record["message"] as? [String: Any] else { continue }
+                if let text = Self.userText(message["content"]) {
+                    let images = Self.images(in: message["content"])
+                    let shown = images.isEmpty ? text : Self.strippingImageMarkers(text)
+                    conversation.items.append(AgentItem(id: record["uuid"] as? String ?? UUID().uuidString,
+                                                        kind: .user(shown), images: images))
+                } else {
+                    conversation.apply(record)
+                }
+            default:
+                break
+            }
+            if conversation.sessionId == nil { conversation.sessionId = record["sessionId"] as? String }
+            if conversation.cwd == nil { conversation.cwd = record["cwd"] as? String }
+        }
+        conversation.isRunning = false
+        return conversation
+    }
+
+    /// A person's message, or nil for tool results and command echoes.
+    private static func userText(_ content: Any?) -> String? {
+        let text: String
+        if let string = content as? String {
+            text = string
+        } else if let blocks = content as? [[String: Any]], !blocks.contains(where: { $0["type"] as? String == "tool_result" }) {
+            text = blocks.compactMap { $0["type"] as? String == "text" ? $0["text"] as? String : nil }.joined(separator: "\n")
+        } else {
+            return nil
+        }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.hasPrefix("<command-"), !trimmed.hasPrefix("<local-command") else { return nil }
+        guard !trimmed.isEmpty || !images(in: content).isEmpty else { return nil }
+        return trimmed
+    }
+
+    /// Where Claude Code keeps a session's log: its project folder name is
+    /// the working directory with every non-alphanumeric character as "-".
+    static func claudeLogPath(sessionId: String, cwd: String, home: String = NSHomeDirectory()) -> String {
+        let folder = String(cwd.map { $0.isLetter || $0.isNumber ? $0 : "-" })
+        return home + "/.claude/projects/" + folder + "/" + sessionId + ".jsonl"
+    }
+}
+
+extension AgentToolCall {
+    /// "Read", or for MCP tools "server: tool" instead of mcp__server__tool.
+    var displayName: String {
+        guard name.hasPrefix("mcp__") else { return name }
+        let parts = name.dropFirst(5).components(separatedBy: "__")
+        guard parts.count >= 2 else { return name }
+        return "\(parts[0]): \(parts[1...].joined(separator: "__"))"
+    }
+
+    var isMCP: Bool { name.hasPrefix("mcp__") }
+
+    /// Which icon names the tool's kind.
+    var iconName: String {
+        if isMCP { return "tool.mcp" }
+        switch name {
+        case "Read": return "tool.read"
+        case "Edit", "MultiEdit": return "tool.edit"
+        case "Write": return "tool.write"
+        case "Grep", "Glob", "LS", "ToolSearch": return "tool.search"
+        case "WebSearch": return "tool.web"
+        case "WebFetch": return "tool.fetch"
+        case "Bash", "BashOutput", "KillShell", "KillBash": return "tool.run"
+        case "Task", "Agent": return "tool.agent"
+        case "TodoWrite", "TaskCreate", "TaskUpdate": return "tool.todo"
+        case "NotebookEdit", "NotebookRead": return "tool.notebook"
+        default: return "tool.other"
+        }
+    }
+
+    struct Todo: Equatable {
+        enum State: String { case pending, inProgress = "in_progress", completed }
+        let text: String
+        let state: State
+    }
+
+    /// TodoWrite's list, drawn as a checklist.
+    var todos: [Todo]? {
+        guard name == "TodoWrite", let items = inputObject?["todos"] as? [[String: Any]] else { return nil }
+        return items.map {
+            let state = Todo.State(rawValue: $0["status"] as? String ?? "") ?? .pending
+            let text = state == .inProgress ? ($0["activeForm"] as? String ?? $0["content"] as? String ?? "")
+                : ($0["content"] as? String ?? "")
+            return Todo(text: text, state: state)
+        }
+    }
+}

@@ -1,11 +1,14 @@
 import Foundation
 
-// herd-cli: helpers that run inside herdr panes.
+// herd-cli: helpers that run inside session server panes.
 //
 //   herd-cli hook <agent>              subagent hook for that agent (stdin JSON)
 //   herd-cli agent-watch …             live subagent transcript viewer
 //   herd-cli install-subagent-hook …   add the hook to an agent's config
 //   herd-cli uninstall-subagent-hook … remove it
+//   herd-cli mcp-permission --socket <path>
+//                                      permission prompt tool for conversations
+//                                      Herd drives headless (stdio MCP server)
 //
 // <agent> is an agent id, e.g. claude or codex; omitting it means every
 // agent installed on this machine.
@@ -84,6 +87,16 @@ case "uninstall-subagent-hook", "uninstall-claude-hook":
         }
     }
 
+case "mcp-permission":
+    guard let socketPath = option("--socket", in: Array(arguments.dropFirst())) else {
+        fail("usage: herd-cli mcp-permission --socket <path>")
+    }
+    while let line = readLine() {
+        if let reply = PermissionMCP.respond(to: line, ask: { PermissionMCP.askApp(socketPath: socketPath, arguments: $0) }) {
+            print(reply)
+        }
+    }
+
 default:
-    fail("usage: herd-cli <hook <agent>|agent-watch|install-subagent-hook [agent]|uninstall-subagent-hook [agent]>")
+    fail("usage: herd-cli <hook <agent>|agent-watch|install-subagent-hook [agent]|uninstall-subagent-hook [agent]|mcp-permission --socket <path>>")
 }

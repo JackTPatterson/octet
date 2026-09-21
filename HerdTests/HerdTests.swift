@@ -1,8 +1,8 @@
 import XCTest
 
-final class HerdrModelTests: XCTestCase {
+final class EngineModelTests: XCTestCase {
     func testDecodesLiveSnapshotShape() throws {
-        // Captured from `herdr api snapshot` (herdr 0.9.1).
+        // Captured from the session server's `api snapshot` (0.9.1).
         let json = """
         {"id":"x","result":{"snapshot":{"agents":[{"agent":"claude","agent_status":"working","pane_id":"w1:p2","tab_id":"w1:t2","workspace_id":"w1","focused":false,"revision":3}],
         "focused_pane_id":"w1:p1","focused_tab_id":"w1:t1","focused_workspace_id":"w1",
@@ -11,9 +11,9 @@ final class HerdrModelTests: XCTestCase {
         {"agent_status":"working","focused":false,"label":"Explore: tests","number":2,"pane_count":1,"tab_id":"w1:t2","workspace_id":"w1"}],
         "version":"0.9.1","workspaces":[{"active_tab_id":"w1:t1","agent_status":"working","focused":true,"label":"app","number":1,"pane_count":2,"tab_count":2,"workspace_id":"w1","future_field":1}]},"type":"session_snapshot"}}
         """
-        let result = try HerdrClient.parseResponse(Data(json.utf8))
+        let result = try EngineClient.parseResponse(Data(json.utf8))
         let data = try JSONSerialization.data(withJSONObject: result["snapshot"]!)
-        let snapshot = try JSONDecoder().decode(HerdrSnapshot.self, from: data)
+        let snapshot = try JSONDecoder().decode(EngineSnapshot.self, from: data)
 
         XCTAssertEqual(snapshot.workspaces.first?.label, "app")
         XCTAssertEqual(snapshot.tabs(inWorkspace: "w1").map(\.label), ["1", "Explore: tests"])
@@ -23,44 +23,44 @@ final class HerdrModelTests: XCTestCase {
 
     func testDecodesCapturedFixture() throws {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "snapshot", withExtension: "json"))
-        let result = try HerdrClient.parseResponse(try Data(contentsOf: url).split(separator: 0x0A).first.map { Data($0) } ?? Data())
+        let result = try EngineClient.parseResponse(try Data(contentsOf: url).split(separator: 0x0A).first.map { Data($0) } ?? Data())
         let data = try JSONSerialization.data(withJSONObject: result["snapshot"]!)
-        XCTAssertNoThrow(try JSONDecoder().decode(HerdrSnapshot.self, from: data))
+        XCTAssertNoThrow(try JSONDecoder().decode(EngineSnapshot.self, from: data))
     }
 
     func testUnknownAgentStatusDecodesAsUnknown() throws {
         let data = Data(#"["sleeping"]"#.utf8)
-        XCTAssertEqual(try JSONDecoder().decode([HerdrAgentStatus].self, from: data), [.unknown])
+        XCTAssertEqual(try JSONDecoder().decode([EngineAgentStatus].self, from: data), [.unknown])
     }
 
     func testServerErrorsThrow() {
         let line = Data(#"{"id":"1","error":{"code":"not_found","message":"pane not found"}}"#.utf8)
-        XCTAssertThrowsError(try HerdrClient.parseResponse(line))
+        XCTAssertThrowsError(try EngineClient.parseResponse(line))
     }
 
     func testSessionSocketPath() {
-        XCTAssertEqual(HerdrClient.socketPath(session: "herd", home: "/Users/me"), "/Users/me/.config/herdr/sessions/herd/herdr.sock")
-        XCTAssertEqual(HerdrClient.socketPath(session: nil, home: "/Users/me"), "/Users/me/.config/herdr/herdr.sock")
+        XCTAssertEqual(EngineClient.socketPath(session: "herd", home: "/Users/me"), "/Users/me/.config/herdr/sessions/herd/herdr.sock")
+        XCTAssertEqual(EngineClient.socketPath(session: nil, home: "/Users/me"), "/Users/me/.config/herdr/herdr.sock")
     }
 }
 
 final class ProjectGroupingTests: XCTestCase {
-    private func workspace(_ id: String, _ number: Int, _ label: String) -> HerdrWorkspace {
-        HerdrWorkspace(
+    private func workspace(_ id: String, _ number: Int, _ label: String) -> EngineWorkspace {
+        EngineWorkspace(
             workspaceId: id, number: number, label: label, focused: false, paneCount: 1, tabCount: 1,
             activeTabId: "\(id):t1", agentStatus: .idle, worktree: nil
         )
     }
 
-    private func pane(_ workspaceId: String, cwd: String) -> HerdrPane {
-        HerdrPane(
+    private func pane(_ workspaceId: String, cwd: String) -> EnginePane {
+        EnginePane(
             paneId: "\(workspaceId):p1", tabId: "\(workspaceId):t1", workspaceId: workspaceId, focused: false,
             cwd: cwd, foregroundCwd: nil, agentStatus: .idle, terminalTitle: nil
         )
     }
 
     func testGroupsByProjectRootInWorkspaceOrder() {
-        let snapshot = HerdrSnapshot(
+        let snapshot = EngineSnapshot(
             workspaces: [workspace("w1", 1, "api"), workspace("w2", 2, "notes"), workspace("w3", 3, "api tests")],
             tabs: [], panes: [pane("w1", cwd: "/r/api/src"), pane("w2", cwd: "/tmp"), pane("w3", cwd: "/r/api")],
             agents: [], focusedWorkspaceId: nil, focusedTabId: nil, focusedPaneId: nil
@@ -116,7 +116,7 @@ final class SubagentTabTests: XCTestCase {
     func testBuildsNamedTabRunningViewer() throws {
         let request = try XCTUnwrap(SubagentHook.tabRequest(
             payload: payload,
-            environment: ["HERDR_WORKSPACE_ID": "w2"],
+            environment: [EngineProtocol.workspaceIdVariable: "w2"],
             cliPath: "/Apps/Herd.app/Contents/MacOS/herd-cli",
             now: Date(timeIntervalSince1970: 1000)
         ))
@@ -131,10 +131,10 @@ final class SubagentTabTests: XCTestCase {
         XCTAssertEqual(root["cwd"] as? String, "/Users/me/app")
     }
 
-    func testIgnoresOtherToolsAndNonHerdrPanes() {
+    func testIgnoresOtherToolsAndNonEnginePanes() {
         var bash = payload
         bash["tool_name"] = "Bash"
-        XCTAssertNil(SubagentHook.tabRequest(payload: bash, environment: ["HERDR_WORKSPACE_ID": "w1"], cliPath: "x"))
+        XCTAssertNil(SubagentHook.tabRequest(payload: bash, environment: [EngineProtocol.workspaceIdVariable: "w1"], cliPath: "x"))
         XCTAssertNil(SubagentHook.tabRequest(payload: payload, environment: [:], cliPath: "x"))
     }
 
@@ -246,8 +246,8 @@ final class PaletteRankingTests: XCTestCase {
     private let entries = [
         PaletteSearchable(id: "action.newTab", kind: .action, title: "New Tab", subtitle: "", keywords: ["create"]),
         PaletteSearchable(id: "action.closeTab", kind: .action, title: "Close Tab", subtitle: "", keywords: []),
-        PaletteSearchable(id: "workspace.w1", kind: .workspace, title: "cmux", subtitle: "feat/tabs", keywords: []),
-        PaletteSearchable(id: "tab.w1:t2", kind: .tab, title: "Explore: map api", subtitle: "cmux", keywords: []),
+        PaletteSearchable(id: "workspace.w1", kind: .workspace, title: "atlas", subtitle: "feat/tabs", keywords: []),
+        PaletteSearchable(id: "tab.w1:t2", kind: .tab, title: "Explore: map api", subtitle: "atlas", keywords: []),
         PaletteSearchable(id: "agent.w1:p2", kind: .agent, title: "Claude Code", subtitle: "working", keywords: ["claude"]),
     ]
 
@@ -276,16 +276,16 @@ final class PaletteRankingTests: XCTestCase {
     }
 }
 
-final class HerdrPluginTests: XCTestCase {
+final class EnginePluginTests: XCTestCase {
     func testDecodesPluginListAndLogs() throws {
-        // Shape captured from herdr 0.9.1 `plugin.list` / `plugin.log.list`.
+        // Shape captured from the session server (0.9.1) `plugin.list` / `plugin.log.list`.
         let plugins = """
         [{"plugin_id":"herd.sample","name":"Herd Sample","version":"0.1.0","enabled":true,"platforms":["macos"],
           "actions":[{"id":"stamp","title":"Write a timestamp file","contexts":["global"],"command":["/bin/sh"]}],
           "panes":[{"id":"clock","title":"Clock","placement":"overlay","command":["/bin/sh"]}],
           "source":{"kind":"local"}}]
         """
-        let decoded = try JSONDecoder().decode([HerdrPlugin].self, from: Data(plugins.utf8))
+        let decoded = try JSONDecoder().decode([EnginePlugin].self, from: Data(plugins.utf8))
         XCTAssertEqual(decoded.first?.actions.first?.id, "stamp")
         XCTAssertEqual(decoded.first?.panes.first?.placement, "overlay")
         XCTAssertEqual(decoded.first?.isGitHubInstall, false)
@@ -294,7 +294,7 @@ final class HerdrPluginTests: XCTestCase {
         [{"log_id":"plugin-log-1","plugin_id":"herd.sample","action_id":"stamp","status":"succeeded",
           "started_unix_ms":1789663888058,"exit_code":0,"stdout":"","stderr":"","command":["/bin/sh"]}]
         """
-        XCTAssertEqual(try JSONDecoder().decode([HerdrPluginLog].self, from: Data(logs.utf8)).first?.exitCode, 0)
+        XCTAssertEqual(try JSONDecoder().decode([EnginePluginLog].self, from: Data(logs.utf8)).first?.exitCode, 0)
     }
 
     func testPluginPrefix() {
@@ -303,18 +303,18 @@ final class HerdrPluginTests: XCTestCase {
 }
 
 final class WorkspaceActivityTests: XCTestCase {
-    private func workspace(_ id: String, status: HerdrAgentStatus = .idle) -> HerdrWorkspace {
-        HerdrWorkspace(workspaceId: id, number: 1, label: id, focused: false, paneCount: 1, tabCount: 1,
+    private func workspace(_ id: String, status: EngineAgentStatus = .idle) -> EngineWorkspace {
+        EngineWorkspace(workspaceId: id, number: 1, label: id, focused: false, paneCount: 1, tabCount: 1,
                        activeTabId: "\(id):t1", agentStatus: status, worktree: nil)
     }
 
-    private func snapshot(_ workspaces: [HerdrWorkspace], agents: [HerdrAgent] = [], focused: String? = nil) -> HerdrSnapshot {
-        HerdrSnapshot(workspaces: workspaces, tabs: [], panes: [], agents: agents,
+    private func snapshot(_ workspaces: [EngineWorkspace], agents: [EngineAgent] = [], focused: String? = nil) -> EngineSnapshot {
+        EngineSnapshot(workspaces: workspaces, tabs: [], panes: [], agents: agents,
                       focusedWorkspaceId: focused, focusedTabId: nil, focusedPaneId: nil)
     }
 
-    private func agent(_ workspaceId: String, _ status: HerdrAgentStatus, seq: Int) -> HerdrAgent {
-        HerdrAgent(paneId: "\(workspaceId):p1", tabId: "\(workspaceId):t1", workspaceId: workspaceId, agent: "claude",
+    private func agent(_ workspaceId: String, _ status: EngineAgentStatus, seq: Int) -> EngineAgent {
+        EngineAgent(paneId: "\(workspaceId):p1", tabId: "\(workspaceId):t1", workspaceId: workspaceId, agent: "claude",
                    name: nil, displayAgent: nil, agentStatus: status, stateChangeSeq: seq)
     }
 
@@ -368,23 +368,23 @@ final class WorkspaceActivityTests: XCTestCase {
 }
 
 final class AgentRecoveryTests: XCTestCase {
-    private func snapshot(agents: [HerdrAgent], terminals: [String]) -> HerdrSnapshot {
+    private func snapshot(agents: [EngineAgent], terminals: [String]) -> EngineSnapshot {
         let panes = terminals.enumerated().map { index, terminal in
-            HerdrPane(paneId: "w1:p\(index)", tabId: "w1:t1", workspaceId: "w1", focused: false, cwd: "/repo",
+            EnginePane(paneId: "w1:p\(index)", tabId: "w1:t1", workspaceId: "w1", focused: false, cwd: "/repo",
                       foregroundCwd: nil, agentStatus: .idle, terminalTitle: nil, terminalId: terminal)
         }
-        return HerdrSnapshot(
-            workspaces: [HerdrWorkspace(workspaceId: "w1", number: 1, label: "repo", focused: true, paneCount: 1,
+        return EngineSnapshot(
+            workspaces: [EngineWorkspace(workspaceId: "w1", number: 1, label: "repo", focused: true, paneCount: 1,
                                         tabCount: 1, activeTabId: "w1:t1", agentStatus: .idle, worktree: nil)],
-            tabs: [HerdrTab(tabId: "w1:t1", workspaceId: "w1", number: 1, label: "claude", focused: true, paneCount: 1, agentStatus: .idle)],
+            tabs: [EngineTab(tabId: "w1:t1", workspaceId: "w1", number: 1, label: "claude", focused: true, paneCount: 1, agentStatus: .idle)],
             panes: panes, agents: agents, focusedWorkspaceId: "w1", focusedTabId: "w1:t1", focusedPaneId: nil
         )
     }
 
-    private func agent(_ kind: String, terminal: String, session: String? = nil) -> HerdrAgent {
-        HerdrAgent(paneId: "w1:p0", tabId: "w1:t1", workspaceId: "w1", agent: kind, name: nil, displayAgent: nil,
+    private func agent(_ kind: String, terminal: String, session: String? = nil) -> EngineAgent {
+        EngineAgent(paneId: "w1:p0", tabId: "w1:t1", workspaceId: "w1", agent: kind, name: nil, displayAgent: nil,
                    agentStatus: .idle, cwd: "/repo", terminalId: terminal,
-                   agentSession: session.map { HerdrAgent.SessionReference(source: nil, agent: kind, kind: "id", value: $0) })
+                   agentSession: session.map { EngineAgent.SessionReference(source: nil, agent: kind, kind: "id", value: $0) })
     }
 
     func testSessionsRunningAtLastObservationAreLostAfterRestart() {
@@ -759,15 +759,15 @@ final class SlashCommandTests: XCTestCase {
 }
 
 final class TabAutoNameTests: XCTestCase {
-    private func snapshot(title: String?, label: String, panes: Int = 1, cwd: String = "/work/app") -> HerdrSnapshot {
+    private func snapshot(title: String?, label: String, panes: Int = 1, cwd: String = "/work/app") -> EngineSnapshot {
         let panes = (0..<panes).map { index in
-            HerdrPane(paneId: "w1:p\(index)", tabId: "w1:t1", workspaceId: "w1", focused: index == 0, cwd: cwd,
+            EnginePane(paneId: "w1:p\(index)", tabId: "w1:t1", workspaceId: "w1", focused: index == 0, cwd: cwd,
                       foregroundCwd: nil, agentStatus: .idle, terminalTitle: title, terminalId: "term\(index)")
         }
-        return HerdrSnapshot(
-            workspaces: [HerdrWorkspace(workspaceId: "w1", number: 1, label: "app", focused: true, paneCount: panes.count,
+        return EngineSnapshot(
+            workspaces: [EngineWorkspace(workspaceId: "w1", number: 1, label: "app", focused: true, paneCount: panes.count,
                                         tabCount: 1, activeTabId: "w1:t1", agentStatus: .idle, worktree: nil)],
-            tabs: [HerdrTab(tabId: "w1:t1", workspaceId: "w1", number: 1, label: label, focused: true,
+            tabs: [EngineTab(tabId: "w1:t1", workspaceId: "w1", number: 1, label: label, focused: true,
                             paneCount: panes.count, agentStatus: .idle)],
             panes: panes, agents: [], focusedWorkspaceId: "w1", focusedTabId: "w1:t1", focusedPaneId: nil
         )
@@ -820,7 +820,7 @@ final class TabAutoNameTests: XCTestCase {
 
 final class ClipboardPreviewTests: XCTestCase {
     func testPreviewShowsOneLineAndHowMuchMore() {
-        XCTAssertEqual(ClipboardPreview.summary("herdr --session herd"), "herdr --session herd")
+        XCTAssertEqual(ClipboardPreview.summary("make run --watch"), "make run --watch")
         XCTAssertEqual(ClipboardPreview.summary("  trimmed  "), "trimmed")
         XCTAssertEqual(ClipboardPreview.summary("first\nsecond\nthird"), "first · +2 lines")
         XCTAssertEqual(ClipboardPreview.summary("only\nmore"), "only · +1 line")
@@ -909,18 +909,18 @@ final class AgentEnvironmentTests: XCTestCase {
 }
 
 final class AgentActivityTests: XCTestCase {
-    private func snapshot(_ statuses: [(pane: String, status: HerdrAgentStatus)], tabLabel: String = "refactor") -> HerdrSnapshot {
+    private func snapshot(_ statuses: [(pane: String, status: EngineAgentStatus)], tabLabel: String = "refactor") -> EngineSnapshot {
         let agents = statuses.enumerated().map { index, entry in
-            HerdrAgent(paneId: entry.pane, tabId: "w1:t\(index + 1)", workspaceId: "w1", agent: "claude", name: nil,
+            EngineAgent(paneId: entry.pane, tabId: "w1:t\(index + 1)", workspaceId: "w1", agent: "claude", name: nil,
                        displayAgent: nil, agentStatus: entry.status, stateChangeSeq: index, cwd: "/repo",
                        terminalId: "term-\(entry.pane)")
         }
         let tabs = agents.enumerated().map { index, agent in
-            HerdrTab(tabId: agent.tabId!, workspaceId: "w1", number: index + 1, label: tabLabel, focused: index == 0,
+            EngineTab(tabId: agent.tabId!, workspaceId: "w1", number: index + 1, label: tabLabel, focused: index == 0,
                      paneCount: 1, agentStatus: agent.agentStatus)
         }
-        return HerdrSnapshot(
-            workspaces: [HerdrWorkspace(workspaceId: "w1", number: 1, label: "repo", focused: true, paneCount: agents.count,
+        return EngineSnapshot(
+            workspaces: [EngineWorkspace(workspaceId: "w1", number: 1, label: "repo", focused: true, paneCount: agents.count,
                                         tabCount: tabs.count, activeTabId: tabs.first?.tabId ?? "w1:t1", agentStatus: .idle, worktree: nil)],
             tabs: tabs, panes: [], agents: agents,
             focusedWorkspaceId: "w1", focusedTabId: tabs.first?.tabId, focusedPaneId: nil
@@ -967,8 +967,8 @@ final class AgentActivityTests: XCTestCase {
 }
 
 final class BranchRunTests: XCTestCase {
-    private func workspace(_ id: String, worktree: HerdrWorktree? = nil) -> HerdrWorkspace {
-        HerdrWorkspace(workspaceId: id, number: 1, label: id, focused: false, paneCount: 1, tabCount: 1,
+    private func workspace(_ id: String, worktree: EngineWorktree? = nil) -> EngineWorkspace {
+        EngineWorkspace(workspaceId: id, number: 1, label: id, focused: false, paneCount: 1, tabCount: 1,
                        activeTabId: "\(id):t1", agentStatus: .idle, worktree: worktree)
     }
 
@@ -984,7 +984,7 @@ final class BranchRunTests: XCTestCase {
     }
 
     func testWorktreesSplitARunAndNameThemselves() {
-        let tree = HerdrWorktree(repoRoot: "/repo", branch: "release/2.0", path: "/repo/.worktrees/release-2")
+        let tree = EngineWorktree(repoRoot: "/repo", branch: "release/2.0", path: "/repo/.worktrees/release-2")
         let runs = BranchRuns.make([workspace("w1"), workspace("w2", worktree: tree), workspace("w3")],
                                    branch: { $0.workspaceId == "w2" ? "release/2.0" : "main" },
                                    worktree: { $0.worktree })
@@ -999,7 +999,7 @@ final class BranchRunTests: XCTestCase {
         let runs = BranchRuns.make([workspace("w1")], branch: { _ in nil }, worktree: { _ in nil })
         XCTAssertTrue(runs[0].isBare)
         // A worktree alone is still worth labelling.
-        let tree = HerdrWorktree(repoRoot: nil, branch: nil, path: "/repo/.worktrees/spike")
+        let tree = EngineWorktree(repoRoot: nil, branch: nil, path: "/repo/.worktrees/spike")
         let worktreeRuns = BranchRuns.make([workspace("w2", worktree: tree)], branch: { _ in nil }, worktree: { $0.worktree })
         XCTAssertFalse(worktreeRuns[0].isBare)
         XCTAssertEqual(worktreeRuns[0].worktreeName, "spike")
@@ -1095,7 +1095,7 @@ final class ShellPromptTests: XCTestCase {
         XCTAssertFalse(ShellPrompt.isAtPrompt(nil))
     }
 
-    func testProcessInfoParsesWhatHerdrReports() throws {
+    func testProcessInfoParsesWhatEngineReports() throws {
         let payload: [String: Any] = [
             "process_info": [
                 "pane_id": "w1:p1",
@@ -1531,5 +1531,66 @@ final class ImagePasteTests: XCTestCase {
         ImagePaste.prune(keeping: 2, home: home)
         let left = try FileManager.default.contentsOfDirectory(atPath: ImagePaste.directory(home: home))
         XCTAssertEqual(left.count, 2)
+    }
+}
+
+final class AgentDiscoveryTests: XCTestCase {
+    /// A home with an executable `agent` in `bin`, and a plain file next to it.
+    private func makeHome() throws -> String {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
+        try FileManager.default.createDirectory(atPath: home + "/bin", withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: home + "/bin/agent", contents: Data("#!/bin/sh\n".utf8),
+                                       attributes: [.posixPermissions: 0o755])
+        FileManager.default.createFile(atPath: home + "/bin/notes.txt", contents: Data())
+        return home
+    }
+
+    func testLocateFindsOnlyExecutableFiles() throws {
+        let home = try makeHome()
+        defer { try? FileManager.default.removeItem(atPath: home) }
+        let directories = [home + "/bin"]
+        XCTAssertEqual(AgentDiscovery.locate(command: "agent", in: directories), home + "/bin/agent")
+        // A readable file that isn't executable, and a name that isn't there.
+        XCTAssertNil(AgentDiscovery.locate(command: "notes.txt", in: directories))
+        XCTAssertNil(AgentDiscovery.locate(command: "missing", in: directories))
+        // A directory of the right name is not a command.
+        XCTAssertNil(AgentDiscovery.locate(command: "bin", in: [home]))
+    }
+
+    func testLocateTakesTheFirstDirectoryThatHasIt() throws {
+        let first = try makeHome(), second = try makeHome()
+        defer {
+            try? FileManager.default.removeItem(atPath: first)
+            try? FileManager.default.removeItem(atPath: second)
+        }
+        XCTAssertEqual(AgentDiscovery.locate(command: "agent", in: [first + "/bin", second + "/bin"]),
+                       first + "/bin/agent")
+    }
+
+    func testSearchDirectoriesExpandsHomeAndDropsRepeats() {
+        let directories = AgentDiscovery.searchDirectories(shellPath: "/usr/bin:/opt/homebrew/bin::/usr/bin",
+                                                           home: "/Users/test")
+        XCTAssertEqual(directories.first, "/usr/bin")
+        XCTAssertEqual(directories.filter { $0 == "/usr/bin" }.count, 1)
+        XCTAssertEqual(directories.filter { $0 == "/opt/homebrew/bin" }.count, 1)
+        XCTAssertFalse(directories.contains(""))
+        XCTAssertTrue(directories.contains("/Users/test/.local/bin"))
+        // Each agent's own bin folder is searched too, which is where
+        // OpenCode installs itself.
+        XCTAssertTrue(directories.contains("/Users/test/.opencode/bin"))
+    }
+
+    func testVersionIgnoresCommandsThatSayTooMuch() throws {
+        let home = try makeHome()
+        defer { try? FileManager.default.removeItem(atPath: home) }
+        let chatty = home + "/bin/chatty"
+        FileManager.default.createFile(atPath: chatty, contents: Data("#!/bin/sh\necho '\(String(repeating: "x", count: 200))'\n".utf8),
+                                       attributes: [.posixPermissions: 0o755])
+        XCTAssertNil(AgentDiscovery.version(of: chatty))
+
+        let quiet = home + "/bin/quiet"
+        FileManager.default.createFile(atPath: quiet, contents: Data("#!/bin/sh\necho\necho 'agent 1.2.3'\n".utf8),
+                                       attributes: [.posixPermissions: 0o755])
+        XCTAssertEqual(AgentDiscovery.version(of: quiet), "agent 1.2.3")
     }
 }

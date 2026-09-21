@@ -6,7 +6,7 @@ struct PaletteItem: Identifiable {
     enum Icon {
         case symbol(String)
         case agent(AgentBrand)
-        case state(HerdrAgentStatus)
+        case state(EngineAgentStatus)
     }
 
     enum Effect {
@@ -31,11 +31,12 @@ struct PaletteItem: Identifiable {
     }
 }
 
-/// Builds every palette entry from live herdr state.
+/// Builds every palette entry from live session state.
 @MainActor
 enum PaletteCatalog {
-    static func items(store: HerdrStore, ui: UIState) -> [PaletteItem] {
+    static func items(store: SessionStore, ui: UIState) -> [PaletteItem] {
         actions(store: store, ui: ui)
+            + discoveredAgents(store: store)
             + workspaces(store: store)
             + tabs(store: store)
             + agents(store: store)
@@ -43,9 +44,30 @@ enum PaletteCatalog {
             + plugins(store: store)
     }
 
+    // MARK: Discovered agents
+
+    /// One row per agent installed on this machine, opening a terminal tab
+    /// already running it. The terminal is agent-agnostic, so this works for
+    /// agents Herd has no driver for.
+    static func discoveredAgents(store: SessionStore) -> [PaletteItem] {
+        AgentDiscoveryStore.shared.agents.compactMap { agent in
+            guard agent.executablePath != nil else { return nil }
+            let brand = AgentBrand.forAgent(agent.id)
+            return PaletteItem(
+                id: "agent.tab.\(agent.id)",
+                kind: .action,
+                title: "New \(agent.displayName) Tab",
+                subtitle: agent.version ?? agent.command,
+                keywords: ["run", "terminal", "agent", agent.command],
+                icon: brand.map { .agent($0) } ?? .symbol("terminal"),
+                effect: .run { store.newTab(running: agent) }
+            )
+        }
+    }
+
     // MARK: Actions
 
-    static func actions(store: HerdrStore, ui: UIState) -> [PaletteItem] {
+    static func actions(store: SessionStore, ui: UIState) -> [PaletteItem] {
         let workspace = store.focusedWorkspace
         let tab = store.focusedWorkspaceTabs.first { $0.tabId == store.snapshot.focusedTabId }
         func action(
@@ -76,13 +98,13 @@ enum PaletteCatalog {
             action("focusUp", "Focus Pane Up", "arrow.up", shortcut: "⌘⌥↑") { store.focusPane(.up) },
             action("focusDown", "Focus Pane Down", "arrow.down", shortcut: "⌘⌥↓") { store.focusPane(.down) },
             action("toggleSidebar", "Toggle Sidebar", "sidebar.left", shortcut: "⌘B") { ui.sidebarVisible.toggle() },
-            action("reloadConfig", "Reload Terminal Config", "arrow.clockwise", keywords: ["settings"]) { store.reloadHerdrConfig() },
+            action("reloadConfig", "Reload Terminal Config", "arrow.clockwise", keywords: ["settings"]) { store.reloadSessionConfig() },
             action("installHook", "Install Subagent Tabs Hook", "sparkles",
                    keywords: ["claude", "codex", "agent", "setup"]) { SubagentHookMenu.install() },
             action("removeHook", "Remove Subagent Tabs Hook", "sparkles",
                    keywords: ["claude", "codex", "agent"]) { SubagentHookMenu.uninstall() },
             action("revealConfig", "Reveal Terminal Config in Finder", "doc.text.magnifyingglass") {
-                if let path = HerdrSession.make()?.configPath {
+                if let path = EngineSession.make()?.configPath {
                     NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
                 }
             },
@@ -190,7 +212,7 @@ enum PaletteCatalog {
 
     // MARK: Navigation
 
-    static func workspaces(store: HerdrStore) -> [PaletteItem] {
+    static func workspaces(store: SessionStore) -> [PaletteItem] {
         store.groups.flatMap { group in
             group.workspaces.map { workspace in
                 let agent = store.primaryAgent(in: store.snapshot.agents(inWorkspace: workspace.workspaceId))
@@ -209,7 +231,7 @@ enum PaletteCatalog {
         }
     }
 
-    static func tabs(store: HerdrStore) -> [PaletteItem] {
+    static func tabs(store: SessionStore) -> [PaletteItem] {
         let labels = Dictionary(uniqueKeysWithValues: store.snapshot.workspaces.map { ($0.workspaceId, $0.label) })
         return store.snapshot.tabs.sorted { ($0.workspaceId, $0.number) < ($1.workspaceId, $1.number) }.map { tab in
             let agent = store.primaryAgent(in: store.snapshot.agents(inTab: tab.tabId))
@@ -224,7 +246,7 @@ enum PaletteCatalog {
         }
     }
 
-    static func agents(store: HerdrStore) -> [PaletteItem] {
+    static func agents(store: SessionStore) -> [PaletteItem] {
         let workspaceLabels = Dictionary(uniqueKeysWithValues: store.snapshot.workspaces.map { ($0.workspaceId, $0.label) })
         let tabLabels = Dictionary(uniqueKeysWithValues: store.snapshot.tabs.map { ($0.tabId, $0.label) })
         return store.snapshot.agents.map { agent in
@@ -241,7 +263,7 @@ enum PaletteCatalog {
         }
     }
 
-    static func projects(store: HerdrStore) -> [PaletteItem] {
+    static func projects(store: SessionStore) -> [PaletteItem] {
         ProjectDirectories.list().map { path in
             let open = store.groups.contains { $0.id == path }
             return PaletteItem(
@@ -255,7 +277,7 @@ enum PaletteCatalog {
 
     // MARK: Plugins
 
-    static func plugins(store: HerdrStore) -> [PaletteItem] {
+    static func plugins(store: SessionStore) -> [PaletteItem] {
         var items: [PaletteItem] = []
         for plugin in store.plugins {
             let owner = [plugin.name, plugin.version.map { "v\($0)" }].compactMap { $0 }.joined(separator: " ")
@@ -295,7 +317,7 @@ enum PaletteCatalog {
                 icon: .symbol("list.bullet.rectangle"),
                 effect: logsEffect(store: store, pluginId: plugin.pluginId, title: "\(plugin.name) Logs")
             ))
-            if plugin.isGitHubInstall, let herdr = HerdrSession.locateHerdr() {
+            if plugin.isGitHubInstall, let engine = EngineSession.locateEngine() {
                 items.append(PaletteItem(
                     id: "plugin.\(plugin.pluginId).uninstall", kind: .plugin, title: "Uninstall \(plugin.name)",
                     subtitle: plugin.pluginId, keywords: ["remove", "delete"],
@@ -306,7 +328,7 @@ enum PaletteCatalog {
                                 ToastCenter.shared.info("Uninstall cancelled", detail: plugin.name)
                                 return
                             }
-                            store.uninstallPlugin(plugin.pluginId, herdrPath: herdr)
+                            store.uninstallPlugin(plugin.pluginId, enginePath: engine)
                         }
                     }
                 ))
@@ -320,20 +342,20 @@ enum PaletteCatalog {
             }
         }
 
-        if let herdr = HerdrSession.locateHerdr() {
+        if let engine = EngineSession.locateEngine() {
             items.append(PaletteItem(
                 id: "plugin.install", kind: .plugin, title: "Install Plugin from GitHub…",
                 subtitle: "owner/repo[/subdir] · review the install preview before confirming",
                 keywords: ["add", "marketplace"],
                 icon: .symbol("square.and.arrow.down"),
                 effect: .prompt(title: "Install Plugin", placeholder: "owner/repo", initial: "") { repo in
-                    store.installPlugin(repo: repo, herdrPath: herdr, confirm: PluginDialogs.confirmInstall)
+                    store.installPlugin(repo: repo, enginePath: engine, confirm: PluginDialogs.confirmInstall)
                 }
             ))
         }
         items.append(PaletteItem(
             id: "plugin.link", kind: .plugin, title: "Link Local Plugin Folder…",
-            subtitle: "A folder containing herdr-plugin.toml", keywords: ["add", "develop"],
+            subtitle: "A folder containing a plugin manifest", keywords: ["add", "develop"],
             icon: .symbol("folder.badge.gearshape"),
             effect: .run { linkPluginFolder(store: store) }
         ))
@@ -343,16 +365,10 @@ enum PaletteCatalog {
             icon: .symbol("list.bullet.rectangle"),
             effect: logsEffect(store: store, pluginId: nil, title: "Plugin Logs")
         ))
-        items.append(PaletteItem(
-            id: "plugin.marketplace", kind: .plugin, title: "Browse Plugin Marketplace",
-            subtitle: "Browse the plugin directory", keywords: ["discover"],
-            icon: .symbol("safari"),
-            effect: .run { NSWorkspace.shared.open(URL(string: "https://herdr.dev/plugins/")!) }
-        ))
         return items
     }
 
-    static func logsEffect(store: HerdrStore, pluginId: String?, title: String) -> PaletteItem.Effect {
+    static func logsEffect(store: SessionStore, pluginId: String?, title: String) -> PaletteItem.Effect {
         .list(title: title) { deliver in
             store.pluginLogs(pluginId: pluginId) { logs in
                 deliver(logs.sorted { $0.startedUnixMs > $1.startedUnixMs }.map(logItem))
@@ -360,7 +376,7 @@ enum PaletteCatalog {
         }
     }
 
-    static func logItem(_ log: HerdrPluginLog) -> PaletteItem {
+    static func logItem(_ log: EnginePluginLog) -> PaletteItem {
         let started = Date(timeIntervalSince1970: TimeInterval(log.startedUnixMs) / 1000)
         let what = log.actionId.map { "action \($0)" } ?? log.event.map { "event \($0)" } ?? "startup"
         let exit = log.exitCode.map { "exit \($0)" }
@@ -394,17 +410,17 @@ enum PaletteCatalog {
         )
     }
 
-    static func linkPluginFolder(store: HerdrStore) {
+    static func linkPluginFolder(store: SessionStore) {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
-        panel.message = "Choose a folder containing herdr-plugin.toml"
+        panel.message = "Choose a plugin folder (the one holding its manifest)"
         if panel.runModal() == .OK, let url = panel.url {
             store.linkPlugin(path: url.path)
         }
     }
 
-    static func openFolder(store: HerdrStore) {
+    static func openFolder(store: SessionStore) {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
@@ -441,7 +457,7 @@ enum ProjectDirectories {
 /// Native confirmation dialogs for plugin changes.
 @MainActor
 enum PluginDialogs {
-    /// Shows herdr's install preview; returns true when the user confirms.
+    /// Shows the session server's install preview; returns true when the user confirms.
     static func confirmInstall(preview: String, answer: @escaping (Bool) -> Void) {
         let name = PluginCLI.previewField("name", in: preview) ?? "this plugin"
         ConfirmCenter.shared.ask(ConfirmCenter.Request(

@@ -1,10 +1,10 @@
 import SwiftUI
 
-/// Window layout: Warp title bar, sidebar, tab bar, and the herdr terminal.
+/// Window layout: title bar, sidebar, tab bar, and the session terminal.
 struct RootView: View {
-    @ObservedObject var store: HerdrStore
+    @ObservedObject var store: SessionStore
     @ObservedObject var ui: UIState
-    let session: HerdrSession?
+    let session: EngineSession?
     @ObservedObject var slash: SlashController
     @ObservedObject var prompt: PromptEditor
     @StateObject private var palette = PaletteModel()
@@ -12,31 +12,54 @@ struct RootView: View {
     @ObservedObject private var settings = SettingsStore.shared
     @ObservedObject private var confirmations = ConfirmCenter.shared
     @StateObject private var terminalAnchor = TerminalAnchor()
+    @ObservedObject private var agents = AgentCenter.shared
 
     /// Where the terminal starts across the window.
-    private var sidebarInset: CGFloat { ui.sidebarVisible ? Theme.sidebarWidth + 1 : 0 }
+    private var sidebarInset: CGFloat { ui.sidebarVisible ? ui.sidebarWidth + 1 : 0 }
     private var windowHeight: CGFloat { NSApp.keyWindow?.contentView?.bounds.height ?? 800 }
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(spacing: 0) {
             // Chrome views are re-identified per theme so every color
-            // re-resolves; the terminal keeps its identity (and herdr client).
+            // re-resolves; the terminal keeps its identity (and its session client).
             TitleBar(store: store, ui: ui)
-                .id(settings.values.themeName)
+                .id(settings.themeKey)
             HStack(spacing: 0) {
                 if ui.sidebarVisible {
                     HStack(spacing: 0) {
-                        SidebarView(store: store)
+                        SidebarView(store: store, width: ui.sidebarWidth)
                         Rectangle().fill(Theme.divider).frame(width: 1)
+                            .overlay { SidebarResizeHandle(ui: ui) }
                     }
-                    .id(settings.values.themeName)
+                    .id(settings.themeKey)
                     .transition(motion.animates(.sidebar) ? .move(edge: .leading) : .identity)
                 }
                 VStack(spacing: 0) {
                     TabBarView(store: store)
-                        .id(settings.values.themeName)
+                        .id(settings.themeKey)
                     terminal
+                        .overlay {
+                            // Clipped to the terminal area, so the board slides
+                            // out from behind the sidebar, not over it.
+                            ZStack {
+                                if agents.board == .claude {
+                                    AgentsBoard(store: store)
+                                        .transition(motion.animates(.sidebar) ? .move(edge: .leading).combined(with: .opacity) : .identity)
+                                } else if agents.board == .codex {
+                                    CodexBoard(store: store)
+                                        .transition(motion.animates(.sidebar) ? .move(edge: .leading).combined(with: .opacity) : .identity)
+                                } else if let conversation = agents.active(in: store.focusedWorkspace?.workspaceId) {
+                                    ConversationView(session: conversation, client: store.client)
+                                        .id(conversation.id)
+                                }
+                            }
+                            // Full size even while empty, so the clip is a
+                            // fixed window the board slides through rather than
+                            // a box that grows with it from the center.
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .clipped()
+                        }
                 }
             }
         }
@@ -52,13 +75,36 @@ struct RootView: View {
                 ToastStack(center: ToastCenter.shared)
                 RecoveryOverlay(recovery: store.recovery)
             }
-            .id(settings.values.themeName)
+            .id(settings.themeKey)
         }
         .onAppear {
             MarketplaceWindow.opener = { openWindow(id: MarketplaceWindow.id) }
             slash.warmContexts()
             ClipboardWatcher.shared.start()
             #if DEBUG
+            // Verification hook: "conversation" opens a native conversation;
+            // "conversation:model" also opens that dropdown.
+            if let window = ProcessInfo.processInfo.environment["HERD_OPEN_WINDOW"], window.hasPrefix("conversation") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    store.newConversation()
+                    let parts = window.split(separator: ":").map(String.init)
+                    ConversationDebug.openDropdown = parts.dropFirst().first
+                    ConversationDebug.scrollToItem = parts.count > 2 ? Int(parts[2]) : nil
+                }
+            }
+            // Verification hook: "codex" opens a native Codex conversation;
+            // "codex:<text>" also sends that first message.
+            if let window = ProcessInfo.processInfo.environment["HERD_OPEN_WINDOW"], window.hasPrefix("codex") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    store.newConversation(engine: .codex)
+                    let text = window.split(separator: ":", maxSplits: 1).dropFirst().first.map(String.init)
+                    guard let text, let session = AgentCenter.shared.sessions.last else { return }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { session.send(text) }
+                }
+            }
+            if ProcessInfo.processInfo.environment["HERD_OPEN_WINDOW"] == "agents" {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { AgentCenter.shared.showingBoard = true }
+            }
             // Verification hook: open a window at launch without a click.
             if ProcessInfo.processInfo.environment["HERD_OPEN_WINDOW"] == MarketplaceWindow.id {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1) { MarketplaceWindow.open() }
@@ -138,7 +184,9 @@ struct RootView: View {
             // content. Only a root-level overlay paints above the hosted
             // terminal view, so the cover lives here rather than on it.
             let _ = { DebugSnapshot.coverActive = terminalAnchor.chromeCover != nil || prompt.isActive }()
-            if let cover = terminalAnchor.chromeCover {
+            // A conversation covers the terminal, so the patch over the engine's
+            // tab row would only show through it.
+            if let cover = terminalAnchor.chromeCover, agents.active(in: store.focusedWorkspace?.workspaceId) == nil, agents.board == nil {
                 Color(hex: TerminalTheme.named(settings.values.themeName).background)
                     .frame(width: cover.width, height: cover.height)
                     .offset(x: sidebarInset + cover.minX,
@@ -146,7 +194,6 @@ struct RootView: View {
                     .allowsHitTesting(false)
             }
         }
-        .overlay { ConfirmDialog(center: confirmations) }
         .overlay {
             if ui.paletteVisible {
                 CommandPaletteView(model: palette) { closePalette() }
@@ -155,8 +202,11 @@ struct RootView: View {
                         : .identity)
             }
         }
+        // Above the palette, so a confirm raised while it's open isn't buried.
+        .overlay { ConfirmDialog(center: confirmations) }
         .animation(motion.animation(.palette, .smooth(duration: 0.16)), value: ui.paletteVisible)
         .animation(motion.animation(.sidebar), value: ui.sidebarVisible)
+        .animation(motion.animation(.sidebar), value: agents.board)
         .onChange(of: ui.paletteVisible) { _, visible in
             DebugSnapshot.overlayVisible = visible
             if visible {
@@ -172,16 +222,22 @@ struct RootView: View {
                 palette.reload(items: PaletteCatalog.items(store: store, ui: ui))
             }
         }
-        .onChange(of: store.snapshot) { _, _ in
+        .onChange(of: store.snapshot) { _, snapshot in
+            if !snapshot.workspaces.isEmpty {
+                AgentCenter.shared.restoreIfNeeded(
+                    workspaceFor: { cwd in snapshot.workspaces.first { snapshot.directory(ofWorkspace: $0.workspaceId) == cwd }?.workspaceId },
+                    fallback: store.focusedWorkspace?.workspaceId
+                )
+            }
             if ui.paletteVisible, palette.prompt == nil {
                 palette.reload(items: PaletteCatalog.items(store: store, ui: ui))
             }
         }
-        .background(settings.values.backgroundOpacity < 1 ? Color.clear : Theme.terminalBackground)
+        .background(settings.values.effectiveBackgroundOpacity < 1 ? Color.clear : Theme.terminalBackground)
         .background(WindowTransparency(
-            opacity: settings.values.backgroundOpacity,
-            blur: settings.values.backgroundBlur,
-            themeName: settings.values.themeName
+            opacity: settings.values.effectiveBackgroundOpacity,
+            blur: settings.values.effectiveBackgroundBlur,
+            themeName: settings.themeKey
         ))
         .ignoresSafeArea()
         .preferredColorScheme(Theme.colorScheme)
@@ -198,18 +254,18 @@ struct RootView: View {
                 command: session.command,
                 environment: session.environment,
                 workingDirectory: NSHomeDirectory(),
-                hiddenTopRows: HerdrSession.hiddenTopRows,
+                hiddenTopRows: EngineSession.hiddenTopRows,
                 anchor: terminalAnchor,
                 onTitleChange: { _ in },
                 onExit: { NSApp.terminate(nil) }
             )
             .background(Color(hex: TerminalTheme.named(settings.values.themeName).background)
-                .opacity(settings.values.backgroundOpacity))
+                .opacity(settings.values.effectiveBackgroundOpacity))
 
         } else {
             VStack(spacing: 8) {
                 Text("Terminal engine missing").font(.system(size: 14, weight: .semibold))
-                Text("Install it with `brew install herdr`, then relaunch Herd.")
+                Text("The terminal engine is missing from this copy of Herd. Reinstall Herd.")
                     .font(Theme.uiFont)
                     .foregroundStyle(Theme.textSecondary)
             }
@@ -220,7 +276,7 @@ struct RootView: View {
 }
 
 /// Makes the window see-through when the terminal background is translucent,
-/// and applies Ghostty's background blur.
+/// and applies the renderer's background blur.
 private struct WindowTransparency: NSViewRepresentable {
     let opacity: Double
     let blur: Bool
@@ -241,23 +297,71 @@ private struct WindowTransparency: NSViewRepresentable {
 }
 
 final class UIState: ObservableObject {
-    @Published var sidebarVisible = true
+    @Published var sidebarVisible = UserDefaults.standard.object(forKey: "herd.sidebarVisible") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(sidebarVisible, forKey: "herd.sidebarVisible") }
+    }
     @Published var paletteVisible = false
+    /// Drag the sidebar's edge to resize it (200pt up to half the window).
+    @Published var sidebarWidth: CGFloat = {
+        let saved = UserDefaults.standard.double(forKey: "herd.sidebarWidth")
+        return saved > 0 ? CGFloat(saved) : Theme.sidebarWidth
+    }() {
+        didSet { UserDefaults.standard.set(Double(sidebarWidth), forKey: "herd.sidebarWidth") }
+    }
+    static let sidebarMinWidth: CGFloat = 200
+}
+
+/// An invisible strip over the sidebar's divider: drag to resize, double-click
+/// to go back to the default width.
+private struct SidebarResizeHandle: View {
+    @ObservedObject var ui: UIState
+    @State private var startWidth: CGFloat?
+    @State private var hovering = false
+
+    var body: some View {
+        Color.clear
+            .frame(width: 7)
+            .contentShape(Rectangle())
+            .onHover { inside in
+                guard inside != hovering else { return }
+                hovering = inside
+                if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+            }
+            .gesture(
+                DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                    .onChanged { drag in
+                        let start = startWidth ?? ui.sidebarWidth
+                        startWidth = start
+                        let maxWidth = max(UIState.sidebarMinWidth, (NSApp.keyWindow?.frame.width ?? 1280) / 2)
+                        ui.sidebarWidth = min(maxWidth, max(UIState.sidebarMinWidth, (start + drag.translation.width).rounded()))
+                    }
+                    .onEnded { _ in startWidth = nil }
+            )
+            .onTapGesture(count: 2) { ui.sidebarWidth = Theme.sidebarWidth }
+            .help("Drag to resize the sidebar. Double-click to reset.")
+            .accessibilityLabel("Sidebar width")
+            .accessibilityValue("\(Int(ui.sidebarWidth)) points")
+            .accessibilityAdjustableAction { direction in
+                let delta: CGFloat = direction == .increment ? 16 : -16
+                ui.sidebarWidth = max(UIState.sidebarMinWidth, ui.sidebarWidth + delta)
+            }
+    }
 }
 
 private struct TitleBar: View {
-    @ObservedObject var store: HerdrStore
+    @ObservedObject var store: SessionStore
     @ObservedObject var ui: UIState
+    @ObservedObject private var agents = AgentCenter.shared
+    @State private var isFullScreen = false
 
     var body: some View {
         HStack(spacing: 8) {
-            // Room for the traffic lights.
-            Color.clear.frame(width: 70)
+            // Room for the traffic lights, which hide in full screen.
+            Color.clear.frame(width: isFullScreen ? 4 : 70)
             Button {
                 ui.sidebarVisible.toggle()
             } label: {
-                Image(systemName: "sidebar.left")
-                    .font(.system(size: 13))
+                HerdIcon("sidebar.left", size: 18)
                     .foregroundStyle(ui.sidebarVisible ? Theme.textPrimary : Theme.textSecondary)
                     .frame(width: 28, height: 24)
                     .background(ui.sidebarVisible ? Theme.cardSelected : Color.clear)
@@ -265,12 +369,21 @@ private struct TitleBar: View {
             }
             .buttonStyle(.plain)
             .help("Toggle Sidebar (⌘B)")
+            .accessibilityLabel(ui.sidebarVisible ? "Hide sidebar" : "Show sidebar")
             Spacer()
+            // A connected engine is the normal state and says nothing worth a
+            // badge; only the wait for one does.
+            if !store.isConnected { connectingIndicator }
+            AccountChips()
+                .padding(.trailing, 12)
+        }
+        // Centered on the window, not between the uneven side groups.
+        .overlay {
             Button {
                 ui.paletteVisible = true
             } label: {
                 HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass").font(.system(size: 11))
+                    HerdIcon("magnifyingglass", size: 15)
                     Text(titleText).font(Theme.uiFontMedium).lineLimit(1)
                     Spacer(minLength: 8)
                     Keycap(text: "⌘P")
@@ -284,30 +397,41 @@ private struct TitleBar: View {
             }
             .buttonStyle(.plain)
             .help("Command Palette (⌘P)")
-            Spacer()
-            connectionIndicator
-                .padding(.trailing, 12)
+            .accessibilityLabel("Search, \(titleText)")
         }
         .frame(height: Theme.titleBarHeight)
-        .background(Theme.chrome)
+        .background {
+            ZStack {
+                Theme.chrome
+                TitleBarDragArea()
+                TrafficLightAligner(height: Theme.titleBarHeight)
+                WindowObserver(title: titleText, isFullScreen: $isFullScreen)
+            }
+        }
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.divider).frame(height: 1) }
     }
 
     private var titleText: String {
         guard let workspace = store.focusedWorkspace else { return "Herd" }
-        let tab = store.focusedWorkspaceTabs.first { $0.tabId == store.snapshot.focusedTabId }
-        return [workspace.label, tab?.label].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " — ")
+        // A conversation in front names itself, not the terminal behind it.
+        if let conversation = agents.active(in: workspace.workspaceId) {
+            return [workspace.label, conversation.title].filter { !$0.isEmpty }.joined(separator: " · ")
+        }
+        let tab = store.focusedWorkspaceTabs.first { $0.tabId == store.displayedFocusedTabId }
+        let tabName = tab.map { TabAutoName.display(label: $0.label, number: $0.number) }
+        return [workspace.label, tabName].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
-    private var connectionIndicator: some View {
+    private var connectingIndicator: some View {
         HStack(spacing: 5) {
             Circle()
-                .fill(store.isConnected ? Color(hex: AgentStateColor.done) : Theme.textTertiary)
+                .fill(Theme.textTertiary)
                 .frame(width: 6, height: 6)
-            Text(store.isConnected ? "ready" : "connecting")
+            Text("connecting")
                 .font(Theme.uiFont)
                 .foregroundStyle(Theme.textTertiary)
         }
+        .padding(.trailing, 4)
     }
 }
 
