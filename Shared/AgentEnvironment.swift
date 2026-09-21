@@ -1,11 +1,11 @@
 import Foundation
 
 /// Agents mark their own child processes through the environment (Claude
-/// Code's `CLAUDECODE`, session ids, sandbox markers). When Herd is launched
+/// Code's `CLAUDECODE`, session ids, sandbox markers). When Octet is launched
 /// from inside an agent's shell, those markers reach every pane it opens and
 /// the agents started there behave as nested children — Claude Code, for one,
-/// stops saving transcripts, which also costs Herd its session recovery.
-/// Herd drops them from its own environment at launch, for every agent.
+/// stops saving transcripts, which also costs Octet its session recovery.
+/// Octet drops them from its own environment at launch, for every agent.
 enum AgentEnvironment {
     /// Marker names an agent sets on its children, whatever the vendor.
     static let exactNames: Set<String> = ["CLAUDECODE", "CODEXCLI", "CURSOR_AGENT", "OPENCODE"]
@@ -37,7 +37,7 @@ enum AgentEnvironment {
         return environment
     }
 
-    /// Drops the markers from this process, so everything Herd spawns —
+    /// Drops the markers from this process, so everything Octet spawns —
     /// panes, shells, agents — starts as its own session.
     @discardableResult
     static func clearInheritedMarkers() -> [String] {

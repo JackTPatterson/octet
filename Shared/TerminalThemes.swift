@@ -1,5 +1,4 @@
-// Generated from warpdotdev/Warp app/src/themes/default_themes.rs (solid-color
-// built-in themes; image and gradient themes are omitted).
+// Built-in solid-color terminal themes (no image or gradient themes).
 
 /// A terminal color theme: background, foreground, accent, and the 16 ANSI colors.
 struct TerminalTheme: Identifiable, Equatable, Codable {
@@ -13,7 +12,7 @@ struct TerminalTheme: Identifiable, Equatable, Codable {
     var id: String { name }
 
     /// A theme read from the user's own terminal config, when they asked
-    /// Herd to follow it. Set once at launch and on import.
+    /// Octet to follow it. Set once at launch and on import.
     nonisolated(unsafe) static var imported: TerminalTheme?
 
     static func named(_ name: String) -> TerminalTheme {

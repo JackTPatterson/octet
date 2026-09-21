@@ -1,12 +1,12 @@
 import Foundation
 
-/// Opens a herdr tab for each Claude Code subagent (Agent/Task tool call),
-/// named after the subagent and running `herd-cli agent-watch`.
+/// Opens a session server tab for each Claude Code subagent (Agent/Task tool call),
+/// named after the subagent and running `octet-cli agent-watch`.
 enum SubagentHook {
     static let maxLabelLength = 48
 
     /// Builds the `layout.apply` params for a subagent tab, or nil when the
-    /// payload is not a subagent launch inside a herdr pane.
+    /// payload is not a subagent launch inside a session server pane.
     static func tabRequest(
         payload: [String: Any],
         environment: [String: String],
@@ -15,7 +15,7 @@ enum SubagentHook {
     ) -> [String: Any]? {
         guard let toolName = payload["tool_name"] as? String,
               toolName == "Agent" || toolName == "Task",
-              let workspaceId = environment["HERDR_WORKSPACE_ID"], !workspaceId.isEmpty,
+              let workspaceId = environment[EngineProtocol.workspaceIdVariable], !workspaceId.isEmpty,
               let transcriptPath = payload["transcript_path"] as? String,
               transcriptPath.hasSuffix(".jsonl") else { return nil }
 
@@ -56,11 +56,11 @@ enum SubagentHook {
     }
 
     static func handlePreToolUse(payload data: Data, environment: [String: String], cliPath: String) {
-        guard environment["HERD_SUBAGENT_TABS"] != "0",
+        guard environment["OCTET_SUBAGENT_TABS"] != "0",
               let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let socketPath = environment["HERDR_SOCKET_PATH"], !socketPath.isEmpty,
+              let socketPath = environment[EngineProtocol.socketPathVariable], !socketPath.isEmpty,
               let request = tabRequest(payload: payload, environment: environment, cliPath: cliPath) else { return }
-        _ = try? HerdrClient(socketPath: socketPath).call("layout.apply", request)
+        _ = try? EngineClient(socketPath: socketPath).call("layout.apply", request)
     }
 }
 
@@ -98,22 +98,22 @@ enum SubagentWatch {
     }
 }
 
-/// Reports a viewer pane's state to herdr so tabs and the sidebar show the
+/// Reports a viewer pane's state to the session server so tabs and the sidebar show the
 /// subagent as a working/idle Claude agent.
 struct PaneAgentReporter {
-    let client: HerdrClient?
+    let client: EngineClient?
     let paneId: String?
 
     init(environment: [String: String]) {
-        paneId = environment["HERDR_PANE_ID"]
-        client = environment["HERDR_SOCKET_PATH"].map(HerdrClient.init(socketPath:))
+        paneId = environment[EngineProtocol.paneIdVariable]
+        client = environment[EngineProtocol.socketPathVariable].map(EngineClient.init(socketPath:))
     }
 
     func report(state: String, message: String) {
         guard let client, let paneId else { return }
         _ = try? client.call("pane.report_agent", [
             "pane_id": paneId,
-            "source": "herd:subagent",
+            "source": "octet:subagent",
             "agent": "claude",
             "state": state,
             "message": message,
@@ -121,14 +121,14 @@ struct PaneAgentReporter {
     }
 }
 
-/// Where an agent keeps its hook config. Every agent Herd supports uses the
+/// Where an agent keeps its hook config. Every agent Octet supports uses the
 /// same shape — a `hooks` map of event name to matcher entries — so one
 /// installer serves them all; adding an agent is a row in `specs`.
 struct SubagentHookSpec: Identifiable, Equatable {
     let hostId: String
     /// The file holding the hooks map.
     let file: String
-    /// The file's own name for a backup Herd writes before editing.
+    /// The file's own name for a backup Octet writes before editing.
     let backupName: String
     let event: String
     /// Tool names that spawn a subagent.
@@ -139,14 +139,14 @@ struct SubagentHookSpec: Identifiable, Equatable {
     var url: URL { URL(fileURLWithPath: file) }
 }
 
-/// Adds and removes Herd's subagent hook in each agent's own config.
+/// Adds and removes Octet's subagent hook in each agent's own config.
 enum SubagentHookInstaller {
     static func specs(home: String = NSHomeDirectory()) -> [SubagentHookSpec] {
         [
             SubagentHookSpec(hostId: "claude", file: "\(home)/.claude/settings.json",
-                             backupName: "settings.json.herd-backup", event: "PreToolUse", matcher: "Agent|Task"),
+                             backupName: "settings.json.octet-backup", event: "PreToolUse", matcher: "Agent|Task"),
             SubagentHookSpec(hostId: "codex", file: "\(home)/.codex/hooks.json",
-                             backupName: "hooks.json.herd-backup", event: "PreToolUse", matcher: "Agent|Task"),
+                             backupName: "hooks.json.octet-backup", event: "PreToolUse", matcher: "Agent|Task"),
         ]
     }
 
@@ -160,9 +160,9 @@ enum SubagentHookInstaller {
         specs(home: home).first { $0.hostId == hostId }
     }
 
-    /// Whether a hook command is one Herd installed (any herd-cli path).
-    static func isHerdHookCommand(_ command: String) -> Bool {
-        command.contains("herd-cli") && command.range(of: " hook [a-z_-]+$", options: .regularExpression) != nil
+    /// Whether a hook command is one Octet installed (any octet-cli path).
+    static func isOctetHookCommand(_ command: String) -> Bool {
+        command.contains("octet-cli") && command.range(of: " hook [a-z_-]+$", options: .regularExpression) != nil
     }
 
     static func isInstalled(_ spec: SubagentHookSpec) -> Bool {
@@ -170,7 +170,7 @@ enum SubagentHookInstaller {
               let settings = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let entries = (settings["hooks"] as? [String: Any])?[spec.event] as? [[String: Any]] else { return false }
         return entries.contains { entry in
-            (entry["hooks"] as? [[String: Any]] ?? []).contains { ($0["command"] as? String).map(isHerdHookCommand) ?? false }
+            (entry["hooks"] as? [[String: Any]] ?? []).contains { ($0["command"] as? String).map(isOctetHookCommand) ?? false }
         }
     }
 
@@ -178,7 +178,7 @@ enum SubagentHookInstaller {
         "'\(cliPath.replacingOccurrences(of: "'", with: "'\"'\"'"))' hook \(hostId)"
     }
 
-    /// Returns settings with Herd's hook present (replacing an older path).
+    /// Returns settings with Octet's hook present (replacing an older path).
     static func installing(into settings: [String: Any], cliPath: String, spec: SubagentHookSpec) -> [String: Any] {
         var settings = removing(from: settings, spec: spec)
         var hooks = settings["hooks"] as? [String: Any] ?? [:]
@@ -199,7 +199,7 @@ enum SubagentHookInstaller {
         let kept = entries.compactMap { entry -> [String: Any]? in
             var entry = entry
             let inner = (entry["hooks"] as? [[String: Any]] ?? []).filter {
-                !(($0["command"] as? String).map(isHerdHookCommand) ?? false)
+                !(($0["command"] as? String).map(isOctetHookCommand) ?? false)
             }
             guard !inner.isEmpty else { return nil }
             entry["hooks"] = inner

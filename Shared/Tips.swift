@@ -1,6 +1,6 @@
 import Foundation
 
-/// A short piece of Herd that is easy to miss. Tips surface one at a time in
+/// A short piece of Octet that is easy to miss. Tips surface one at a time in
 /// the sidebar, and only when they apply to what is on screen.
 struct Tip: Identifiable, Equatable {
     let id: String
@@ -31,7 +31,7 @@ enum Tips {
             body: "Search actions, workspaces, tabs, agents, projects and plugins. Prefixes narrow it: > % # @ / !",
             shortcut: "⌘P"),
         Tip(id: "slash", title: "Slash commands, natively",
-            body: "Type / in an agent pane for Herd's own menu. Return runs the command; /mcp and /model open their arguments."),
+            body: "Type / in an agent pane for Octet's own menu. Return runs the command; /mcp and /model open their arguments."),
         Tip(id: "marketplace", title: "One place for MCP, plugins, skills and prompts",
             body: "Install into every agent at once. Skills and prompts live once in ~/.agents and link into each of them.",
             shortcut: "⌘⇧M"),
@@ -39,10 +39,10 @@ enum Tips {
             body: "After adding an MCP server or plugin, Reload Agents restarts each one with --resume, keeping the conversation.",
             applies: { $0.agentCount > 0 }),
         Tip(id: "recovery", title: "Sessions survive a shutdown",
-            body: "Herd remembers each agent's session. When a restart kills them, it offers to resume them where they were.",
+            body: "Octet remembers each agent's session. When a restart kills them, it offers to resume them where they were.",
             applies: { $0.hasRecoverableSessions }),
         Tip(id: "autoname", title: "Tabs follow the work",
-            body: "A tab renames itself to whatever its pane is doing. Rename one yourself and Herd leaves it alone.",
+            body: "A tab renames itself to whatever its pane is doing. Rename one yourself and Octet leaves it alone.",
             applies: { $0.hasUnnamedTabs }),
         Tip(id: "idle", title: "Stale workspaces move out of the way",
             body: "Anything untouched for a while drops into the dock below. Pin one to keep it up top.",

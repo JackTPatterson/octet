@@ -1,0 +1,236 @@
+import Foundation
+
+/// Brings a command-spec corpus onto the machine and normalises it into
+/// Octet's own shape. The source is the MIT-licensed Fig completion specs
+/// (withfig/autocomplete), fetched on demand rather than vendored, with its
+/// licence and a notice written beside the result.
+@MainActor
+enum SpecIngest {
+    static let package = "@withfig/autocomplete"
+    static let sourceName = "withfig/autocomplete (MIT)"
+
+    struct Result {
+        let commands: Int
+        let version: String
+    }
+
+    /// True while an ingest is running, so the UI can show it once.
+    private(set) static var isRunning = false
+
+    /// Downloads and converts the corpus. Everything heavy happens off the
+    /// main thread; `progress` is called with human-readable steps.
+    static func run(
+        progress: @escaping (String) -> Void,
+        completion: @escaping (Swift.Result<Result, Error>) -> Void
+    ) {
+        guard !isRunning else { return }
+        isRunning = true
+        let destination = SpecCorpus.directory()
+        DispatchQueue.global(qos: .userInitiated).async {
+            let outcome = Swift.Result { try ingest(into: destination) { step in
+                DispatchQueue.main.async { progress(step) }
+            } }
+            DispatchQueue.main.async {
+                isRunning = false
+                completion(outcome)
+            }
+        }
+    }
+
+    // MARK: - The work
+
+    private nonisolated static func ingest(into destination: String, progress: (String) -> Void) throws -> Result {
+        let manager = FileManager.default
+        let work = manager.temporaryDirectory.appendingPathComponent("octet-specs-" + UUID().uuidString)
+        try manager.createDirectory(at: work, withIntermediateDirectories: true)
+        defer { try? manager.removeItem(at: work) }
+
+        progress("Downloading the spec corpus…")
+        let packed = try shell("npm pack \(package) --silent", in: work.path)
+        let archive = packed.split(separator: "\n").map(String.init).last { $0.hasSuffix(".tgz") }
+        guard let archive, manager.fileExists(atPath: work.appendingPathComponent(archive).path) else {
+            throw IngestError.message("npm couldn't fetch \(package). Is npm installed and online?")
+        }
+
+        progress("Unpacking…")
+        _ = try shell("tar xzf \(archive)", in: work.path)
+        let build = work.appendingPathComponent("package/build")
+        guard manager.fileExists(atPath: build.path) else {
+            throw IngestError.message("The package didn't contain the expected specs")
+        }
+
+        progress("Converting specs…")
+        let script = work.appendingPathComponent("normalise.mjs")
+        try normaliser.write(to: script, atomically: true, encoding: .utf8)
+        let specsOut = work.appendingPathComponent("out")
+        let output = try shell(
+            "node \(script.path) \(build.path) \(specsOut.path)",
+            in: work.path,
+            timeout: 600
+        )
+        let count = Int(output.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: "\n").last ?? "") ?? 0
+        guard count > 0 else { throw IngestError.message("No specs were converted") }
+
+        progress("Installing \(count) commands…")
+        let specsDirectory = destination + "/specs"
+        try? manager.removeItem(atPath: specsDirectory)
+        try manager.createDirectory(atPath: destination, withIntermediateDirectories: true)
+        try manager.moveItem(atPath: specsOut.path, toPath: specsDirectory)
+
+        // The licence travels with the data it covers.
+        let licence = work.appendingPathComponent("package/LICENSE")
+        if manager.fileExists(atPath: licence.path) {
+            try? manager.removeItem(atPath: destination + "/LICENSE-fig")
+            try manager.copyItem(atPath: licence.path, toPath: destination + "/LICENSE-fig")
+        }
+        let version = packageVersion(from: archive)
+        try notice(version: version).write(toFile: destination + "/NOTICE.md", atomically: true, encoding: .utf8)
+
+        let commands = (try? manager.contentsOfDirectory(atPath: specsDirectory))?
+            .filter { $0.hasSuffix(".json") }
+            .map { String($0.dropLast(5)) }
+            .sorted() ?? []
+        try SpecCorpusWriter.writeIndex(
+            .init(source: sourceName, version: version, commands: commands, ingestedAt: Date())
+        )
+        return Result(commands: commands.count, version: version)
+    }
+
+    private nonisolated static func packageVersion(from archive: String) -> String {
+        // withfig-autocomplete-2.692.3.tgz
+        let stem = archive.replacingOccurrences(of: ".tgz", with: "")
+        return stem.split(separator: "-").last.map(String.init) ?? "unknown"
+    }
+
+    private nonisolated static func notice(version: String) -> String {
+        """
+        # Command completion specs
+
+        These files are generated by Octet from \(sourceName), version \(version),
+        and converted into Octet's own format. The original licence is in
+        `LICENSE-fig`; the upstream project is https://github.com/withfig/autocomplete.
+
+        Octet fetches this corpus on request rather than bundling it, and adds its
+        own sources on top: your history, this project's scripts and targets, and
+        live values from cached generators.
+        """
+    }
+
+    /// Imports each compiled spec and writes Octet's normalised JSON. Fig's
+    /// generators are functions, so only their static shape survives; Octet
+    /// supplies its own generators for the values that need running code.
+    private nonisolated static let normaliser = """
+    import { readdirSync, mkdirSync, writeFileSync } from 'node:fs';
+    import { join, resolve } from 'node:path';
+
+    const [buildDir, outDir] = process.argv.slice(2);
+    mkdirSync(outDir, { recursive: true });
+
+    const first = (name) => Array.isArray(name) ? name[0] : name;
+    const names = (name) => Array.isArray(name) ? name : [name];
+
+    const arg = (args) => {
+      const a = Array.isArray(args) ? args[0] : args;
+      if (!a || typeof a !== 'object') return undefined;
+      const out = {};
+      if (typeof a.template === 'string') out.template = a.template;
+      else if (Array.isArray(a.template) && typeof a.template[0] === 'string') out.template = a.template[0];
+      if (Array.isArray(a.suggestions)) {
+        const values = a.suggestions
+          .map((s) => (typeof s === 'string' ? s : first(s?.name)))
+          .filter((s) => typeof s === 'string');
+        if (values.length) out.suggestions = values.slice(0, 100);
+      }
+      return Object.keys(out).length ? out : undefined;
+    };
+
+    const option = (o) => {
+      const list = names(o?.name).filter((n) => typeof n === 'string');
+      if (!list.length) return null;
+      const out = { names: list };
+      if (typeof o.description === 'string') out.description = o.description;
+      const a = arg(o.args);
+      if (a) out.args = a;
+      return out;
+    };
+
+    const subcommand = (s, depth = 0) => {
+      const name = first(s?.name);
+      if (typeof name !== 'string') return null;
+      const out = { name };
+      if (typeof s.description === 'string') out.description = s.description;
+      const opts = (s.options || []).map(option).filter(Boolean);
+      if (opts.length) out.options = opts;
+      const a = arg(s.args);
+      if (a) out.args = a;
+      if (depth < 2) {
+        const subs = (s.subcommands || []).map((x) => subcommand(x, depth + 1)).filter(Boolean);
+        if (subs.length) out.subcommands = subs;
+      }
+      return out;
+    };
+
+    let written = 0;
+    for (const file of readdirSync(buildDir)) {
+      if (!file.endsWith('.js')) continue;
+      try {
+        const module = await import(resolve(buildDir, file));
+        let spec = module.default ?? module.completionSpec ?? module;
+        if (typeof spec === 'function') spec = await spec();
+        const name = first(spec?.name);
+        if (typeof name !== 'string' || !name) continue;
+        const out = { name };
+        if (typeof spec.description === 'string') out.description = spec.description;
+        const subs = (spec.subcommands || []).map((s) => subcommand(s)).filter(Boolean);
+        if (subs.length) out.subcommands = subs;
+        const opts = (spec.options || []).map(option).filter(Boolean);
+        if (opts.length) out.options = opts;
+        const a = arg(spec.args);
+        if (a) out.args = a;
+        if (!out.subcommands && !out.options && !out.args) continue;
+        writeFileSync(join(outDir, `${name}.json`), JSON.stringify(out));
+        written += 1;
+      } catch {
+        // A spec that won't import is simply skipped.
+      }
+    }
+    console.log(written);
+    """
+
+    // MARK: - Shell
+
+    private nonisolated static func shell(_ command: String, in directory: String, timeout: TimeInterval = 300) throws -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = ["-lc", command]
+        process.currentDirectoryURL = URL(fileURLWithPath: directory)
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        try process.run()
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
+            if process.isRunning { process.terminate() }
+        }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        let output = String(decoding: data, as: UTF8.self)
+        guard process.terminationStatus == 0 else {
+            throw IngestError.message(PluginCLI.lastLines(output))
+        }
+        return output
+    }
+
+    struct IngestError: LocalizedError {
+        let text: String
+        static func message(_ text: String) -> IngestError { IngestError(text: text) }
+        var errorDescription: String? { text }
+    }
+}
+
+/// Writing the index needs no main-actor state; kept apart so the ingest can
+/// finish its work off the main thread.
+enum SpecCorpusWriter {
+    static func writeIndex(_ index: SpecCorpus.Index) throws {
+        try SpecCorpus.write(index: index)
+    }
+}

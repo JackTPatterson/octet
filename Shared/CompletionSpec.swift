@@ -1,7 +1,6 @@
 import Foundation
 
-/// How a command completes, as data rather than code — the shape Warp's
-/// engine uses: subcommands, options, and arguments that name where their
+/// How a command completes, as data rather than code: subcommands, options, and arguments that name where their
 /// values come from. Dynamic values (branches, npm scripts, containers) come
 /// from a generator: one short command whose output is cached, so typing
 /// never waits on a process.
@@ -67,7 +66,7 @@ struct CompletionSpec: Equatable {
 }
 
 enum CompletionSpecs {
-    /// Herd ships a small set; the format is the point, so more are data.
+    /// Octet ships a small set; the format is the point, so more are data.
     static let all: [String: CompletionSpec] = [
         "git": git,
         "npm": npm,

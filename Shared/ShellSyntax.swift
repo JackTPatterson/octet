@@ -1,7 +1,7 @@
 import Foundation
 
-/// Colours a command line the way a shell reads it. Herd renders the input
-/// itself while a pane sits at a prompt, so highlighting is Herd's to do
+/// Colours a command line the way a shell reads it. Octet renders the input
+/// itself while a pane sits at a prompt, so highlighting is Octet's to do
 /// rather than something the shell has to be configured for.
 enum ShellSyntax {
     enum Role: Equatable {

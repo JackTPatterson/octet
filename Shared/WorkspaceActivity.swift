@@ -2,13 +2,12 @@ import Foundation
 
 /// When each workspace was last used, and which ones have gone idle.
 ///
-/// herdr reports what an agent is doing, never when it last did anything, so
-/// Herd stamps activity itself (the approach herdr-radar's `lib/activity.js`
-/// takes): a workspace is touched when it is on screen, when an agent in it
+/// The session server reports what an agent is doing, never when it last did
+/// anything, so Octet stamps activity itself: a workspace is touched when it is on screen, when an agent in it
 /// changes state, or when a pane title changes. Stamps persist across
 /// launches. A workspace first seen with a Claude agent recovers its stamp
 /// from the newest Claude transcript for that folder, so sessions abandoned
-/// before Herd started don't all look fresh.
+/// before Octet started don't all look fresh.
 struct WorkspaceActivity: Equatable {
     /// Last-activity time per workspace id.
     private(set) var stamps: [String: Date] = [:]
@@ -24,10 +23,10 @@ struct WorkspaceActivity: Equatable {
     /// Updates stamps from a snapshot. `recover` supplies a last-active time
     /// for a workspace seen for the first time (nil = no evidence → now).
     mutating func observe(
-        _ snapshot: HerdrSnapshot,
+        _ snapshot: EngineSnapshot,
         viewedWorkspaceId: String?,
         now: Date = Date(),
-        recover: (HerdrWorkspace) -> Date? = { _ in nil }
+        recover: (EngineWorkspace) -> Date? = { _ in nil }
     ) {
         let present = Set(snapshot.workspaces.map(\.workspaceId))
         stamps = stamps.filter { present.contains($0.key) }
@@ -49,7 +48,7 @@ struct WorkspaceActivity: Equatable {
     }
 
     /// Changes that count as use: agent state transitions and pane titles.
-    static func signature(of workspaceId: String, in snapshot: HerdrSnapshot) -> String {
+    static func signature(of workspaceId: String, in snapshot: EngineSnapshot) -> String {
         let agents = snapshot.agents(inWorkspace: workspaceId)
             .sorted { $0.paneId < $1.paneId }
             .map { "\($0.paneId)=\($0.stateChangeSeq ?? 0):\($0.agentStatus.rawValue)" }
@@ -62,14 +61,14 @@ struct WorkspaceActivity: Equatable {
     /// Splits workspaces into those kept in view and those gone idle. Never
     /// idle: pinned, focused, or an agent that is working or needs input.
     func partition(
-        _ workspaces: [HerdrWorkspace],
-        snapshot: HerdrSnapshot,
+        _ workspaces: [EngineWorkspace],
+        snapshot: EngineSnapshot,
         pinned: Set<String>,
         idleAfter: TimeInterval,
         now: Date = Date()
-    ) -> (active: [HerdrWorkspace], idle: [HerdrWorkspace]) {
-        var active: [HerdrWorkspace] = []
-        var idle: [HerdrWorkspace] = []
+    ) -> (active: [EngineWorkspace], idle: [EngineWorkspace]) {
+        var active: [EngineWorkspace] = []
+        var idle: [EngineWorkspace] = []
         for workspace in workspaces {
             if isIdle(workspace, snapshot: snapshot, pinned: pinned, idleAfter: idleAfter, now: now) {
                 idle.append(workspace)
@@ -82,8 +81,8 @@ struct WorkspaceActivity: Equatable {
     }
 
     func isIdle(
-        _ workspace: HerdrWorkspace,
-        snapshot: HerdrSnapshot,
+        _ workspace: EngineWorkspace,
+        snapshot: EngineSnapshot,
         pinned: Set<String>,
         idleAfter: TimeInterval,
         now: Date = Date()

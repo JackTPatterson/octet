@@ -1,27 +1,27 @@
 import Foundation
 
 /// A sidebar section: one project (git repository or project folder) and the
-/// herdr workspaces that belong to it.
+/// workspaces that belong to it.
 struct ProjectGroup: Equatable, Identifiable {
     /// Project root path, or `ProjectGroup.otherId` for unaffiliated workspaces.
     let id: String
     let name: String
-    let workspaces: [HerdrWorkspace]
+    let workspaces: [EngineWorkspace]
 
-    static let otherId = "herd.other"
+    static let otherId = "octet.other"
 }
 
 enum ProjectGrouping {
     static let defaultParentDirectories = ["~/Developer", "~/Projects", "~/code", "~/src"]
 
-    /// Groups workspaces by project, keeping herdr's workspace order: a group
+    /// Groups workspaces by project, keeping the session server's workspace order: a group
     /// appears where its first workspace appears.
     static func groups(
-        snapshot: HerdrSnapshot,
+        snapshot: EngineSnapshot,
         resolveRoot: (String) -> String?
     ) -> [ProjectGroup] {
         var order: [String] = []
-        var members: [String: [HerdrWorkspace]] = [:]
+        var members: [String: [EngineWorkspace]] = [:]
         for workspace in snapshot.workspaces.sorted(by: { $0.number < $1.number }) {
             let root = workspace.worktree?.repoRoot
                 ?? snapshot.directory(ofWorkspace: workspace.workspaceId).flatMap(resolveRoot)

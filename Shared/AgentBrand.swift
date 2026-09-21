@@ -2,8 +2,7 @@ import Foundation
 
 /// Agent vendor identity: display name, logo asset, and brand hue.
 ///
-/// Values come from herdr-radar (MIT, `lib/palette.js` and `lib/logos.js`):
-/// hues are each vendor's published color, adjusted only where the published
+/// Hues are each vendor's published color, adjusted only where the published
 /// value is unreadable on a dark or light panel. Vendors that sign in black
 /// have no hue and render in the neutral ink.
 struct AgentBrand: Equatable {
@@ -28,7 +27,7 @@ struct AgentBrand: Equatable {
         )
     }
 
-    // herdr-radar lib/palette.js `brand`.
+    // Brand hues.
     static let hues: [String: String] = [
         "claude": "#d97757",
         "gemini": "#4285f4",
@@ -41,7 +40,7 @@ struct AgentBrand: Equatable {
         "other": "#c78a1f",
     ]
 
-    // herdr-radar lib/logos.js `DISPLAY`.
+    // Display names.
     static let displayNames: [String: String] = [
         "claude": "Claude Code", "codex": "Codex", "opencode": "OpenCode", "omp": "OhMyPosh",
         "cline": "Cline", "mastracode": "Mastra", "kimi": "Kimi", "kilo": "Kilo", "maki": "Maki",
@@ -50,7 +49,7 @@ struct AgentBrand: Equatable {
         "agy": "Antigravity", "kiro": "Kiro", "amp": "Amp", "devin": "Devin", "qodercli": "Qoder",
     ]
 
-    /// herdr agent ids that differ from radar's logo keys.
+    /// Agent ids the session server reports that differ from the logo keys.
     static let aliases: [String: String] = [
         "claude_code": "claude", "claude-code": "claude", "antigravity": "agy",
         "open_code": "opencode", "github_copilot": "copilot", "hermes-agent": "hermes",
@@ -63,7 +62,7 @@ struct AgentBrand: Equatable {
     ]
 }
 
-/// State colors from herdr-radar `lib/palette.js` `state`: green and red are
+/// State colors: green and red are
 /// semantic and outrank branding.
 enum AgentStateColor {
     static let done = "#4c9a5a"

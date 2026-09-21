@@ -1,6 +1,6 @@
 import Foundation
 
-/// Kinds of palette entries; also the filter chips (Warp's QueryFilter).
+/// Kinds of palette entries; also the filter chips.
 enum PaletteKind: String, CaseIterable, Identifiable {
     case action, workspace, tab, agent, project, plugin
 
@@ -58,7 +58,7 @@ enum PaletteRanking {
     static let zeroStateRecents = 3
 
     /// Ranks entries for a query. Empty queries return recents first, then
-    /// entries in kind order (actions last, as in Warp's zero state).
+    /// entries in kind order (actions last).
     static func rank(
         _ entries: [PaletteSearchable],
         query rawQuery: String,

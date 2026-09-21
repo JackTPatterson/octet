@@ -1,7 +1,7 @@
 import Foundation
 
 /// Keeps a tab's name on the work happening in it. Agents and shells alike
-/// publish what they are doing as the terminal title, so Herd follows that
+/// publish what they are doing as the terminal title, so Octet follows that
 /// rather than guessing, for every agent equally: switch task inside a
 /// workspace and the tab follows, while a name you typed is never
 /// overwritten.
@@ -14,14 +14,14 @@ enum TabAutoName {
     /// an agent announcing itself rather than its task.
     static var uninformative: Set<String> {
         let shells: Set<String> = [
-            "zsh", "bash", "fish", "sh", "login", "terminal", "herdr",
+            "zsh", "bash", "fish", "sh", "login", "terminal",
             "node", "python", "tmux", "vim", "nvim", "ssh", "git",
         ]
         let agents = Set(AgentBrand.displayNames.keys).union(AgentBrand.displayNames.values)
-        return shells.union(agents.map { $0.lowercased() })
+        return shells.union(EngineProtocol.processNames).union(agents.map { $0.lowercased() })
     }
 
-    /// herdr numbers a new tab; Herd shows that as words until the tab has
+    /// The session server numbers a new tab; Octet shows that as words until the tab has
     /// a name of its own.
     static let unnamedLabel = "New tab"
 
@@ -84,7 +84,7 @@ enum TabAutoName {
     /// named; `pending` carries the last round's candidates so a title has to
     /// hold still for `settleAfter` before anything is renamed.
     static func renames(
-        snapshot: HerdrSnapshot,
+        snapshot: EngineSnapshot,
         manual: Set<String>,
         pending: inout [String: Candidate],
         now: Date = Date()

@@ -1,6 +1,6 @@
 import Foundation
 
-/// Reads the colours your terminal already uses, so Herd can follow them
+/// Reads the colours your terminal already uses, so Octet can follow them
 /// instead of imposing its own. Ghostty-style `key = value` config is the
 /// format: the same shape covers a config file, a theme file it points at,
 /// and most hand-written theme files people keep around.
@@ -23,7 +23,7 @@ enum TerminalThemeImport {
         ]
     }
 
-    /// The first terminal config Herd can read colours from.
+    /// The first terminal config Octet can read colours from.
     static func importFromConfig(home: String = NSHomeDirectory()) -> TerminalTheme? {
         for path in searchPaths(home: home) {
             guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { continue }
@@ -91,7 +91,7 @@ enum TerminalThemeImport {
             name: name,
             background: background,
             foreground: foreground,
-            // Blue is what terminals use for the things Herd accents.
+            // Blue is what terminals use for the things Octet accents.
             accent: cursor ?? palette[4] ?? filled[4],
             ansi: ansi,
             isLight: isLight(background)

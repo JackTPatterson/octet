@@ -7,7 +7,7 @@ struct TerminalSpikeApp: App {
     @State private var title = "TerminalSpike"
 
     init() {
-        HerdTerminalRuntime.configure(overrides: """
+        OctetTerminalRuntime.configure(overrides: """
         background = 050505
         window-padding-x = 6
         window-padding-y = 4
@@ -16,7 +16,7 @@ struct TerminalSpikeApp: App {
 
     var body: some Scene {
         Window("TerminalSpike", id: "main") {
-            HerdTerminalView(
+            OctetTerminalView(
                 command: ProcessInfo.processInfo.environment["SPIKE_COMMAND"] ?? "/bin/zsh -l",
                 environment: ["TERM": "xterm-256color", "COLORTERM": "truecolor"],
                 workingDirectory: NSHomeDirectory(),

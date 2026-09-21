@@ -8,7 +8,7 @@ struct BranchRun: Identifiable, Equatable {
     let branch: String?
     /// The worktree a workspace was opened in, when it is one.
     let worktreePath: String?
-    var workspaces: [HerdrWorkspace]
+    var workspaces: [EngineWorkspace]
 
     /// Stable across refreshes: the run's key plus its first workspace.
     var id: String { "\(key)|\(workspaces.first?.workspaceId ?? "")" }
@@ -25,9 +25,9 @@ enum BranchRuns {
     /// Splits a project's workspaces into consecutive runs that share a
     /// branch and worktree, keeping the order the sidebar already uses.
     static func make(
-        _ workspaces: [HerdrWorkspace],
-        branch: (HerdrWorkspace) -> String?,
-        worktree: (HerdrWorkspace) -> HerdrWorktree?
+        _ workspaces: [EngineWorkspace],
+        branch: (EngineWorkspace) -> String?,
+        worktree: (EngineWorkspace) -> EngineWorktree?
     ) -> [BranchRun] {
         var runs: [BranchRun] = []
         for workspace in workspaces {

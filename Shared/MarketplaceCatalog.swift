@@ -1,6 +1,6 @@
 import Foundation
 
-/// Plugins and MCP servers as Herd shows them, parsed from the agent CLIs.
+/// Plugins and MCP servers as Octet shows them, parsed from the agent CLIs.
 /// Claude and Codex print the same shapes, so one parser serves both.
 struct MarketplaceEntry: Identifiable, Equatable {
     enum Kind: String { case plugin, mcp }

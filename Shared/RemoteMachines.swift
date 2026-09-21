@@ -1,8 +1,8 @@
 import Foundation
 
-/// Machines the engine already knows how to reach. Herd lists them and opens
+/// Machines the engine already knows how to reach. Octet lists them and opens
 /// a session on one, so working on another box doesn't mean dropping into a
-/// bare ssh and losing everything Herd shows.
+/// bare ssh and losing everything Octet shows.
 struct RemoteMachine: Identifiable, Equatable {
     let id: String
     let label: String

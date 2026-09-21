@@ -1,6 +1,6 @@
-name: Herd
+name: Octet
 options:
-  bundleIdPrefix: studio.jpdigital
+  bundleIdPrefix: com.jpxsoftware
   deploymentTarget:
     macOS: "14.0"
   createIntermediateGroups: true
@@ -8,15 +8,37 @@ settings:
   base:
     SWIFT_VERSION: "5.0"
     MACOSX_DEPLOYMENT_TARGET: "14.0"
-    CODE_SIGN_IDENTITY: "-"
     CODE_SIGN_STYLE: Manual
-    ENABLE_HARDENED_RUNTIME: NO
+    # A real team, so macOS keeps a keychain "Always Allow" across builds.
+    # Ad-hoc signing ("-") pinned every grant to one build's hash, and each
+    # rebuild asked again.
+    DEVELOPMENT_TEAM: P8FLGJ3757
+    # The generated Info.plist takes its version from these; without them
+    # the app ships with no version at all.
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+  configs:
+    Debug:
+      CODE_SIGN_IDENTITY: "Apple Development"
+      ENABLE_HARDENED_RUNTIME: NO
+    Release:
+      # Distribution outside the App Store: notarization requires Developer
+      # ID signing, the hardened runtime, and a secure timestamp.
+      CODE_SIGN_IDENTITY: "Developer ID Application"
+      ENABLE_HARDENED_RUNTIME: YES
+      OTHER_CODE_SIGN_FLAGS: "--timestamp"
+      # Xcode otherwise signs in get-task-allow (the debugger entitlement),
+      # which notarization rejects.
+      CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+      # Apple silicon only: GhosttyKit and the terminal engine are vendored
+      # as arm64 builds, so an Intel slice has nothing to link against.
+      ARCHS: arm64
 targets:
-  Herd:
+  Octet:
     type: application
     platform: macOS
     sources:
-      - path: Herd
+      - path: Octet
       - path: Shared
     dependencies:
       - framework: Vendor/GhosttyKit.xcframework
@@ -28,54 +50,84 @@ targets:
       - sdk: CoreText.framework
       - sdk: CoreVideo.framework
       - sdk: UniformTypeIdentifiers.framework
-      - target: herd-cli
+      - target: octet-cli
         embed: true
         copy:
           destination: executables
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: studio.jpdigital.herd
-        PRODUCT_NAME: Herd
+        PRODUCT_BUNDLE_IDENTIFIER: com.jpxsoftware.octet
+        PRODUCT_NAME: Octet
         GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: Herd
+        INFOPLIST_KEY_CFBundleDisplayName: Octet
+        # Drawn by scripts/make-icon.swift.
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_NSPrincipalClass: NSApplication
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
         OTHER_LDFLAGS: "-lc++"
         ENABLE_APP_SANDBOX: NO
-  herd-cli:
+    postBuildScripts:
+      - name: Bundle terminal engine
+        basedOnDependencyAnalysis: true
+        inputFiles:
+          - $(SRCROOT)/Vendor/engine/octet-engine
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(EXECUTABLE_FOLDER_PATH)/octet-engine
+        script: |
+          set -eu
+          source="$SRCROOT/Vendor/engine/octet-engine"
+          dest="$TARGET_BUILD_DIR/$EXECUTABLE_FOLDER_PATH/octet-engine"
+          if [ ! -x "$source" ]; then
+            echo "error: $source is missing. Run scripts/fetch-engine.sh first."
+            exit 1
+          fi
+          mkdir -p "$(dirname "$dest")"
+          rm -f "$dest"
+          cp "$source" "$dest"
+          chmod 755 "$dest"
+          # Signed with the build's own identity: nested code signed ad hoc
+          # fails notarization, and Release adds the hardened runtime and a
+          # timestamp as notarization requires.
+          identity="${EXPANDED_CODE_SIGN_IDENTITY:--}"
+          if [ "$CONFIGURATION" = "Release" ]; then
+            codesign --force --sign "$identity" --options runtime --timestamp "$dest"
+          else
+            codesign --force --sign "$identity" "$dest"
+          fi
+  octet-cli:
     type: tool
     platform: macOS
     sources:
-      - path: HerdCLI
+      - path: OctetCLI
       - path: Shared
     settings:
       base:
-        PRODUCT_NAME: herd-cli
-  HerdTests:
+        PRODUCT_NAME: octet-cli
+  OctetTests:
     type: bundle.unit-test
     platform: macOS
     sources:
-      - path: HerdTests
+      - path: OctetTests
       - path: Shared
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
-        PRODUCT_BUNDLE_IDENTIFIER: studio.jpdigital.herd.tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.jpxsoftware.octet.tests
 schemes:
-  Herd:
+  Octet:
     build:
       targets:
-        Herd: all
+        Octet: all
     run:
       config: Debug
     test:
       targets:
-        - HerdTests
-  HerdCore:
+        - OctetTests
+  OctetCore:
     build:
       targets:
-        herd-cli: all
-        HerdTests: [test]
+        octet-cli: all
+        OctetTests: [test]
     test:
       targets:
-        - HerdTests
+        - OctetTests
