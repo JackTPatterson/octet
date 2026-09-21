@@ -1,6 +1,6 @@
 import Foundation
 
-/// Herd's shared, vendor-neutral library of skills and prompts, kept in
+/// Octet's shared, vendor-neutral library of skills and prompts, kept in
 /// `~/.agents` (the convention Claude's `skills` symlinks already follow).
 /// Items live here once and are symlinked into each agent host, so editing a
 /// prompt or skill updates every agent that has it.
@@ -12,9 +12,9 @@ enum AgentLibrary {
         var title: String { self == .skill ? "Skills" : "Prompts" }
     }
 
-    /// `HERD_LIBRARY_DIR` overrides the root, for tests.
+    /// `OCTET_LIBRARY_DIR` overrides the root, for tests.
     static func root(home: String = NSHomeDirectory()) -> String {
-        ProcessInfo.processInfo.environment["HERD_LIBRARY_DIR"] ?? "\(home)/.agents"
+        ProcessInfo.processInfo.environment["OCTET_LIBRARY_DIR"] ?? "\(home)/.agents"
     }
 
     static func directory(_ kind: Kind, home: String = NSHomeDirectory()) -> String {
@@ -249,7 +249,7 @@ enum AgentLibrary {
 
         var errorDescription: String? {
             switch self {
-            case .occupied(let path): "\(path) already exists and isn't managed by Herd"
+            case .occupied(let path): "\(path) already exists and isn't managed by Octet"
             case .alreadyLinked(let path): "\(path) is already a link"
             }
         }

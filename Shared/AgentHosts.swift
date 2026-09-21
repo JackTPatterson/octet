@@ -1,9 +1,9 @@
 import Foundation
 
-/// An agent CLI Herd can configure. Nothing here is specific to one vendor:
+/// An agent CLI Octet can configure. Nothing here is specific to one vendor:
 /// agents keep their config in `~/.<agent>`, with `skills/` folders and a
-/// prompts folder, so Herd discovers whichever ones are installed and treats
-/// them alike. Skills, prompts, and MCP servers live once in Herd's shared
+/// prompts folder, so Octet discovers whichever ones are installed and treats
+/// them alike. Skills, prompts, and MCP servers live once in Octet's shared
 /// library and are installed into each host.
 struct AgentHost: Identifiable, Equatable {
     let id: String
@@ -32,17 +32,17 @@ enum AgentHosts {
         "agy": "antigravity", "cursor": "cursor-agent", "omp": "oh-my-posh",
     ]
 
-    /// Agents whose CLI exposes `mcp` subcommands Herd can drive.
+    /// Agents whose CLI exposes `mcp` subcommands Octet can drive.
     static let mcpCapable: Set<String> = ["claude", "codex"]
 
     /// Agents that name their prompt folder `commands` rather than `prompts`.
     static let commandFolders: Set<String> = ["claude"]
 
-    /// Shown first because Herd knows the most about them; the rest follow
+    /// Shown first because Octet knows the most about them; the rest follow
     /// alphabetically.
     static let preferredOrder = ["claude", "codex"]
 
-    /// Every agent Herd knows the name of, whether or not it is installed.
+    /// Every agent Octet knows the name of, whether or not it is installed.
     static func all(home: String = NSHomeDirectory()) -> [AgentHost] {
         let ids = Set(AgentBrand.displayNames.keys).union(AgentBrand.logoIds).subtracting(["gpt", "omp"])
         return ids.map { host($0, home: home)! }

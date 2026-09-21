@@ -1,6 +1,6 @@
 import Foundation
 
-/// Codex's app server speaks JSON-RPC: Herd starts a thread and a turn, and
+/// Codex's app server speaks JSON-RPC: Octet starts a thread and a turn, and
 /// the server sends notifications back as the turn runs. They carry the same
 /// things Claude's stream does in a different shape, so they build the same
 /// `AgentConversation` and the same view draws both.
@@ -59,7 +59,7 @@ extension AgentConversation {
         guard let id = item["id"] as? String else { return }
         switch item["type"] as? String {
         case "userMessage":
-            // Already in the transcript: Herd appends it when you send.
+            // Already in the transcript: Octet appends it when you send.
             break
         case "agentMessage":
             let text = item["text"] as? String ?? ""
@@ -123,7 +123,7 @@ extension AgentConversation {
         }
     }
 
-    /// Codex's item kinds under the tool names Herd already draws icons for.
+    /// Codex's item kinds under the tool names Octet already draws icons for.
     static func codexToolName(kind: String, item: [String: Any]) -> String {
         switch kind {
         case "commandExecution": return "Bash"
@@ -166,13 +166,13 @@ extension AgentConversation {
     }
 }
 
-/// The questions Codex's app server asks and waits on, translated for Herd's
+/// The questions Codex's app server asks and waits on, translated for Octet's
 /// permission card and back.
 ///
 /// Codex sends these as JSON-RPC requests of its own, with its own ids, under
 /// an approval policy that asks (`untrusted`, or a sandbox it would break). A
-/// request Herd doesn't answer leaves the turn waiting forever, so every one
-/// gets an answer: the person's, or a plain refusal Herd explains.
+/// request Octet doesn't answer leaves the turn waiting forever, so every one
+/// gets an answer: the person's, or a plain refusal Octet explains.
 enum CodexApproval {
     /// Requests the permission card can put to the person.
     static let approvals: Set<String> = [
@@ -221,12 +221,12 @@ enum CodexApproval {
         return names.first { $0 == "decline" } ?? names.first { $0 == "cancel" } ?? "cancel"
     }
 
-    /// A request Herd can't put to the person yet, in words for the transcript.
+    /// A request Octet can't put to the person yet, in words for the transcript.
     static func unsupported(_ method: String) -> String {
         switch method {
-        case "item/tool/requestUserInput": "Codex asked you a question Herd can't show yet, so it was told no answer is coming. Open in Terminal to answer it in Codex."
-        case "mcpServer/elicitation/request": "An MCP server asked you for input Herd can't show yet, so it was told no answer is coming. Open in Terminal to answer it in Codex."
-        default: "Codex asked for something Herd doesn't handle yet (\(method)), so it was told no. Open in Terminal to continue in Codex."
+        case "item/tool/requestUserInput": "Codex asked you a question Octet can't show yet, so it was told no answer is coming. Open in Terminal to answer it in Codex."
+        case "mcpServer/elicitation/request": "An MCP server asked you for input Octet can't show yet, so it was told no answer is coming. Open in Terminal to answer it in Codex."
+        default: "Codex asked for something Octet doesn't handle yet (\(method)), so it was told no. Open in Terminal to continue in Codex."
         }
     }
 }

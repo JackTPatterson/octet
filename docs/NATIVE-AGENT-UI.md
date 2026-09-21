@@ -14,7 +14,7 @@ interrupt.
 
 ## The move
 
-Herd drives the agent headless over its structured stream and draws the whole
+Octet drives the agent headless over its structured stream and draws the whole
 conversation natively. No TUI means no full-screen repainting, the heaviest
 technical complaint in `docs/research/terminal-pain-points.md`.
 
@@ -48,7 +48,7 @@ From the documentation:
 | --- | --- | --- |
 | Many turns in one process | Yes | Write `{"type":"user","message":{"role":"user","content":...},"parent_tool_use_id":null}` lines to stdin with `--input-format stream-json` |
 | Nested subagent threads | Yes | `--forward-subagent-text`; group by `parent_tool_use_id` |
-| Permission prompts answered by the host | No, for the stdio control protocol | `--permission-prompt-tool <mcp tool>`: a small MCP server in `herd-cli` receives each prompt and relays it to the app |
+| Permission prompts answered by the host | No, for the stdio control protocol | `--permission-prompt-tool <mcp tool>`: a small MCP server in `octet-cli` receives each prompt and relays it to the app |
 | Interrupt a turn | No | SIGINT the process: the spike showed it ends the turn and keeps the process for the next message |
 | Change model or effort mid-session | Partly | `/model <name>` and `/effort <level>` sent as prompts work in print mode |
 | Change permission mode mid-session | No | Restart with `--resume` and `--permission-mode` |
@@ -56,7 +56,7 @@ From the documentation:
 
 ## Two ways to drive it
 
-- **A. Direct CLI.** Herd spawns `claude` and uses only the documented
+- **A. Direct CLI.** Octet spawns `claude` and uses only the documented
   surface above. No extra runtime. Permission mode changes mean a restart
   with `--resume`, which is cheap while the prompt cache is warm.
 - **B. Agent SDK helper.** A small bundled helper built on Anthropic's Agent
@@ -77,9 +77,9 @@ CLIs can slot in later.
 
 | Area | CLI surface | Native UI |
 | --- | --- | --- |
-| Sessions | `-c`, `-r <id or name>`, `--fork-session`, `-n`, `/rename`, `--session-id` | New, continue, resume and fork; names. Herd assigns the session id up front, so recovery is trivial |
+| Sessions | `-c`, `-r <id or name>`, `--fork-session`, `-n`, `/rename`, `--session-id` | New, continue, resume and fork; names. Octet assigns the session id up front, so recovery is trivial |
 | Composer | `--model`, `/model`, `--effort`, `--permission-mode`, `--agent`, `--add-dir`, `-w` (including `#<PR>`) | Model, effort, mode and agent pickers; extra folders; worktrees |
-| Input | Image content blocks; `slash_commands`, `skills` from init; `--prompt-suggestions` | Image attachments (reuse `ImagePaste`); Herd's native slash and skill menu; suggested next prompts |
+| Input | Image content blocks; `slash_commands`, `skills` from init; `--prompt-suggestions` | Image attachments (reuse `ImagePaste`); Octet's native slash and skill menu; suggested next prompts |
 | Conversation | `stream_event` deltas, thinking blocks, tool use and results, `--include-hook-events` | Streaming text, collapsible thinking, tool cards (Edit and Write as diffs, Bash with output, Read collapsed), quiet hook activity |
 | Subagents | `--forward-subagent-text`, `parent_tool_use_id` | Nested threads; replaces the `agent-watch` subagent tabs |
 | Permissions | `--permission-prompt-tool` (A) or `canUseTool` (B) | Approval sheet with a diff preview; Allow once, Always, Deny with a note |

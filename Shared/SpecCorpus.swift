@@ -3,11 +3,11 @@ import Foundation
 /// A corpus of command specs on disk, one file per command, loaded only when
 /// that command is typed. The data comes from the MIT-licensed Fig
 /// completion specs (withfig/autocomplete) via `SpecIngest`, normalised to
-/// Herd's own shape; the licence and a notice sit beside it.
+/// Octet's own shape; the licence and a notice sit beside it.
 enum SpecCorpus {
-    /// `~/Library/Application Support/Herd/completions`.
+    /// `~/Library/Application Support/Octet/completions`.
     static func directory(home: String = NSHomeDirectory()) -> String {
-        "\(home)/Library/Application Support/Herd/completions"
+        "\(home)/Library/Application Support/Octet/completions"
     }
 
     static func indexPath(home: String = NSHomeDirectory()) -> String { directory(home: home) + "/index.json" }
@@ -44,7 +44,7 @@ enum SpecCorpus {
         return parse(object)
     }
 
-    // MARK: - Parsing Herd's normalised JSON
+    // MARK: - Parsing Octet's normalised JSON
 
     static func parse(_ object: [String: Any]) -> CompletionSpec? {
         guard let name = object["name"] as? String else { return nil }
@@ -78,7 +78,7 @@ enum SpecCorpus {
         )
     }
 
-    /// Fig describes argument values by template; Herd maps those onto its
+    /// Fig describes argument values by template; Octet maps those onto its
     /// own sources, and named generators onto its cached ones.
     private static func parseArgument(_ raw: Any?) -> CompletionSpec.Argument? {
         guard let object = raw as? [String: Any] else { return nil }
@@ -101,7 +101,7 @@ enum SpecCorpus {
         }
     }
 
-    /// Specs Herd ships itself take priority: they carry Herd's generators.
+    /// Specs Octet ships itself take priority: they carry Octet's generators.
     static func merged(for command: String, home: String = NSHomeDirectory()) -> CompletionSpec? {
         if let built = CompletionSpecs.spec(for: command) { return built }
         return spec(for: command, home: home)

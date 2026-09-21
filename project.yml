@@ -1,6 +1,6 @@
-name: Herd
+name: Octet
 options:
-  bundleIdPrefix: studio.jpdigital
+  bundleIdPrefix: com.jpxsoftware
   deploymentTarget:
     macOS: "14.0"
   createIntermediateGroups: true
@@ -34,11 +34,11 @@ settings:
       # as arm64 builds, so an Intel slice has nothing to link against.
       ARCHS: arm64
 targets:
-  Herd:
+  Octet:
     type: application
     platform: macOS
     sources:
-      - path: Herd
+      - path: Octet
       - path: Shared
     dependencies:
       - framework: Vendor/GhosttyKit.xcframework
@@ -50,16 +50,16 @@ targets:
       - sdk: CoreText.framework
       - sdk: CoreVideo.framework
       - sdk: UniformTypeIdentifiers.framework
-      - target: herd-cli
+      - target: octet-cli
         embed: true
         copy:
           destination: executables
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: studio.jpdigital.herd
-        PRODUCT_NAME: Herd
+        PRODUCT_BUNDLE_IDENTIFIER: com.jpxsoftware.octet
+        PRODUCT_NAME: Octet
         GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: Herd
+        INFOPLIST_KEY_CFBundleDisplayName: Octet
         INFOPLIST_KEY_NSPrincipalClass: NSApplication
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
         OTHER_LDFLAGS: "-lc++"
@@ -68,13 +68,13 @@ targets:
       - name: Bundle terminal engine
         basedOnDependencyAnalysis: true
         inputFiles:
-          - $(SRCROOT)/Vendor/engine/herd-engine
+          - $(SRCROOT)/Vendor/engine/octet-engine
         outputFiles:
-          - $(TARGET_BUILD_DIR)/$(EXECUTABLE_FOLDER_PATH)/herd-engine
+          - $(TARGET_BUILD_DIR)/$(EXECUTABLE_FOLDER_PATH)/octet-engine
         script: |
           set -eu
-          source="$SRCROOT/Vendor/engine/herd-engine"
-          dest="$TARGET_BUILD_DIR/$EXECUTABLE_FOLDER_PATH/herd-engine"
+          source="$SRCROOT/Vendor/engine/octet-engine"
+          dest="$TARGET_BUILD_DIR/$EXECUTABLE_FOLDER_PATH/octet-engine"
           if [ ! -x "$source" ]; then
             echo "error: $source is missing. Run scripts/fetch-engine.sh first."
             exit 1
@@ -92,40 +92,40 @@ targets:
           else
             codesign --force --sign "$identity" "$dest"
           fi
-  herd-cli:
+  octet-cli:
     type: tool
     platform: macOS
     sources:
-      - path: HerdCLI
+      - path: OctetCLI
       - path: Shared
     settings:
       base:
-        PRODUCT_NAME: herd-cli
-  HerdTests:
+        PRODUCT_NAME: octet-cli
+  OctetTests:
     type: bundle.unit-test
     platform: macOS
     sources:
-      - path: HerdTests
+      - path: OctetTests
       - path: Shared
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
-        PRODUCT_BUNDLE_IDENTIFIER: studio.jpdigital.herd.tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.jpxsoftware.octet.tests
 schemes:
-  Herd:
+  Octet:
     build:
       targets:
-        Herd: all
+        Octet: all
     run:
       config: Debug
     test:
       targets:
-        - HerdTests
-  HerdCore:
+        - OctetTests
+  OctetCore:
     build:
       targets:
-        herd-cli: all
-        HerdTests: [test]
+        octet-cli: all
+        OctetTests: [test]
     test:
       targets:
-        - HerdTests
+        - OctetTests

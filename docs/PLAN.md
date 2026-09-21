@@ -1,39 +1,39 @@
-# Herd: a native macOS terminal for agents
+# Octet: a native macOS terminal for agents
 
-Herd is a native macOS terminal. Its session server owns every terminal and
-agent; Herd embeds a GPU terminal engine to render the session client and
+Octet is a native macOS terminal. Its session server owns every terminal and
+agent; Octet embeds a GPU terminal engine to render the session client and
 replaces the server's text sidebar and tab row with native chrome driven by
 the server's socket API.
 
 ## Architecture
 
 ```
-┌ Herd.app ──────────────────────────────────────────────────────────────┐
+┌ Octet.app ──────────────────────────────────────────────────────────────┐
 │ Title bar: traffic lights · sidebar toggle · search (⌘K)               │
 ├───────────────┬────────────────────────────────────────────────────────┤
 │ Sidebar       │ Tab bar (tabs of the focused workspace)                │
 │ projects      ├────────────────────────────────────────────────────────┤
 │  └ workspaces │ terminal surface running                               │
-│     agent     │   herd-engine --session herd                           │
-│     state/hue │   (config path → Herd's config: server sidebar         │
+│     agent     │   octet-engine --session octet                           │
+│     state/hue │   (config path → Octet's config: server sidebar         │
 │               │    hidden, own tab row hidden when possible)           │
 └───────────────┴────────────────────────────────────────────────────────┘
         ▲ session.snapshot + events.subscribe      │ workspace.focus / tab.focus / tab.create
-        └──────────── session socket (sessions/herd) ◀────────────────────┘
+        └──────────── session socket (sessions/octet) ◀────────────────────┘
 ```
 
-- **Session:** Herd runs its own named session (`herd`) so a standalone
+- **Session:** Octet runs its own named session (`octet`) so a standalone
   session in another terminal is untouched. The session server ships inside
-  Herd.app as `Contents/MacOS/herd-engine`.
+  Octet.app as `Contents/MacOS/octet-engine`.
 - **State:** a store subscribes to session events and re-fetches
   `session.snapshot` (debounced) on any change.
 - **Projects:** workspaces are grouped by git repository root (worktrees join
   their main repo) of the workspace's cwd.
 - **Agents:** the server's agent records (`agent`, state `working|blocked|idle|done`)
   drive a status glyph and a soft per-agent hue (tab colors at 15%).
-- **Subagents:** a Claude Code `PreToolUse` hook (`herd-cli hook claude`) opens
+- **Subagents:** a Claude Code `PreToolUse` hook (`octet-cli hook claude`) opens
   a tab named after the subagent in the same workspace, running
-  `herd-cli agent-watch` (live transcript view) and reporting working/done to
+  `octet-cli agent-watch` (live transcript view) and reporting working/done to
   the session server so the tab shows real state.
 
 ## v1 scope (definition of done)
@@ -73,7 +73,7 @@ All eight items done and verified in the running app:
 | Session recovery | killed a session server holding two agents, relaunched: the panel offered both, and the server accepted the resume tabs it builds |
 | Marketplace | real MCP servers from both CLIs merged per agent; 34 library skills listed with per-agent chips; prompts created, listed and linked |
 | Slash menu | renders over the terminal with built-ins, user, project and plugin commands; `/mcp` submenu lists the machine's real servers |
-| Confirmations | Herd's own dialog replaces every NSAlert (verified on the quit confirmation) |
+| Confirmations | Octet's own dialog replaces every NSAlert (verified on the quit confirmation) |
 | Agent-agnostic | hosts discovered by convention from `~/.<agent>`; hook installer, library, slash commands and MCP/plugin CLIs all keyed off host capabilities |
 | Performance | Release build idles at ~1% CPU (debug window snapshots were 63% of main-thread time) |
 

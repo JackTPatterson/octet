@@ -8,7 +8,7 @@ struct ProjectGroup: Equatable, Identifiable {
     let name: String
     let workspaces: [EngineWorkspace]
 
-    static let otherId = "herd.other"
+    static let otherId = "octet.other"
 }
 
 enum ProjectGrouping {

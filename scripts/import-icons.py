@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""Copies the iconsax icons (linear, or another style where named) Herd uses into Herd/Assets.xcassets/Icons
+"""Copies the iconsax icons (linear, or another style where named) Octet uses into Octet/Assets.xcassets/Icons
 as template images, so they take the color of the text around them.
 
 Usage: scripts/import-icons.py [iconsax static/standard folder]
-The icon list is the right-hand side of HerdIcon.map in Herd/Theme/HerdIcon.swift.
+The icon list is the right-hand side of OctetIcon.map in Octet/Theme/OctetIcon.swift.
 """
 import json, os, re, shutil, sys
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 source = sys.argv[1] if len(sys.argv) > 1 else os.path.expanduser("~/Documents/icons/static/standard")
-swift = open(os.path.join(root, "Herd/Theme/HerdIcon.swift")).read()
+swift = open(os.path.join(root, "Octet/Theme/OctetIcon.swift")).read()
 table = swift[swift.index("static let map"):swift.index("]\n", swift.index("static let map"))]
 # (name, style) pairs; style defaults to linear, e.g. .init("tick-circle", style: "bold").
 entries = re.findall(r':\s*\.init\("([a-z0-9-]+)"(?:[^)]*?style:\s*"([a-z]+)")?', table)
 icons = sorted({(name, style or "linear") for name, style in entries} | {("more", "linear")})
 
-out = os.path.join(root, "Herd/Assets.xcassets/Icons")
+out = os.path.join(root, "Octet/Assets.xcassets/Icons")
 shutil.rmtree(out, ignore_errors=True)
 os.makedirs(out)
 with open(os.path.join(out, "Contents.json"), "w") as f:

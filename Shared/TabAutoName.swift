@@ -1,7 +1,7 @@
 import Foundation
 
 /// Keeps a tab's name on the work happening in it. Agents and shells alike
-/// publish what they are doing as the terminal title, so Herd follows that
+/// publish what they are doing as the terminal title, so Octet follows that
 /// rather than guessing, for every agent equally: switch task inside a
 /// workspace and the tab follows, while a name you typed is never
 /// overwritten.
@@ -21,7 +21,7 @@ enum TabAutoName {
         return shells.union(EngineProtocol.processNames).union(agents.map { $0.lowercased() })
     }
 
-    /// The session server numbers a new tab; Herd shows that as words until the tab has
+    /// The session server numbers a new tab; Octet shows that as words until the tab has
     /// a name of its own.
     static let unnamedLabel = "New tab"
 

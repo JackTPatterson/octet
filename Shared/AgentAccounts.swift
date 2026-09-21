@@ -134,7 +134,7 @@ enum AgentAccounts {
     }
 
     /// The label for one entry of the cache's `limits`, or nil for a kind
-    /// Herd doesn't show.
+    /// Octet doesn't show.
     private static func name(cachedLimit limit: [String: Any]) -> String? {
         switch limit["kind"] as? String {
         case "session": return "5h"

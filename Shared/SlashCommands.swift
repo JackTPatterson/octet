@@ -1,7 +1,7 @@
 import Foundation
 
 /// The slash commands an agent offers: its built-ins plus the prompt files
-/// the user and plugins provide. Herd lists them itself so `/` opens a native
+/// the user and plugins provide. Octet lists them itself so `/` opens a native
 /// menu instead of the agent's in-terminal one. Commands that take a known
 /// set of arguments — `/mcp`, `/model`, namespaced prompts, plugins with
 /// several commands — carry children and open a submenu.
@@ -217,7 +217,7 @@ enum SlashCommands {
         ]
     }
 
-    /// The built-in table for an agent, empty when Herd doesn't ship one.
+    /// The built-in table for an agent, empty when Octet doesn't ship one.
     static func builtIns(for agent: String, context: SlashContext) -> [SlashCommand] {
         switch agent {
         case "claude": claudeBuiltIns(context)
@@ -290,7 +290,7 @@ enum SlashCommands {
     ) -> [SlashCommand] {
         let kind = AgentBrand.forAgent(agent)?.id ?? agent ?? ""
         guard let host = AgentHosts.host(kind, home: home) else { return [] }
-        // Built-ins are per-agent; an agent Herd has no table for still gets
+        // Built-ins are per-agent; an agent Octet has no table for still gets
         // its own prompt files and plugin commands.
         var commands = builtIns(for: kind, context: context)
         var extra = prompts(in: host.promptsDirectory, origin: .user)

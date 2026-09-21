@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""Copies the language logos Herd shows on code into
-Herd/Assets.xcassets/Languages as template images, tinted in the app with
+"""Copies the language logos Octet shows on code into
+Octet/Assets.xcassets/Languages as template images, tinted in the app with
 each brand's color. Logos come from Simple Icons (CC0 1.0, simpleicons.org).
 
 Usage: scripts/import-language-logos.py <extracted simple-icons package dir>
   (npm pack simple-icons && tar xzf simple-icons-*.tgz gives ./package)
 The slugs are the right-hand side of LanguageLogo.table in
-Herd/Agent/LanguageLogo.swift.
+Octet/Agent/LanguageLogo.swift.
 """
 import json, os, re, shutil, sys
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 package = sys.argv[1] if len(sys.argv) > 1 else "package"
-swift = open(os.path.join(root, "Herd/Agent/LanguageLogo.swift")).read()
+swift = open(os.path.join(root, "Octet/Agent/LanguageLogo.swift")).read()
 slugs = sorted(set(re.findall(r'\.init\("([a-z0-9]+)",', swift)))
 
-out = os.path.join(root, "Herd/Assets.xcassets/Languages")
+out = os.path.join(root, "Octet/Assets.xcassets/Languages")
 shutil.rmtree(out, ignore_errors=True)
 os.makedirs(out)
 with open(os.path.join(out, "Contents.json"), "w") as f:

@@ -1,6 +1,6 @@
 import Foundation
 
-/// A conversation as Herd shows it, whichever agent produced it. Agents
+/// A conversation as Octet shows it, whichever agent produced it. Agents
 /// already write their turns as structured JSONL, so the visual twin reads
 /// that rather than scraping a terminal UI — which is what makes it possible
 /// to draw a real interface over any agent.

@@ -1,6 +1,6 @@
 name: TerminalSpike
 options:
-  bundleIdPrefix: studio.jpdigital
+  bundleIdPrefix: com.jpxsoftware
   deploymentTarget:
     macOS: "14.0"
   createIntermediateGroups: true
@@ -17,7 +17,7 @@ targets:
     platform: macOS
     sources:
       - path: Sources
-      - path: ../../Herd/Terminal
+      - path: ../../Octet/Terminal
     dependencies:
       - framework: ../../Vendor/GhosttyKit.xcframework
         embed: false
@@ -30,7 +30,7 @@ targets:
       - sdk: UniformTypeIdentifiers.framework
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: studio.jpdigital.herd.terminalspike
+        PRODUCT_BUNDLE_IDENTIFIER: com.jpxsoftware.octet.terminalspike
         PRODUCT_NAME: TerminalSpike
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_NSPrincipalClass: NSApplication

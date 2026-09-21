@@ -1,6 +1,6 @@
 import Foundation
 
-/// Notices Herd raises when an agent stops working: it finished, or it is
+/// Notices Octet raises when an agent stops working: it finished, or it is
 /// waiting on you. Works off the status every agent reports, so no agent is
 /// treated specially.
 struct AgentEvent: Identifiable, Equatable {
@@ -19,7 +19,7 @@ struct AgentEvent: Identifiable, Equatable {
     let workspaceId: String?
     /// What the tab is called, for the banner's line of context.
     let label: String
-    /// How long it worked before this, when Herd saw it start.
+    /// How long it worked before this, when Octet saw it start.
     let workedFor: TimeInterval?
     let at: Date
 }
@@ -84,7 +84,7 @@ struct AgentActivityWatcher {
         }
     }
 
-    /// `2m 14s`, or nil when Herd didn't see the work start.
+    /// `2m 14s`, or nil when Octet didn't see the work start.
     static func durationLabel(_ seconds: TimeInterval?) -> String? {
         guard let seconds, seconds >= 1 else { return nil }
         let whole = Int(seconds.rounded())

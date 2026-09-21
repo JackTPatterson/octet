@@ -1,16 +1,16 @@
 import Foundation
 
-/// How Herd moves one window's engine client: by that client's own keys.
+/// How Octet moves one window's engine client: by that client's own keys.
 ///
-/// Each Herd window is its own client of the engine's session. Measured
+/// Each Octet window is its own client of the engine's session. Measured
 /// against herdr with two clients attached: keys typed into one client move
 /// only that client (tab 1 and tab 2 side by side), while an API focus call
 /// (`tab.focus`, `workspace.focus`, or anything sent with `focus: true`)
 /// moves every client at once (both jumped to tab 3). So with one window,
-/// Herd navigates through the API as it always has; with more, a window goes
+/// Octet navigates through the API as it always has; with more, a window goes
 /// where it's asked by being sent these keys.
 ///
-/// The engine's defaults leave workspace switching unbound, so Herd binds
+/// The engine's defaults leave workspace switching unbound, so Octet binds
 /// what it uses in the engine config it writes (`keysConfig`).
 enum EngineNavigation {
     /// One key press: a `TerminalEngine.Input.Key` raw value and modifiers.
@@ -34,7 +34,7 @@ enum EngineNavigation {
         }
     }
 
-    /// Bindings Herd owns in the engine's config, so these moves never
+    /// Bindings Octet owns in the engine's config, so these moves never
     /// depend on what the engine's defaults happen to be.
     static let keysConfig = """
     [keys]

@@ -1,6 +1,6 @@
 import Foundation
 
-/// A live conversation with an agent Herd drives headless, built from the
+/// A live conversation with an agent Octet drives headless, built from the
 /// agent's stream-json events (`claude -p --output-format stream-json
 /// --include-partial-messages`). Pure data: the driver feeds events in, the
 /// native view draws `items`.
@@ -259,7 +259,7 @@ struct AgentItem: Identifiable, Equatable {
         case text(String)
         case thinking(String)
         case tool(AgentToolCall)
-        /// Something Herd says about the conversation (stopped, errors).
+        /// Something Octet says about the conversation (stopped, errors).
         case notice(String)
     }
 
@@ -284,7 +284,7 @@ struct AgentToolCall: Equatable {
     var isError = false
 }
 
-/// A permission prompt the agent's permission tool relays to Herd.
+/// A permission prompt the agent's permission tool relays to Octet.
 struct AgentPermissionRequest: Identifiable, Equatable {
     let id: String
     let toolName: String
@@ -310,7 +310,7 @@ struct AgentPermissionRequest: Identifiable, Equatable {
     /// The permission tool's answer, in the shape the agent expects.
     static func decision(allow: Bool, input: [String: Any], message: String?) -> [String: Any] {
         allow ? ["behavior": "allow", "updatedInput": input]
-            : ["behavior": "deny", "message": message?.isEmpty == false ? message! : "The user declined this in Herd."]
+            : ["behavior": "deny", "message": message?.isEmpty == false ? message! : "The user declined this in Octet."]
     }
 }
 

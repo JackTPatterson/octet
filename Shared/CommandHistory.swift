@@ -63,7 +63,7 @@ struct CommandHistory {
 
     // MARK: - Reading shells' own files
 
-    /// History files Herd knows how to read, newest-relevant first.
+    /// History files Octet knows how to read, newest-relevant first.
     static func historyPaths(home: String = NSHomeDirectory(), environment: [String: String] = ProcessInfo.processInfo.environment) -> [String] {
         var paths: [String] = []
         if let histfile = environment["HISTFILE"], !histfile.isEmpty { paths.append(histfile) }

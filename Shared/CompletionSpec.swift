@@ -66,7 +66,7 @@ struct CompletionSpec: Equatable {
 }
 
 enum CompletionSpecs {
-    /// Herd ships a small set; the format is the point, so more are data.
+    /// Octet ships a small set; the format is the point, so more are data.
     static let all: [String: CompletionSpec] = [
         "git": git,
         "npm": npm,

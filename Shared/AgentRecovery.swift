@@ -1,6 +1,6 @@
 import Foundation
 
-/// A durable record of an agent session Herd has seen running, so it can be
+/// A durable record of an agent session Octet has seen running, so it can be
 /// resumed after the session server restarts (a Mac shutdown kills every pane).
 struct AgentSessionRecord: Codable, Equatable, Identifiable {
     var agent: String
@@ -47,7 +47,7 @@ enum AgentRecovery {
         }
     }
 
-    /// Agents whose sessions Herd can find without a session server integration.
+    /// Agents whose sessions Octet can find without a session server integration.
     static let inferable: Set<String> = ["claude", "codex"]
 
     private static func shellQuoted(_ value: String) -> String {
@@ -92,9 +92,9 @@ enum AgentRecovery {
         return byTerminal.values.filter { $0.lastSeen >= cutoff }.sorted { $0.lastSeen > $1.lastSeen }
     }
 
-    /// Sessions that were still running when Herd last observed the session server
+    /// Sessions that were still running when Octet last observed the session server
     /// (`lastObserved`) and aren't running now: killed by a shutdown, crash,
-    /// or session server restart rather than exited by the user while Herd watched.
+    /// or session server restart rather than exited by the user while Octet watched.
     static func lostSessions(
         journal: [AgentSessionRecord],
         lastObserved: Date,
@@ -149,14 +149,14 @@ enum AgentRecovery {
     }
 }
 
-/// On-disk journal: `~/Library/Application Support/Herd/agent-sessions.json`.
+/// On-disk journal: `~/Library/Application Support/Octet/agent-sessions.json`.
 struct AgentSessionJournal: Codable, Equatable {
     var lastObserved: Date = .distantPast
     var records: [AgentSessionRecord] = []
 
     static var defaultURL: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Herd/agent-sessions.json")
+            .appendingPathComponent("Octet/agent-sessions.json")
     }
 
     static func load(from url: URL = defaultURL) -> AgentSessionJournal {
@@ -229,7 +229,7 @@ enum AgentSessionFiles {
             .filter { $0.sessionReference == nil && $0.terminalId != nil && !$0.searchCwds.isEmpty }
             .sorted { (firstSeen[$0.terminalId!] ?? now) > (firstSeen[$1.terminalId!] ?? now) }
         // First pass: files written since the agent appeared. Second pass:
-        // agents that have been quiet since Herd first saw them take the
+        // agents that have been quiet since Octet first saw them take the
         // newest unclaimed session in their folder.
         for strict in [true, false] {
             for agent in candidates where result[agent.terminalId!] == nil {

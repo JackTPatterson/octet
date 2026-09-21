@@ -1,5 +1,5 @@
 #!/bin/sh
-# Builds, signs, notarizes and staples a Herd release, then checks that
+# Builds, signs, notarizes and staples an Octet release, then checks that
 # Gatekeeper accepts it as another Mac would.
 #
 # Needs, once per machine:
@@ -8,17 +8,17 @@
 #      Manage Certificates). If that team's ID differs from DEVELOPMENT_TEAM
 #      in project.yml, change it there.
 #   2. Notarization credentials, saved under a keychain profile:
-#        xcrun notarytool store-credentials herd-notary \
+#        xcrun notarytool store-credentials octet-notary \
 #          --apple-id <you@example.com> --team-id <TEAMID> --password <app-specific password>
 #      (an app-specific password is made at account.apple.com).
 #
-# Usage: scripts/release.sh   (HERD_NOTARY_PROFILE picks another profile)
+# Usage: scripts/release.sh   (OCTET_NOTARY_PROFILE picks another profile)
 set -eu
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
-profile="${HERD_NOTARY_PROFILE:-herd-notary}"
+profile="${OCTET_NOTARY_PROFILE:-octet-notary}"
 out="$root/build/release"
-app="$out/DerivedData/Build/Products/Release/Herd.app"
+app="$out/DerivedData/Build/Products/Release/Octet.app"
 
 if ! security find-identity -v -p codesigning | grep -q "Developer ID Application"; then
     echo "error: no Developer ID Application certificate in the keychain." >&2
@@ -35,7 +35,7 @@ echo "==> Building"
 cd "$root"
 xcodegen generate
 rm -rf "$out"
-xcodebuild -project Herd.xcodeproj -scheme Herd -configuration Release \
+xcodebuild -project Octet.xcodeproj -scheme Octet -configuration Release \
     -derivedDataPath "$out/DerivedData" build | grep -E "^\*\* BUILD|: error:" || true
 [ -d "$app" ] || { echo "error: the build produced no app." >&2; exit 1; }
 
@@ -54,23 +54,23 @@ for binary in "$app/Contents/MacOS/"*; do
 done
 
 echo "==> Notarizing (this waits on Apple, usually a few minutes)"
-ditto -c -k --keepParent "$app" "$out/Herd-notarize.zip"
-xcrun notarytool submit "$out/Herd-notarize.zip" --keychain-profile "$profile" --wait
+ditto -c -k --keepParent "$app" "$out/Octet-notarize.zip"
+xcrun notarytool submit "$out/Octet-notarize.zip" --keychain-profile "$profile" --wait
 xcrun stapler staple "$app"
 
 echo "==> Checking Gatekeeper"
 spctl --assess --type execute --verbose=2 "$app"
 
 # The ticket is stapled into the app, so zip it again for shipping.
-ditto -c -k --keepParent "$app" "$out/Herd.zip"
-rm -f "$out/Herd-notarize.zip"
+ditto -c -k --keepParent "$app" "$out/Octet.zip"
+rm -f "$out/Octet-notarize.zip"
 
 # The disk image is what people download. It holds the stapled app, and is
 # notarized and stapled itself so it opens cleanly on a Mac that is offline.
-"$root/scripts/make-dmg.sh" "$app" "$out/Herd.dmg"
+"$root/scripts/make-dmg.sh" "$app" "$out/Octet.dmg"
 echo "==> Notarizing the disk image"
-xcrun notarytool submit "$out/Herd.dmg" --keychain-profile "$profile" --wait
-xcrun stapler staple "$out/Herd.dmg"
-spctl --assess --type open --context context:primary-signature --verbose=2 "$out/Herd.dmg"
+xcrun notarytool submit "$out/Octet.dmg" --keychain-profile "$profile" --wait
+xcrun stapler staple "$out/Octet.dmg"
+spctl --assess --type open --context context:primary-signature --verbose=2 "$out/Octet.dmg"
 
-echo "==> Ready: $out/Herd.dmg (and $out/Herd.zip)"
+echo "==> Ready: $out/Octet.dmg (and $out/Octet.zip)"

@@ -1,6 +1,6 @@
 import Foundation
 
-/// The command line Herd edits while a pane sits at a shell prompt: the text,
+/// The command line Octet edits while a pane sits at a shell prompt: the text,
 /// where the caret is, and every edit a shell's own line editor offers. Kept
 /// free of AppKit so the editing rules can be tested directly.
 struct PromptLine: Equatable {

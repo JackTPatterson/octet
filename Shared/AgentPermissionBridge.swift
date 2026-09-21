@@ -1,11 +1,11 @@
 import Foundation
 
-/// Permission prompts for conversations Herd drives headless. The agent is
-/// started with `--permission-prompt-tool mcp__herd__approve`; that tool is
-/// `herd-cli mcp-permission`, a stdio MCP server, which relays each prompt
+/// Permission prompts for conversations Octet drives headless. The agent is
+/// started with `--permission-prompt-tool mcp__octet__approve`; that tool is
+/// `octet-cli mcp-permission`, a stdio MCP server, which relays each prompt
 /// over a Unix socket to the app and returns the user's answer.
 enum PermissionMCP {
-    static let serverName = "herd"
+    static let serverName = "octet"
     static let toolName = "approve"
     /// What the agent's `--permission-prompt-tool` flag names.
     static var qualifiedToolName: String { "mcp__\(serverName)__\(toolName)" }
@@ -37,7 +37,7 @@ enum PermissionMCP {
         case "tools/list":
             result = ["tools": [[
                 "name": toolName,
-                "description": "Asks the Herd user to allow or deny a tool call.",
+                "description": "Asks the Octet user to allow or deny a tool call.",
                 "inputSchema": [
                     "type": "object",
                     "properties": [
@@ -63,7 +63,7 @@ enum PermissionMCP {
     }
 
     /// Relays one prompt to the app and waits for the answer. Denies when
-    /// Herd can't be reached, so nothing runs unasked.
+    /// Octet can't be reached, so nothing runs unasked.
     static func askApp(socketPath: String, arguments: [String: Any]) -> [String: Any] {
         do {
             let connection = try EngineSocketConnection(path: socketPath)
@@ -71,7 +71,7 @@ enum PermissionMCP {
             let line = try connection.readLine()
             if let decision = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any] { return decision }
         } catch {}
-        return ["behavior": "deny", "message": "Herd couldn't show this permission prompt, so it was denied."]
+        return ["behavior": "deny", "message": "Octet couldn't show this permission prompt, so it was denied."]
     }
 }
 
@@ -80,7 +80,7 @@ enum PermissionMCP {
 final class PermissionSocketServer {
     let path: String
     private var listener: Int32 = -1
-    private let queue = DispatchQueue(label: "herd.permission-socket")
+    private let queue = DispatchQueue(label: "octet.permission-socket")
 
     init(path: String) {
         self.path = path

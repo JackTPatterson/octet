@@ -1,17 +1,17 @@
 # Agent driver spike
 
-Answers phase 0 of `docs/NATIVE-AGENT-UI.md`: can Herd drive Claude Code
+Answers phase 0 of `docs/NATIVE-AGENT-UI.md`: can Octet drive Claude Code
 headless well enough to draw a native conversation UI? Run 2026-09-19 against
 Claude Code 2.1.277, Haiku, from a scratch folder.
 
 - `driver_a.py`: driver A. Spawns `claude -p --input-format stream-json
   --output-format stream-json --verbose --include-partial-messages` with
   `--session-id`, `--mcp-config` and `--permission-prompt-tool
-  mcp__herdperm__approve`, then runs every scenario through one long-lived
+  mcp__octetperm__approve`, then runs every scenario through one long-lived
   process. `SPIKE_ONLY=perm` runs just the permission turns.
 - `perm_server.py`: the permission tool as a minimal stdio MCP server. It
   allows by default and denies commands containing "deny", logging each
-  request. In Herd this becomes a `herd-cli` subcommand relaying to the app.
+  request. In Octet this becomes a `octet-cli` subcommand relaying to the app.
 
 Run: `SPIKE_WORKDIR=<scratch dir> python3 driver_a.py` from that directory.
 
@@ -49,7 +49,7 @@ nothing bundled:
 
 - multi-turn: one long-lived process per conversation, started when the
   composer opens, so the 3.7 s startup overlaps with typing
-- permissions: the MCP permission tool, served by `herd-cli`, relaying to a
+- permissions: the MCP permission tool, served by `octet-cli`, relaying to a
   native sheet
 - interrupt: SIGINT, keeping the process
 - permission mode change: restart with `--resume` and `--permission-mode`;

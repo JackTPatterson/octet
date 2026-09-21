@@ -1,6 +1,6 @@
 import Foundation
 
-/// One agent Herd looked for on this machine.
+/// One agent Octet looked for on this machine.
 ///
 /// `AgentHosts.installed` answers a narrower question: whether an agent keeps
 /// config in `~/.<agent>`. That misses a CLI installed but never run, and
@@ -27,12 +27,12 @@ struct DiscoveredAgent: Codable, Equatable, Identifiable {
     var isConfigured: Bool { configPath != nil }
 }
 
-/// Looks for every agent CLI Herd knows the name of.
+/// Looks for every agent CLI Octet knows the name of.
 ///
-/// Herd is a GUI app, so its own PATH is whatever launched it, usually
+/// Octet is a GUI app, so its own PATH is whatever launched it, usually
 /// launchd's. The shell's PATH is the honest one, and beyond it agents land
 /// in a handful of per-tool bin folders that installers add to a shell
-/// profile Herd never reads.
+/// profile Octet never reads.
 enum AgentDiscovery {
     /// Bin folders that are not always on PATH, in the order they should win.
     static let extraDirectories = [

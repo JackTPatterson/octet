@@ -2,11 +2,11 @@ import Darwin
 import Foundation
 
 /// Whether a pane is sitting at its shell's prompt, which is the only time
-/// Herd takes the keyboard to edit the command line itself. The moment any
+/// Octet takes the keyboard to edit the command line itself. The moment any
 /// program runs — an agent, an editor, a pager — typing goes straight
-/// through, so nothing can be trapped behind Herd's editor.
+/// through, so nothing can be trapped behind Octet's editor.
 enum ShellPrompt {
-    /// Shells Herd recognises; anything else running is a program.
+    /// Shells Octet recognises; anything else running is a program.
     static let shells: Set<String> = [
         "zsh", "bash", "sh", "fish", "dash", "ksh", "tcsh", "csh", "nu", "xonsh", "elvish", "-zsh", "-bash", "-fish",
     ]
@@ -48,7 +48,7 @@ enum ShellPrompt {
     /// and echo keys themselves; `read`, and `read -s` for a password, keep
     /// canonical mode. So a shell in the foreground is not enough to know
     /// it's safe to take the keyboard: this is the check that keeps a secret
-    /// out of Herd's line and history. nil when the tty can't be read.
+    /// out of Octet's line and history. nil when the tty can't be read.
     static func lineEditorActive(shellPid pid: Int) -> Bool? {
         var info = proc_bsdinfo()
         let size = Int32(MemoryLayout<proc_bsdinfo>.size)

@@ -106,7 +106,7 @@ struct EngineClient {
     @discardableResult
     func call(_ method: String, _ params: [String: Any] = [:]) throws -> [String: Any] {
         let connection = try EngineSocketConnection(path: socketPath)
-        let id = "herd-\(UUID().uuidString.prefix(8))"
+        let id = "octet-\(UUID().uuidString.prefix(8))"
         try connection.send(["id": id, "method": method, "params": params])
         let line = try connection.readLine()
         return try Self.parseResponse(line)
@@ -137,7 +137,7 @@ struct EngineClient {
         return try JSONDecoder().decode(EngineSnapshot.self, from: data)
     }
 
-    /// Event types Herd listens to; any of them triggers a snapshot refresh.
+    /// Event types Octet listens to; any of them triggers a snapshot refresh.
     static let subscribedEvents = [
         "workspace.created", "workspace.updated", "workspace.renamed", "workspace.moved",
         "workspace.reordered", "workspace.closed", "workspace.focused",
@@ -156,7 +156,7 @@ struct EngineClient {
     ) throws {
         let connection = try EngineSocketConnection(path: socketPath)
         try connection.send([
-            "id": "herd-events",
+            "id": "octet-events",
             "method": "events.subscribe",
             "params": ["subscriptions": Self.subscribedEvents.map { ["type": $0] }],
         ])

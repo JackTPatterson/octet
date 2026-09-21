@@ -46,7 +46,7 @@ hdiutil create -srcfolder "$stage" -volname "$volume" -fs HFS+ \
 mount="$(hdiutil attach -readwrite -noverify -noautoopen "$work/rw.dmg" \
     | awk -F'\t' '/\/Volumes\//{print $NF}')"
 [ -d "$mount" ] || { echo "error: the image didn't mount." >&2; exit 1; }
-# Another "Herd" volume may be mounted already, making this one "Herd 1".
+# Another "Octet" volume may be mounted already, making this one "Octet 1".
 disk="$(basename "$mount")"
 
 echo "==> Laying out the window"

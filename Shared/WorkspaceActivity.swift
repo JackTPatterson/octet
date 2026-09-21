@@ -3,11 +3,11 @@ import Foundation
 /// When each workspace was last used, and which ones have gone idle.
 ///
 /// The session server reports what an agent is doing, never when it last did
-/// anything, so Herd stamps activity itself: a workspace is touched when it is on screen, when an agent in it
+/// anything, so Octet stamps activity itself: a workspace is touched when it is on screen, when an agent in it
 /// changes state, or when a pane title changes. Stamps persist across
 /// launches. A workspace first seen with a Claude agent recovers its stamp
 /// from the newest Claude transcript for that folder, so sessions abandoned
-/// before Herd started don't all look fresh.
+/// before Octet started don't all look fresh.
 struct WorkspaceActivity: Equatable {
     /// Last-activity time per workspace id.
     private(set) var stamps: [String: Date] = [:]

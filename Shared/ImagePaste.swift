@@ -1,13 +1,13 @@
 import Foundation
 
 /// Pasting a screenshot into an agent is the one thing every terminal UI gets
-/// wrong: the image either arrives as binary noise or not at all. Herd sees
+/// wrong: the image either arrives as binary noise or not at all. Octet sees
 /// ⌘V before the terminal does, writes the image somewhere real, and pastes
 /// the path — which is what every agent actually accepts.
 enum ImagePaste {
     /// Where pasted images live, kept out of the user's folders.
     static func directory(home: String = NSHomeDirectory()) -> String {
-        "\(home)/Library/Application Support/Herd/pasted"
+        "\(home)/Library/Application Support/Octet/pasted"
     }
 
     /// A name that sorts by time and says where it came from.

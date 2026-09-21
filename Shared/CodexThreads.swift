@@ -1,7 +1,7 @@
 import Foundation
 
 /// Codex sessions for the Codex agents board. `codex agents` is a TUI with
-/// no machine output, so Herd reads what it reads: the `threads` table of
+/// no machine output, so Octet reads what it reads: the `threads` table of
 /// Codex's state database (queried read-only), and each thread's rollout
 /// log for its state and transcript.
 enum CodexThreads {

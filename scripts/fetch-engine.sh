@@ -1,6 +1,6 @@
 #!/bin/sh
 # Copies the terminal engine binary and its license into Vendor/engine so the
-# Xcode build can bundle it inside Herd.app (Contents/MacOS/herd-engine).
+# Xcode build can bundle it inside Octet.app (Contents/MacOS/octet-engine).
 #
 # Usage: scripts/fetch-engine.sh [path-to-engine-binary]
 # With no argument, the binary is taken from the Homebrew install.
@@ -23,9 +23,9 @@ if [ ! -x "$binary" ]; then
 fi
 
 mkdir -p "$dest"
-rm -f "$dest/herd-engine"
-cp "$binary" "$dest/herd-engine"
-chmod 755 "$dest/herd-engine"
+rm -f "$dest/octet-engine"
+cp "$binary" "$dest/octet-engine"
+chmod 755 "$dest/octet-engine"
 
 license=""
 for candidate in "$source_dir/LICENSE" "$(dirname "$binary")/LICENSE"; do
@@ -44,5 +44,5 @@ if [ -f "$source_dir/NOTICE" ]; then
     cp "$source_dir/NOTICE" "$dest/NOTICE"
 fi
 
-echo "Engine copied to $dest/herd-engine"
-"$dest/herd-engine" --version 2>/dev/null || true
+echo "Engine copied to $dest/octet-engine"
+"$dest/octet-engine" --version 2>/dev/null || true

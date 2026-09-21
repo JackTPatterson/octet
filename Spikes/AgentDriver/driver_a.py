@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Spike, driver A: Herd drives `claude -p` directly over stream-json using
+"""Spike, driver A: Octet drives `claude -p` directly over stream-json using
 only documented flags. One long-lived process for several turns, permission
 prompts through an MCP tool, interrupt by SIGINT, then --resume.
 
@@ -13,14 +13,14 @@ PERM_LOG = os.path.join(WORK, "perm.log")
 MODEL = os.environ.get("SPIKE_MODEL", "haiku")
 SESSION = str(uuid.uuid4())
 
-mcp_config = json.dumps({"mcpServers": {"herdperm": {
+mcp_config = json.dumps({"mcpServers": {"octetperm": {
     "type": "stdio", "command": sys.executable, "args": [os.path.join(HERE, "perm_server.py")],
     "env": {"PERM_LOG": PERM_LOG}}}})
 
 def launch(resume=False):
     args = ["claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json",
             "--verbose", "--include-partial-messages", "--model", MODEL, "--tools", "Bash",
-            "--mcp-config", mcp_config, "--permission-prompt-tool", "mcp__herdperm__approve"]
+            "--mcp-config", mcp_config, "--permission-prompt-tool", "mcp__octetperm__approve"]
     args += ["--resume", SESSION] if resume else ["--session-id", SESSION]
     started = time.monotonic()
     proc = subprocess.Popen(args, cwd=WORK, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -55,7 +55,7 @@ def turn(proc, events, text, label, interrupt_after_first_token=False, timeout=1
         kind = ev.get("type")
         if ev.get("subtype") == "init":
             report.setdefault("init_after_first_send_s", round(at - sent, 2))
-            report["mcp"] = [(m["name"], m["status"]) for m in ev.get("mcp_servers", []) if m["name"] == "herdperm"]
+            report["mcp"] = [(m["name"], m["status"]) for m in ev.get("mcp_servers", []) if m["name"] == "octetperm"]
         if kind == "stream_event" and ev["event"].get("type") == "content_block_delta":
             delta = ev["event"].get("delta", {})
             if first_token is None and delta.get("type") == "text_delta":
