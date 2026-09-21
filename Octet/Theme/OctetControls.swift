@@ -169,6 +169,7 @@ struct OctetDropdown: View {
         .anchorPreference(key: DropdownAnchorKey.self, value: .bounds) { [spec.id: $0] }
         .onAppear { state.specs[spec.id] = spec }
         .onChange(of: spec.selected) { _, _ in state.specs[spec.id] = spec }
+        .onChange(of: spec.options.map(\.id)) { _, _ in state.specs[spec.id] = spec }
         .accessibilityLabel(label)
         .accessibilityValue(current)
         .accessibilityHint("Opens a menu")
@@ -194,6 +195,7 @@ struct OctetDropdownAnchor<Label: View>: View {
         .anchorPreference(key: DropdownAnchorKey.self, value: .bounds) { [spec.id: $0] }
         .onAppear { state.specs[spec.id] = spec }
         .onChange(of: spec.selected) { _, _ in state.specs[spec.id] = spec }
+        .onChange(of: spec.options.map(\.id)) { _, _ in state.specs[spec.id] = spec }
     }
 }
 

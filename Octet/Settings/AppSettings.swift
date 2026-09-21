@@ -59,8 +59,6 @@ struct OctetSettings: Codable, Equatable {
     /// chip reads Claude Code's cache and any conversation Octet runs.
     var readClaudeAccountUsage = false
     var offerRecovery = true
-    var slashMenu = true
-    var slashRunsCommands = true
     var promptEditor = true
     var pasteImagesAsFiles = true
     var autoNameTabs = true
@@ -177,8 +175,6 @@ struct OctetSettings: Codable, Equatable {
         paneHistory = value("paneHistory", defaults.paneHistory)
         readClaudeAccountUsage = value("readClaudeAccountUsage", defaults.readClaudeAccountUsage)
         offerRecovery = value("offerRecovery", defaults.offerRecovery)
-        slashMenu = value("slashMenu", defaults.slashMenu)
-        slashRunsCommands = value("slashRunsCommands", defaults.slashRunsCommands)
         promptEditor = value("promptEditor", defaults.promptEditor)
         pasteImagesAsFiles = value("pasteImagesAsFiles", defaults.pasteImagesAsFiles)
         autoNameTabs = value("autoNameTabs", defaults.autoNameTabs)

@@ -6,7 +6,6 @@ struct OctetApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var store: SessionStore
     @StateObject private var marketplace: MarketplaceStore
-    @StateObject private var slash: SlashController
     @StateObject private var prompt: PromptEditor
     private let session: EngineSession?
 
@@ -25,9 +24,6 @@ struct OctetApp: App {
         let store = SessionStore(client: EngineClient(socketPath: socketPath))
         _store = StateObject(wrappedValue: store)
         _marketplace = StateObject(wrappedValue: MarketplaceStore(session: store))
-        let slash = SlashController(store: store)
-        _slash = StateObject(wrappedValue: slash)
-        OctetKeyHook.controller = slash
         let prompt = PromptEditor(store: store)
         _prompt = StateObject(wrappedValue: prompt)
         OctetKeyHook.prompt = prompt
@@ -41,7 +37,7 @@ struct OctetApp: App {
         // Each window is its own client of the one engine session, showing
         // a workspace of its own; what it was opened for comes back with it.
         WindowGroup(for: OctetWindowSpec.self) { $spec in
-            OctetWindowRoot(spec: spec, store: store, session: session, slash: slash, prompt: prompt)
+            OctetWindowRoot(spec: spec, store: store, session: session, prompt: prompt)
                 .frame(minWidth: 720, minHeight: 420)
                 .onAppear {
                     // Once for the app, not once per window.
@@ -115,6 +111,7 @@ struct OctetCommands: Commands {
             // Codex's has no shortcut of its own: ⌘⇧N belongs to Claude's,
             // and a second chord for the same thing isn't worth the key.
             Button("New Codex Conversation") { KeyWindow.act { $0.newConversation(engine: .codex) } }
+            Button("New OpenCode Conversation") { KeyWindow.act { $0.newConversation(engine: .opencode) } }
             Button(OctetShortcut.agents.title) { KeyWindow.act { $0.toggleAgentsBoard() } }
                 .keyboardShortcut(OctetShortcut.agents.keyboardShortcut)
             Button(OctetShortcut.newWorkspace.title) { KeyWindow.act { $0.newWorkspace() } }
@@ -264,11 +261,10 @@ enum MarketplaceWindow {
 }
 
 
-/// Static bridge so the terminal surface can consult the slash menu without
+/// Static bridge so the terminal surface can consult Octet's command line without
 /// knowing about Octet's stores.
 @MainActor
 enum OctetKeyHook {
-    static weak var controller: SlashController?
     static weak var prompt: PromptEditor?
 
     static weak var store: SessionStore?
@@ -297,8 +293,7 @@ enum OctetKeyHook {
         // Input methods and dead keys compose text over several keystrokes;
         // raw key codes would break Japanese, Chinese, Korean and Option-accents.
         if isComposing(event) { return false }
-        // Agent panes get the slash menu; shell prompts get Octet's own line.
-        if controller?.handleKeyDown(event) == true { return true }
+        // Shell prompts get Octet's own line; agents keep their own `/` menus.
         return prompt?.handleKeyDown(event) ?? false
     }
 }

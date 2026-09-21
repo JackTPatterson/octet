@@ -65,9 +65,15 @@ final class AgentSession: ObservableObject, Identifiable {
     /// stream-json stdio; Codex over its app server's JSON-RPC. Everything
     /// downstream, the transcript and the view, is the same for both.
     enum Engine: String, Codable {
-        case claude, codex
+        case claude, codex, opencode
 
-        var displayName: String { self == .codex ? "Codex" : "Claude" }
+        var displayName: String {
+            switch self {
+            case .claude: "Claude"
+            case .codex: "Codex"
+            case .opencode: "OpenCode"
+            }
+        }
         /// The vendor mark, and what `SlashCommands` files are read for.
         var agent: String { rawValue }
     }
@@ -76,7 +82,7 @@ final class AgentSession: ObservableObject, Identifiable {
     let engine: Engine
     let workspaceId: String
     let cwd: String
-    @Published private(set) var conversation = AgentConversation()
+    @Published var conversation = AgentConversation()
     @Published var title: String {
         // The title bar and tab strip watch the center, not each session.
         didSet {
@@ -92,9 +98,13 @@ final class AgentSession: ObservableObject, Identifiable {
     @Published var permissionMode: PermissionMode {
         didSet { if permissionMode != oldValue { settingsChanged() } }
     }
-    /// Codex only: the sandbox a thread runs under, e.g. `:workspace`. Nil
-    /// leaves whatever the person's Codex config says.
+    /// Codex: the sandbox a thread runs under, e.g. `:workspace`. OpenCode:
+    /// a permission preset (`OpenCodePermission.presets`). Nil leaves
+    /// whatever the person's own config says.
     @Published var permissionProfile: String? { didSet { if permissionProfile != oldValue { settingsChanged() } } }
+    /// OpenCode only: the agent messages go to (Build, Plan, or one of the
+    /// person's own). Nil is OpenCode's default.
+    @Published var agentName: String? { didSet { if agentName != oldValue { AgentCenter.shared.save() } } }
 
     private func settingsChanged() {
         switch engine {
@@ -102,15 +112,19 @@ final class AgentSession: ObservableObject, Identifiable {
             needsRestart = true
         case .codex:
             if let threadId, process?.isRunning == true { updateCodexSettings(threadId: threadId) }
+        case .opencode:
+            // Model, variant and agent go with each message; permissions are
+            // the session's, and change at once.
+            updateOpenCodePermissions()
         }
         AgentCenter.shared.save()
     }
     @Published private(set) var pendingPermission: AgentPermissionRequest?
-    @Published private(set) var startupError: String?
+    @Published var startupError: String?
 
     /// Assigned up front so the session can be resumed or opened in a pane.
     let sessionId: String
-    private var hasTurns = false {
+    var hasTurns = false {
         didSet { if hasTurns != oldValue { AgentCenter.shared.save() } }
     }
     private var needsRestart = false
@@ -122,14 +136,34 @@ final class AgentSession: ObservableObject, Identifiable {
     private var permissionReply: (([String: Any]) -> Void)?
     private var permissionQueue: [(AgentPermissionRequest, ([String: Any]) -> Void)] = []
 
+    // MARK: - OpenCode
+
+    /// Reads the server's events for this conversation's session.
+    var openCode = OpenCodeStream()
+    /// A question OpenCode's agent is waiting on you to answer.
+    @Published var pendingQuestion: OpenCodeQuestion?
+    var questionQueue: [OpenCodeQuestion] = []
+    /// Messages written before the session existed, sent once it does.
+    var openCodeQueue: [[String: Any]] = []
+    var openCodeCreating = false
+    /// Permission requests on the card, by the tool call they're for.
+    var openCodePermissions: [String: String] = [:]
+    /// The title Octet gave from the first message, which OpenCode's own
+    /// generated title may replace.
+    var provisionalTitle: String?
+    /// The first message undone in OpenCode's own interface, from which
+    /// the transcript is hidden, as OpenCode hides it.
+    var openCodeRevertMessage: String?
+
     // MARK: - Codex
 
     /// The thread the app server opened for this conversation. Codex names
     /// its own threads, unlike Claude Code, which takes the id Octet gives it.
-    private var threadId: String?
+    /// Codex's thread, or OpenCode's session: the agent's own id for it.
+    var threadId: String?
     /// What each call Octet has made to the app server was for, by id, so an
     /// answer (or an error) lands where it belongs.
-    private enum CodexCall { case handshake, thread, turn, settings, interrupt }
+    private enum CodexCall { case handshake, thread, turn, settings, interrupt, command(String) }
     private var codexCalls: [Int: CodexCall] = [:]
     private var nextRequestId = 0
     /// Messages sent before the thread was open, in order.
@@ -162,15 +196,18 @@ final class AgentSession: ObservableObject, Identifiable {
         var hasTurns: Bool
         /// Absent in conversations saved before Codex ones existed.
         var engine: Engine?
-        /// Codex only: the thread to resume, and the sandbox it runs under.
+        /// Codex: the thread to resume, and the sandbox it runs under.
+        /// OpenCode: its session, and a permission preset.
         var threadId: String?
         var permissionProfile: String?
+        /// OpenCode only: the agent messages go to.
+        var agent: String?
     }
 
     var saved: Saved {
         Saved(sessionId: sessionId, cwd: cwd, title: title, model: model, effort: effort,
               permissionMode: permissionMode.rawValue, hasTurns: hasTurns, engine: engine, threadId: threadId,
-              permissionProfile: permissionProfile)
+              permissionProfile: permissionProfile, agent: agentName)
     }
 
     static func restore(_ saved: Saved, workspaceId: String) -> AgentSession {
@@ -180,6 +217,7 @@ final class AgentSession: ObservableObject, Identifiable {
                                    sessionId: saved.sessionId, threadId: saved.threadId)
         session.effort = saved.effort
         session.permissionProfile = saved.permissionProfile
+        session.agentName = saved.agent
         session.title = saved.title
         session.hasTurns = saved.hasTurns
         session.needsRestart = false
@@ -198,6 +236,13 @@ final class AgentSession: ObservableObject, Identifiable {
                         session.conversation = transcript
                     }
                 }
+            }
+        case .opencode:
+            // OpenCode keeps the history; its server hands it back.
+            session.openCode.sessionId = saved.threadId
+            if saved.hasTurns {
+                session.startOpenCode()
+                session.restoreOpenCodeTranscript()
             }
         }
         return session
@@ -219,6 +264,8 @@ final class AgentSession: ObservableObject, Identifiable {
                 let twin = TwinTranscript.parse(agent: "codex", lines: log.components(separatedBy: "\n"))
                 conversation = AgentConversation(twin: twin)
             }
+        case .opencode:
+            break
         }
         conversation?.cwd = saved.cwd
         return conversation
@@ -226,31 +273,40 @@ final class AgentSession: ObservableObject, Identifiable {
 
     // MARK: - Slash commands
 
-    /// Built-ins that work when Claude Code runs headless (model and effort
-    /// have their own pickers).
-    static let headlessBuiltIns: Set<String> = ["rename", "mcp", "config", "output-style", "fast", "color", "compact"]
     private var diskCommands: [SlashCommand]?
 
     /// What `/` offers: the user's, the project's and plugins' commands from
     /// disk (ready before the first message), the headless-safe built-ins,
     /// and whatever else the agent reports once it's running, like skills.
+    /// The commands the agent itself reports it can run (Claude Code's, from
+    /// its `initialize` answer), as it describes them.
+    @Published var agentCommands: [SlashCommand] = []
+    static let commandsRequest = "octet-commands"
+
+    /// What `/` offers, from the agent wherever it publishes a list, plus the
+    /// actions Octet carries out itself. Nothing here is a guess at what an
+    /// agent's own interface shows.
     var slashCommands: [SlashCommand] {
-        if diskCommands == nil {
-            diskCommands = SlashCommands.all(agent: engine.agent, cwd: cwd).filter {
-                $0.origin != .builtIn || Self.headlessBuiltIns.contains($0.name)
+        let commands: [SlashCommand]
+        switch engine {
+        case .opencode:
+            commands = openCodeSlashCommands
+        case .claude:
+            commands = agentCommands
+        case .codex:
+            // Codex publishes no command list; its menu's own entries are its
+            // prompt files, which its app server doesn't expand, so Octet does.
+            if diskCommands == nil {
+                diskCommands = SlashCommands.all(agent: "codex", cwd: cwd)
+            }
+            commands = SlashCommands.codexOctetCommands + (diskCommands ?? []).map { prompt in
+                var prompt = prompt
+                prompt.handling = .octet
+                return prompt
             }
         }
-        var commands = diskCommands ?? []
-        let known = Set(commands.flatMap(\.flattened).map(\.name))
-        commands += conversation.slashCommands
-            .filter { !known.contains($0) && !Self.hiddenReported.contains($0) }
-            .map { SlashCommand(name: $0, summary: "skill or command", origin: .user) }
         return commands.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
-
-    /// Reported by the agent but only meaningful in its own interface, or
-    /// covered by Octet's pickers.
-    static let hiddenReported: Set<String> = ["model", "effort", "login", "logout", "exit", "quit", "clear", "resume", "vim", "terminal-setup", "ide", "doctor"]
 
     // MARK: - Turns
 
@@ -288,7 +344,7 @@ final class AgentSession: ObservableObject, Identifiable {
     }
 
     /// When the turn in flight started, for the status line.
-    @Published private(set) var turnStartedAt: Date?
+    @Published var turnStartedAt: Date?
 
     /// What the agent is doing right now, in a few words.
     var activity: String {
@@ -315,6 +371,16 @@ final class AgentSession: ObservableObject, Identifiable {
             let name = trimmed.dropFirst("/rename ".count).trimmingCharacters(in: .whitespaces)
             if !name.isEmpty { title = name }
         }
+        if engine == .opencode {
+            if !conversation.isRunning { turnStartedAt = Date() }
+            conversation.appendUser(trimmed, images: attachments.map(\.data))
+            if title == engine.displayName, !trimmed.hasPrefix("/") {
+                title = String(trimmed.prefix(40))
+                provisionalTitle = title
+            }
+            if trimmed == "/compact" { compactOpenCode() } else { sendOpenCode(trimmed, attachments: attachments) }
+            return
+        }
         if needsRestart || process?.isRunning != true { restart() }
         guard stdin != nil else { return }
         if !conversation.isRunning { turnStartedAt = Date() }
@@ -336,6 +402,8 @@ final class AgentSession: ObservableObject, Identifiable {
             // The thread may still be opening, and a turn needs its id.
             guard let threadId else { queuedTurns.append(trimmed); return }
             startTurn(trimmed, threadId: threadId)
+        case .opencode:
+            break
         }
     }
 
@@ -355,6 +423,7 @@ final class AgentSession: ObservableObject, Identifiable {
             switch engine {
             case .claude: conversation.apply(["type": "result", "subtype": "error", "errors": [failure]])
             case .codex: conversation.applyCodex(["method": "turn/failed", "params": ["error": ["message": failure]]])
+            case .opencode: break
             }
             return false
         }
@@ -391,6 +460,10 @@ final class AgentSession: ObservableObject, Identifiable {
     /// Ends the current turn; the process stays up for the next message.
     /// Claude Code takes a signal, Codex an interrupt for the thread.
     func interrupt() {
+        if engine == .opencode {
+            if conversation.isRunning { interruptOpenCode() }
+            return
+        }
         guard let process, process.isRunning, conversation.isRunning else { return }
         switch engine {
         case .claude:
@@ -398,17 +471,21 @@ final class AgentSession: ObservableObject, Identifiable {
         case .codex:
             guard let threadId else { return }
             call("turn/interrupt", ["threadId": threadId], as: .interrupt)
+        case .opencode:
+            break
         }
     }
 
     /// Starts the process ahead of the first message, so its startup
     /// overlaps with typing.
     func prewarm() {
+        if engine == .opencode { return startOpenCode() }
         if process == nil { restart() }
     }
 
     func close() {
         denyAllPending(message: "The conversation was closed.")
+        if engine == .opencode { closeOpenCode() }
         stopProcess()
         permissionServer?.stop()
         permissionServer = nil
@@ -418,7 +495,7 @@ final class AgentSession: ObservableObject, Identifiable {
 
     /// Answers allowed for the rest of this conversation: an exact Bash
     /// command, all file edits, or any other tool by name.
-    private var sessionAllows: Set<String> = []
+    private(set) var sessionAllows: Set<String> = []
 
     static func allowKey(_ request: AgentPermissionRequest) -> String {
         switch request.toolName {
@@ -434,6 +511,22 @@ final class AgentSession: ObservableObject, Identifiable {
         case "edits": "Allow Edits for Session"
         case let key where key.hasPrefix("Bash|"): "Allow Command for Session"
         default: "Allow \(request.toolName) for Session"
+        }
+    }
+
+    /// A request answered somewhere else (OpenCode's own interface) leaves
+    /// the card, unanswered from here.
+    func dropPermission(id: String) {
+        if pendingPermission?.id == id {
+            pendingPermission = nil
+            permissionReply = nil
+            if !permissionQueue.isEmpty {
+                let (next, nextReply) = permissionQueue.removeFirst()
+                pendingPermission = next
+                permissionReply = nextReply
+            }
+        } else {
+            permissionQueue.removeAll { $0.0.id == id }
         }
     }
 
@@ -649,7 +742,7 @@ final class AgentSession: ObservableObject, Identifiable {
     }
     #endif
 
-    private func receivePermission(_ prompt: [String: Any], reply: @escaping ([String: Any]) -> Void) {
+    func receivePermission(_ prompt: [String: Any], reply: @escaping ([String: Any]) -> Void) {
         guard let request = AgentPermissionRequest(json: prompt) else {
             reply(AgentPermissionRequest.decision(allow: false, input: [:], message: "Octet couldn't read this request."))
             return
@@ -682,6 +775,7 @@ final class AgentSession: ObservableObject, Identifiable {
         needsRestart = false
         startupError = nil
         if engine == .codex { startCodex(); return }
+        if engine == .opencode { startOpenCode(); return }
         guard let cli = Bundle.main.url(forAuxiliaryExecutable: "octet-cli")?.path else {
             startupError = "octet-cli is missing from the app bundle."
             return
@@ -740,6 +834,9 @@ final class AgentSession: ObservableObject, Identifiable {
             try process.run()
             self.process = process
             stdin = input.fileHandleForWriting
+            // Claude Code's own list of what this session can run: built-ins,
+            // plugins, skills and the person's commands, described.
+            write(["type": "control_request", "request_id": Self.commandsRequest, "request": ["subtype": "initialize"]])
         } catch {
             startupError = "Couldn't start Claude Code: \(error.localizedDescription)"
         }
@@ -873,12 +970,19 @@ final class AgentSession: ObservableObject, Identifiable {
             guard let event = (try? JSONSerialization.jsonObject(with: Data(line))) as? [String: Any] else { continue }
             switch engine {
             case .claude:
+                if event["type"] as? String == "control_response",
+                   let response = event["response"] as? [String: Any], response["request_id"] as? String == Self.commandsRequest {
+                    agentCommands = SlashCommands.claudePublished((response["response"] as? [String: Any])?["commands"] as? [[String: Any]] ?? [])
+                    continue
+                }
                 conversation.apply(event)
                 if event["type"] as? String == "rate_limit_event", !conversation.usageWindows.isEmpty {
                     AccountStore.shared.updateClaudeWindows(conversation.usageWindows)
                 }
             case .codex:
                 receiveCodex(event)
+            case .opencode:
+                break
             }
             if !conversation.isRunning { turnStartedAt = nil }
         }
@@ -934,6 +1038,45 @@ final class AgentSession: ObservableObject, Identifiable {
             }
         case .interrupt:
             break
+        case .command(let name):
+            if let error { notice("Codex couldn't run /\(name): \(error)") }
+        }
+    }
+
+    /// A Codex prompt file's text with its arguments filled in: `$ARGUMENTS`
+    /// takes them all, `$1`…`$9` one word each.
+    func codexPrompt(_ command: SlashCommand, arguments: String) -> String? {
+        let directory = command.origin == .project ? "\(cwd)/.codex/prompts" : NSHomeDirectory() + "/.codex/prompts"
+        guard var text = try? String(contentsOfFile: "\(directory)/\(command.name).md", encoding: .utf8) else {
+            notice("Couldn't read the prompt file for /\(command.name).")
+            return nil
+        }
+        // Front matter describes the prompt; it isn't part of it.
+        if text.hasPrefix("---"), let end = text.range(of: "\n---", range: text.index(text.startIndex, offsetBy: 3)..<text.endIndex) {
+            text = String(text[end.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let words = arguments.split(separator: " ").map(String.init)
+        for index in (1...9).reversed() {
+            text = text.replacingOccurrences(of: "$\(index)", with: index <= words.count ? words[index - 1] : "")
+        }
+        return text.replacingOccurrences(of: "$ARGUMENTS", with: arguments)
+    }
+
+    /// Runs one of Codex's own actions for a `/` command.
+    func codexCommand(_ name: String, arguments: String) {
+        guard let threadId else { return notice("Send a message first; Codex hasn't opened the conversation yet.") }
+        switch name {
+        case "compact":
+            call("thread/compact/start", ["threadId": threadId], as: .command(name))
+        case "review":
+            // `/review main` compares with a branch; bare, the working tree.
+            let target: [String: Any] = arguments.isEmpty ? ["type": "uncommittedChanges"] : ["type": "baseBranch", "branch": arguments]
+            call("review/start", ["threadId": threadId, "target": target], as: .command(name))
+        case "rename":
+            title = arguments
+            call("thread/name/set", ["threadId": threadId, "name": arguments], as: .command(name))
+        default:
+            break
         }
     }
 
@@ -955,7 +1098,7 @@ final class AgentSession: ObservableObject, Identifiable {
         }
     }
 
-    private func notice(_ text: String) {
+    func notice(_ text: String) {
         conversation.items.append(AgentItem(id: UUID().uuidString, kind: .notice(text)))
     }
 
@@ -990,6 +1133,7 @@ final class AgentSession: ObservableObject, Identifiable {
         switch engine {
         case .claude: "claude --resume \(sessionId)"
         case .codex: threadId.map { "codex resume \($0)" } ?? "codex"
+        case .opencode: threadId.map { "opencode --session \($0)" } ?? "opencode"
         }
     }
 
@@ -997,7 +1141,9 @@ final class AgentSession: ObservableObject, Identifiable {
     /// of the same workspace. The headless process stops first so two
     /// processes never write the same session.
     func openInTerminal(window: WindowContext) {
-        guard hasTurns else { return }
+        // Before a first message there's nothing to resume: the agent starts
+        // fresh there instead.
+        let command = hasTurns ? resumeCommand : engine.agent
         close()
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
         window.applyLayout([
@@ -1005,7 +1151,7 @@ final class AgentSession: ObservableObject, Identifiable {
             "tab_label": title,
             "root": [
                 "type": "pane", "label": title, "cwd": cwd,
-                "command": [shell, "-lic", "\(resumeCommand); exec \(shell) -l"],
+                "command": [shell, "-lic", "\(command); exec \(shell) -l"],
             ] as [String: Any],
         ], failure: "Couldn't open the conversation in a terminal")
     }

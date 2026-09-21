@@ -592,13 +592,6 @@ private struct AgentSettings: View {
             }
             SettingsDivider()
             SettingsRow(
-                title: "Octet's slash command menu",
-                detail: "Typing / in an agent pane opens Octet's own command list instead of the agent's in-terminal one."
-            ) {
-                Toggle("Octet's slash command menu", isOn: $settings.values.slashMenu).labelsHidden().toggleStyle(.switch)
-            }
-            SettingsDivider()
-            SettingsRow(
                 title: "Octet's command line",
                 detail: "At a shell prompt, Octet edits the line itself: highlighted as you type, with a suggestion from your history. Anything it doesn't handle goes straight to the shell."
             ) {
@@ -618,13 +611,6 @@ private struct AgentSettings: View {
             ) {
                 Button(SpecCorpus.index() == nil ? "Install" : "Update") { installSpecs() }
                     .disabled(installingSpecs)
-            }
-            SettingsDivider()
-            SettingsRow(
-                title: "Run commands from the menu",
-                detail: "Picking a command submits it to the agent. Off types it into the prompt instead. Commands that take arguments are always typed."
-            ) {
-                Toggle("Run commands from the menu", isOn: $settings.values.slashRunsCommands).labelsHidden().toggleStyle(.switch)
             }
             SettingsDivider()
             SettingsRow(

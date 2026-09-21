@@ -32,6 +32,18 @@ struct SlashCommand: Identifiable, Equatable {
     /// Shown when the command takes free text, e.g. `<instructions>`.
     var argumentHint: String = ""
     var children: [SlashCommand] = []
+    /// Other names typing matches, as the agent's own menu allows
+    /// (`/clear` for `/new`).
+    var aliases: [String] = []
+    /// Who carries the command out in Octet's chat view.
+    var handling: Handling = .agent
+
+    enum Handling: Equatable {
+        /// Sent to the agent, which runs it headless.
+        case agent
+        /// Octet does it: opens its own menu, starts a conversation, and so on.
+        case octet
+    }
 
     var id: String { "\(origin.label)|\(insertion)|\(name)" }
     var hasChildren: Bool { !children.isEmpty }
@@ -42,7 +54,9 @@ struct SlashCommand: Identifiable, Equatable {
         summary: String = "",
         origin: Origin = .builtIn,
         argumentHint: String = "",
-        children: [SlashCommand] = []
+        children: [SlashCommand] = [],
+        aliases: [String] = [],
+        handling: Handling = .agent
     ) {
         self.name = name
         self.insertion = insertion ?? "/" + name
@@ -50,6 +64,8 @@ struct SlashCommand: Identifiable, Equatable {
         self.origin = origin
         self.argumentHint = argumentHint
         self.children = children
+        self.aliases = aliases
+        self.handling = handling
     }
 
     /// This command and every descendant, for searching the whole tree.
@@ -58,250 +74,25 @@ struct SlashCommand: Identifiable, Equatable {
     }
 }
 
-/// What the machine actually has, so submenus list real arguments rather
-/// than guesses: configured MCP servers, cached models, agents, and so on.
-struct SlashContext: Equatable {
-    var mcpServers: [String] = []
-    var agents: [(name: String, summary: String)] = []
-    var outputStyles: [String] = []
-    /// Codex ships its model list with the reasoning levels each supports.
-    var models: [(id: String, summary: String, efforts: [String])] = []
-    var directories: [String] = []
-    var sessions: [(id: String, label: String)] = []
-
-    static func == (lhs: SlashContext, rhs: SlashContext) -> Bool {
-        lhs.mcpServers == rhs.mcpServers
-            && lhs.agents.map(\.name) == rhs.agents.map(\.name)
-            && lhs.outputStyles == rhs.outputStyles
-            && lhs.models.map(\.id) == rhs.models.map(\.id)
-            && lhs.directories == rhs.directories
-            && lhs.sessions.map(\.id) == rhs.sessions.map(\.id)
-    }
-
-    /// Reads the agents' own config. File reads only, so it stays cheap
-    /// enough to refresh whenever the menu opens.
-    static func load(agent: String?, cwd: String?, home: String = NSHomeDirectory()) -> SlashContext {
-        var context = SlashContext()
-        let kind = AgentBrand.forAgent(agent)?.id ?? agent ?? ""
-        switch kind {
-        case "codex":
-            context.mcpServers = codexServers(home: home)
-            context.models = codexModels(home: home)
-        case "claude":
-            context.mcpServers = claudeServers(cwd: cwd, home: home)
-            context.models = [
-                ("default", "Let Claude Code choose", []),
-                ("opus", "Claude Opus", []),
-                ("sonnet", "Claude Sonnet", []),
-                ("haiku", "Claude Haiku", []),
-                ("opusplan", "Opus for planning, Sonnet to execute", []),
-            ]
-            context.agents = markdownEntries(in: "\(home)/.claude/agents")
-                + (cwd.map { markdownEntries(in: "\($0)/.claude/agents") } ?? [])
-            context.outputStyles = ["default", "explanatory", "learning"]
-                + markdownEntries(in: "\(home)/.claude/output-styles").map(\.name)
-        default:
-            // Any other agent: its own folders, nothing vendor-specific.
-            if let host = AgentHosts.host(kind, home: home) {
-                context.agents = markdownEntries(in: "\(host.home)/agents")
-            }
-        }
-        return context
-    }
-
-    /// `~/.claude.json` holds user servers; a project adds `.mcp.json`.
-    static func claudeServers(cwd: String?, home: String = NSHomeDirectory()) -> [String] {
-        var names: [String] = []
-        for path in [("\(home)/.claude.json"), cwd.map { "\($0)/.mcp.json" }].compactMap({ $0 }) {
-            guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
-                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let servers = object["mcpServers"] as? [String: Any] else { continue }
-            names += servers.keys
-        }
-        return Array(Set(names)).sorted()
-    }
-
-    /// `[mcp_servers.<name>]` tables in Codex's config.
-    static func codexServers(home: String = NSHomeDirectory()) -> [String] {
-        let text = (try? String(contentsOfFile: "\(home)/.codex/config.toml", encoding: .utf8)) ?? ""
-        return parseCodexServers(text)
-    }
-
-    static func parseCodexServers(_ toml: String) -> [String] {
-        toml.components(separatedBy: "\n").compactMap { line in
-            let text = line.trimmingCharacters(in: .whitespaces)
-            guard text.hasPrefix("[mcp_servers."), text.hasSuffix("]") else { return nil }
-            let name = text.dropFirst("[mcp_servers.".count).dropLast()
-            return name.isEmpty ? nil : String(name).trimmingCharacters(in: CharacterSet(charactersIn: "\""))
-        }
-    }
-
-    static func codexModels(home: String = NSHomeDirectory()) -> [(id: String, summary: String, efforts: [String])] {
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: "\(home)/.codex/models_cache.json")) else { return [] }
-        return parseCodexModels(data)
-    }
-
-    static func parseCodexModels(_ data: Data) -> [(id: String, summary: String, efforts: [String])] {
-        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let models = object["models"] as? [[String: Any]] else { return [] }
-        return models.compactMap { model in
-            guard let slug = model["slug"] as? String else { return nil }
-            let efforts = (model["supported_reasoning_levels"] as? [[String: Any]])?
-                .compactMap { $0["effort"] as? String } ?? []
-            let summary = model["description"] as? String ?? model["display_name"] as? String ?? ""
-            return (slug, summary, efforts)
-        }
-    }
-
-    /// `name` and `description` of every markdown file in a folder.
-    static func markdownEntries(in directory: String) -> [(name: String, summary: String)] {
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: directory)) ?? []
-        return names.filter { $0.hasSuffix(".md") }.sorted().map { file in
-            let text = (try? String(contentsOfFile: "\(directory)/\(file)", encoding: .utf8)) ?? ""
-            let described = AgentLibrary.describe(text)
-            return (described.name ?? String(file.dropLast(3)), described.summary)
-        }
-    }
-}
-
 enum SlashCommands {
-    // MARK: Built-ins
-
-    /// Claude Code's built-ins. `arguments` names the submenu each one opens.
-    static func claudeBuiltIns(_ context: SlashContext) -> [SlashCommand] {
-        [
-            command("add-dir", "Add a working directory", hint: "<path>",
-                    children: context.directories.map { path in
-                        SlashCommand(name: (path as NSString).lastPathComponent, insertion: "/add-dir \(path)",
-                                     summary: path, origin: .argument)
-                    }),
-            command("agents", "Manage agents and subagents",
-                    children: context.agents.map { agent in
-                        SlashCommand(name: agent.name, insertion: "/agents \(agent.name)",
-                                     summary: agent.summary, origin: .argument)
-                    }),
-            command("clear", "Clear the conversation"),
-            command("compact", "Summarize the conversation to free context", hint: "<instructions>"),
-            command("config", "Open settings"),
-            command("context", "Show what is using the context window"),
-            command("cost", "Show token usage and cost"),
-            command("doctor", "Check the installation's health"),
-            command("exit", "Quit Claude Code"),
-            command("export", "Export the conversation", hint: "<file>"),
-            command("help", "List commands"),
-            command("hooks", "Configure hooks"),
-            command("init", "Create a CLAUDE.md for this project"),
-            command("mcp", "Manage MCP servers", children: serverChildren(context, command: "/mcp")),
-            command("memory", "Edit memory files"),
-            command("model", "Change the model", hint: "<model>", children: modelChildren(context, command: "/model")),
-            command("output-style", "Change the output style",
-                    children: context.outputStyles.map { style in
-                        SlashCommand(name: style, insertion: "/output-style \(style)", origin: .argument)
-                    }),
-            command("permissions", "Manage tool permissions"),
-            command("plugin", "Manage plugins"),
-            command("pr-comments", "Read pull request comments"),
-            command("release-notes", "Show what changed"),
-            command("resume", "Resume a past conversation",
-                    children: context.sessions.map { session in
-                        SlashCommand(name: session.label, insertion: "/resume \(session.id)",
-                                     summary: session.id, origin: .argument)
-                    }),
-            command("review", "Review a pull request", hint: "<pr>"),
-            command("rewind", "Rewind the conversation or the code"),
-            command("status", "Show account and system status"),
-            command("statusline", "Set up the status line"),
-            command("todos", "Show the todo list"),
-            command("usage", "Show plan usage limits"),
-            command("vim", "Toggle vim bindings"),
-        ]
-    }
-
-    /// The built-in table for an agent, empty when Octet doesn't ship one.
-    static func builtIns(for agent: String, context: SlashContext) -> [SlashCommand] {
-        switch agent {
-        case "claude": claudeBuiltIns(context)
-        case "codex": codexBuiltIns(context)
-        default: []
-        }
-    }
-
-    static func codexBuiltIns(_ context: SlashContext) -> [SlashCommand] {
-        [
-            command("approvals", "Change what Codex may do without asking",
-                    children: ["untrusted", "on-failure", "on-request", "never"].map { mode in
-                        SlashCommand(name: mode, insertion: "/approvals \(mode)", origin: .argument)
-                    }),
-            command("compact", "Summarize the conversation to free context"),
-            command("diff", "Show the working tree diff"),
-            command("init", "Create an AGENTS.md for this project"),
-            command("mcp", "Manage MCP servers", children: serverChildren(context, command: "/mcp")),
-            command("mention", "Mention a file", hint: "<file>"),
-            command("model", "Change the model and reasoning effort", hint: "<model>",
-                    children: modelChildren(context, command: "/model")),
-            command("new", "Start a new conversation"),
-            command("quit", "Quit Codex"),
-            command("review", "Review the current changes"),
-            command("status", "Show session status"),
-            command("undo", "Undo the last change"),
-        ]
-    }
-
-    private static func command(
-        _ name: String,
-        _ summary: String,
-        hint: String = "",
-        children: [SlashCommand] = []
-    ) -> SlashCommand {
-        SlashCommand(name: name, summary: summary, argumentHint: hint, children: children)
-    }
-
-    private static func serverChildren(_ context: SlashContext, command: String) -> [SlashCommand] {
-        context.mcpServers.map { server in
-            SlashCommand(name: server, insertion: "\(command) \(server)", summary: "MCP server", origin: .argument)
-        }
-    }
-
-    /// Models, each with its reasoning levels as a further submenu.
-    private static func modelChildren(_ context: SlashContext, command: String) -> [SlashCommand] {
-        context.models.map { model in
-            SlashCommand(
-                name: model.id,
-                insertion: "\(command) \(model.id)",
-                summary: model.summary,
-                origin: .argument,
-                children: model.efforts.map { effort in
-                    SlashCommand(name: effort, insertion: "\(command) \(model.id) \(effort)",
-                                 summary: "reasoning effort", origin: .argument)
-                }
-            )
-        }
-    }
-
     // MARK: Tree
 
-    /// Every command for an agent: built-ins, the user's and the project's
-    /// prompt files, and each plugin's commands, grouped into submenus.
+    /// An agent's commands on disk: the user's and the project's prompt
+    /// files, and each plugin's commands, grouped into submenus.
     static func all(
         agent: String?,
         cwd: String?,
-        context: SlashContext = SlashContext(),
         home: String = NSHomeDirectory()
     ) -> [SlashCommand] {
         let kind = AgentBrand.forAgent(agent)?.id ?? agent ?? ""
         guard let host = AgentHosts.host(kind, home: home) else { return [] }
-        // Built-ins are per-agent; an agent Octet has no table for still gets
-        // its own prompt files and plugin commands.
-        var commands = builtIns(for: kind, context: context)
-        var extra = prompts(in: host.promptsDirectory, origin: .user)
+        // The agent's prompt files and plugin commands, read from disk.
+        var commands = prompts(in: host.promptsDirectory, origin: .user)
         if let cwd {
             let directory = kind == "codex" ? "\(cwd)/.codex/prompts" : "\(cwd)/.claude/commands"
-            extra += prompts(in: directory, origin: .project)
+            commands += prompts(in: directory, origin: .project)
         }
-        extra += pluginCommands(host: host)
-        // Later sources shadow a built-in of the same name.
-        let overridden = Set(extra.map(\.name))
-        commands = commands.filter { !overridden.contains($0.name) } + extra
+        commands += pluginCommands(host: host)
         return group(commands).sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
@@ -432,12 +223,16 @@ enum SlashCommands {
         return searchable.compactMap { command -> (SlashCommand, Int)? in
             guard seen.insert(command.id).inserted else { return nil }
             let haystack = command.insertion.hasPrefix("/") ? String(command.insertion.dropFirst()) : command.insertion
-            guard let match = FuzzyMatcher.match(needle, in: haystack) else {
+            // The best of the name and its aliases.
+            let scores = ([haystack] + command.aliases).compactMap { name -> Int? in
+                guard let match = FuzzyMatcher.match(needle, in: name) else { return nil }
+                return match.score + (name.lowercased().hasPrefix(needle.lowercased()) ? 500 : 0)
+            }
+            guard let best = scores.max() else {
                 guard !command.summary.isEmpty, FuzzyMatcher.match(needle, in: command.summary) != nil else { return nil }
                 return (command, -1000)
             }
-            let exact = haystack.lowercased().hasPrefix(needle.lowercased()) ? 500 : 0
-            return (command, match.score + exact)
+            return (command, best)
         }
         .sorted { first, second in
             first.1 == second.1
@@ -445,5 +240,44 @@ enum SlashCommands {
                 : first.1 > second.1
         }
         .map(\.0)
+    }
+}
+
+// MARK: - Octet's chat view
+
+extension SlashCommands {
+    /// Claude Code's commands, as its `initialize` answer lists them. Model,
+    /// effort and a fresh start are Octet's pickers and tabs in its chat view;
+    /// internal ones (`__…`) aren't for people.
+    static func claudePublished(_ list: [[String: Any]]) -> [SlashCommand] {
+        list.compactMap { command in
+            guard let name = command["name"] as? String, !name.hasPrefix("__") else { return nil }
+            return SlashCommand(name: name, summary: command["description"] as? String ?? "",
+                                argumentHint: command["argumentHint"] as? String ?? "",
+                                handling: ["model", "effort", "clear"].contains(name) ? .octet : .agent)
+        }
+    }
+
+    /// Codex's app server carries out these; Octet offers them under the
+    /// names Codex's own menu uses.
+    static let codexOctetCommands: [SlashCommand] = [
+        SlashCommand(name: "compact", summary: "Summarize the conversation to free context", handling: .octet),
+        SlashCommand(name: "model", summary: "Change the model and reasoning effort", handling: .octet),
+        SlashCommand(name: "new", summary: "Start a new conversation", handling: .octet),
+        SlashCommand(name: "permissions", summary: "Change what Codex may do without asking", aliases: ["approvals"], handling: .octet),
+        SlashCommand(name: "quit", summary: "Close this conversation", aliases: ["exit"], handling: .octet),
+        SlashCommand(name: "rename", summary: "Rename the conversation", argumentHint: "<name>", handling: .octet),
+        SlashCommand(name: "review", summary: "Review the current changes, or against a branch", argumentHint: "[branch]", handling: .octet),
+    ]
+
+    /// The command a message starts with, by name or alias, and the rest of
+    /// the line as its arguments.
+    static func invoked(_ text: String, in commands: [SlashCommand]) -> (command: SlashCommand, arguments: String)? {
+        guard text.hasPrefix("/") else { return nil }
+        let line = text.dropFirst()
+        let name = String(line.prefix { !$0.isWhitespace })
+        guard !name.isEmpty,
+              let command = commands.first(where: { $0.name == name || $0.aliases.contains(name) }) else { return nil }
+        return (command, line.dropFirst(name.count).trimmingCharacters(in: .whitespacesAndNewlines))
     }
 }

@@ -671,7 +671,7 @@ final class SlashCommandTests: XCTestCase {
         try? FileManager.default.removeItem(atPath: home)
     }
 
-    func testCommandsCombineBuiltInsUserFilesAndPlugins() throws {
+    func testCommandsCombineUserFilesProjectFilesAndPlugins() throws {
         let project = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
         try FileManager.default.createDirectory(atPath: project + "/.claude/commands", withIntermediateDirectories: true)
         try "---\ndescription: Ship it\n---\n".write(toFile: project + "/.claude/commands/ship.md", atomically: true, encoding: .utf8)
@@ -679,17 +679,13 @@ final class SlashCommandTests: XCTestCase {
 
         let commands = SlashCommands.all(agent: "claude", cwd: project, home: home)
         let byName = Dictionary(uniqueKeysWithValues: commands.map { ($0.name, $0) })
-        XCTAssertEqual(byName["compact"]?.origin, .builtIn)
         XCTAssertEqual(byName["review-diff"]?.origin, .user)
         XCTAssertEqual(byName["review-diff"]?.summary, "Review the diff")
         XCTAssertEqual(byName["review-diff"]?.argumentHint, "<base>")
         XCTAssertEqual(byName["ship"]?.origin, .project)
         XCTAssertEqual(byName["review-diff"]?.insertion, "/review-diff")
-
-        // Codex gets its own built-ins, not Claude's.
-        let codex = SlashCommands.all(agent: "codex", cwd: nil, home: home).map(\.name)
-        XCTAssertTrue(codex.contains("approvals"))
-        XCTAssertFalse(codex.contains("vim"))
+        // Nothing Octet made up: no built-in names without a file behind them.
+        XCTAssertNil(byName["compact"])
     }
 
     func testNamespacedPromptsAndMultiCommandPluginsBecomeSubmenus() {
@@ -706,53 +702,13 @@ final class SlashCommandTests: XCTestCase {
         XCTAssertFalse(commands.contains { $0.name == "format" })
     }
 
-    func testBuiltInsCarryTheMachinesRealArguments() {
-        var context = SlashContext()
-        context.mcpServers = ["pencil", "firecrawl"]
-        context.models = [("gpt-6-astra", "Most capable", ["low", "high"])]
-        context.sessions = [(id: "abc-123", label: "refactor")]
-
-        let codex = SlashCommands.all(agent: "codex", cwd: nil, context: context, home: home)
-        let mcp = codex.first { $0.name == "mcp" }
-        XCTAssertEqual(mcp?.children.map(\.insertion), ["/mcp pencil", "/mcp firecrawl"])
-        // Models nest one level further, into their reasoning levels.
-        let model = codex.first { $0.name == "model" }?.children.first
-        XCTAssertEqual(model?.insertion, "/model gpt-6-astra")
-        XCTAssertEqual(model?.children.map(\.insertion), ["/model gpt-6-astra low", "/model gpt-6-astra high"])
-
-        let claude = SlashCommands.all(agent: "claude", cwd: nil, context: context, home: home)
-        XCTAssertEqual(claude.first { $0.name == "resume" }?.children.first?.insertion, "/resume abc-123")
-    }
-
-    func testConfigParsersReadCodexServersAndModels() {
-        let servers = SlashContext.parseCodexServers("""
-        model = "gpt-6"
-
-        [mcp_servers.pencil]
-        command = "pencil"
-
-        [mcp_servers.firecrawl]
-        url = "https://example.com"
-
-        [features]
-        codex_hooks = true
-        """)
-        XCTAssertEqual(servers, ["pencil", "firecrawl"])
-
-        let models = SlashContext.parseCodexModels(Data("""
-        {"models":[{"slug":"gpt-6-astra","description":"Most capable",
-          "supported_reasoning_levels":[{"effort":"low"},{"effort":"high"}]}]}
-        """.utf8))
-        XCTAssertEqual(models.map(\.id), ["gpt-6-astra"])
-        XCTAssertEqual(models.first?.efforts, ["low", "high"])
-    }
-
     func testMatchingSearchesTheWholeTreeAndPrefersPrefixes() {
         let commands = SlashCommands.all(agent: "claude", cwd: nil, home: home)
-        XCTAssertEqual(SlashCommands.matching("comp", in: commands).first?.name, "compact")
+        XCTAssertEqual(SlashCommands.matching("revi", in: commands).first?.name, "review-diff")
         // A namespaced command is findable from the top level by its own name.
         XCTAssertTrue(SlashCommands.matching("amend", in: commands).contains { $0.insertion == "/git:amend" })
-        XCTAssertTrue(SlashCommands.matching("toggle", in: commands).contains { $0.name == "vim" })
+        // And by what it does.
+        XCTAssertTrue(SlashCommands.matching("onto main", in: commands).contains { $0.name == "rebase" })
         XCTAssertTrue(SlashCommands.matching("zzz", in: commands).isEmpty)
         XCTAssertEqual(SlashCommands.matching("", in: commands).count, commands.count)
     }
@@ -1810,4 +1766,222 @@ final class EngineNavigationTests: XCTestCase {
         XCTAssertEqual(EngineCreated(result: ["move_result": ["pane": ["pane_id": "w3:p1", "workspace_id": "w3", "tab_id": "w3:t1"]]]),
                        EngineCreated(workspaceId: "w3", tabId: "w3:t1", paneId: "w3:p1"))
     }
+}
+
+final class OpenCodeStreamTests: XCTestCase {
+    private let session = "ses_1"
+
+    private func event(_ type: String, _ properties: [String: Any]) -> [String: Any] {
+        ["id": "evt_\(UUID().uuidString)", "type": type, "properties": properties]
+    }
+
+    private func run(_ events: [[String: Any]]) -> (OpenCodeStream, AgentConversation) {
+        var stream = OpenCodeStream(sessionId: session)
+        var conversation = AgentConversation()
+        for event in events { stream.apply(event, to: &conversation) }
+        return (stream, conversation)
+    }
+
+    func testTextStreamsByDeltaAndUserPartsAreSkipped() {
+        let (_, conversation) = run([
+            event("message.updated", ["sessionID": session, "info": ["id": "msg_u", "role": "user"]]),
+            event("message.part.updated", ["sessionID": session, "part": ["id": "prt_u", "messageID": "msg_u", "type": "text", "text": "hi"]]),
+            event("session.status", ["sessionID": session, "status": ["type": "busy"]]),
+            event("message.updated", ["sessionID": session, "info": ["id": "msg_a", "role": "assistant", "providerID": "anthropic", "modelID": "claude-sonnet-4-6",
+                                                                   "cost": 0.01, "tokens": ["input": 100, "output": 5, "reasoning": 0, "cache": ["read": 900, "write": 0]]]]),
+            event("message.part.updated", ["sessionID": session, "part": ["id": "prt_a", "messageID": "msg_a", "type": "text", "text": ""]]),
+            event("message.part.delta", ["sessionID": session, "messageID": "msg_a", "partID": "prt_a", "field": "text", "delta": "Hel"]),
+            event("message.part.delta", ["sessionID": session, "messageID": "msg_a", "partID": "prt_a", "field": "text", "delta": "lo"]),
+        ])
+        XCTAssertEqual(conversation.items.map(\.kind), [.text("Hello")])
+        XCTAssertTrue(conversation.isRunning)
+        XCTAssertEqual(conversation.model, "anthropic/claude-sonnet-4-6")
+        XCTAssertEqual(conversation.contextUsed, 1000)
+        XCTAssertEqual(conversation.costUSD, 0.01)
+    }
+
+    func testReasoningDeltaAheadOfItsText() {
+        let (_, conversation) = run([
+            event("message.updated", ["sessionID": session, "info": ["id": "msg_a", "role": "assistant"]]),
+            event("message.part.updated", ["sessionID": session, "part": ["id": "prt_r", "messageID": "msg_a", "type": "reasoning", "text": "", "time": ["start": 1]]]),
+            event("message.part.delta", ["sessionID": session, "messageID": "msg_a", "partID": "prt_r", "field": "text", "delta": "Think"]),
+        ])
+        XCTAssertEqual(conversation.items.map(\.kind), [.thinking("Think")])
+    }
+
+    func testEditToolReadsAsClaudesEditWithItsKeys() throws {
+        let running: [String: Any] = ["id": "prt_t", "messageID": "msg_a", "type": "tool", "callID": "call_1", "tool": "edit",
+                                      "state": ["status": "running", "input": ["filePath": "/tmp/a.swift", "oldString": "a", "newString": "b"], "time": ["start": 1]]]
+        var done = running
+        done["state"] = ["status": "completed", "input": ["filePath": "/tmp/a.swift", "oldString": "a", "newString": "b"],
+                         "output": "Edit applied", "title": "a.swift", "metadata": [:], "time": ["start": 1, "end": 2]]
+        let (_, conversation) = run([
+            event("message.updated", ["sessionID": session, "info": ["id": "msg_a", "role": "assistant"]]),
+            event("message.part.updated", ["sessionID": session, "part": running]),
+            event("message.part.updated", ["sessionID": session, "part": done]),
+        ])
+        XCTAssertEqual(conversation.items.count, 1)
+        guard case .tool(let call) = conversation.items[0].kind else { return XCTFail("not a tool") }
+        XCTAssertEqual(conversation.items[0].id, "call_1")
+        XCTAssertEqual(call.name, "Edit")
+        XCTAssertEqual(call.result, "Edit applied")
+        XCTAssertEqual(call.summary, "a.swift")
+        let input = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(call.inputData)) as? [String: Any])
+        XCTAssertEqual(input["file_path"] as? String, "/tmp/a.swift")
+        XCTAssertEqual(input["old_string"] as? String, "a")
+        XCTAssertEqual(input["new_string"] as? String, "b")
+    }
+
+    func testFailedToolIsAnError() {
+        let (_, conversation) = run([
+            event("message.part.updated", ["sessionID": session, "part": ["id": "prt_t", "messageID": "msg_a", "type": "tool", "callID": "c", "tool": "bash",
+                                                                         "state": ["status": "error", "input": ["command": "false"], "error": "exit 1", "time": ["start": 1, "end": 2]]]]),
+        ])
+        guard case .tool(let call) = conversation.items.first?.kind else { return XCTFail("not a tool") }
+        XCTAssertEqual(call.name, "Bash")
+        XCTAssertTrue(call.isError)
+        XCTAssertEqual(call.summary, "false")
+    }
+
+    func testSubagentPartsNestUnderTheirTask() {
+        let task: [String: Any] = ["id": "prt_task", "messageID": "msg_a", "type": "tool", "callID": "call_task", "tool": "task",
+                                   "state": ["status": "running", "input": ["description": "Look around", "prompt": "…", "subagent_type": "explore"], "time": ["start": 1]]]
+        let (stream, conversation) = run([
+            event("message.updated", ["sessionID": session, "info": ["id": "msg_a", "role": "assistant"]]),
+            event("message.part.updated", ["sessionID": session, "part": task]),
+            event("session.created", ["sessionID": "ses_child", "info": ["id": "ses_child", "parentID": session]]),
+            event("message.updated", ["sessionID": "ses_child", "info": ["id": "msg_c", "role": "assistant"]]),
+            event("message.part.updated", ["sessionID": "ses_child", "part": ["id": "prt_c", "messageID": "msg_c", "type": "text", "text": "found it"]]),
+            event("session.status", ["sessionID": "ses_child", "status": ["type": "idle"]]),
+        ])
+        XCTAssertTrue(stream.owns("ses_child"))
+        XCTAssertEqual(conversation.items.last?.parent, "call_task")
+        XCTAssertEqual(conversation.items.last?.kind, .text("found it"))
+        // A child going idle doesn't end the conversation's turn.
+        XCTAssertFalse(stream.owns("ses_other"))
+    }
+
+    func testOtherSessionsAreIgnored() {
+        let (_, conversation) = run([
+            event("message.part.updated", ["sessionID": "ses_other", "part": ["id": "p", "messageID": "m", "type": "text", "text": "not mine"]]),
+        ])
+        XCTAssertTrue(conversation.items.isEmpty)
+    }
+
+    func testUpgradeRequiredErrorSaysWhatToDo() {
+        // As OpenCode 1.17 reported it for a free Zen model.
+        let error: [String: Any] = ["name": "APIError", "data": ["message": "Error from provider (Console): OpenCode 1.18.0 or newer is required to use the free tier",
+                                                                 "statusCode": 426, "isRetryable": false]]
+        let (_, conversation) = run([
+            event("session.status", ["sessionID": session, "status": ["type": "busy"]]),
+            event("session.error", ["sessionID": session, "error": error]),
+            event("session.idle", ["sessionID": session]),
+        ])
+        XCTAssertFalse(conversation.isRunning)
+        XCTAssertTrue(conversation.lastError?.contains("opencode upgrade") == true)
+    }
+
+    func testAbortIsStoppedNotAnError() {
+        let (_, conversation) = run([
+            event("session.error", ["sessionID": session, "error": ["name": "MessageAbortedError", "data": ["message": "aborted"]]]),
+        ])
+        XCTAssertNil(conversation.lastError)
+        XCTAssertEqual(conversation.items.map(\.kind), [.notice("Stopped")])
+    }
+
+    func testRetryIsAnnouncedOncePerAttempt() {
+        let retry: [String: Any] = ["type": "retry", "attempt": 2, "message": "Overloaded", "next": 0]
+        let (_, conversation) = run([
+            event("session.status", ["sessionID": session, "status": retry]),
+            event("session.status", ["sessionID": session, "status": retry]),
+        ])
+        XCTAssertEqual(conversation.items.count, 1)
+        XCTAssertTrue(conversation.isRunning)
+    }
+
+    func testPermissionReadsAsClaudesBashRequest() {
+        let request: [String: Any] = ["id": "per_1", "sessionID": session, "permission": "bash", "patterns": ["rm -rf build"],
+                                      "metadata": [:], "always": ["rm *"], "tool": ["messageID": "msg_a", "callID": "call_9"]]
+        let prompt = OpenCodePermission.prompt(request, toolInput: ["command": "rm -rf build", "description": "Clean"])
+        XCTAssertEqual(prompt["tool_name"] as? String, "Bash")
+        XCTAssertEqual(prompt["tool_use_id"] as? String, "call_9")
+        XCTAssertEqual((prompt["input"] as? [String: Any])?["command"] as? String, "rm -rf build")
+        XCTAssertEqual(OpenCodePermission.reply(allow: true, forSession: true), "always")
+        XCTAssertEqual(OpenCodePermission.reply(allow: true, forSession: false), "once")
+        XCTAssertEqual(OpenCodePermission.reply(allow: false, forSession: false), "reject")
+    }
+}
+
+final class OpenCodeCatalogTests: XCTestCase {
+    func testVariantsOrderWeakestToStrongest() {
+        XCTAssertEqual(OpenCodeCatalog.orderedVariants(["max", "high", "low", "medium"]), ["low", "medium", "high", "max"])
+        XCTAssertEqual(OpenCodeCatalog.orderedVariants(["xhigh", "none", "minimal", "high"]), ["none", "minimal", "high", "xhigh"])
+        XCTAssertEqual(OpenCodeCatalog.orderedVariants(["thinking", "none"]), ["none", "thinking"])
+        XCTAssertEqual(OpenCodeCatalog.orderedVariants(["turbo", "low"]), ["low", "turbo"])
+    }
+
+    func testProvidersModelsAndAgents() {
+        let providers: [String: Any] = [
+            "default": ["opencode": "big-pickle", "anthropic": "claude-sonnet-4-6"],
+            "providers": [
+                ["id": "anthropic", "name": "Anthropic", "models": [
+                    "claude-sonnet-4-6": ["id": "claude-sonnet-4-6", "name": "Claude Sonnet 4.6", "status": "active",
+                                          "capabilities": ["reasoning": true, "attachment": true, "input": ["image": true]],
+                                          "limit": ["context": 1_000_000, "output": 64000], "cost": ["input": 3, "output": 15],
+                                          "variants": ["max": ["effort": "max"], "low": ["effort": "low"], "high": ["effort": "high"],
+                                                       "xhigh": ["disabled": true]]],
+                    "claude-2": ["id": "claude-2", "name": "Claude 2", "status": "deprecated"],
+                ]],
+                ["id": "opencode", "name": "OpenCode Zen", "models": [
+                    "big-pickle": ["id": "big-pickle", "name": "Big Pickle", "cost": ["input": 0, "output": 0], "variants": [:]],
+                ]],
+            ],
+        ]
+        let agents: [[String: Any]] = [
+            ["name": "plan", "mode": "primary", "description": "Plan mode"],
+            ["name": "explore", "mode": "subagent"],
+            ["name": "title", "mode": "primary", "hidden": true],
+            ["name": "build", "mode": "primary", "description": "Default"],
+            ["name": "review", "mode": "all", "model": ["providerID": "anthropic", "modelID": "claude-sonnet-4-6"]],
+        ]
+        let catalog = OpenCodeCatalog(providers: providers, agents: agents)
+        XCTAssertEqual(catalog.providers.map(\.id), ["opencode", "anthropic"])
+        XCTAssertEqual(catalog.models.map(\.id), ["opencode/big-pickle", "anthropic/claude-sonnet-4-6"])
+        let sonnet = catalog.model("anthropic/claude-sonnet-4-6")
+        XCTAssertEqual(sonnet?.variants, ["low", "high", "max"])
+        XCTAssertEqual(sonnet?.context, 1_000_000)
+        XCTAssertTrue(sonnet?.images == true)
+        XCTAssertTrue(catalog.model("opencode/big-pickle")?.isFree == true)
+        XCTAssertEqual(catalog.defaultModel(configured: nil)?.id, "opencode/big-pickle")
+        XCTAssertEqual(catalog.defaultModel(configured: "anthropic/claude-sonnet-4-6")?.id, "anthropic/claude-sonnet-4-6")
+        XCTAssertEqual(catalog.agents.map(\.name), ["build", "plan", "review"])
+        XCTAssertEqual(catalog.agents.last?.model, "anthropic/claude-sonnet-4-6")
+    }
+}
+
+
+final class PublishedCommandTests: XCTestCase {
+    func testClaudesInitializeListBecomesTheMenu() {
+        // As Claude Code's `initialize` answer lists them.
+        let commands = SlashCommands.claudePublished([
+            ["name": "compact", "description": "Free up context by summarizing the conversation so far",
+             "argumentHint": "<optional custom summarization instructions>"],
+            ["name": "model", "description": "Set the AI model for Claude Code", "argumentHint": "<model>"],
+            ["name": "figma:figma-use", "description": "(figma) Use Figma"],
+            ["name": "__remote-workflow", "description": "internal"],
+        ])
+        XCTAssertEqual(commands.map(\.name), ["compact", "model", "figma:figma-use"])
+        XCTAssertEqual(commands.first?.argumentHint, "<optional custom summarization instructions>")
+        XCTAssertEqual(commands.first { $0.name == "compact" }?.handling, .agent)
+        XCTAssertEqual(commands.first { $0.name == "model" }?.handling, .octet)
+    }
+
+    func testAliasesInvokeAndMatch() {
+        let commands = SlashCommands.codexOctetCommands
+        XCTAssertEqual(SlashCommands.invoked("/approvals", in: commands)?.command.name, "permissions")
+        XCTAssertEqual(SlashCommands.invoked("/rename Better name", in: commands)?.arguments, "Better name")
+        XCTAssertNil(SlashCommands.invoked("/nothing", in: commands))
+        XCTAssertEqual(SlashCommands.matching("approv", in: commands).first?.name, "permissions")
+    }
+
 }

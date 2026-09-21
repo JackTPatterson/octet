@@ -15,8 +15,17 @@ struct ConversationView: View {
             ConversationHeader(session: session, client: client)
             Rectangle().fill(Theme.divider).frame(height: 1)
             Transcript(session: session)
-            if session.conversation.isRunning && session.pendingPermission == nil {
+            if session.conversation.isRunning && session.pendingPermission == nil && session.pendingQuestion == nil {
                 StatusLine(session: session)
+            }
+            if let question = session.pendingQuestion, session.pendingPermission == nil {
+                QuestionCard(session: session, question: question)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
+                    .id(question.id)
+                    .transition(motion.animates(.approvals)
+                        ? .asymmetric(insertion: .opacity.combined(with: .offset(y: 14)), removal: .opacity)
+                        : .identity)
             }
             if let request = session.pendingPermission {
                 PermissionCard(session: session)
@@ -32,6 +41,7 @@ struct ConversationView: View {
             Composer(session: session, dropdowns: dropdowns)
         }
         .animation(motion.animation(.approvals, .smooth(duration: 0.26)), value: session.pendingPermission?.id)
+        .animation(motion.animation(.approvals, .smooth(duration: 0.26)), value: session.pendingQuestion?.id)
         .background(Theme.terminalBackground)
         .octetDropdownHost(dropdowns)
         .environment(\.openImage) { enlarged = $0 }
@@ -227,14 +237,24 @@ extension Transcript {
 private struct EmptyConversation: View {
     @ObservedObject var session: AgentSession
 
+    static func intro(_ session: AgentSession) -> String {
+        let folder = abbreviateHome(session.cwd)
+        switch session.engine {
+        case .claude:
+            return "Claude Code works in \(folder) with your usual settings, hooks and MCP servers. Tool calls that need permission ask you here."
+        case .codex:
+            return "Codex works in \(folder) with your usual config, and asks for what it needs inside its own sandbox."
+        case .opencode:
+            return "OpenCode works in \(folder) with your usual config, providers and agents. Pick any model you're signed in to; what needs permission asks you here."
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("New conversation")
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
-            Text(session.engine == .codex
-                 ? "Codex works in \(abbreviateHome(session.cwd)) with your usual config, and asks for what it needs inside its own sandbox."
-                 : "Claude Code works in \(abbreviateHome(session.cwd)) with your usual settings, hooks and MCP servers. Tool calls that need permission ask you here.")
+            Text(Self.intro(session))
                 .font(Theme.uiFont)
                 .foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -404,6 +424,108 @@ private struct Disclosure<Trailing: View, Content: View>: View {
 
 // MARK: - Permission
 
+/// Questions OpenCode's agent is waiting on: pick an option (or several),
+/// or type an answer of your own where it takes one. Skipping tells the agent
+/// no answer is coming, which ends its turn.
+private struct QuestionCard: View {
+    @ObservedObject var session: AgentSession
+    let question: OpenCodeQuestion
+    @State private var picked: [Int: Set<String>] = [:]
+    @State private var typed: [Int: String] = [:]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(Array(question.items.enumerated()), id: \.offset) { index, item in
+                VStack(alignment: .leading, spacing: 6) {
+                    if !item.header.isEmpty {
+                        Text(item.header.uppercased())
+                            .font(Theme.headerFont)
+                            .kerning(0.4)
+                            .foregroundStyle(Theme.textTertiary)
+                    }
+                    Text(item.question)
+                        .font(Theme.uiFontMedium)
+                        .foregroundStyle(Theme.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    ForEach(item.options, id: \.label) { option in
+                        optionRow(option, item: item, index: index)
+                    }
+                    if item.custom {
+                        OctetTextField(placeholder: item.options.isEmpty ? "Your answer" : "Or type your own answer",
+                                      text: Binding(get: { typed[index] ?? "" }, set: { typed[index] = $0 })) {
+                            if ready { answer() }
+                        }
+                    }
+                }
+            }
+            HStack(spacing: 8) {
+                Spacer()
+                OctetButton(title: "Skip", kind: .secondary) { session.rejectQuestion(question) }
+                    .keyboardShortcut(.cancelAction)
+                    .help("Tell the agent you won't answer; its turn ends")
+                OctetButton(title: "Answer", kind: .primary) { answer() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!ready)
+            }
+        }
+        .padding(12)
+        .background(Theme.card)
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.accent.opacity(0.6), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func optionRow(_ option: OpenCodeQuestion.Item.Option, item: OpenCodeQuestion.Item, index: Int) -> some View {
+        let selected = picked[index]?.contains(option.label) == true
+        return Button {
+            var set = picked[index] ?? []
+            if item.multiple {
+                if selected { set.remove(option.label) } else { set.insert(option.label) }
+            } else {
+                set = selected ? [] : [option.label]
+            }
+            picked[index] = set
+        } label: {
+            HStack(alignment: .top, spacing: 8) {
+                RoundedRectangle(cornerRadius: item.multiple ? 3 : 7)
+                    .strokeBorder(selected ? Theme.accent : Theme.border, lineWidth: 1.5)
+                    .background(RoundedRectangle(cornerRadius: item.multiple ? 3 : 7).fill(selected ? Theme.accent.opacity(0.35) : .clear))
+                    .frame(width: 14, height: 14)
+                    .padding(.top, 2)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(option.label).font(Theme.uiFont).foregroundStyle(Theme.textPrimary)
+                    if !option.description.isEmpty {
+                        Text(option.description).font(Theme.uiFont).foregroundStyle(Theme.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 5)
+            .padding(.horizontal, 8)
+            .background(RoundedRectangle(cornerRadius: 6).fill(selected ? Theme.hover : Color.clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    /// One answer per question: the options picked, or what was typed.
+    private var answers: [[String]] {
+        question.items.indices.map { index in
+            let text = (typed[index] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let chosen = question.items[index].options.map(\.label).filter { picked[index]?.contains($0) == true }
+            return text.isEmpty ? chosen : chosen + [text]
+        }
+    }
+
+    private var ready: Bool { answers.allSatisfy { !$0.isEmpty } }
+
+    private func answer() {
+        guard ready else { return }
+        session.answerQuestion(question, answers: answers)
+    }
+}
+
 private struct PermissionCard: View {
     @ObservedObject var session: AgentSession
     @State private var note = ""
@@ -440,8 +562,10 @@ private struct PermissionCard: View {
                 HStack(spacing: 8) {
                     // Claude Code carries a note back with a refusal; Codex's
                     // answer is only a decision, so a note there would vanish.
-                    if session.engine == .claude {
-                        OctetTextField(placeholder: "Note for Claude when denying (optional)", text: $note) {
+                    if session.engine != .codex {
+                        OctetTextField(placeholder: session.engine == .opencode
+                                        ? "Note for OpenCode when denying (optional; without one the turn stops)"
+                                        : "Note for Claude when denying (optional)", text: $note) {
                             session.answerPermission(allow: false, note: note)
                             note = ""
                         }
@@ -481,11 +605,16 @@ private struct PermissionCard: View {
 private struct Composer: View {
     @ObservedObject var session: AgentSession
     @ObservedObject var dropdowns: OctetDropdownState
+    @EnvironmentObject private var window: WindowContext
     @State private var text = ""
     @FocusState private var focused: Bool
     @State private var highlighted = 0
     @State private var dismissedFor: String?
     @State private var attachments: [AgentSession.Attachment] = []
+    @ObservedObject private var motion = MotionPreferences.shared
+    /// The commands on show, changed inside an animation so the list, the
+    /// composer card around it and the transcript above all move together.
+    @State private var shownSuggestions: [SlashCommand] = []
 
     private func attach(_ images: [NSImage]) {
         attachments += images.compactMap(AgentSession.Attachment.init(image:))
@@ -505,17 +634,69 @@ private struct Composer: View {
         return Array(SlashCommands.matching(String(text.dropFirst()), in: session.slashCommands).prefix(8))
     }
 
+    private func refreshSuggestions() {
+        let next = suggestions
+        guard next.map(\.id) != shownSuggestions.map(\.id) else { return }
+        motion.perform(.palette, .smooth(duration: 0.22)) { shownSuggestions = next }
+    }
+
     private func accept(_ command: SlashCommand) {
-        text = command.insertion + " "
         highlighted = 0
+        // Picking one of Octet's or the terminal's commands runs it, as the
+        // agent's own menu does; one that takes arguments waits for them.
+        if command.handling != .agent, command.argumentHint.isEmpty, command.children.isEmpty {
+            text = ""
+            return run(command, arguments: "")
+        }
+        text = command.insertion + " "
+    }
+
+    /// A command Octet carries out itself: Claude's model, effort and fresh
+    /// start, and Codex's actions and prompt files.
+    private func run(_ command: SlashCommand, arguments: String) {
+        // A Codex prompt file, expanded here as Codex's own interface does.
+        if session.engine == .codex, command.origin == .user || command.origin == .project {
+            if let prompt = session.codexPrompt(command, arguments: arguments) { session.send(prompt) }
+            return
+        }
+        switch command.name {
+        case "model":
+            if !arguments.isEmpty, let match = modelMatching(arguments) { session.model = match } else { dropdowns.openId = "model" }
+        case "effort": dropdowns.openId = "effort"
+        case "permissions": dropdowns.openId = "mode"
+        case "new", "clear": window.newConversation(engine: session.engine)
+        case "quit": AgentCenter.shared.close(session)
+        case "rename" where arguments.isEmpty: text = "/rename "
+        case "compact", "review", "rename": session.codexCommand(command.name, arguments: arguments)
+        default:
+            session.send("/" + command.name + (arguments.isEmpty ? "" : " " + arguments))
+        }
+    }
+
+    /// A model named in `/model <name>`: its id, or one of Claude's families.
+    private func modelMatching(_ name: String) -> String? {
+        let needle = name.lowercased()
+        switch session.engine {
+        case .claude:
+            return AgentSession.models.first { $0.id.lowercased() == needle || $0.family.lowercased() == needle }?.id
+        case .codex:
+            return CodexCatalogStore.shared.models.first { $0.id.lowercased() == needle }?.id
+        case .opencode:
+            return nil
+        }
     }
 
     var body: some View {
         let running = session.conversation.isRunning
-        let matches = suggestions
+        let matches = shownSuggestions
         VStack(spacing: 8) {
             if !matches.isEmpty {
                 SlashSuggestions(commands: matches, highlighted: min(highlighted, matches.count - 1)) { accept($0) }
+                    // Grows up out of the message field, and folds back into it.
+                    .transition(motion.animates(.palette)
+                        ? .asymmetric(insertion: .opacity.combined(with: .offset(y: 8)),
+                                      removal: .opacity.combined(with: .offset(y: 4)))
+                        : .identity)
             }
             if !attachments.isEmpty {
                 AttachmentStrip(images: attachments.map(\.data)) { index in attachments.remove(at: index) }
@@ -536,6 +717,16 @@ private struct Composer: View {
                     .focused($focused)
                     .frame(minHeight: 22, maxHeight: 160)
                     .fixedSize(horizontal: false, vertical: true)
+                    .onKeyPress(.tab) {
+                        // Tab cycles OpenCode's agents, as in its own interface.
+                        guard session.engine == .opencode, suggestions.isEmpty else { return .ignored }
+                        let agents = OpenCodeCatalogStore.shared.catalog(for: session.cwd).agents
+                        guard agents.count > 1 else { return .ignored }
+                        let current = agents.firstIndex { $0.name == (session.agentName ?? agents[0].name) } ?? 0
+                        let next = agents[(current + 1) % agents.count]
+                        session.agentName = next.name == agents[0].name ? nil : next.name
+                        return .handled
+                    }
                     .onKeyPress(.return, phases: .down) { press in
                         // Return sends (or takes the highlighted command); Shift-Return adds a line.
                         guard !press.modifiers.contains(.shift) else { return .ignored }
@@ -582,9 +773,13 @@ private struct Composer: View {
                     .onKeyPress(.escape) {
                         guard !suggestions.isEmpty else { return .ignored }
                         dismissedFor = text
+                        refreshSuggestions()
                         return .handled
                     }
-                    .onChange(of: text) { _, _ in highlighted = 0 }
+                    .onChange(of: text) { _, _ in
+                        highlighted = 0
+                        refreshSuggestions()
+                    }
                     .accessibilityLabel("Message \(session.engine.displayName)")
             }
             HStack(spacing: 6) {
@@ -630,8 +825,10 @@ private struct Composer: View {
                 .accessibilityLabel("Permission mode")
                 .accessibilityValue(session.permissionMode.title)
                 .help("How Claude asks before using tools. Changes apply from the next message.")
-                } else {
+                } else if session.engine == .codex {
                     CodexControls(session: session, dropdowns: dropdowns)
+                } else {
+                    OpenCodeControls(session: session, dropdowns: dropdowns)
                 }
                 OctetButton(title: "", icon: "paperclip", kind: .ghost, compact: true) { pickImages() }
                     .help("Attach images (or paste or drop them here)")
@@ -693,6 +890,13 @@ private struct Composer: View {
     private func submit() {
         let message = text
         guard !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty else { return }
+        if attachments.isEmpty,
+           let (command, arguments) = SlashCommands.invoked(message.trimmingCharacters(in: .whitespacesAndNewlines),
+                                                             in: session.slashCommands),
+           command.handling != .agent {
+            text = ""
+            return run(command, arguments: arguments)
+        }
         text = ""
         let images = attachments
         attachments = []
@@ -705,6 +909,8 @@ private struct SlashSuggestions: View {
     let commands: [SlashCommand]
     let highlighted: Int
     let choose: (SlashCommand) -> Void
+    @ObservedObject private var motion = MotionPreferences.shared
+    @Namespace private var selection
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
@@ -728,16 +934,25 @@ private struct SlashSuggestions: View {
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 5)
-                .background(index == highlighted ? Theme.cardSelected : Color.clear)
-                .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
+                .background {
+                    // One highlight that slides between rows as you arrow.
+                    if index == highlighted {
+                        RoundedRectangle(cornerRadius: Theme.rowRadius)
+                            .fill(Theme.cardSelected)
+                            .matchedGeometryEffect(id: "highlight", in: selection)
+                    }
+                }
                 .contentShape(Rectangle())
+                .transition(motion.animates(.palette) ? .opacity.combined(with: .offset(y: 6)) : .identity)
                 .onTapGesture { choose(command) }
                 .accessibilityElement(children: .combine)
                 .accessibilityAddTraits(index == highlighted ? [.isButton, .isSelected] : .isButton)
             }
         }
+        .animation(motion.animation(.palette, .smooth(duration: 0.14)), value: highlighted)
         .padding(.bottom, 4)
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.divider).frame(height: 1) }
+        .clipped()
     }
 }
 
@@ -962,6 +1177,112 @@ private struct CodexControls: View {
             .accessibilityLabel("Sandbox")
             .accessibilityValue(SandboxStyle.label(session.permissionProfile, profiles: catalog.profiles))
         }
+    }
+}
+
+/// OpenCode's pickers: the agent a message goes to (Build, Plan, or the
+/// person's own), any model of any provider it's signed in to, that model's
+/// own reasoning variants, and what it may do without asking. All but
+/// permissions travel with each message, so a change applies from the next.
+private struct OpenCodeControls: View {
+    @ObservedObject var session: AgentSession
+    @ObservedObject var dropdowns: OctetDropdownState
+    @ObservedObject private var store = OpenCodeCatalogStore.shared
+    @EnvironmentObject private var window: WindowContext
+    @State private var browsing = false
+    private static let viewAll = "octet.view-all"
+
+    var body: some View {
+        let catalog = store.catalog(for: session.cwd)
+        let model = catalog.model(session.model)
+        if catalog.agents.count > 1 {
+            OctetDropdown(spec: OctetDropdownSpec(
+                id: "agent",
+                options: catalog.agents.map {
+                    OctetDropdownOption(id: $0.name, title: $0.name.capitalized,
+                                       detail: $0.description.isEmpty ? nil : String($0.description.prefix(80)))
+                },
+                selected: session.agentName ?? catalog.agents.first?.name ?? "build",
+                select: { choice in
+                    session.agentName = choice == catalog.agents.first?.name ? nil : choice
+                    // An agent with a model of its own brings it along.
+                    if let agent = catalog.agents.first(where: { $0.name == choice }),
+                       let own = agent.model, catalog.model(own) != nil {
+                        session.model = own
+                        session.effort = agent.variant
+                    }
+                }
+            ), label: "Agent", state: dropdowns)
+            .help("Who handles the message: Build works, Plan only reads and plans. Tab cycles them.")
+        }
+
+        OctetDropdown(spec: OctetDropdownSpec(
+            id: "model",
+            options: catalog.models.map {
+                OctetDropdownOption(id: $0.id, title: $0.name, detail: $0.detail.isEmpty ? nil : $0.detail,
+                                   section: $0.providerName)
+            } + [OctetDropdownOption(id: Self.viewAll, title: "View all models…",
+                                    detail: "Every provider OpenCode supports", section: "More")],
+            selected: model?.id ?? session.model,
+            select: { choice in
+                guard choice != Self.viewAll else { browsing = true; return }
+                session.model = choice
+                // Variants are per model; keep the choice only where it exists.
+                if let effort = session.effort, catalog.model(choice)?.variants.contains(effort) != true { session.effort = nil }
+                session.conversation.contextWindow = catalog.model(choice)?.context
+            }
+        ), label: "Model", state: dropdowns)
+        .sheet(isPresented: $browsing, onDismiss: {
+            // A provider signed in to meanwhile joins the menu.
+            store.load(cwd: session.cwd, refresh: true)
+        }) {
+            OpenCodeModelBrowser(session: session) { browsing = false }
+                .environmentObject(window)
+        }
+
+        if let model, !model.variants.isEmpty {
+            let spec = OctetDropdownSpec(
+                id: "effort", options: [], selected: session.effort ?? "", select: { _ in },
+                panel: { close in
+                    AnyView(EffortSliderPanel(initial: session.effort, implicit: nil,
+                                              levels: model.variants, detail: OpenCodeCatalog.variantDetail,
+                                              apply: { session.effort = $0 }, close: close))
+                }
+            )
+            OctetDropdownAnchor(spec: spec, state: dropdowns) { open in
+                EffortChip(level: session.effort, implicit: nil, open: open)
+            }
+            .help("How hard \(model.name) reasons: the variants this model offers. Applies from the next message.")
+            .accessibilityLabel("Reasoning variant")
+            .accessibilityValue(session.effort ?? "default")
+        }
+
+        OctetDropdown(spec: OctetDropdownSpec(
+            id: "mode",
+            options: [
+                OctetDropdownOption(id: "config", title: "From your config",
+                                   detail: "OpenCode's own rules: most tools run, outside folders ask"),
+                OctetDropdownOption(id: "ask", title: "Ask first",
+                                   detail: "Asks before edits, commands, fetches and subagents"),
+                OctetDropdownOption(id: "allow", title: "Allow everything",
+                                   detail: "Never asks, like opencode --auto. Use with care", dangerous: true),
+            ],
+            selected: session.permissionProfile ?? "config",
+            select: { choice in
+                let preset = choice == "config" ? nil : choice
+                guard preset == "allow", session.permissionProfile != "allow" else {
+                    session.permissionProfile = preset
+                    return
+                }
+                ConfirmCenter.shared.ask(
+                    title: "Let OpenCode do anything?",
+                    message: "OpenCode will edit files, run commands and work outside this folder without asking, for the rest of this conversation.",
+                    confirmTitle: "Allow Everything",
+                    destructive: true
+                ) { _ in session.permissionProfile = "allow" }
+            }
+        ), label: "Permissions", state: dropdowns)
+        .help("What OpenCode may do without asking. Applies at once.")
     }
 }
 

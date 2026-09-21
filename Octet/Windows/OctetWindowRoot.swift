@@ -6,22 +6,20 @@ struct OctetWindowRoot: View {
     let spec: OctetWindowSpec
     @ObservedObject var store: SessionStore
     let session: EngineSession?
-    @ObservedObject var slash: SlashController
     @ObservedObject var prompt: PromptEditor
     @StateObject private var context: WindowContext
     @Environment(\.openWindow) private var openWindow
 
-    init(spec: OctetWindowSpec, store: SessionStore, session: EngineSession?, slash: SlashController, prompt: PromptEditor) {
+    init(spec: OctetWindowSpec, store: SessionStore, session: EngineSession?, prompt: PromptEditor) {
         self.spec = spec
         self.store = store
         self.session = session
-        self.slash = slash
         self.prompt = prompt
         _context = StateObject(wrappedValue: WindowContext(spec: spec, store: store))
     }
 
     var body: some View {
-        RootView(store: store, ui: context.ui, session: session, slash: slash, prompt: prompt)
+        RootView(store: store, ui: context.ui, session: session, prompt: prompt)
             .environmentObject(context)
             .background(WindowAccessor(context: context, origin: spec.origin, frame: spec.frame))
             .onAppear {

@@ -5,7 +5,6 @@ struct RootView: View {
     @ObservedObject var store: SessionStore
     @ObservedObject var ui: UIState
     let session: EngineSession?
-    @ObservedObject var slash: SlashController
     @ObservedObject var prompt: PromptEditor
     @StateObject private var palette = PaletteModel()
     @ObservedObject private var motion = MotionPreferences.shared
@@ -118,19 +117,7 @@ struct RootView: View {
             ToastCenter.shared.fail(nil, "Terminal request failed", detail: error)
             store.lastError = nil
         }
-        .overlay(alignment: .center) {
-            if slash.isOpen {
-                SlashPaletteView(slash: slash)
-                    .padding(.bottom, 40)
-                    .transition(motion.animates(.palette)
-                        ? .opacity.combined(with: .scale(scale: 0.98, anchor: .bottom))
-                        : .identity)
-            }
-        }
-        .animation(motion.animation(.palette, .smooth(duration: 0.14)), value: slash.isOpen)
-        .onChange(of: slash.isOpen) { _, open in DebugSnapshot.overlayVisible = open }
         .onChange(of: confirmations.request?.id) { _, id in DebugSnapshot.overlayVisible = id != nil }
-        .onChange(of: window.focusedPaneId) { _, _ in slash.resetTyping() }
         .overlay(alignment: .topLeading) { promptOverlay }
         .overlay(alignment: .topLeading) { chromeCover }
         .overlay {
@@ -152,7 +139,6 @@ struct RootView: View {
     /// the DEBUG verification hooks that open things without a click.
     private func appeared() {
             MarketplaceWindow.opener = { openWindow(id: MarketplaceWindow.id) }
-            slash.warmContexts()
             ClipboardWatcher.shared.start()
             #if DEBUG
             // Verification hook: "conversation" opens a native conversation;
@@ -165,14 +151,29 @@ struct RootView: View {
                     ConversationDebug.scrollToItem = parts.count > 2 ? Int(parts[2]) : nil
                 }
             }
-            // Verification hook: "codex" opens a native Codex conversation;
-            // "codex:<text>" also sends that first message.
-            if let window = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], window.hasPrefix("codex") {
+            // Verification hook: "codex" (or "opencode") opens a native
+            // conversation; "codex:<text>" also sends that first message.
+            if let window = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"],
+               window.hasPrefix("codex") || window.hasPrefix("opencode") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                    self.window.newConversation(engine: .codex)
+                    self.window.newConversation(engine: window.hasPrefix("opencode") ? .opencode : .codex)
                     let text = window.split(separator: ":", maxSplits: 1).dropFirst().first.map(String.init)
                     guard let text, let session = AgentCenter.shared.sessions.last else { return }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2) { session.send(text) }
+                    // Verification hook: an OpenCode question, as the server sends one.
+                    guard ProcessInfo.processInfo.environment["OCTET_OPENCODE_QUESTION"] != nil else { return }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+                        session.openCodeEvent(["type": "question.asked", "properties": [
+                            "id": "que_debug", "sessionID": session.threadId ?? "",
+                            "questions": [
+                                ["header": "Database", "question": "Which database should the new service use?",
+                                 "options": [["label": "Postgres", "description": "Matches the other services"],
+                                             ["label": "SQLite", "description": "Simplest to run locally"]]],
+                                ["header": "Extras", "question": "Anything else to set up?", "multiple": true,
+                                 "options": [["label": "Migrations", "description": ""], ["label": "Seed data", "description": ""]]],
+                            ],
+                        ] as [String: Any]])
+                    }
                 }
             }
             // Verification hook: "newtab" opens a tab, to see its splash.
@@ -185,16 +186,6 @@ struct RootView: View {
             // Verification hook: open a window at launch without a click.
             if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == MarketplaceWindow.id {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1) { MarketplaceWindow.open() }
-            }
-            if let window = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], window.hasPrefix("slash") {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                    slash.open(paneId: store.snapshot.panes.first?.paneId ?? "", agent: "claude")
-                    // "slash:model" opens that command's submenu too.
-                    if let name = window.split(separator: ":").dropFirst().first,
-                       let command = slash.commands.first(where: { $0.name == name }) {
-                        slash.descend(command)
-                    }
-                }
             }
             if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "banner" {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) {

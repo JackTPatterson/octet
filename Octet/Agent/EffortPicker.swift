@@ -6,8 +6,10 @@ import SwiftUI
 enum EffortStyle {
     static func color(_ level: String?) -> Color {
         switch level {
+        case "none": Theme.textTertiary
+        case "minimal": Color(hex: "E8D9A0")
         case "low": Color(hex: "FFDA58")
-        case "medium": Color(hex: "63ADFF")
+        case "medium", "thinking": Color(hex: "63ADFF")
         case "high": Color(hex: "B4D8FE")
         case "xhigh": Color(hex: "BBA2FF")
         case "max": Color(hex: "FFAE7C")
