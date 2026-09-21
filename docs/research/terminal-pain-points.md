@@ -26,7 +26,7 @@ people who live in a terminal all day, not a survey.
 8. **A tool imposing its own theme** instead of respecting the terminal's.
 9. **Electron**, consistently, as a performance smell.
 
-What he praises: Ghostty, open-source agent CLIs, terminals and multiplexers
+What he praises: fast native terminal emulators, open-source agent CLIs, terminals and multiplexers
 as tools, and moving agent orchestration *out* of the terminal into a GUI.
 
 ## What Herd already answers
@@ -35,8 +35,8 @@ as tools, and moving agent orchestration *out* of the terminal into a GUI.
 | --- | --- |
 | Parallel agents are miserable (3) | The whole point: workspaces grouped by project, per-tab agent state, an idle dock for what's gone stale, one palette across every workspace, tab and agent |
 | Losing sessions to a reboot (3) | Session recovery: Herd journals each agent's session id and offers to resume them where they were |
-| Embedded panes are bad (7) | Herd is a real terminal — libghostty, the emulator he praises — not a pane bolted into an editor |
-| Electron (9) | Native Swift, GPU-rendered text. Worth noting his own team reached for Electron only after a native attempt failed on scrollable-text performance; libghostty is the answer to that specific failure |
+| Embedded panes are bad (7) | Herd is a real terminal, built on the kind of native emulator he praises, not a pane bolted into an editor |
+| Electron (9) | Native Swift, GPU-rendered text. Worth noting his own team reached for Electron only after a native attempt failed on scrollable-text performance; Herd's GPU terminal engine is the answer to that specific failure |
 | Closed source (1) | Herd is MIT and public |
 | Subscriptions (2) | Herd costs nothing and has no account |
 | Sign-in and telemetry (6) | Herd has no account, no sign-in, and no telemetry |
@@ -68,7 +68,7 @@ existing theme. That is worth fixing rather than defending.
    the terminal does: when the pasteboard holds an image, write it to a temp
    file and paste the path, which is what agents actually accept. A concrete
    fix for a named breakage.
-2. **Follow the terminal's own theme** (8). Import from the user's Ghostty
+2. **Follow the terminal's own theme** (8). Import from the user's terminal
    config or an existing theme file, instead of only offering Herd's set.
 3. **Usage and limits in view** (2). A chip per agent showing what its own
    CLI reports about usage, so a rate limit is visible before it bites.

@@ -1,9 +1,9 @@
-# Herd — native macOS app for herdr
+# Herd: a native macOS terminal for agents
 
-Herd is a native window around [herdr](https://herdr.dev). herdr's server owns
-every terminal and agent; Herd embeds libghostty to render the herdr client and
-replaces herdr's text sidebar and tab row with native, Warp-styled chrome driven
-by herdr's socket API.
+Herd is a native macOS terminal. Its session server owns every terminal and
+agent; Herd embeds a GPU terminal engine to render the session client and
+replaces the server's text sidebar and tab row with native chrome driven by
+the server's socket API.
 
 ## Architecture
 
@@ -11,40 +11,41 @@ by herdr's socket API.
 ┌ Herd.app ──────────────────────────────────────────────────────────────┐
 │ Title bar: traffic lights · sidebar toggle · search (⌘K)               │
 ├───────────────┬────────────────────────────────────────────────────────┤
-│ Sidebar       │ Tab bar (herdr tabs of the focused workspace)          │
+│ Sidebar       │ Tab bar (tabs of the focused workspace)                │
 │ projects      ├────────────────────────────────────────────────────────┤
-│  └ workspaces │ libghostty surface running                             │
-│     agent     │   herdr --session herd                                 │
-│     state/hue │   (HERDR_CONFIG_PATH → Herd's config: herdr sidebar    │
+│  └ workspaces │ terminal surface running                               │
+│     agent     │   herd-engine --session herd                           │
+│     state/hue │   (config path → Herd's config: server sidebar         │
 │               │    hidden, own tab row hidden when possible)           │
 └───────────────┴────────────────────────────────────────────────────────┘
         ▲ session.snapshot + events.subscribe      │ workspace.focus / tab.focus / tab.create
-        └──────────── ~/.config/herdr/sessions/herd/herdr.sock ◀──────────┘
+        └──────────── session socket (sessions/herd) ◀────────────────────┘
 ```
 
-- **Session:** Herd runs its own named herdr session (`herd`) so a plain
-  `herdr` in another terminal is untouched.
-- **State:** a store subscribes to herdr events and re-fetches
+- **Session:** Herd runs its own named session (`herd`) so a standalone
+  session in another terminal is untouched. The session server ships inside
+  Herd.app as `Contents/MacOS/herd-engine`.
+- **State:** a store subscribes to session events and re-fetches
   `session.snapshot` (debounced) on any change.
 - **Projects:** workspaces are grouped by git repository root (worktrees join
   their main repo) of the workspace's cwd.
-- **Agents:** herdr's agent records (`agent`, state `working|blocked|idle|done`)
-  drive a status glyph and a soft per-agent hue (Warp tab colors at 15%).
+- **Agents:** the server's agent records (`agent`, state `working|blocked|idle|done`)
+  drive a status glyph and a soft per-agent hue (tab colors at 15%).
 - **Subagents:** a Claude Code `PreToolUse` hook (`herd-cli hook claude`) opens
-  a herdr tab named after the subagent in the same workspace, running
+  a tab named after the subagent in the same workspace, running
   `herd-cli agent-watch` (live transcript view) and reporting working/done to
-  herdr so the tab shows real state.
+  the session server so the tab shows real state.
 
 ## v1 scope (definition of done)
 
 1. App builds with xcodegen + xcodebuild; launches a window.
-2. libghostty terminal renders the herdr client; keyboard, IME text, mouse,
+2. The terminal engine renders the session client; keyboard, IME text, mouse,
    scroll, resize, focus, and clipboard work.
 3. Native sidebar: projects → workspaces, focused highlight, agent state glyph
-   and hue, click focuses the workspace in herdr; live updates.
+   and hue, click focuses the workspace; live updates.
 4. Native top tab bar for the focused workspace's tabs; click focuses, `+`
    creates, close button closes; subagent tabs show their names and state.
-5. Warp dark styling: #050505 terminal, #171717 chrome, 1px #262626 borders,
+5. Dark styling: #050505 terminal, #171717 chrome, 1px #262626 borders,
    4pt radii, 248pt sidebar, accent #19AAD8, uppercase group headers.
 6. Shortcuts: ⌘T new tab, ⌘W close tab, ⌘1–9 tab, ⌃⌘↑/↓ workspace,
    ⌘B toggle sidebar, ⌘N new workspace.
@@ -62,14 +63,14 @@ All eight items done and verified in the running app:
 | Item | Evidence |
 | --- | --- |
 | Build | xcodegen + xcodebuild succeed |
-| Terminal | herdr renders; typing, ⌘-shortcuts, click-to-focus, wheel scroll verified by synthetic events; resize, copy/paste, title, exit verified in the terminal spike |
-| Sidebar | projects grouped (OTHER / cmux / lab-vault), branches, Claude hue + state; card click switches workspace |
+| Terminal | the session renders; typing, ⌘-shortcuts, click-to-focus, wheel scroll verified by synthetic events; resize, copy/paste, title, exit verified in the terminal spike |
+| Sidebar | projects grouped (OTHER / two repos), branches, Claude hue + state; card click switches workspace |
 | Tab bar | tab click switches; ⌘T creates, ⌘W closes; subagent tab shows name, state, Claude mark |
-| Warp styling | colors/metrics from Warp source |
+| Styling | theme colors and vertical tab metrics applied |
 | Shortcuts | ⌘1–9, ⌘T/W/N/B, ⌃⌘↑/↓ verified |
 | Subagent tabs | real `claude -p` run spawned a subagent → background tab "Answer arithmetic" rendered its prompt and answer, state done |
 | Tests | 51 unit tests pass |
-| Session recovery | killed a herdr server holding two agents, relaunched: the panel offered both, and herdr accepted the resume tabs it builds |
+| Session recovery | killed a session server holding two agents, relaunched: the panel offered both, and the server accepted the resume tabs it builds |
 | Marketplace | real MCP servers from both CLIs merged per agent; 34 library skills listed with per-agent chips; prompts created, listed and linked |
 | Slash menu | renders over the terminal with built-ins, user, project and plugin commands; `/mcp` submenu lists the machine's real servers |
 | Confirmations | Herd's own dialog replaces every NSAlert (verified on the quit confirmation) |
@@ -77,5 +78,5 @@ All eight items done and verified in the running app:
 | Performance | Release build idles at ~1% CPU (debug window snapshots were 63% of main-thread time) |
 
 Not verified: IME composition, mixed-DPI displays, and ⌘⇧[ / ⌘⇧].
-herdr's own tab row is clipped rather than disabled (herdr has no option to
-hide it with multiple tabs).
+The session server's own tab row is clipped rather than disabled (the server
+has no option to hide it with multiple tabs).
