@@ -56,8 +56,10 @@ enum PasteHandler {
         guard let paneId = store.keyPaneId else { return false }
         let client = store.client
         let text = ImagePaste.insertion(for: path) + " "
-        DispatchQueue.global(qos: .userInitiated).async {
-            _ = try? client.call("pane.send_text", ["pane_id": paneId, "text": text])
+        if OctetKeyHook.prompt?.insertPastedText(text) != true {
+            EngineClient.inputQueue.async {
+                _ = try? client.call("pane.send_text", ["pane_id": paneId, "text": text])
+            }
         }
         ToastCenter.shared.info(
             copied ? "Pasted the image as a file" : "Pasted the image's path",

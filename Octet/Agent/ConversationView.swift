@@ -246,6 +246,10 @@ private struct EmptyConversation: View {
             return "Codex works in \(folder) with your usual config, and asks for what it needs inside its own sandbox."
         case .opencode:
             return "OpenCode works in \(folder) with your usual config, providers and agents. Pick any model you're signed in to; what needs permission asks you here."
+        case .pi:
+            return "Pi works in \(folder) through its native RPC session, with your configured model, tools, extensions and skills."
+        case .qwen:
+            return "Qwen Code works in \(folder) through its headless stream, with your usual config, tools and MCP servers."
         }
     }
 
@@ -681,7 +685,7 @@ private struct Composer: View {
             return AgentSession.models.first { $0.id.lowercased() == needle || $0.family.lowercased() == needle }?.id
         case .codex:
             return CodexCatalogStore.shared.models.first { $0.id.lowercased() == needle }?.id
-        case .opencode:
+        case .opencode, .pi, .qwen:
             return nil
         }
     }
@@ -827,8 +831,15 @@ private struct Composer: View {
                 .help("How Claude asks before using tools. Changes apply from the next message.")
                 } else if session.engine == .codex {
                     CodexControls(session: session, dropdowns: dropdowns)
-                } else {
+                } else if session.engine == .opencode {
                     OpenCodeControls(session: session, dropdowns: dropdowns)
+                } else if let brand = AgentBrand.forAgent(session.engine.agent) {
+                    HStack(spacing: 5) {
+                        AgentLogo(brand: brand, size: 12)
+                        Text("Using \(session.engine.displayName) settings")
+                            .font(Theme.captionFont)
+                            .foregroundStyle(Theme.textSecondary)
+                    }
                 }
                 OctetButton(title: "", icon: "paperclip", kind: .ghost, compact: true) { pickImages() }
                     .help("Attach images (or paste or drop them here)")

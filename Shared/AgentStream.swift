@@ -36,7 +36,7 @@ struct AgentConversation: Equatable {
         lastError = nil
     }
 
-    /// Applies one stream-json line (already decoded).
+    /// Applies one Claude Code or Qwen Code stream-json line (already decoded).
     mutating func apply(_ event: [String: Any]) {
         let parent = event["parent_tool_use_id"] as? String
         switch event["type"] as? String {
@@ -66,12 +66,134 @@ struct AgentConversation: Equatable {
     // MARK: - Event kinds
 
     private mutating func applySystem(_ event: [String: Any]) {
-        guard event["subtype"] as? String == "init" else { return }
+        guard ["init", "session_start"].contains(event["subtype"] as? String ?? "") else { return }
         sessionId = event["session_id"] as? String ?? sessionId
         model = event["model"] as? String ?? model
         permissionMode = event["permissionMode"] as? String ?? permissionMode
         cwd = event["cwd"] as? String ?? cwd
         if let commands = event["slash_commands"] as? [String] { slashCommands = commands }
+    }
+
+    /// Applies one event from Pi's RPC mode. Pi uses a different envelope,
+    /// but its content blocks and tool lifecycle fit the native transcript.
+    mutating func applyPi(_ event: [String: Any]) {
+        switch event["type"] as? String {
+        case "agent_start":
+            isRunning = true
+            lastError = nil
+        case "agent_settled":
+            isRunning = false
+            openBlocks = [:]
+        case "message_start":
+            let message = event["message"] as? [String: Any]
+            currentMessageId = message?["id"] as? String ?? UUID().uuidString
+            openBlocks = [:]
+        case "message_update":
+            guard let update = event["assistantMessageEvent"] as? [String: Any] else { return }
+            applyPiUpdate(update)
+            if let usage = event["usage"] as? [String: Any] { notePiUsage(usage) }
+        case "message_end":
+            if let message = event["message"] as? [String: Any] { applyPiMessage(message) }
+            openBlocks = [:]
+        case "tool_execution_start", "tool_execution_update", "tool_execution_end":
+            applyPiTool(event)
+        case "response":
+            guard event["success"] as? Bool == false else { return }
+            let message = event["error"] as? String ?? "Pi rejected the request."
+            lastError = message
+            isRunning = false
+            items.append(AgentItem(id: UUID().uuidString, kind: .notice(message)))
+        default:
+            break
+        }
+    }
+
+    private mutating func applyPiUpdate(_ update: [String: Any]) {
+        let index = update["contentIndex"] as? Int ?? 0
+        let messageId = currentMessageId ?? "pi-message"
+        switch update["type"] as? String {
+        case "text_start", "thinking_start":
+            let id = "\(messageId):\(index)"
+            let kind: AgentItem.Kind = update["type"] as? String == "thinking_start" ? .thinking("") : .text("")
+            if !items.contains(where: { $0.id == id }) { items.append(AgentItem(id: id, kind: kind)) }
+            openBlocks[index] = id
+        case "text_delta", "thinking_delta":
+            let id = openBlocks[index] ?? "\(messageId):\(index)"
+            if !items.contains(where: { $0.id == id }) {
+                let kind: AgentItem.Kind = update["type"] as? String == "thinking_delta" ? .thinking("") : .text("")
+                items.append(AgentItem(id: id, kind: kind))
+                openBlocks[index] = id
+            }
+            guard let position = items.firstIndex(where: { $0.id == id }) else { return }
+            let delta = update["delta"] as? String ?? ""
+            switch items[position].kind {
+            case .text(let text): items[position].kind = .text(text + delta)
+            case .thinking(let text): items[position].kind = .thinking(text + delta)
+            default: break
+            }
+        case "toolcall_start":
+            let id = update["id"] as? String ?? "\(messageId):\(index)"
+            upsertTool(id: id, name: Self.piToolName(update["toolName"] as? String ?? "tool"), input: nil, parent: nil)
+            openBlocks[index] = id
+        case "toolcall_end":
+            guard let call = update["toolCall"] as? [String: Any] else { return }
+            let id = call["id"] as? String ?? openBlocks[index] ?? "\(messageId):\(index)"
+            let input = call["arguments"] as? [String: Any] ?? call["args"] as? [String: Any]
+            upsertTool(id: id,
+                       name: Self.piToolName(call["name"] as? String ?? call["toolName"] as? String ?? "tool"),
+                       input: input, parent: nil)
+        default:
+            break
+        }
+    }
+
+    private mutating func applyPiMessage(_ message: [String: Any]) {
+        guard message["role"] as? String == "assistant",
+              let blocks = message["content"] as? [[String: Any]] else { return }
+        let messageId = message["id"] as? String ?? currentMessageId ?? UUID().uuidString
+        for (index, block) in blocks.enumerated() {
+            let id = "\(messageId):\(index)"
+            switch block["type"] as? String {
+            case "text" where !items.contains(where: { $0.id == id }):
+                items.append(AgentItem(id: id, kind: .text(block["text"] as? String ?? "")))
+            case "thinking" where !items.contains(where: { $0.id == id }):
+                items.append(AgentItem(id: id, kind: .thinking(block["thinking"] as? String ?? block["text"] as? String ?? "")))
+            case "toolCall", "tool_call":
+                let callId = block["id"] as? String ?? id
+                let input = block["arguments"] as? [String: Any] ?? block["args"] as? [String: Any]
+                upsertTool(id: callId,
+                           name: Self.piToolName(block["name"] as? String ?? block["toolName"] as? String ?? "tool"),
+                           input: input, parent: nil)
+            default: break
+            }
+        }
+    }
+
+    private mutating func applyPiTool(_ event: [String: Any]) {
+        guard let id = event["toolCallId"] as? String else { return }
+        upsertTool(id: id, name: Self.piToolName(event["toolName"] as? String ?? "tool"),
+                   input: event["args"] as? [String: Any], parent: nil)
+        guard let position = items.firstIndex(where: { $0.id == id }), case .tool(var call) = items[position].kind else { return }
+        let payload = event["result"] ?? event["partialResult"]
+        if let result = payload as? [String: Any] { call.result = Self.resultText(result["content"]) }
+        if event["type"] as? String == "tool_execution_end" { call.isError = event["isError"] as? Bool ?? false }
+        items[position].kind = .tool(call)
+    }
+
+    private mutating func notePiUsage(_ usage: [String: Any]) {
+        if let total = usage["totalTokens"] as? Int { contextUsed = total }
+        if let cost = usage["cost"] as? [String: Any], let total = cost["total"] as? Double { costUSD = total }
+    }
+
+    private static func piToolName(_ name: String) -> String {
+        switch name.lowercased() {
+        case "bash": return "Bash"
+        case "read": return "Read"
+        case "write": return "Write"
+        case "edit": return "Edit"
+        case "grep", "search": return "Grep"
+        default: return name.prefix(1).uppercased() + name.dropFirst()
+        }
     }
 
     private mutating func applyStreamEvent(_ event: [String: Any], parent: String?) {

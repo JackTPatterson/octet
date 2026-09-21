@@ -445,7 +445,7 @@ private struct EntryRow: View {
                         .foregroundStyle(Theme.textSecondary)
                         .lineLimit(2)
                 }
-                HStack(spacing: 6) {
+                ChipFlowLayout(spacing: 6) {
                     ForEach(store.hosts) { host in
                         HostChip(
                             host: host,
@@ -459,6 +459,7 @@ private struct EntryRow: View {
                     }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             Spacer(minLength: 8)
             if entry.isInstalled {
                 Button("Remove") {
@@ -513,6 +514,7 @@ private struct HostChip: View {
                 }
                 Text(host.displayName)
                     .font(Theme.captionFont)
+                    .lineLimit(1)
                 if let status, status.contains("✘") || status == "disabled" {
                     OctetIcon("exclamationmark.triangle.fill", size: 11)
                         .foregroundStyle(.orange)
@@ -529,6 +531,7 @@ private struct HostChip: View {
                     .strokeBorder(installed ? tint.opacity(0.5) : Theme.border, lineWidth: 1)
             }
             .opacity(hovered ? 0.85 : 1)
+            .fixedSize(horizontal: true, vertical: false)
         }
         .buttonStyle(.plain)
         .disabled(busy)
@@ -561,7 +564,7 @@ private struct LibraryRow: View {
                         .foregroundStyle(Theme.textSecondary)
                         .lineLimit(2)
                 }
-                HStack(spacing: 6) {
+                ChipFlowLayout(spacing: 6) {
                     ForEach(store.hosts) { host in
                         HostChip(host: host, installed: item.installedIn.contains(host.id)) {
                             store.setLibraryInstalled(item, host: host, installed: !item.installedIn.contains(host.id))
@@ -569,6 +572,7 @@ private struct LibraryRow: View {
                     }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             Spacer(minLength: 8)
             HStack(spacing: 4) {
                 if item.kind == .prompt, let agent = store.promptTarget {
@@ -701,11 +705,13 @@ private struct LibraryEditor: View {
     }
 
     private var hostPicker: some View {
-        HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             Text("Install in").font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
-            ForEach(store.hosts) { host in
-                HostChip(host: host, installed: draft.hosts.contains(host.id)) {
-                    if draft.hosts.contains(host.id) { draft.hosts.remove(host.id) } else { draft.hosts.insert(host.id) }
+            ChipFlowLayout(spacing: 6) {
+                ForEach(store.hosts) { host in
+                    HostChip(host: host, installed: draft.hosts.contains(host.id)) {
+                        if draft.hosts.contains(host.id) { draft.hosts.remove(host.id) } else { draft.hosts.insert(host.id) }
+                    }
                 }
             }
         }
@@ -753,11 +759,13 @@ private struct ServerEditor: View {
                 .textFieldStyle(.roundedBorder)
                 .font(Theme.monoFont)
                 .disabled(submitting)
-            HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text("Add to").font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
-                ForEach(store.hosts) { host in
-                    HostChip(host: host, installed: hosts.contains(host.id)) {
-                        if hosts.contains(host.id) { hosts.remove(host.id) } else { hosts.insert(host.id) }
+                ChipFlowLayout(spacing: 6) {
+                    ForEach(store.hosts) { host in
+                        HostChip(host: host, installed: hosts.contains(host.id)) {
+                            if hosts.contains(host.id) { hosts.remove(host.id) } else { hosts.insert(host.id) }
+                        }
                     }
                 }
             }
@@ -809,5 +817,44 @@ private struct ServerEditor: View {
                 close()
             }
         }
+    }
+}
+
+/// Keeps every agent chip readable and wraps complete chips onto another
+/// line when the Marketplace window is narrow.
+private struct ChipFlowLayout: Layout {
+    var spacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let result = positions(for: subviews, width: proposal.width ?? .infinity)
+        return CGSize(width: result.width, height: result.height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let result = positions(for: subviews, width: bounds.width)
+        for (index, point) in result.points.enumerated() {
+            subviews[index].place(at: CGPoint(x: bounds.minX + point.x, y: bounds.minY + point.y), proposal: .unspecified)
+        }
+    }
+
+    private func positions(for subviews: Subviews, width: CGFloat) -> (points: [CGPoint], width: CGFloat, height: CGFloat) {
+        var points: [CGPoint] = []
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var usedWidth: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > width {
+                x = 0
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            points.append(CGPoint(x: x, y: y))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+            usedWidth = max(usedWidth, max(0, x - spacing))
+        }
+        return (points, min(usedWidth, width), y + rowHeight)
     }
 }

@@ -4,7 +4,7 @@ import Foundation
 /// it in Octet's conversation view instead of the terminal.
 enum AgentLaunch {
     /// Agents Octet can converse with itself, by the command that starts each.
-    static let commands: Set<String> = ["claude", "codex", "opencode"]
+    static let commands: Set<String> = ["claude", "codex", "opencode", "pi", "qwen"]
 
     /// The agent when `line` is only that command, typed bare. Anything after
     /// it (a flag, a prompt, a pipe) is a request for something specific, and
@@ -18,7 +18,7 @@ enum AgentLaunch {
 /// The banner over the terminal that offers an agent running in its own
 /// interface to Octet's conversation view.
 enum AgentOffer {
-    /// The agent's id (`claude`, `codex`, `opencode`) when Octet can converse
+    /// The agent's id when Octet can converse
     /// with it, else nil.
     static func agentId(_ agent: EngineAgent) -> String? {
         AgentBrand.forAgent(agent.agent).map(\.id).flatMap { AgentLaunch.commands.contains($0) ? $0 : nil }

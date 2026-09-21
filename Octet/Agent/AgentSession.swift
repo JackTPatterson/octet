@@ -62,16 +62,19 @@ final class AgentSession: ObservableObject, Identifiable {
     nonisolated static let efforts = ["low", "medium", "high", "xhigh", "max", "ultracode"]
 
     /// Which CLI is behind the conversation. Claude Code is driven over its
-    /// stream-json stdio; Codex over its app server's JSON-RPC. Everything
+    /// stream-json stdio; Codex over its app server's JSON-RPC; Pi over RPC;
+    /// and Qwen over stream-json. Everything
     /// downstream, the transcript and the view, is the same for both.
     enum Engine: String, Codable {
-        case claude, codex, opencode
+        case claude, codex, opencode, pi, qwen
 
         var displayName: String {
             switch self {
             case .claude: "Claude"
             case .codex: "Codex"
             case .opencode: "OpenCode"
+            case .pi: "Pi"
+            case .qwen: "Qwen"
             }
         }
         /// The vendor mark, and what `SlashCommands` files are read for.
@@ -116,6 +119,10 @@ final class AgentSession: ObservableObject, Identifiable {
             // Model, variant and agent go with each message; permissions are
             // the session's, and change at once.
             updateOpenCodePermissions()
+        case .pi:
+            break
+        case .qwen:
+            needsRestart = true
         }
         AgentCenter.shared.save()
     }
@@ -247,6 +254,8 @@ final class AgentSession: ObservableObject, Identifiable {
                 session.startOpenCode()
                 session.restoreOpenCodeTranscript()
             }
+        case .pi, .qwen:
+            session.prewarm()
         }
         return session
     }
@@ -268,6 +277,8 @@ final class AgentSession: ObservableObject, Identifiable {
                 conversation = AgentConversation(twin: twin)
             }
         case .opencode:
+            break
+        case .pi, .qwen:
             break
         }
         conversation?.cwd = saved.cwd
@@ -307,6 +318,8 @@ final class AgentSession: ObservableObject, Identifiable {
                 prompt.handling = .octet
                 return prompt
             }
+        case .pi, .qwen:
+            commands = agentCommands
         }
         return commands.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
@@ -390,7 +403,7 @@ final class AgentSession: ObservableObject, Identifiable {
         conversation.appendUser(trimmed, images: attachments.map(\.data))
         if title == engine.displayName, !trimmed.hasPrefix("/") { title = String(trimmed.prefix(40)) }
         switch engine {
-        case .claude:
+        case .claude, .qwen:
             let message: [String: Any] = [
                 "type": "user",
                 "message": ["role": "user", "content": Self.content(trimmed, attachments)],
@@ -407,6 +420,15 @@ final class AgentSession: ObservableObject, Identifiable {
             startTurn(trimmed, threadId: threadId)
         case .opencode:
             break
+        case .pi:
+            var message: [String: Any] = ["type": "prompt", "message": trimmed]
+            if !attachments.isEmpty {
+                message["images"] = attachments.map {
+                    ["type": "image", "data": $0.data.base64EncodedString(), "mimeType": $0.mediaType]
+                }
+            }
+            if conversation.isRunning { message["streamingBehavior"] = "followUp" }
+            if write(message) { hasTurns = true }
         }
     }
 
@@ -424,9 +446,10 @@ final class AgentSession: ObservableObject, Identifiable {
         } catch {
             let failure = "Couldn't reach \(engine.displayName): \(error.localizedDescription)"
             switch engine {
-            case .claude: conversation.apply(["type": "result", "subtype": "error", "errors": [failure]])
+            case .claude, .qwen: conversation.apply(["type": "result", "subtype": "error", "errors": [failure]])
             case .codex: conversation.applyCodex(["method": "turn/failed", "params": ["error": ["message": failure]]])
             case .opencode: break
+            case .pi: conversation.applyPi(["type": "response", "success": false, "error": failure])
             }
             return false
         }
@@ -469,13 +492,15 @@ final class AgentSession: ObservableObject, Identifiable {
         }
         guard let process, process.isRunning, conversation.isRunning else { return }
         switch engine {
-        case .claude:
+        case .claude, .qwen:
             process.interrupt()
         case .codex:
             guard let threadId else { return }
             call("turn/interrupt", ["threadId": threadId], as: .interrupt)
         case .opencode:
             break
+        case .pi:
+            write(["type": "abort"])
         }
     }
 
@@ -779,6 +804,8 @@ final class AgentSession: ObservableObject, Identifiable {
         startupError = nil
         if engine == .codex { startCodex(); return }
         if engine == .opencode { startOpenCode(); return }
+        if engine == .pi { startPi(); return }
+        if engine == .qwen { startQwen(); return }
         guard let cli = Bundle.main.url(forAuxiliaryExecutable: "octet-cli")?.path else {
             startupError = "octet-cli is missing from the app bundle."
             return
@@ -843,6 +870,27 @@ final class AgentSession: ObservableObject, Identifiable {
         } catch {
             startupError = "Couldn't start Claude Code: \(error.localizedDescription)"
         }
+    }
+
+    /// Pi's documented RPC mode stays alive for the conversation and emits
+    /// one JSON event per line. Its session file is retained for reopening.
+    private func startPi() {
+        guard let process = spawn(command: "exec pi --mode rpc") else { return }
+        self.process = process
+        if let threadId {
+            write(["type": "switch_session", "sessionPath": threadId])
+        }
+        write(["type": "get_state"])
+        write(["type": "get_commands"])
+    }
+
+    /// Qwen's headless SDK transport uses the same stream-json event shapes
+    /// as Claude Code, including partial message events.
+    private func startQwen() {
+        var args = ["qwen", "--input-format", "stream-json", "--output-format", "stream-json", "--include-partial-messages"]
+        if hasTurns, let threadId { args += ["--resume", threadId] }
+        guard let process = spawn(command: "exec qwen \"$@\"", arguments: args) else { return }
+        self.process = process
     }
 
     /// What Octet calls itself to the agents it drives.
@@ -986,9 +1034,51 @@ final class AgentSession: ObservableObject, Identifiable {
                 receiveCodex(event)
             case .opencode:
                 break
+            case .pi:
+                receivePi(event)
+            case .qwen:
+                conversation.apply(event)
+                if let id = conversation.sessionId, threadId != id {
+                    threadId = id
+                    AgentCenter.shared.save()
+                }
             }
             if !conversation.isRunning { turnStartedAt = nil }
         }
+    }
+
+    private func receivePi(_ event: [String: Any]) {
+        if event["type"] as? String == "response", event["success"] as? Bool == true,
+           let command = event["command"] as? String, let data = event["data"] as? [String: Any] {
+            switch command {
+            case "get_state":
+                if let path = data["sessionFile"] as? String, threadId != path {
+                    threadId = path
+                    AgentCenter.shared.save()
+                }
+                if let model = data["model"] as? [String: Any] {
+                    conversation.model = model["id"] as? String ?? model["name"] as? String
+                }
+            case "get_commands":
+                let commands = data["commands"] as? [[String: Any]] ?? []
+                agentCommands = commands.compactMap { command in
+                    guard let name = command["name"] as? String else { return nil }
+                    return SlashCommand(name: name,
+                                        summary: command["description"] as? String ?? "Pi command",
+                                        argumentHint: command["argumentHint"] as? String ?? "")
+                }
+            case "get_session_stats":
+                conversation.costUSD = data["cost"] as? Double ?? conversation.costUSD
+                if let context = data["contextUsage"] as? [String: Any] {
+                    conversation.contextUsed = context["tokens"] as? Int
+                    conversation.contextWindow = context["contextWindow"] as? Int
+                }
+            default:
+                break
+            }
+        }
+        conversation.applyPi(event)
+        if event["type"] as? String == "agent_settled" { write(["type": "get_session_stats"]) }
     }
 
     /// One JSON-RPC message from the app server: a question it is waiting on,
@@ -1137,6 +1227,8 @@ final class AgentSession: ObservableObject, Identifiable {
         case .claude: "claude --resume \(sessionId)"
         case .codex: threadId.map { "codex resume \($0)" } ?? "codex"
         case .opencode: threadId.map { "opencode --session \($0)" } ?? "opencode"
+        case .pi: threadId.map { "pi --session \(shellQuote($0))" } ?? "pi"
+        case .qwen: threadId.map { "qwen --resume \($0)" } ?? "qwen"
         }
     }
 

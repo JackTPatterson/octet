@@ -156,8 +156,10 @@ struct RootView: View {
             store.lastError = nil
         }
         .onChange(of: confirmations.request?.id) { _, id in DebugSnapshot.overlay("confirmation", id != nil) }
-        .overlay(alignment: .topLeading) { promptOverlay }
+        // Hide the engine's chrome before drawing the prompt and completions;
+        // bottom anchoring can move this cover through the completion menu.
         .overlay(alignment: .topLeading) { chromeCover }
+        .overlay(alignment: .topLeading) { promptOverlay }
         .overlay {
             if ui.paletteVisible {
                 CommandPaletteView(model: palette) { closePalette() }
@@ -390,6 +392,8 @@ struct RootView: View {
                     .init(title: "Command Palette", keys: OctetShortcut.palette.display) { ui.paletteVisible = true },
                     .init(title: "New Claude Conversation", keys: OctetShortcut.newConversation.display) { window.newConversation() },
                     .init(title: "New Codex Conversation") { window.newConversation(engine: .codex) },
+                    .init(title: "New Pi Conversation") { window.newConversation(engine: .pi) },
+                    .init(title: "New Qwen Conversation") { window.newConversation(engine: .qwen) },
                     .init(title: "Split Right", keys: OctetShortcut.splitRight.display) { window.splitPane(.right) },
                     .init(title: "Agents Board", keys: OctetShortcut.agents.display) { window.toggleAgentsBoard() },
                 ]

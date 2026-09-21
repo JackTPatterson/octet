@@ -2613,6 +2613,53 @@ final class OpenCodeStreamTests: XCTestCase {
     }
 }
 
+final class PiAndQwenStreamTests: XCTestCase {
+    func testPiStreamsTextThinkingAndToolsIntoNativeItems() {
+        var conversation = AgentConversation()
+        conversation.applyPi(["type": "agent_start"])
+        conversation.applyPi(["type": "message_start", "message": ["role": "assistant"]])
+        conversation.applyPi(["type": "message_update", "usage": ["totalTokens": 12, "cost": ["total": 0.02]],
+                              "assistantMessageEvent": ["type": "thinking_start", "contentIndex": 0]])
+        conversation.applyPi(["type": "message_update",
+                              "assistantMessageEvent": ["type": "thinking_delta", "contentIndex": 0, "delta": "Check"]])
+        conversation.applyPi(["type": "message_update",
+                              "assistantMessageEvent": ["type": "text_start", "contentIndex": 1]])
+        conversation.applyPi(["type": "message_update",
+                              "assistantMessageEvent": ["type": "text_delta", "contentIndex": 1, "delta": "Done"]])
+        conversation.applyPi(["type": "tool_execution_start", "toolCallId": "call_1", "toolName": "bash",
+                              "args": ["command": "pwd"]])
+        conversation.applyPi(["type": "tool_execution_end", "toolCallId": "call_1", "toolName": "bash",
+                              "args": ["command": "pwd"], "result": ["content": [["type": "text", "text": "/repo"]]],
+                              "isError": false])
+        conversation.applyPi(["type": "agent_settled"])
+
+        XCTAssertFalse(conversation.isRunning)
+        XCTAssertEqual(conversation.contextUsed, 12)
+        XCTAssertEqual(conversation.costUSD, 0.02)
+        XCTAssertEqual(conversation.items.count, 3)
+        XCTAssertEqual(conversation.items[0].kind, .thinking("Check"))
+        XCTAssertEqual(conversation.items[1].kind, .text("Done"))
+        guard case .tool(let call) = conversation.items[2].kind else { return XCTFail("not a tool") }
+        XCTAssertEqual(call.name, "Bash")
+        XCTAssertEqual(call.summary, "pwd")
+        XCTAssertEqual(call.result, "/repo")
+    }
+
+    func testQwenSessionStartAndClaudeCompatibleStreamAreAccepted() {
+        var conversation = AgentConversation()
+        conversation.apply(["type": "system", "subtype": "session_start", "session_id": "qwen-1"])
+        conversation.apply(["type": "stream_event", "event": ["type": "message_start", "message": ["id": "m1"]]])
+        conversation.apply(["type": "stream_event", "event": ["type": "content_block_start", "index": 0,
+                                                                   "content_block": ["type": "text", "text": ""]]])
+        conversation.apply(["type": "stream_event", "event": ["type": "content_block_delta", "index": 0,
+                                                                   "delta": ["type": "text_delta", "text": "Hello"]]])
+        conversation.apply(["type": "result", "subtype": "success"])
+        XCTAssertEqual(conversation.sessionId, "qwen-1")
+        XCTAssertEqual(conversation.items.map(\.kind), [.text("Hello")])
+        XCTAssertFalse(conversation.isRunning)
+    }
+}
+
 final class OpenCodeCatalogTests: XCTestCase {
     func testVariantsOrderWeakestToStrongest() {
         XCTAssertEqual(OpenCodeCatalog.orderedVariants(["max", "high", "low", "medium"]), ["low", "medium", "high", "max"])
@@ -2696,6 +2743,8 @@ final class AgentOfferTests: XCTestCase {
         XCTAssertEqual(AgentLaunch.agent(inCommandLine: "claude"), "claude")
         XCTAssertEqual(AgentLaunch.agent(inCommandLine: "  codex  "), "codex")
         XCTAssertEqual(AgentLaunch.agent(inCommandLine: "opencode"), "opencode")
+        XCTAssertEqual(AgentLaunch.agent(inCommandLine: "pi"), "pi")
+        XCTAssertEqual(AgentLaunch.agent(inCommandLine: "qwen"), "qwen")
         // Anything asked of it runs in the terminal as typed.
         XCTAssertNil(AgentLaunch.agent(inCommandLine: "claude --resume abc"))
         XCTAssertNil(AgentLaunch.agent(inCommandLine: "claude \"fix the bug\""))
@@ -2711,6 +2760,8 @@ final class AgentOfferTests: XCTestCase {
         XCTAssertEqual(AgentOffer.candidate(in: [agent("claude")], dismissed: [])?.paneId, "w1:p1")
         XCTAssertNotNil(AgentOffer.candidate(in: [agent("codex")], dismissed: []))
         XCTAssertNotNil(AgentOffer.candidate(in: [agent("opencode")], dismissed: []))
+        XCTAssertNotNil(AgentOffer.candidate(in: [agent("pi")], dismissed: []))
+        XCTAssertNotNil(AgentOffer.candidate(in: [agent("qwen")], dismissed: []))
         XCTAssertNil(AgentOffer.candidate(in: [agent("gemini")], dismissed: []))
         XCTAssertNil(AgentOffer.candidate(in: [], dismissed: []))
         // The vendor's own names for it count too.
@@ -2734,4 +2785,99 @@ final class AgentOfferTests: XCTestCase {
         XCTAssertTrue(AgentOffer.remaining(dismissed, agents: []).isEmpty)
     }
 
+}
+
+final class TerminalCorpusRegressionTests: XCTestCase {
+    func testSearchResponseDecodesJSONWireNumbers() throws {
+        let bytes = Data(#"{"pane_id":"p1","content_revision":10886,"total":0,"matches":[]}"#.utf8)
+        let response = try JSONSerialization.jsonObject(with: bytes) as! [String: Any]
+        let result = try TerminalSearchResult(response: response, paneId: "p1")
+        XCTAssertEqual(result.revision, 10886)
+        XCTAssertNil(result.match)
+        XCTAssertThrowsError(try TerminalSearchResult(response: response, paneId: "other"))
+    }
+
+    func testPasteCannotInjectBracketedPasteTerminatorOrControlKeys() {
+        let pasted = PromptLine.pastedText("a\r\nb\r\u{1b}[201~\u{3}\n")
+        XCTAssertEqual(pasted, "a\nb\n[201~")
+        XCTAssertFalse(pasted.contains("\u{1b}"))
+        XCTAssertFalse(pasted.contains("\u{3}"))
+    }
+
+    func testMultilineHandoffDoesNotSubmitAndRestoresCaretBeforeTab() {
+        let line = PromptLine(text: "echo one\necho two", caret: 13)
+        XCTAssertEqual(line.shellInput(trailing: "\t", restoreCaret: true),
+                       "\u{1b}[200~echo one\necho two\u{1b}[201~" + String(repeating: "\u{1b}[D", count: 4) + "\t")
+        XCTAssertEqual(line.shellInput(trailing: "\r"), "\u{1b}[200~echo one\necho two\u{1b}[201~\r")
+        XCTAssertEqual(PromptLine(text: "ls").shellInput(trailing: "\t", restoreCaret: true), "ls\t")
+        XCTAssertEqual(PromptLine(text: "printf 'a\tb'").shellInput(), "\u{1b}[200~printf 'a\tb'\u{1b}[201~")
+    }
+
+    func testPasteReplacesSelectedInputAndPreservesUnicodeAndTabs() {
+        var line = PromptLine(text: "printf old")
+        line.selectAll()
+        line.insert(PromptLine.pastedText("printf '新しい\t👩‍💻'\n"))
+        XCTAssertEqual(line.text, "printf '新しい\t👩‍💻'")
+        XCTAssertEqual(line.caret, line.text.count)
+    }
+}
+
+final class TerminalLiveSearchTests: XCTestCase {
+    private func response(total: Int = 2000, global: Int = 1500, row: Int = 7500) -> [String: Any] {
+        ["pane_id": "p1", "content_revision": UInt64(42), "total": total,
+         "current": 0, "current_global": global,
+         "matches": [["start": ["row": row, "col": 4], "end": ["row": row, "col": 10]]]]
+    }
+
+    func testGlobalOrdinalIsIndependentOfReturnedMatchPage() throws {
+        let result = try TerminalSearchResult(response: response(), paneId: "p1")
+        XCTAssertEqual(result.ordinal, 1501)
+        XCTAssertEqual(result.total, 2000)
+        XCTAssertEqual(result.scrollOffset(maximum: 10000, viewportRows: 40), 2520)
+    }
+
+    func testScrollOffsetsClampAtBothEnds() throws {
+        let oldest = try TerminalSearchResult(response: response(row: 0), paneId: "p1")
+        let newest = try TerminalSearchResult(response: response(row: 10039), paneId: "p1")
+        XCTAssertEqual(oldest.scrollOffset(maximum: 10000, viewportRows: 40), 10000)
+        XCTAssertEqual(newest.scrollOffset(maximum: 10000, viewportRows: 40), 0)
+    }
+
+    func testNoMatchesAndInvalidPaneDoNotNavigate() throws {
+        let empty: [String: Any] = ["pane_id": "p1", "content_revision": UInt64(42), "total": 0, "matches": [[String: Any]]()]
+        let result = try TerminalSearchResult(response: empty, paneId: "p1")
+        XCTAssertNil(result.match)
+        XCTAssertNil(result.scrollOffset(maximum: 10000, viewportRows: 40))
+        XCTAssertThrowsError(try TerminalSearchResult(response: empty, paneId: "other"))
+        var invalid = response()
+        invalid["current"] = 10
+        XCTAssertThrowsError(try TerminalSearchResult(response: invalid, paneId: "p1"))
+    }
+
+    func testSearchRetriesStaleContentAndResetsOldCoordinates() throws {
+        let prior = try TerminalSearchResult(response: response(), paneId: "p1")
+        var searches = 0
+        let result = try TerminalSearchResult.find(paneId: "p1", query: "needle", backward: true, previous: prior) { method, params in
+            if method == "pane.copy_motion" { return ["content_revision": UInt64(43)] }
+            searches += 1
+            XCTAssertEqual(params["direction"] as? String, "backward")
+            XCTAssertNil(params["previous"])
+            if searches == 1 { throw EngineSocketError.server(code: "stale_content", message: "changed") }
+            return self.response()
+        }
+        XCTAssertEqual(searches, 2)
+        XCTAssertEqual(result.total, 2000)
+    }
+
+    func testSearchPreservesPreviousMatchAtSameRevisionAndBoundsRetries() throws {
+        let prior = try TerminalSearchResult(response: response(), paneId: "p1")
+        var searches = 0
+        XCTAssertThrowsError(try TerminalSearchResult.find(paneId: "p1", query: "needle", backward: false, previous: prior) { method, params in
+            if method == "pane.copy_motion" { return ["content_revision": UInt64(42)] }
+            searches += 1
+            XCTAssertNotNil(params["previous"])
+            throw EngineSocketError.server(code: "stale_content", message: "changed")
+        })
+        XCTAssertEqual(searches, 3)
+    }
 }

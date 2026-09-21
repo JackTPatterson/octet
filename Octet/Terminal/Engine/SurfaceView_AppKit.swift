@@ -1212,22 +1212,27 @@ extension TerminalEngine {
         }
 
         @IBAction func copy(_ sender: Any?) {
+            if OctetKeyHook.prompt?.copySelection() == true { return }
             performBindingAction("copy_to_clipboard")
         }
 
         @IBAction func paste(_ sender: Any?) {
+            if OctetKeyHook.paste() { return }
             performBindingAction("paste_from_clipboard")
         }
 
         @IBAction func pasteAsPlainText(_ sender: Any?) {
+            if OctetKeyHook.paste(plainText: true) { return }
             performBindingAction("paste_from_clipboard")
         }
 
         @IBAction func pasteSelection(_ sender: Any?) {
+            if OctetKeyHook.paste(from: .engineSelection, plainText: true) { return }
             performBindingAction("paste_from_selection")
         }
 
         @IBAction override func selectAll(_ sender: Any?) {
+            if OctetKeyHook.prompt?.selectAll() == true { return }
             performBindingAction("select_all")
         }
     }
@@ -1614,6 +1619,7 @@ extension TerminalEngine.SurfaceView: NSServicesMenuRequestor {
     }
 
     func readSelection(from pboard: NSPasteboard) -> Bool {
+        if OctetKeyHook.paste(from: pboard, plainText: true) { return true }
         guard let str = pboard.getOpinionatedStringContents() else { return false }
 
         let len = str.utf8CString.count
@@ -1638,6 +1644,8 @@ extension TerminalEngine.SurfaceView: NSMenuItemValidation {
             return !str.isEmpty
 
         case #selector(copy(_:)):
+            if OctetKeyHook.prompt?.isActive == true,
+               OctetKeyHook.prompt?.line.selectedText != nil { return true }
             // We only enable copy menu item when there're actual selected text
             if let text = self.accessibilitySelectedText(), text.count > 0 {
                 return true
@@ -1679,6 +1687,7 @@ extension TerminalEngine.SurfaceView {
         let content = pb.getOpinionatedStringContents()
 
         if let content {
+            if OctetKeyHook.prompt?.insertPastedText(content) == true { return true }
             DispatchQueue.main.async {
                 self.insertText(
                     content,

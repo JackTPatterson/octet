@@ -30,6 +30,25 @@ struct PromptLine: Equatable {
     var isEmpty: Bool { text.isEmpty }
     var caretAtEnd: Bool { caret >= text.count }
 
+    /// Preserve multiline input when handing the editor back to the shell.
+    /// Bracketed paste prevents a focus change or Tab from submitting newlines.
+    func shellInput(trailing: String = "", restoreCaret: Bool = false) -> String {
+        let content = text.contains("\n") || text.contains("\r") || text.contains("\t")
+            ? "\u{1b}[200~" + text + "\u{1b}[201~" : text
+        let moves = restoreCaret ? String(repeating: "\u{1b}[D", count: max(0, text.count - caret)) : ""
+        return content + moves + trailing
+    }
+
+    /// Pasted escape/control bytes must not become terminal instructions on flush.
+    static func pastedText(_ text: String) -> String {
+        let normalized = text.replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        return String(normalized.unicodeScalars.filter {
+            // Unicode format characters (such as emoji ZWJ) are not terminal controls.
+            !($0.value < 0x20 || (0x7f...0x9f).contains($0.value)) || $0 == "\n" || $0 == "\t"
+        }).trimmingCharacters(in: .newlines)
+    }
+
     /// The selected span, if any, as character offsets.
     var selection: Range<Int>? {
         guard let anchor = selectionAnchor, anchor != caret else { return nil }

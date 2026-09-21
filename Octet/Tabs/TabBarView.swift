@@ -376,13 +376,13 @@ private struct NewTabButton: View {
         .background(Theme.chrome)
     }
 
-    /// Claude, Codex and OpenCode first, since Octet can chat with them, then every
+    /// Native conversation agents first, then every
     /// other agent found with an executable to run.
     private var entries: [AgentMenuEntry] {
         let runnable = discovery.agents.filter { $0.executablePath != nil }
-        // OpenCode has a chat view too, offered once it's installed.
+        // Additional native agents are offered once their CLI is installed.
         let chat: [AgentSession.Engine] = [.claude, .codex]
-            + (runnable.contains { $0.id == "opencode" } ? [.opencode] : [])
+            + [.opencode, .pi, .qwen].filter { engine in runnable.contains { $0.id == engine.agent } }
         let driven = chat.map { engine in
             AgentMenuEntry(id: engine.agent, name: engine == .claude ? "Claude Code" : engine.displayName, engine: engine,
                            agent: runnable.first { $0.id == engine.agent })
