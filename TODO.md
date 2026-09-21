@@ -6,9 +6,7 @@ is the embedded terminal view under `Octet/Terminal/`.
 
 ## Bugs
 
-- [ ] **1. ⌘V and ⌘A never reach Octet's key hook (high).** Implementation
-  updated 2026-09-21: native actions now route through the prompt editor; live
-  clipboard acceptance is pending (corpus T10). The original finding: the Edit menu
+- [ ] **1. ⌘V and ⌘A never reach Octet's key hook (high).** The Edit menu
   takes ⌘V first and pastes straight into the terminal, so image paste
   (`PasteHandler`) and the prompt line's paste never run. With the prompt
   line active, pasted text reaches the shell ahead of the held line and the
@@ -26,17 +24,13 @@ is the embedded terminal view under `Octet/Terminal/`.
   clipboard reads and multi-line prompt-line pastes.
 
 - [ ] **3. Font size changes leave the hidden top row wrong (med).**
-  Updated 2026-09-21: cell-size observation invalidates clipping layout; visual
-  acceptance is pending. Original finding:
   `TopRowClippingView` (OctetTerminal.swift) only relayouts on frame or
   backing changes, so after a font change the engine's tab row peeks through
   or the first content row is clipped until the next resize. Fix: subscribe
   to the surface's `cellSize` and set `needsLayout`. (⌘=/⌘-/⌘0 are now
   Octet menu items, so this is only the relayout.)
 
-- [ ] **4. Bottom anchoring lags output by up to 200 ms (med).**
-  Updated 2026-09-21: polling stops while hidden/minimized/fully occluded.
-  Visible-window polling and event-driven updates remain open. Original: a 0.2 s
+- [ ] **4. Bottom anchoring lags output by up to 200 ms (med).** A 0.2 s
   timer polls the cursor row, so every command's output visibly jumps, and
   the timer reads screen text on the main thread 5 times a second forever,
   even when the window is hidden. Fix: recompute from the engine's wakeup
@@ -59,8 +53,7 @@ is the embedded terminal view under `Octet/Terminal/`.
   it's active; for agent panes, reuse `PasteHandler`'s image-to-path logic.
 
 - [ ] **7. Clicks and scrolling above bottom-anchored content go nowhere
-  (med).** Updated 2026-09-21: the host now forwards hits to the surface;
-  visual acceptance remains pending. Originally, above the stage, hit testing returned
+  (med).** Above the moved-down stage, hit testing returns
   `TopRowClippingView` itself, so the click doesn't focus the terminal and
   the scroll wheel never reaches the session. Fix: override `hitTest` in
   `TopRowClippingView` to return the surface view for any point in bounds.
@@ -95,10 +88,7 @@ is the embedded terminal view under `Octet/Terminal/`.
 
 ## Missing features
 
-- [ ] **12. Find in scrollback (med).** Updated 2026-09-21: ⌘F searches the full
-  retained buffer and scrolls the live pane via a native Find panel.
-  Match highlighting and jump-to-prompt remain open. Original finding:
-  ⌘F does nothing, and ⌘↑/⌘↓ (jump
+- [ ] **12. Find in scrollback (med).** ⌘F does nothing, and ⌘↑/⌘↓ (jump
   to prompt) and ⌘Home/⌘PgUp are consumed with no effect. The renderer only
   holds the viewport; the scrollback lives in the session server, which has
   `pane.copy_search`, `pane.read`, `pane.scroll` and copy mode. Fix: a find

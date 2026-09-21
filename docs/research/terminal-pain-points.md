@@ -1,10 +1,5 @@
 # What a heavy terminal user complains about, and where Octet stands
 
-For the 2026-09-21 public-source corpus, code coverage assessment and acceptance
-scenarios, see [Terminal complaint corpus](terminal-corpus/README.md). This older
-single-creator synthesis is retained as historical context; its feature assessments
-are not a current implementation audit.
-
 Source: a survey of 25 videos (of 1,099 listed) from one prolific developer
 channel, filtered to terminal emulators, shells, and terminal-based coding
 agents. The raw digest with per-video timestamps is kept out of this repo;
