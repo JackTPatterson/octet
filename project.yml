@@ -13,6 +13,10 @@ settings:
     # Ad-hoc signing ("-") pinned every grant to one build's hash, and each
     # rebuild asked again.
     DEVELOPMENT_TEAM: P8FLGJ3757
+    # The generated Info.plist takes its version from these; without them
+    # the app ships with no version at all.
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
   configs:
     Debug:
       CODE_SIGN_IDENTITY: "Apple Development"
@@ -23,6 +27,9 @@ settings:
       CODE_SIGN_IDENTITY: "Developer ID Application"
       ENABLE_HARDENED_RUNTIME: YES
       OTHER_CODE_SIGN_FLAGS: "--timestamp"
+      # Xcode otherwise signs in get-task-allow (the debugger entitlement),
+      # which notarization rejects.
+      CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
       # Apple silicon only: GhosttyKit and the terminal engine are vendored
       # as arm64 builds, so an Intel slice has nothing to link against.
       ARCHS: arm64

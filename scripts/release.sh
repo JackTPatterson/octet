@@ -48,6 +48,9 @@ for binary in "$app/Contents/MacOS/"*; do
     echo "$details" | grep -q "flags=.*runtime" || { echo "error: $binary lacks the hardened runtime." >&2; exit 1; }
     echo "$details" | grep -q "^Timestamp=" || { echo "error: $binary has no secure timestamp." >&2; exit 1; }
     echo "$details" | grep -q "Authority=Developer ID Application" || { echo "error: $binary isn't signed with Developer ID." >&2; exit 1; }
+    if codesign -d --entitlements - "$binary" 2>&1 | grep -q "get-task-allow"; then
+        echo "error: $binary carries the get-task-allow entitlement." >&2; exit 1
+    fi
 done
 
 echo "==> Notarizing (this waits on Apple, usually a few minutes)"
