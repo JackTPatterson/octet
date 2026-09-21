@@ -8,9 +8,24 @@ settings:
   base:
     SWIFT_VERSION: "5.0"
     MACOSX_DEPLOYMENT_TARGET: "14.0"
-    CODE_SIGN_IDENTITY: "-"
     CODE_SIGN_STYLE: Manual
-    ENABLE_HARDENED_RUNTIME: NO
+    # A real team, so macOS keeps a keychain "Always Allow" across builds.
+    # Ad-hoc signing ("-") pinned every grant to one build's hash, and each
+    # rebuild asked again.
+    DEVELOPMENT_TEAM: P8FLGJ3757
+  configs:
+    Debug:
+      CODE_SIGN_IDENTITY: "Apple Development"
+      ENABLE_HARDENED_RUNTIME: NO
+    Release:
+      # Distribution outside the App Store: notarization requires Developer
+      # ID signing, the hardened runtime, and a secure timestamp.
+      CODE_SIGN_IDENTITY: "Developer ID Application"
+      ENABLE_HARDENED_RUNTIME: YES
+      OTHER_CODE_SIGN_FLAGS: "--timestamp"
+      # Apple silicon only: GhosttyKit and the terminal engine are vendored
+      # as arm64 builds, so an Intel slice has nothing to link against.
+      ARCHS: arm64
 targets:
   Herd:
     type: application
@@ -42,6 +57,34 @@ targets:
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
         OTHER_LDFLAGS: "-lc++"
         ENABLE_APP_SANDBOX: NO
+    postBuildScripts:
+      - name: Bundle terminal engine
+        basedOnDependencyAnalysis: true
+        inputFiles:
+          - $(SRCROOT)/Vendor/engine/herd-engine
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(EXECUTABLE_FOLDER_PATH)/herd-engine
+        script: |
+          set -eu
+          source="$SRCROOT/Vendor/engine/herd-engine"
+          dest="$TARGET_BUILD_DIR/$EXECUTABLE_FOLDER_PATH/herd-engine"
+          if [ ! -x "$source" ]; then
+            echo "error: $source is missing. Run scripts/fetch-engine.sh first."
+            exit 1
+          fi
+          mkdir -p "$(dirname "$dest")"
+          rm -f "$dest"
+          cp "$source" "$dest"
+          chmod 755 "$dest"
+          # Signed with the build's own identity: nested code signed ad hoc
+          # fails notarization, and Release adds the hardened runtime and a
+          # timestamp as notarization requires.
+          identity="${EXPANDED_CODE_SIGN_IDENTITY:--}"
+          if [ "$CONFIGURATION" = "Release" ]; then
+            codesign --force --sign "$identity" --options runtime --timestamp "$dest"
+          else
+            codesign --force --sign "$identity" "$dest"
+          fi
   herd-cli:
     type: tool
     platform: macOS
