@@ -62,6 +62,31 @@ final class PromptEditor: ObservableObject {
 
     // MARK: - Key handling
 
+    /// All native paste routes must edit the held line before reaching the PTY.
+    @discardableResult
+    func insertPastedText(_ text: String) -> Bool {
+        guard isActive, paneId == store.keyPaneId else { return false }
+        line.insert(PromptLine.pastedText(text))
+        refreshSuggestion()
+        if completionsOpen { closeCompletions() }
+        return true
+    }
+
+    func selectAll() -> Bool {
+        guard isActive, paneId == store.keyPaneId else { return false }
+        line.selectAll()
+        refreshSuggestion()
+        return true
+    }
+
+    func copySelection() -> Bool {
+        guard isActive, paneId == store.keyPaneId, let selected = line.selectedText else { return false }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(selected, forType: .string)
+        ClipboardWatcher.shared.acknowledge()
+        return true
+    }
+
     /// Called before the terminal sees a key; true means Octet took it.
     func handleKeyDown(_ event: NSEvent) -> Bool {
         guard SettingsStore.shared.values.promptEditor else { return false }
@@ -161,6 +186,10 @@ final class PromptEditor: ObservableObject {
             return true
         case 48: // Tab
             guard isActive else { return false }
+            if !SettingsStore.shared.values.promptCompletions, !isSearchingHistory {
+                flush(then: "\t")
+                return true
+            }
             if completionsOpen {
                 acceptCompletion()
             } else {
@@ -365,11 +394,7 @@ final class PromptEditor: ObservableObject {
         let shift = event.modifierFlags.contains(.shift)
         switch event.charactersIgnoringModifiers?.lowercased() {
         case "v":
-            guard let pasted = NSPasteboard.general.string(forType: .string) else { return true }
-            // A trailing newline would run the command; paste the text only.
-            line.insert(pasted.trimmingCharacters(in: .newlines))
-            refreshSuggestion()
-            return true
+            return OctetKeyHook.paste()
         case "c":
             guard let selected = line.selectedText else { return false }
             NSPasteboard.general.clearContents()
@@ -385,8 +410,7 @@ final class PromptEditor: ObservableObject {
             refreshSuggestion()
             return true
         case "a":
-            line.selectAll()
-            return true
+            return selectAll()
         case "z":
             shift ? line.redo() : line.undo()
             refreshSuggestion()
@@ -411,7 +435,7 @@ final class PromptEditor: ObservableObject {
             deactivate()
             return
         }
-        send(command + "\r")
+        send(line.shellInput(trailing: "\r"))
         remember(command)
         deactivate()
     }
@@ -432,7 +456,7 @@ final class PromptEditor: ObservableObject {
     /// Escape, Tab, or a key Octet doesn't handle: give the shell what was
     /// typed and get out of the way.
     private func flush(then trailing: String = "") {
-        let text = line.text + trailing
+        let text = line.shellInput(trailing: trailing, restoreCaret: true)
         if !text.isEmpty { send(text) }
         deactivate()
     }
@@ -446,7 +470,7 @@ final class PromptEditor: ObservableObject {
     private func send(_ text: String) {
         guard let paneId else { return }
         let client = store.client
-        DispatchQueue.global(qos: .userInitiated).async {
+        EngineClient.inputQueue.async {
             let outcome = Result { try client.call("pane.send_text", ["pane_id": paneId, "text": text]) }
             if case .failure(let error) = outcome {
                 DispatchQueue.main.async {

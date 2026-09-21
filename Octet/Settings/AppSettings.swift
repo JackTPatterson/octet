@@ -66,6 +66,7 @@ struct OctetSettings: Codable, Equatable {
     /// conversation view.
     var agentBanner = true
     var promptEditor = true
+    var promptCompletions = true
     var pasteImagesAsFiles = true
     var autoNameTabs = true
     var showTips = true
@@ -198,6 +199,7 @@ struct OctetSettings: Codable, Equatable {
         agentOpening = value("agentOpening", defaults.agentOpening)
         agentBanner = value("agentBanner", defaults.agentBanner)
         promptEditor = value("promptEditor", defaults.promptEditor)
+        promptCompletions = value("promptCompletions", defaults.promptCompletions)
         pasteImagesAsFiles = value("pasteImagesAsFiles", defaults.pasteImagesAsFiles)
         autoNameTabs = value("autoNameTabs", defaults.autoNameTabs)
         showTips = value("showTips", defaults.showTips)

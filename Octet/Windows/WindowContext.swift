@@ -31,6 +31,23 @@ final class WindowContext: ObservableObject, Identifiable {
     weak var nsWindow: NSWindow?
     /// This window's terminal, the only way to move this window's client.
     weak var surface: TerminalEngine.SurfaceView?
+    private var outputSearch: OutputSearch?
+
+    func findOutput(_ action: NSTextFinder.Action = .showFindInterface) {
+        if let outputSearch, outputSearch.window?.parent != nil {
+            if action != .showFindInterface || outputSearch.paneId == focusedPaneId {
+                outputSearch.find(action)
+                return
+            }
+            outputSearch.dismiss()
+        }
+        guard action == .showFindInterface, let nsWindow, nsWindow.attachedSheet == nil,
+              let paneId = focusedPaneId,
+              AgentCenter.shared.active(in: focusedWorkspace?.workspaceId) == nil else { return }
+        let search = OutputSearch(client: store.client, paneId: paneId)
+        outputSearch = search
+        search.present(on: nsWindow)
+    }
     /// Set as the window closes. Its engine client exits then, and that must
     /// not read as the engine going away, which quits the app.
     var closing = false
@@ -329,7 +346,7 @@ final class WindowContext: ObservableObject, Identifiable {
         runInFocusedPane(agent)
     }
 
-    /// The banner's "Open in Octet": moves an agent running in a terminal
+    /// The banner's "Switch to Octet UI": moves an agent running in a terminal
     /// pane into a conversation, continuing its session when Octet knows the
     /// id. Two processes never write one session, so the terminal one ends.
     func continueInOctet(_ agent: EngineAgent) {
@@ -342,8 +359,8 @@ final class WindowContext: ObservableObject, Identifiable {
         }
         ConfirmCenter.shared.ask(
             title: "\(name) is working",
-            message: "Opening it in Octet ends this terminal session and continues from what \(name) has saved, so the turn in progress stops.",
-            confirmTitle: "Open in Octet"
+            message: "Switching to conversation view ends this terminal session and continues from what \(name) has saved, so the turn in progress stops.",
+            confirmTitle: "Switch to Octet UI"
         ) { _ in proceed() }
     }
 
@@ -669,4 +686,3 @@ final class WindowRegistry: ObservableObject {
         key.followEngine(workspace: workspace, tab: focus.1)
     }
 }
-

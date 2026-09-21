@@ -2034,3 +2034,98 @@ final class AgentOfferTests: XCTestCase {
     }
 
 }
+
+final class TerminalCorpusRegressionTests: XCTestCase {
+    func testSearchResponseDecodesJSONWireNumbers() throws {
+        let bytes = Data(#"{"pane_id":"p1","content_revision":10886,"total":0,"matches":[]}"#.utf8)
+        let response = try JSONSerialization.jsonObject(with: bytes) as! [String: Any]
+        let result = try TerminalSearchResult(response: response, paneId: "p1")
+        XCTAssertEqual(result.revision, 10886)
+        XCTAssertNil(result.match)
+        XCTAssertThrowsError(try TerminalSearchResult(response: response, paneId: "other"))
+    }
+
+    func testPasteCannotInjectBracketedPasteTerminatorOrControlKeys() {
+        let pasted = PromptLine.pastedText("a\r\nb\r\u{1b}[201~\u{3}\n")
+        XCTAssertEqual(pasted, "a\nb\n[201~")
+        XCTAssertFalse(pasted.contains("\u{1b}"))
+        XCTAssertFalse(pasted.contains("\u{3}"))
+    }
+
+    func testMultilineHandoffDoesNotSubmitAndRestoresCaretBeforeTab() {
+        let line = PromptLine(text: "echo one\necho two", caret: 13)
+        XCTAssertEqual(line.shellInput(trailing: "\t", restoreCaret: true),
+                       "\u{1b}[200~echo one\necho two\u{1b}[201~" + String(repeating: "\u{1b}[D", count: 4) + "\t")
+        XCTAssertEqual(line.shellInput(trailing: "\r"), "\u{1b}[200~echo one\necho two\u{1b}[201~\r")
+        XCTAssertEqual(PromptLine(text: "ls").shellInput(trailing: "\t", restoreCaret: true), "ls\t")
+        XCTAssertEqual(PromptLine(text: "printf 'a\tb'").shellInput(), "\u{1b}[200~printf 'a\tb'\u{1b}[201~")
+    }
+
+    func testPasteReplacesSelectedInputAndPreservesUnicodeAndTabs() {
+        var line = PromptLine(text: "printf old")
+        line.selectAll()
+        line.insert(PromptLine.pastedText("printf '新しい\t👩‍💻'\n"))
+        XCTAssertEqual(line.text, "printf '新しい\t👩‍💻'")
+        XCTAssertEqual(line.caret, line.text.count)
+    }
+}
+
+final class TerminalLiveSearchTests: XCTestCase {
+    private func response(total: Int = 2000, global: Int = 1500, row: Int = 7500) -> [String: Any] {
+        ["pane_id": "p1", "content_revision": UInt64(42), "total": total,
+         "current": 0, "current_global": global,
+         "matches": [["start": ["row": row, "col": 4], "end": ["row": row, "col": 10]]]]
+    }
+
+    func testGlobalOrdinalIsIndependentOfReturnedMatchPage() throws {
+        let result = try TerminalSearchResult(response: response(), paneId: "p1")
+        XCTAssertEqual(result.ordinal, 1501)
+        XCTAssertEqual(result.total, 2000)
+        XCTAssertEqual(result.scrollOffset(maximum: 10000, viewportRows: 40), 2520)
+    }
+
+    func testScrollOffsetsClampAtBothEnds() throws {
+        let oldest = try TerminalSearchResult(response: response(row: 0), paneId: "p1")
+        let newest = try TerminalSearchResult(response: response(row: 10039), paneId: "p1")
+        XCTAssertEqual(oldest.scrollOffset(maximum: 10000, viewportRows: 40), 10000)
+        XCTAssertEqual(newest.scrollOffset(maximum: 10000, viewportRows: 40), 0)
+    }
+
+    func testNoMatchesAndInvalidPaneDoNotNavigate() throws {
+        let empty: [String: Any] = ["pane_id": "p1", "content_revision": UInt64(42), "total": 0, "matches": [[String: Any]]()]
+        let result = try TerminalSearchResult(response: empty, paneId: "p1")
+        XCTAssertNil(result.match)
+        XCTAssertNil(result.scrollOffset(maximum: 10000, viewportRows: 40))
+        XCTAssertThrowsError(try TerminalSearchResult(response: empty, paneId: "other"))
+        var invalid = response()
+        invalid["current"] = 10
+        XCTAssertThrowsError(try TerminalSearchResult(response: invalid, paneId: "p1"))
+    }
+
+    func testSearchRetriesStaleContentAndResetsOldCoordinates() throws {
+        let prior = try TerminalSearchResult(response: response(), paneId: "p1")
+        var searches = 0
+        let result = try TerminalSearchResult.find(paneId: "p1", query: "needle", backward: true, previous: prior) { method, params in
+            if method == "pane.copy_motion" { return ["content_revision": UInt64(43)] }
+            searches += 1
+            XCTAssertEqual(params["direction"] as? String, "backward")
+            XCTAssertNil(params["previous"])
+            if searches == 1 { throw EngineSocketError.server(code: "stale_content", message: "changed") }
+            return self.response()
+        }
+        XCTAssertEqual(searches, 2)
+        XCTAssertEqual(result.total, 2000)
+    }
+
+    func testSearchPreservesPreviousMatchAtSameRevisionAndBoundsRetries() throws {
+        let prior = try TerminalSearchResult(response: response(), paneId: "p1")
+        var searches = 0
+        XCTAssertThrowsError(try TerminalSearchResult.find(paneId: "p1", query: "needle", backward: false, previous: prior) { method, params in
+            if method == "pane.copy_motion" { return ["content_revision": UInt64(42)] }
+            searches += 1
+            XCTAssertNotNil(params["previous"])
+            throw EngineSocketError.server(code: "stale_content", message: "changed")
+        })
+        XCTAssertEqual(searches, 3)
+    }
+}

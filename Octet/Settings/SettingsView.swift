@@ -620,6 +620,15 @@ private struct AgentSettings: View {
             }
             SettingsDivider()
             SettingsRow(
+                title: "Octet's Tab completions",
+                detail: "Turn off to send Tab to your shell while keeping Octet's command-line editing and history suggestions. The shell takes over the current line after Tab."
+            ) {
+                Toggle("Octet's Tab completions", isOn: $settings.values.promptCompletions)
+                    .labelsHidden().toggleStyle(.switch)
+                    .disabled(!settings.values.promptEditor)
+            }
+            SettingsDivider()
+            SettingsRow(
                 title: "Paste images as files",
                 detail: "⌘V with an image on the clipboard writes it out and pastes the path, which is what agents can actually read."
             ) {

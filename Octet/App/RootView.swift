@@ -146,8 +146,10 @@ struct RootView: View {
             store.lastError = nil
         }
         .onChange(of: confirmations.request?.id) { _, id in DebugSnapshot.overlayVisible = id != nil }
-        .overlay(alignment: .topLeading) { promptOverlay }
+        // Hide the engine's chrome before drawing the prompt and completions;
+        // bottom anchoring can move this cover through the completion menu.
         .overlay(alignment: .topLeading) { chromeCover }
+        .overlay(alignment: .topLeading) { promptOverlay }
         .overlay {
             if ui.paletteVisible {
                 CommandPaletteView(model: palette) { closePalette() }

@@ -7,6 +7,7 @@
 // The engine glue lives in ./Engine.
 
 import AppKit
+import Combine
 import GhosttyKit
 import SwiftUI
 
@@ -266,9 +267,9 @@ final class TopRowClippingView: NSView {
     /// the pane instead of clinging to the top.
     private var blankRowsBelow = 0
     private var anchorTimer: Timer?
+    private var observations = Set<AnyCancellable>()
     private let stage = FlippedView()
     private let anchor: TerminalAnchor
-    private var lastCursorRow: UInt16 = .max
 
     init(surfaceView: TerminalEngine.SurfaceView, hiddenRows: Int, anchor: TerminalAnchor) {
         self.surfaceView = surfaceView
@@ -284,7 +285,17 @@ final class TopRowClippingView: NSView {
         stage.layer?.masksToBounds = true
         stage.addSubview(surfaceView)
         addSubview(stage)
-        startBottomAnchor()
+        surfaceView.$cellSize.removeDuplicates().receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.needsLayout = true }
+            .store(in: &observations)
+        for name in [NSWindow.didChangeOcclusionStateNotification,
+                     NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification,
+                     NSApplication.didHideNotification, NSApplication.didUnhideNotification] {
+            NotificationCenter.default.publisher(for: name)
+                .receive(on: RunLoop.main)
+                .sink { [weak self] _ in self?.updatePollingLifecycle() }
+                .store(in: &observations)
+        }
     }
 
     deinit {
@@ -293,11 +304,35 @@ final class TopRowClippingView: NSView {
 
     /// Watches the cursor so the shift follows the prompt as output grows.
     private func startBottomAnchor() {
+        guard anchorTimer == nil else { return }
         let timer = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.updateBottomAnchor() }
         }
         RunLoop.main.add(timer, forMode: .common)
         anchorTimer = timer
+    }
+
+    /// Hidden/minimized/fully covered windows need no main-thread grid scans.
+    private func updatePollingLifecycle() {
+        guard let window, window.isVisible, !window.isMiniaturized,
+              window.occlusionState.contains(.visible), !NSApp.isHidden else {
+            anchorTimer?.invalidate()
+            anchorTimer = nil
+            return
+        }
+        updateBottomAnchor()
+        startBottomAnchor()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        updatePollingLifecycle()
+    }
+
+    /// Blank space above bottom-anchored output is still part of the terminal.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard super.hitTest(point) != nil else { return nil }
+        return surfaceView
     }
 
     @MainActor
@@ -320,7 +355,6 @@ final class TopRowClippingView: NSView {
         guard ghostty_surface_grid_metrics(surface, &metrics), metrics.cursor_in_viewport else { return 0 }
         let below = Int(metrics.rows) - 1 - Int(metrics.cursor_row)
         guard below > 0 else { return 0 }
-        lastCursorRow = metrics.cursor_row
 
         var text = ghostty_text_s()
         let selection = ghostty_selection_s(

@@ -93,6 +93,8 @@ final class EngineSocketConnection {
 /// Request/response access to the session server's socket API. Each call opens a short
 /// connection, which keeps the client stateless and thread-safe.
 struct EngineClient {
+    /// Ordered editor/image input must not race across separate socket calls.
+    static let inputQueue = DispatchQueue(label: "com.jpxsoftware.octet.pane-input", qos: .userInitiated)
     let socketPath: String
 
     /// Socket for a named session (`<state folder>/sessions/<name>/<socket file>`).

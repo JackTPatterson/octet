@@ -132,6 +132,14 @@ struct OctetCommands: Commands {
                 .keyboardShortcut(OctetShortcut.marketplace.keyboardShortcut)
             SecureKeyboardEntryToggle()
         }
+        CommandGroup(after: .textEditing) {
+            Button("Find in Terminal Output…") { OutputSearch.perform() }
+                .keyboardShortcut("f", modifiers: .command)
+            Button("Find Next") { OutputSearch.perform(.nextMatch) }
+                .keyboardShortcut("g", modifiers: .command)
+            Button("Find Previous") { OutputSearch.perform(.previousMatch) }
+                .keyboardShortcut("g", modifiers: [.command, .shift])
+        }
         CommandGroup(after: .sidebar) {
             Button(OctetShortcut.palette.title) { KeyWindow.act { $0.ui.paletteVisible.toggle() } }
                 .keyboardShortcut(OctetShortcut.palette.keyboardShortcut)
@@ -269,14 +277,17 @@ enum OctetKeyHook {
 
     static weak var store: SessionStore?
 
-    static func handleKeyDown(_ event: NSEvent) -> Bool {
-        // An image on the clipboard becomes a path, in any pane.
-        if event.modifierFlags.contains(.command),
-           event.charactersIgnoringModifiers?.lowercased() == "v",
-           prompt?.isActive != true,
-           let store, PasteHandler.handleCommandV(store: store) {
-            return true
+    static func paste(from pasteboard: NSPasteboard = .general, plainText: Bool = false) -> Bool {
+        guard ConfirmCenter.shared.request == nil else { return true }
+        if !plainText, pasteboard === NSPasteboard.general,
+           let store, PasteHandler.handleCommandV(store: store) { return true }
+        guard let text = pasteboard.getOpinionatedStringContents() else {
+            return prompt?.isActive == true
         }
+        return prompt?.insertPastedText(text) ?? false
+    }
+
+    static func handleKeyDown(_ event: NSEvent) -> Bool {
         // A dialog over the terminal owns the keyboard. Its buttons' Return
         // and Esc equivalents don't reach it past the terminal, so they're
         // answered here.
@@ -293,6 +304,8 @@ enum OctetKeyHook {
         // Input methods and dead keys compose text over several keystrokes;
         // raw key codes would break Japanese, Chinese, Korean and Option-accents.
         if isComposing(event) { return false }
+        if event.modifierFlags.intersection([.command, .control, .option, .shift]) == .command,
+           event.charactersIgnoringModifiers?.lowercased() == "v", paste() { return true }
         // Shell prompts get Octet's own line; agents keep their own `/` menus.
         return prompt?.handleKeyDown(event) ?? false
     }

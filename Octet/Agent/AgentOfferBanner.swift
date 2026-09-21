@@ -17,12 +17,12 @@ struct AgentOfferBanner: View {
         let brand = AgentBrand.forAgent(agent.agent)
         HStack(spacing: 10) {
             if let brand { AgentLogo(brand: brand, size: 14) }
-            Text("\(brand?.displayName ?? "The agent") is running in its own interface")
+            Text("\(brand?.displayName ?? "The agent") is running in the terminal")
                 .font(Theme.uiFontMedium)
                 .foregroundStyle(Theme.textPrimary)
                 .lineLimit(1)
                 .layoutPriority(1)
-            Text("Octet can show it as a conversation.")
+            Text("Switch to Octet’s conversation view.")
                 .font(Theme.uiFont)
                 .foregroundStyle(Theme.textTertiary)
                 .lineLimit(1)
@@ -30,8 +30,8 @@ struct AgentOfferBanner: View {
             Spacer(minLength: 8)
             // Never squeezed: the words before them give way first.
             Group {
-                OctetButton(title: "Open in Octet", kind: .primary, compact: true, action: open)
-                    .help("Ends this terminal session and continues it in Octet")
+                OctetButton(title: "Switch to Octet UI", kind: .primary, compact: true, action: open)
+                    .help("Ends this terminal session and opens Octet’s conversation view")
                 OctetButton(title: "Dismiss", kind: .ghost, compact: true, action: dismiss)
                     .help("Hide this until the agent is started again")
                 OctetButton(title: "Don't show again", kind: .ghost, compact: true, action: never)
@@ -50,6 +50,6 @@ struct AgentOfferBanner: View {
         .offset(y: shown ? 0 : -6)
         .onAppear { motion.perform(.toasts, .smooth(duration: 0.22)) { shown = true } }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(brand?.displayName ?? "Agent") is running in its own interface")
+        .accessibilityLabel("\(brand?.displayName ?? "Agent") is running in the terminal")
     }
 }
