@@ -211,7 +211,7 @@ private struct TabItem: View {
                         Theme.terminalBackground
                         if let hue = brand?.hueHex { Color(hex: hue).opacity(0.08) }
                         Rectangle()
-                            .fill(brand?.hueHex.map { Color(hex: $0) } ?? Theme.accent)
+                            .fill(Color.white.opacity(0.9))
                             .frame(height: 2)
                     }
                     .matchedGeometryEffect(id: "selectedTab", in: selection)
@@ -559,7 +559,7 @@ private struct ConversationTab: View {
                 if isActive {
                     ZStack(alignment: .top) {
                         Theme.terminalBackground
-                        Rectangle().fill(brand?.hueHex.map { Color(hex: $0) } ?? Theme.accent).frame(height: 2)
+                        Rectangle().fill(Color.white.opacity(0.9)).frame(height: 2)
                     }
                     .matchedGeometryEffect(id: "selectedTab", in: selection)
                 }
