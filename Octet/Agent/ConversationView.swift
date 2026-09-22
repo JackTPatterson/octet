@@ -105,15 +105,11 @@ private struct ConversationHeader: View {
         let conversation = session.conversation
         HStack(spacing: 10) {
             if let brand = AgentBrand.forAgent(session.engine.agent) { AgentLogo(brand: brand, size: 14) }
+            ProjectLocation(directory: session.cwd, branch: branch, worktree: workspace?.worktree)
             Text(session.title)
                 .font(Theme.uiFontMedium)
                 .foregroundStyle(Theme.textPrimary)
                 .lineLimit(1)
-            Text(abbreviateHome(session.cwd))
-                .font(Theme.captionFont)
-                .foregroundStyle(Theme.textTertiary)
-                .lineLimit(1)
-                .truncationMode(.middle)
             Spacer(minLength: 8)
             if let used = conversation.contextUsed {
                 ContextMeter(used: used, window: conversation.contextWindow)
@@ -136,6 +132,57 @@ private struct ConversationHeader: View {
         .padding(.horizontal, 16)
         .frame(height: 36)
         .background(Theme.chrome)
+    }
+
+    private var workspace: EngineWorkspace? {
+        window.store.snapshot.workspaces.first { $0.workspaceId == session.workspaceId }
+    }
+
+    private var branch: String? {
+        workspace?.worktree?.branch ?? window.store.branches[session.workspaceId]
+    }
+}
+
+private struct ProjectLocation: View {
+    let directory: String
+    let branch: String?
+    let worktree: EngineWorktree?
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Text(abbreviateHome(directory))
+                .font(Theme.monoFont)
+                .foregroundStyle(Theme.textSecondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .help(directory)
+            if let label = sourceLabel {
+                HStack(spacing: 4) {
+                    OctetIcon(worktree == nil ? "arrow.triangle.branch" : "square.stack.3d.up", size: 10)
+                    Text(label)
+                        .font(Theme.captionFont)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                .foregroundStyle(Theme.textTertiary)
+                .help(sourceHelp)
+            }
+        }
+        .layoutPriority(1)
+    }
+
+    private var sourceLabel: String? {
+        if let worktree {
+            return worktree.branch ?? worktree.path.map { ($0 as NSString).lastPathComponent }
+        }
+        return branch
+    }
+
+    private var sourceHelp: String {
+        if let worktree {
+            return worktree.path.map { "Worktree at \($0)" } ?? "Worktree \(sourceLabel ?? "")"
+        }
+        return "Branch \(branch ?? "")"
     }
 }
 

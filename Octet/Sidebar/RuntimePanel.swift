@@ -109,18 +109,19 @@ struct RuntimePanel: View {
             guard let info = store.paneProcesses[pane.paneId] else { continue }
             let tab = snapshot.tabs.first { $0.tabId == pane.tabId }
             let location = tab.map { TabAutoName.display(label: $0.label, number: $0.number) } ?? "Terminal"
-            for process in info.background {
+            for process in info.background where Self.isShell(process.name) {
                 let title = Self.commandName(process.name)
-                result.append(RuntimeEntry(id: "\(pane.paneId)-\(process.pid)", kind: Self.kind(for: title),
+                result.append(RuntimeEntry(id: "\(pane.paneId)-\(process.pid)", kind: .shell,
                                            title: title, detail: "PID \(process.pid)",
                                            location: location, paneId: pane.paneId))
             }
         }
 
         if let session = activeClaude {
-            for process in store.nativeRuntimeProcesses[session.id] ?? [] {
+            result += activeMonitors(in: session)
+            for process in store.nativeRuntimeProcesses[session.id] ?? [] where Self.isShell(process.name) {
                 let title = Self.commandName(process.name)
-                result.append(RuntimeEntry(id: "\(session.id)-\(process.pid)", kind: Self.kind(for: title),
+                result.append(RuntimeEntry(id: "\(session.id)-\(process.pid)", kind: .shell,
                                            title: title, detail: "PID \(process.pid)",
                                            location: session.title, paneId: nil, sessionId: session.id))
             }
@@ -148,10 +149,33 @@ struct RuntimePanel: View {
         return name.hasPrefix("-") ? String(name.dropFirst()) : name
     }
 
-    private static func kind(for command: String) -> RuntimeKind {
-        let normalized = command.lowercased()
-        return ShellPrompt.shells.contains(normalized) || ShellPrompt.shells.contains("-" + normalized)
-            ? .shell : .monitor
+    private func activeMonitors(in session: AgentSession) -> [RuntimeEntry] {
+        let now = Date()
+        return session.conversation.items.compactMap { item in
+            guard case .tool(let call) = item.kind, call.name.caseInsensitiveCompare("Monitor") == .orderedSame,
+                  call.result?.localizedCaseInsensitiveContains("monitor started") == true,
+                  let input = call.inputObject else { return nil }
+            let timeout = (input["timeout_ms"] as? NSNumber)?.doubleValue ?? 120_000
+            let expires = item.createdAt.addingTimeInterval(timeout / 1_000)
+            guard expires > now else { return nil }
+            let title = input["description"] as? String ?? call.summary
+            return RuntimeEntry(id: "monitor-\(item.id)", kind: .monitor,
+                                title: title.isEmpty ? "Monitor" : title,
+                                detail: Self.remaining(until: expires, now: now),
+                                location: session.title, paneId: nil, sessionId: session.id)
+        }
+    }
+
+    private static func isShell(_ raw: String) -> Bool {
+        let command = commandName(raw).lowercased()
+        return ShellPrompt.shells.contains(command) || ShellPrompt.shells.contains("-" + command)
+    }
+
+    private static func remaining(until end: Date, now: Date) -> String {
+        let seconds = max(0, Int(end.timeIntervalSince(now)))
+        let minutes = seconds / 60
+        let remainder = seconds % 60
+        return minutes > 0 ? "\(minutes)m \(remainder)s" : "\(remainder)s"
     }
 }
 

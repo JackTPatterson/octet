@@ -542,6 +542,9 @@ struct AgentItem: Identifiable, Equatable {
     var parent: String?
     /// Images the person attached to a message, as sent.
     var images: [Data] = []
+    /// When the item began. Runtime uses this with a Monitor call's timeout
+    /// to distinguish a live watch from historical tool output.
+    var createdAt = Date()
 }
 
 struct AgentToolCall: Equatable {
@@ -653,6 +656,7 @@ extension AgentConversation {
             guard let data = line.data(using: .utf8),
                   let record = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
                   record["isMeta"] as? Bool != true, record["isSidechain"] as? Bool != true else { continue }
+            let firstNewItem = conversation.items.count
             switch record["type"] as? String {
             case "assistant":
                 conversation.apply(record)
@@ -669,11 +673,23 @@ extension AgentConversation {
             default:
                 break
             }
+            if let timestamp = record["timestamp"] as? String,
+               let date = eventDate(timestamp) {
+                for index in firstNewItem..<conversation.items.count {
+                    conversation.items[index].createdAt = date
+                }
+            }
             if conversation.sessionId == nil { conversation.sessionId = record["sessionId"] as? String }
             if conversation.cwd == nil { conversation.cwd = record["cwd"] as? String }
         }
         conversation.isRunning = false
         return conversation
+    }
+
+    private static func eventDate(_ value: String) -> Date? {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fractional.date(from: value) ?? ISO8601DateFormatter().date(from: value)
     }
 
     /// A person's message, or nil for tool results and command echoes.
