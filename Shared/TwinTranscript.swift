@@ -55,7 +55,7 @@ struct TwinUsage: Equatable {
 
     var total: Int { inputTokens + outputTokens }
 
-    /// How full the window is, when Herd can tell honestly.
+    /// How full the window is, when Octet can tell honestly.
     var contextFraction: Double? {
         guard let contextWindow, contextWindow > 0, currentContextTokens > 0 else { return nil }
         return min(1, Double(currentContextTokens) / Double(contextWindow))
@@ -76,7 +76,7 @@ struct TwinUsage: Equatable {
         }
     }
 
-    /// Windows Herd can infer from a model name when the agent doesn't say.
+    /// Windows Octet can infer from a model name when the agent doesn't say.
     static func window(forModel model: String?) -> Int? {
         guard let model = model?.lowercased() else { return nil }
         if model.contains("1m") { return 1_000_000 }
@@ -87,7 +87,7 @@ struct TwinUsage: Equatable {
 
 enum TwinTranscript {
     /// Parses whichever format the agent writes. Claude and Codex are the two
-    /// Herd knows by name; anything else goes through the loose reader, which
+    /// Octet knows by name; anything else goes through the loose reader, which
     /// understands the shapes agents actually write rather than one vendor's.
     static func parse(agent: String?, lines: [String]) -> TwinConversation {
         switch AgentBrand.forAgent(agent)?.id {

@@ -1563,7 +1563,7 @@ final class TerminalThemeImportTests: XCTestCase {
 
     func testAConfigThatOnlyNamesAThemeIsFollowed() {
         XCTAssertEqual(TerminalThemeImport.themeName(in: "theme = catppuccin-mocha"), "catppuccin-mocha")
-        // The split form picks the dark one, which is what Herd defaults to.
+        // The split form picks the dark one, which is what Octet defaults to.
         XCTAssertEqual(TerminalThemeImport.themeName(in: "theme = light:rosepine-dawn,dark:rosepine"), "rosepine")
         XCTAssertNil(TerminalThemeImport.themeName(in: "background = #000"))
     }
@@ -1605,8 +1605,8 @@ final class RemoteMachineTests: XCTestCase {
         XCTAssertEqual(array.map(\.label), ["builder"])
         XCTAssertEqual(array.first?.target, "jack@builder.local")
 
-        let wrapped = RemoteMachines.parse(Data(#"{"machines":[{"name":"pve","ssh_target":"root@192.168.86.10","enabled":false}]}"#.utf8))
-        XCTAssertEqual(wrapped.first?.label, "pve")
+        let wrapped = RemoteMachines.parse(Data(#"{"machines":[{"name":"homelab","ssh_target":"root@homelab.local","enabled":false}]}"#.utf8))
+        XCTAssertEqual(wrapped.first?.label, "homelab")
         XCTAssertFalse(wrapped.first?.enabled ?? true)
         // Nothing usable is no machines, not a crash.
         XCTAssertTrue(RemoteMachines.parse(Data("No saved SSH machines.".utf8)).isEmpty)
@@ -1615,9 +1615,9 @@ final class RemoteMachineTests: XCTestCase {
 
     func testOpeningAMachineRunsTheEngineAgainstIt() {
         let machine = RemoteMachine(id: "m", label: "Build Box", target: "jack@box")
-        XCTAssertEqual(RemoteMachines.sessionName(for: machine), "herd-build-box")
-        XCTAssertEqual(machine.command(herdrPath: "/usr/local/bin/herdr", session: "herd-build-box"),
-                       ["/usr/local/bin/herdr", "--remote", "jack@box", "--session", "herd-build-box"])
+        XCTAssertEqual(RemoteMachines.sessionName(for: machine), "octet-build-box")
+        XCTAssertEqual(machine.command(herdrPath: "/usr/local/bin/herdr", session: "octet-build-box"),
+                       ["/usr/local/bin/herdr", "--remote", "jack@box", "--session", "octet-build-box"])
     }
 }
 
@@ -1707,7 +1707,7 @@ final class TwinGenericReaderTests: XCTestCase {
     }
 
     func testAKnownFormatIsRecognisedEvenFromAnUnknownAgent() {
-        // An agent Herd hasn't met may still write Claude's or Codex's shape.
+        // An agent Octet hasn't met may still write Claude's or Codex's shape.
         let claude = #"{"type":"assistant","uuid":"a1","message":{"content":[{"type":"text","text":"hello"}]}}"#
         XCTAssertEqual(TwinTranscript.parse(agent: "mystery", lines: [claude]).messages.first?.blocks, [.text("hello")])
         let codex = #"{"type":"response_item","payload":{"type":"message","id":"m","role":"assistant","content":[{"type":"output_text","text":"done"}]}}"#
@@ -2114,7 +2114,7 @@ final class TwinStyleTests: XCTestCase {
         XCTAssertEqual(codex.bullet, "•")
         XCTAssertEqual(codex.callLine(tool: "apply_patch", argument: "main.rs"), "Apply patch(main.rs)")
 
-        // An agent Herd doesn't know still gets a usable one.
+        // An agent Octet doesn't know still gets a usable one.
         XCTAssertEqual(TwinStyle.forAgent("mystery").promptPrefix, "›")
     }
 

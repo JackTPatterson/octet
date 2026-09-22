@@ -4,11 +4,11 @@ import Foundation
 struct TwinSource: Equatable {
     let path: String
     /// Agent id whose format the file is written in; nil means the loose
-    /// reader, which is what any agent Herd hasn't met by name gets.
+    /// reader, which is what any agent Octet hasn't met by name gets.
     let format: String?
 }
 
-/// Finding that file. Claude and Codex are the two Herd knows by name, so
+/// Finding that file. Claude and Codex are the two Octet knows by name, so
 /// they resolve exactly; every other agent is found the way you would find it
 /// yourself — the newest session file under the folder that agent keeps, in
 /// the project you are standing in.
@@ -58,7 +58,7 @@ enum TwinSources {
         within: TimeInterval = 7 * 86_400
     ) -> TwinSource? {
         // A minute of slack: an agent writes its first line moments after
-        // Herd first sees the process.
+        // Octet first sees the process.
         let floor = max(now.addingTimeInterval(-within), since?.addingTimeInterval(-60) ?? .distantPast)
         let id = AgentBrand.forAgent(agent)?.id ?? agent?.lowercased()
         if id == "claude" {

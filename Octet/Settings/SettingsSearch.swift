@@ -205,7 +205,7 @@ private struct SearchResultRow: View {
 
 /// Help menu items. Octet has no help book, so help is the README.
 enum OctetHelp {
-    static let readmeURL = URL(string: "https://github.com/JackTPatterson/herd#readme")!
+    static let readmeURL = URL(string: "https://github.com/JackTPatterson/octet#readme")!
 
     static func openReadme() {
         NSWorkspace.shared.open(readmeURL)

@@ -6,7 +6,7 @@ import Foundation
 /// an interface is supposed to spare you. The ones worth knowing about become
 /// one quiet line; the rest are dropped.
 enum TwinNotes {
-    /// A line for this block, or nil when it isn't one Herd summarises.
+    /// A line for this block, or nil when it isn't one Octet summarises.
     static func summarise(_ text: String) -> String? {
         guard text.hasPrefix("<task-notification>") else { return nil }
         let summary = tag("summary", in: text) ?? "A background agent finished"

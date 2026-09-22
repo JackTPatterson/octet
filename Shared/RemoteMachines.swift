@@ -49,6 +49,6 @@ enum RemoteMachines {
         let cleaned = machine.label.lowercased()
             .replacingOccurrences(of: "[^a-z0-9-]+", with: "-", options: .regularExpression)
             .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
-        return "herd-" + (cleaned.isEmpty ? "remote" : cleaned)
+        return "octet-" + (cleaned.isEmpty ? "remote" : cleaned)
     }
 }

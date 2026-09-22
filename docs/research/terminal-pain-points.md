@@ -36,7 +36,7 @@ as tools, and moving agent orchestration *out* of the terminal into a GUI.
 | Parallel agents are miserable (3) | The whole point: workspaces grouped by project, per-tab agent state, an idle dock for what's gone stale, one palette across every workspace, tab and agent |
 | Losing sessions to a reboot (3) | Session recovery: Octet journals each agent's session id and offers to resume them where they were |
 | Embedded panes are bad (7) | Octet is a real terminal, built on the kind of native emulator he praises, not a pane bolted into an editor |
-| Electron (9) | Native Swift, GPU-rendered text. Worth noting his own team reached for Electron only after a native attempt failed on scrollable-text performance; Octet's GPU terminal engine is the answer to that specific failure |
+| Electron (9) | Native Swift, with terminal text rendered on the GPU by libghostty. Native isn't automatically fast: smooth scrolling of long, rich text in AppKit is hard, and the native conversation views still have to prove it with long transcripts |
 | Closed source (1) | Octet is MIT and public |
 | Subscriptions (2) | Octet costs nothing and has no account |
 | Sign-in and telemetry (6) | Octet has no account, no sign-in, and no telemetry |
@@ -58,28 +58,33 @@ agreement. These are the features of ours his stated positions bear on:
 | Tips in the sidebar | Settings → General |
 | Motion | Settings → Motion, per area |
 
-The one place we contradict him outright is **theming**: Octet imposes its own
-theme set on the whole window, and he wants a tool to follow the terminal's
-existing theme. That is worth fixing rather than defending.
+The one place we contradicted him outright was **theming**: Octet imposed its
+own theme set on the whole window. It now follows the terminal's colours
+(Settings → Appearance → Follow your terminal's colours, which reads a Ghostty
+or `key = value` theme file).
 
-## Worth adding, in order of how much pain it removes
+## What this list led to
 
-1. **Paste an image into an agent pane** (complaint 5). Octet sees ⌘V before
-   the terminal does: when the pasteboard holds an image, write it to a temp
-   file and paste the path, which is what agents actually accept. A concrete
-   fix for a named breakage.
-2. **Follow the terminal's own theme** (8). Import from the user's terminal
-   config or an existing theme file, instead of only offering Octet's set.
-3. **Usage and limits in view** (2). A chip per agent showing what its own
-   CLI reports about usage, so a rate limit is visible before it bites.
-4. **An agents board** (3). One view of every running agent with its last
-   line and state — the thing tmux stops being able to do past six tasks.
-5. **Remote sessions in the UI** (the SSH complaint). The engine already
-   manages machines; Octet doesn't surface them.
+Shipped since this was written:
+
+1. **Pasting an image into an agent pane** (complaint 5) writes the image to a
+   file and pastes the path, which is what agents accept.
+2. **Following the terminal's own theme** (8), described above.
+3. **Usage and limits in view** (2): Claude and Codex usage, weekly pace, and
+   a limit screen with a reset countdown.
+4. **An agents board** (3), ⌘⇧A: every running agent sorted by who needs
+   you, with its last line and state.
+
+Still open:
+
+5. **Remote sessions in the UI** (the SSH complaint). The engine manages
+   machines; Octet only lists and opens them from the palette.
+6. **Diff review and commit** for agent changes, which Octet shows only as a
+   line count today.
 
 Full-screen repainting (4) looked out of reach from outside the agent, and
 was, until the visual twin: agents write their turns to disk as structured
-lines, so Herd can draw the conversation itself and never repaint at all. The
+lines, so Octet can draw the conversation itself and never repaint at all. The
 twin renders each agent's own idiom — Claude's `●`/`⎿` and `Update(file)`,
 Codex's `•` and patches — so what it replaces is the repainting, not the
 interface people know.
