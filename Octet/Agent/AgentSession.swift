@@ -862,6 +862,18 @@ final class AgentSession: ObservableObject, Identifiable {
     #endif
 
     func receivePermission(_ prompt: [String: Any], reply: @escaping ([String: Any]) -> Void) {
+        if let question = ClaudeUserInput.question(prompt, sessionId: sessionId) {
+            enqueueQuestion(question, answer: { answers in
+                reply(ClaudeUserInput.decision(prompt, question: question, answers: answers))
+            }, reject: {
+                reply(AgentPermissionRequest.decision(
+                    allow: false, input: prompt["input"] as? [String: Any] ?? [:],
+                    message: "The user skipped this question in Octet."
+                ))
+            })
+            NSApp.requestUserAttention(.informationalRequest)
+            return
+        }
         guard let request = AgentPermissionRequest(json: prompt) else {
             reply(AgentPermissionRequest.decision(allow: false, input: [:], message: "Octet couldn't read this request."))
             return

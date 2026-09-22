@@ -88,6 +88,7 @@ enum SettingsSearchIndex {
               ["usage", "allowance", "limit", "quota", "keychain", "claude", "account", "rate"]),
         .init(.agents, "Agents on this machine", anchor: "Agents on this machine",
               ["installed", "discover", "scan", "opencode", "gemini", "cursor", "deepseek", "version", "path"]),
+        .init(.agents, "Prompt for agent updates", ["update", "upgrade", "version", "claude", "codex", "pi"]),
         .init(.agents, "Resume agents after a restart", ["resume", "restart", "recover", "reboot", "session"]),
         .init(.agents, "Offer to recover lost sessions", ["recover", "recovery", "crash", "lost", "session"]),
         .init(.agents, "When you run an agent in a terminal",

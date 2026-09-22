@@ -556,6 +556,30 @@ final class CodexApprovalTests: XCTestCase {
                        "Ship it\nVerify it")
     }
 
+    func testClaudeAskUserQuestionMapsToQuestionAndPermissionAnswer() throws {
+        let prompt: [String: Any] = [
+            "tool_name": "AskUserQuestion", "tool_use_id": "ask-claude",
+            "input": ["questions": [
+                ["header": "Database", "question": "Which database?", "multiSelect": false,
+                 "options": [["label": "Postgres", "description": "Shared service"]]],
+                ["header": "Features", "question": "Which features?", "multiSelect": true,
+                 "options": [["label": "Auth", "description": "Sign in"]]],
+            ]],
+        ]
+        let question = try XCTUnwrap(ClaudeUserInput.question(prompt, sessionId: "session"))
+        XCTAssertEqual(question.id, "ask-claude")
+        XCTAssertEqual(question.items.map(\.question), ["Which database?", "Which features?"])
+        XCTAssertEqual(question.items.map(\.multiple), [false, true])
+
+        let decision = ClaudeUserInput.decision(prompt, question: question,
+                                                answers: [["Postgres"], ["Auth", "Metrics"]])
+        XCTAssertEqual(decision["behavior"] as? String, "allow")
+        let updated = try XCTUnwrap(decision["updatedInput"] as? [String: Any])
+        let answers = try XCTUnwrap(updated["answers"] as? [String: String])
+        XCTAssertEqual(answers["Which database?"], "Postgres")
+        XCTAssertEqual(answers["Which features?"], "Auth, Metrics")
+    }
+
     func testPiModelsKeepProviderAndSlashesInModelId() throws {
         let model = try XCTUnwrap(PiModel([
             "id": "qwen/qwen3.7-max", "name": "Qwen 3.7 Max", "provider": "qwen-token-plan",

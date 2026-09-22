@@ -11,7 +11,8 @@ struct AgentQuickAnswerHost: View {
     @ObservedObject private var motion = MotionPreferences.shared
 
     private var localSession: AgentSession? {
-        center.sessions(in: workspaceId).first(where: Self.needsAnswer)
+        let visible = center.active(in: workspaceId)?.id
+        return center.sessions(in: workspaceId).first { $0.id != visible && Self.needsAnswer($0) }
     }
 
     private var backgroundSession: AgentSession? {

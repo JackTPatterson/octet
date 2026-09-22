@@ -736,6 +736,14 @@ private struct AgentSettings: View {
         }
         SettingsGroup(title: "Installed agents") {
             SettingsRow(
+                title: "Prompt for agent updates",
+                detail: "Once a day, check installed agent tools for newer releases. Octet asks before you run any update command."
+            ) {
+                Toggle("Prompt for agent updates", isOn: $settings.values.checkForAgentUpdates)
+                    .labelsHidden().toggleStyle(.switch)
+            }
+            SettingsDivider()
+            SettingsRow(
                 title: "Agents on this machine",
                 detail: discovery.scanning
                     ? "Looking through your shell's PATH and the folders installers use…"

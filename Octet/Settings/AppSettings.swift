@@ -70,6 +70,7 @@ struct OctetSettings: Codable, Equatable {
     /// Show a compact corner panel whenever an agent is waiting for a choice,
     /// typed answer, or permission decision.
     var agentQuickAnswers = true
+    var checkForAgentUpdates = true
     var promptEditor = true
     var promptCompletions = true
     var pasteImagesAsFiles = true
@@ -210,6 +211,7 @@ struct OctetSettings: Codable, Equatable {
         agentOpening = value("agentOpening", defaults.agentOpening)
         agentBanner = value("agentBanner", defaults.agentBanner)
         agentQuickAnswers = value("agentQuickAnswers", defaults.agentQuickAnswers)
+        checkForAgentUpdates = value("checkForAgentUpdates", defaults.checkForAgentUpdates)
         promptEditor = value("promptEditor", defaults.promptEditor)
         promptCompletions = value("promptCompletions", defaults.promptCompletions)
         pasteImagesAsFiles = value("pasteImagesAsFiles", defaults.pasteImagesAsFiles)

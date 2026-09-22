@@ -2259,6 +2259,23 @@ final class AgentDiscoveryTests: XCTestCase {
                                        attributes: [.posixPermissions: 0o755])
         XCTAssertEqual(AgentDiscovery.version(of: quiet), "agent 1.2.3")
     }
+
+    func testAgentUpdateVersionsAreExtractedAndComparedSemantically() {
+        XCTAssertEqual(AgentUpdateChecker.version(in: "claude 2.4.1 (Claude Code)"), "2.4.1")
+        XCTAssertEqual(AgentUpdateChecker.version(in: "codex-cli 0.99.0-beta.2"), "0.99.0-beta.2")
+        XCTAssertNil(AgentUpdateChecker.version(in: "development build"))
+        XCTAssertTrue(AgentUpdateChecker.isNewer("2.10.0", than: "2.9.9"))
+        XCTAssertTrue(AgentUpdateChecker.isNewer("2.0.0", than: "2.0.0-beta.4"))
+        XCTAssertFalse(AgentUpdateChecker.isNewer("2.0.0-beta.4", than: "2.0.0"))
+        XCTAssertFalse(AgentUpdateChecker.isNewer("2.0.0", than: "2.0.0"))
+    }
+}
+
+final class WorkingTreeChangesTests: XCTestCase {
+    func testNumstatAddsTextChangesAndSkipsBinaryMarkers() {
+        let changes = WorkingTreeChanges.parseNumstat("12\t3\tSources/App.swift\n-\t-\tAssets/logo.png\n4\t0\tREADME.md\n")
+        XCTAssertEqual(changes, WorkingTreeChanges(added: 16, removed: 3))
+    }
 }
 
 final class UsageRateTests: XCTestCase {

@@ -339,6 +339,13 @@ private struct UsageRateGraph: View {
         return "No limit before reset"
     }
 
+    private var projectedLimit: Date? {
+        guard let window, let bounds, let latest = observed.last,
+              let reaches = UsageRate.projectedLimitDate(window: window, at: latest.at),
+              reaches >= bounds.start, reaches <= bounds.end else { return nil }
+        return reaches
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Rectangle().fill(Theme.divider).frame(height: 1)
@@ -387,13 +394,21 @@ private struct UsageRateGraph: View {
                     context.stroke(forecast, with: .color(Theme.textTertiary),
                                    style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
                 }
+                if let projectedLimit {
+                    let x = (projectedLimit.timeIntervalSinceReferenceDate - first) / span * size.width
+                    var marker = Path()
+                    marker.move(to: CGPoint(x: x, y: 0))
+                    marker.addLine(to: CGPoint(x: x, y: size.height))
+                    context.stroke(marker, with: .color(Theme.textSecondary.opacity(0.75)),
+                                   style: StrokeStyle(lineWidth: 1, dash: [1.5, 3]))
+                }
             }
             .frame(height: 48)
             if let bounds {
                 HStack {
                     Text(bounds.start.formatted(.dateTime.weekday(.abbreviated)))
                     Spacer()
-                    Text("Reset \(bounds.end.formatted(.dateTime.weekday(.abbreviated)))")
+                    Text("Reset \(bounds.end.formatted(.dateTime.month(.defaultDigits).day(.twoDigits)))")
                 }
                 .font(Theme.captionFont)
                 .foregroundStyle(Theme.textMuted)

@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 /// A native conversation with Claude Code or Codex, drawn in place of the
@@ -20,8 +21,7 @@ struct ConversationView: View {
             if session.conversation.isRunning && session.pendingPermission == nil && session.pendingQuestion == nil {
                 StatusLine(session: session)
             }
-            if !settings.values.agentQuickAnswers,
-               let question = session.pendingQuestion, session.pendingPermission == nil {
+            if let question = session.pendingQuestion, session.pendingPermission == nil {
                 QuestionCard(session: session, question: question)
                     .padding(.horizontal, 16)
                     .padding(.bottom, 8)
@@ -30,7 +30,7 @@ struct ConversationView: View {
                         ? .asymmetric(insertion: .opacity.combined(with: .offset(y: 14)), removal: .opacity)
                         : .identity)
             }
-            if !settings.values.agentQuickAnswers, let request = session.pendingPermission {
+            if let request = session.pendingPermission {
                 PermissionCard(session: session)
                     .padding(.horizontal, 16)
                     .padding(.bottom, 8)
@@ -112,10 +112,6 @@ private struct ConversationHeader: View {
         HStack(spacing: 10) {
             if let brand = AgentBrand.forAgent(session.engine.agent) { AgentLogo(brand: brand, size: 14) }
             ProjectLocation(directory: session.cwd, branch: branch, worktree: workspace?.worktree)
-            Text(session.title)
-                .font(Theme.uiFontMedium)
-                .foregroundStyle(Theme.textPrimary)
-                .lineLimit(1)
             Spacer(minLength: 8)
             if let used = conversation.contextUsed {
                 ContextMeter(used: used, window: conversation.contextWindow)
@@ -153,15 +149,20 @@ private struct ProjectLocation: View {
     let directory: String
     let branch: String?
     let worktree: EngineWorktree?
+    @State private var changes: WorkingTreeChanges?
+    private let refresh = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
 
     var body: some View {
         HStack(spacing: 7) {
-            Text(abbreviateHome(directory))
-                .font(Theme.monoFont)
-                .foregroundStyle(Theme.textSecondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .help(directory)
+            HStack(spacing: 4) {
+                OctetIcon("folder", size: 11)
+                Text(directory)
+                    .font(Theme.monoFont)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .foregroundStyle(Theme.textSecondary)
+            .help(directory)
             if let label = sourceLabel {
                 HStack(spacing: 4) {
                     OctetIcon(worktree == nil ? "arrow.triangle.branch" : "square.stack.3d.up", size: 10)
@@ -170,11 +171,29 @@ private struct ProjectLocation: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
-                .foregroundStyle(Theme.textTertiary)
+                .foregroundStyle(Color(hex: AgentStateColor.done))
                 .help(sourceHelp)
+            }
+            if let changes, !changes.isEmpty {
+                HStack(spacing: 5) {
+                    Text("±")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Theme.textTertiary)
+                    if changes.added > 0 {
+                        Text("+\(changes.added)").foregroundStyle(Color(hex: AgentStateColor.done))
+                    }
+                    if changes.removed > 0 {
+                        Text("-\(changes.removed)").foregroundStyle(Color(hex: AgentStateColor.blocked))
+                    }
+                }
+                .font(Theme.captionFont.monospacedDigit())
+                .help("Working tree changes")
             }
         }
         .layoutPriority(1)
+        .onAppear { reloadChanges() }
+        .onChange(of: directory) { _, _ in reloadChanges() }
+        .onReceive(refresh) { _ in reloadChanges() }
     }
 
     private var sourceLabel: String? {
@@ -189,6 +208,17 @@ private struct ProjectLocation: View {
             return worktree.path.map { "Worktree at \($0)" } ?? "Worktree \(sourceLabel ?? "")"
         }
         return "Branch \(branch ?? "")"
+    }
+
+    private func reloadChanges() {
+        let path = directory
+        DispatchQueue.global(qos: .utility).async {
+            let value = WorkingTreeChanges.read(in: path)
+            DispatchQueue.main.async {
+                guard path == directory, value != changes else { return }
+                changes = value
+            }
+        }
     }
 }
 

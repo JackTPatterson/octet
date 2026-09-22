@@ -48,6 +48,7 @@ final class AgentDiscoveryStore: ObservableObject {
         scanning = false
         scannedAt = Date()
         UserDefaults.standard.set(scannedAt, forKey: Self.scannedKey)
+        AgentUpdatePrompter.shared.check(found)
         guard agents != found else { return }
         agents = found
         if let data = try? JSONEncoder().encode(found) { UserDefaults.standard.set(data, forKey: Self.agentsKey) }

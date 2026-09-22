@@ -526,6 +526,41 @@ enum PiExtensionUI {
     }
 }
 
+/// Claude Code sends AskUserQuestion through the same permission callback as
+/// commands and edits. Translate it into Octet's common question surface, and
+/// put the chosen answers back into the tool input Claude is waiting for.
+enum ClaudeUserInput {
+    static func question(_ prompt: [String: Any], sessionId: String) -> OpenCodeQuestion? {
+        guard prompt["tool_name"] as? String == "AskUserQuestion",
+              let input = prompt["input"] as? [String: Any],
+              let questions = input["questions"] as? [[String: Any]], !questions.isEmpty else { return nil }
+        return OpenCodeQuestion([
+            "id": prompt["tool_use_id"] as? String ?? UUID().uuidString,
+            "sessionID": sessionId,
+            "questions": questions.map { item in
+                [
+                    "header": item["header"] as? String ?? "",
+                    "question": item["question"] as? String ?? "",
+                    "options": item["options"] as? [[String: Any]] ?? [],
+                    "multiple": item["multiSelect"] as? Bool ?? false,
+                    "custom": true,
+                ] as [String: Any]
+            },
+        ])
+    }
+
+    static func decision(_ prompt: [String: Any], question: OpenCodeQuestion,
+                         answers: [[String]]) -> [String: Any] {
+        var input = prompt["input"] as? [String: Any] ?? [:]
+        var mapped: [String: String] = [:]
+        for (item, answer) in zip(question.items, answers) {
+            mapped[item.question] = answer.joined(separator: ", ")
+        }
+        input["answers"] = mapped
+        return AgentPermissionRequest.decision(allow: true, input: input, message: nil)
+    }
+}
+
 struct AgentItem: Identifiable, Equatable {
     enum Kind: Equatable {
         case user(String)

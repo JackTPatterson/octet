@@ -131,12 +131,18 @@ struct RootView: View {
                     terminal
                         .overlay { terminalOverlay }
                 }
-                if ui.runtimePanelVisible {
+                ZStack(alignment: .leading) {
                     Rectangle().fill(Theme.divider).frame(width: 1)
+                        .frame(maxHeight: .infinity, alignment: .leading)
                     RuntimePanel(store: store)
                         .frame(width: 292)
-                        .transition(motion.animates(.sidebar) ? .move(edge: .trailing) : .identity)
+                        .padding(.leading, 1)
+                        .offset(x: ui.runtimePanelVisible ? 0 : 293)
                 }
+                .frame(width: ui.runtimePanelVisible ? 293 : 0, alignment: .leading)
+                .clipped()
+                .allowsHitTesting(ui.runtimePanelVisible)
+                .accessibilityHidden(!ui.runtimePanelVisible)
             }
         }
         .overlay(alignment: .topTrailing) {
