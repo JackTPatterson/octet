@@ -1,369 +1,320 @@
+<div align="center">
+
+<img src="Octet/AppIcon.icon/Assets/image.png" alt="Octet" width="640">
+
 # Octet
 
-A native macOS terminal for running coding agents side by side: Octet's
-persistent session server runs every terminal and agent, a GPU terminal engine
-renders it, and Octet draws native chrome (project sidebar, top tabs, agent
-state and vendor hues). Claude Code subagents open as named background tabs showing
-their live transcript. Design and scope: [docs/PLAN.md](docs/PLAN.md).
+### The native macOS terminal built for coding agents
 
-## Requirements
+Run agents side by side, see what each one is doing, and move between projects without losing the terminal underneath.
 
-- macOS 14+, Xcode 26/27, `xcodegen` (`brew install xcodegen`)
-- The terminal engine framework in `Vendor/` (prebuilt, not checked in).
-- The session server binary in `Vendor/engine/octet-engine`, copied there by
-  `scripts/fetch-engine.sh` (from the Homebrew install by default, or from a
-  path you pass). The build bundles it into Octet.app as
-  `Contents/MacOS/octet-engine`, so users install nothing else.
+<p>
+  <a href="https://github.com/JackTPatterson/octet/releases"><strong>Releases</strong></a>
+  ·
+  <a href="#build-from-source"><strong>Build from source</strong></a>
+  ·
+  <a href="docs/PLAN.md"><strong>Architecture</strong></a>
+  ·
+  <a href="https://github.com/JackTPatterson/octet/issues"><strong>Issues</strong></a>
+</p>
 
-## Build and run
+<p>
+  <img src="https://img.shields.io/badge/macOS-14%2B-111111?style=flat-square&logo=apple&logoColor=white" alt="macOS 14 or newer">
+  <img src="https://img.shields.io/badge/Apple%20Silicon-arm64-111111?style=flat-square" alt="Apple Silicon">
+  <img src="https://img.shields.io/badge/Swift-5-F05138?style=flat-square&logo=swift&logoColor=white" alt="Swift 5">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-19AAD8?style=flat-square" alt="MIT License"></a>
+</p>
+
+</div>
+
+---
+
+Octet is a native terminal and workspace for people who run more than one coding agent. It combines a GPU-rendered terminal with native project navigation, agent-aware tabs, session recovery, a universal marketplace, and an optional conversation view over the real agent process.
+
+It does not proxy prompts through a second service or replace your agent. Claude Code, Codex, OpenCode, and other installed CLIs keep their own configuration, credentials, models, tools, and transcripts. Octet gives them a shared place to work.
+
+> [!NOTE]
+> Octet is under active development and is currently source-first. Expect the feature set and setup to evolve before a stable 1.0 release.
+
+## Why Octet
+
+Agent-heavy work breaks the assumptions of a traditional terminal. A tab title does not tell you who is waiting, completed sessions disappear into scrollback, subagents are easy to miss, and every vendor ships a separate way to manage prompts, skills, and tools.
+
+Octet makes those states part of the interface:
+
+- **Projects stay coherent.** Repositories, worktrees, branches, workspaces, tabs, and panes stay visually grouped.
+- **Agent state at a glance.** See which agents are working, blocked, idle, or done without opening every tab.
+- **Native conversations, real processes.** The Visual Twin renders an agent transcript as a macOS conversation while input still goes to the actual CLI.
+- **Sessions that survive the window.** The bundled session server owns terminals and agents, so workspaces persist across app relaunches.
+- **One library for every agent.** Browse and manage MCP servers, plugins, skills, and prompts from a single marketplace.
+- **A terminal first.** Splits, scrollback search, themes, shell history, completions, image paste, and keyboard-driven navigation remain first-class.
+
+## Highlights
+
+### Your agents, organized like work
+
+The sidebar groups workspaces by repository and branch. Each running agent gets its own vendor mark, status, context usage, and activity. Tabs automatically follow stable terminal titles, while names you set manually stay untouched.
+
+Agent notices tell you when background work finishes or needs input. Click a notice to jump directly to the relevant pane; work already on screen stays quiet.
+
+### The Visual Twin
+
+Press `⌘⇧V` to switch an agent pane between its terminal and a native transcript view.
+
+The twin reads the structured session files the agent already writes. It renders messages, reasoning, tool calls, command output, diffs, checklists, model information, and context usage without scraping terminal repaints. Answers typed into the twin are sent to the same live process.
+
+When an agent is waiting on a numbered choice or a yes/no decision, Octet can turn that terminal prompt into native actions. If no supported transcript is available, the terminal remains fully usable.
+
+### Command palette
+
+`⌘P` opens one fuzzy-searchable surface for the whole application.
+
+| Prefix | Finds |
+| :---: | --- |
+| `>` | Actions, including tabs, panes, workspaces, worktrees, and settings |
+| `%` | Workspaces with project, branch, and agent state |
+| `#` | Tabs across every workspace, including subagent tabs |
+| `@` | Running agents and their panes |
+| `/` | Projects in common development directories |
+| `!` | Session plugins, actions, panes, logs, and installation controls |
+
+Use `↑` / `↓` or `⌃N` / `⌃P` to move, `↩` to run, `⇥` to change filters, and `esc` to close.
+
+### Agent marketplace
+
+Open the Marketplace with `⌘⇧M` to manage integrations across installed agents.
+
+| Library | How Octet handles it |
+| --- | --- |
+| **MCP servers** | Reads and writes each supported agent's own MCP configuration |
+| **Plugins** | Discovers configured marketplaces and calls the agent's native plugin CLI |
+| **Skills** | Stores one shared copy and links it into selected agents |
+| **Prompts** | Shares reusable prompt files across agent-specific command folders |
+
+Per-agent chips show exactly where an item is installed. When a new MCP server or plugin requires an agent restart, **Reload Agents** resumes eligible conversations in place instead of discarding them.
+
+### A smarter shell prompt
+
+At a bare shell prompt, Octet can provide syntax highlighting, history suggestions, selection, undo/redo, and completions without taking over programs running inside the pane.
+
+Completion sources include:
+
+- executables, shell built-ins, files, and directories;
+- command specs, subcommands, options, and descriptions;
+- Git branches, package scripts, Make targets, just recipes, and Compose services;
+- local shell history ranked by frequency and recency; and
+- common command sequences learned from that history.
+
+Anything Octet does not handle is passed through to the shell. Agent TUIs, editors, pagers, and full-screen programs continue to receive their keys normally.
+
+### Recovery that understands agents
+
+Octet journals the agent, session ID, working directory, workspace, and tab for every agent pane it can identify. After a crash, forced shutdown, or session-server restart, it offers to resume interrupted work in the right project.
+
+Recovery uses the agent's native mechanism—such as `claude --resume <id>` or `codex resume <id>`—and can recreate a missing workspace. Sessions can also be recovered later from the command palette.
+
+## Agent support
+
+Octet is designed around capabilities, not a single vendor. It discovers agent homes by convention, reads each tool's native command and prompt folders, and only exposes operations a host supports.
+
+Claude Code, Codex, and OpenCode have deeper transcript/catalog integrations. Other installed agents—including tools following the common `~/.<agent>` layout—can still participate in the shared library, workspace UI, status system, and terminal workflows where their CLI capabilities allow it.
+
+### Subagent tabs
+
+The **Install Subagent Tabs Hook** palette action installs an agent-specific hook that opens spawned work in a named background tab. The hook is inactive outside Octet panes and keeps a `.octet-backup` beside any configuration it changes.
+
+The same operation is available from the bundled CLI:
 
 ```sh
+/Applications/Octet.app/Contents/MacOS/octet-cli install-subagent-hook claude
+```
+
+Reinstall the hook after moving the app because its configuration stores the CLI path.
+
+## Build from source
+
+### Requirements
+
+- macOS 14 or newer on Apple Silicon
+- Xcode 26 or 27 with command-line tools
+- [XcodeGen](https://github.com/yonaskolb/XcodeGen): `brew install xcodegen`
+- `Vendor/GhosttyKit.xcframework`
+- a Herdr session-server binary, installed through Homebrew or supplied directly
+
+> [!IMPORTANT]
+> `GhosttyKit.xcframework` and the prebuilt session server are vendored build inputs and are not committed to the repository. The project will not link without the framework, and the app target will stop with a clear error if the server binary is missing.
+
+### Build and launch
+
+```sh
+git clone https://github.com/JackTPatterson/octet.git
+cd octet
+
+# Copies the Homebrew Herdr binary into Vendor/engine/octet-engine.
+# You can also pass an explicit binary path: scripts/fetch-engine.sh /path/to/herdr
 scripts/fetch-engine.sh
+
 xcodegen generate
-xcodebuild -project Octet.xcodeproj -scheme Octet -configuration Debug -derivedDataPath build/DerivedData build
+xcodebuild \
+  -project Octet.xcodeproj \
+  -scheme Octet \
+  -configuration Debug \
+  -derivedDataPath build/DerivedData \
+  build
+
 open build/DerivedData/Build/Products/Debug/Octet.app
 ```
 
-Tests: `xcodebuild -project Octet.xcodeproj -scheme OctetCore -derivedDataPath build/DerivedData test`
-
-Octet runs its own named session (`octet-engine --session octet`) with a managed
-config in `~/Library/Application Support/Octet/terminal.toml`, so a standalone
-session elsewhere is unaffected. Workspaces persist in that session across
-relaunches.
-
-## Releasing
-
-`scripts/release.sh` builds Release, signs it with Developer ID, notarizes and
-staples the app, then packs it into `build/release/Octet.dmg`: a disk image
-whose window shows Octet beside the Applications folder, itself signed,
-notarized and stapled. The one-time setup (certificate, notarization
-credentials) is described at the top of the script.
-
-`scripts/make-dmg.sh <app> <out.dmg>` builds the disk image alone. The app
-icon lives in the layered Icon Composer source `Octet/AppIcon.icon`.
-
-## Subagent tabs
-
-The palette action **Install Subagent Tabs Hook** (or
-`Octet.app/Contents/MacOS/octet-cli install-subagent-hook [agent]`) adds a
-`PreToolUse` hook for `Agent|Task` to each installed agent's own config
-(`~/.claude/settings.json`, `~/.codex/hooks.json`), keeping a
-`.octet-backup` beside it. Agents share the hook format, so supporting another
-one is a row in `SubagentHookInstaller.specs`. The hook does nothing outside
-Octet panes. Reinstall after moving Octet.app, since it stores the octet-cli path.
-
-## Agents
-
-Nothing in Octet is tied to one vendor. Agents keep their config in
-`~/.<agent>`, with `skills/` and a prompts folder, so Octet discovers whichever
-are installed (Claude Code, Codex, Qwen, Kiro, Copilot, …) and treats them
-alike: the shared library installs into each, the slash menu reads each one's
-own commands, recovery resumes each with its own resume command, and a
-capability flag decides whether Octet drives its `mcp` and `plugin` CLIs.
-
-## Command palette
-
-⌘P (or ⌘⇧P, or click the title bar search) opens a palette that
-fuzzy-searches everything:
-
-| Filter | Prefix | Contents |
-| --- | --- | --- |
-| Actions | `>` | every command (tabs, panes, workspaces, worktrees, sidebar, terminal config, Claude hook), with shortcuts |
-| Workspaces | `%` | all workspaces with project, branch, and agent state |
-| Tabs | `#` | tabs across all workspaces, including subagent tabs |
-| Agents | `@` | running agents; jumps to their pane |
-| Projects | `/` | folders under ~/Developer, ~/Projects, ~/code, ~/src; opens or focuses a workspace |
-| Plugins | `!` | session plugin actions and panes, enable/disable, logs, unlink/uninstall, install from GitHub, link a local folder |
-
-↑↓ or ⌃N/⌃P to move, ↩ to run, ⇥ to cycle filters, esc to close. With an empty
-query it shows your 3 most recent picks first. Rename Tab/Workspace and New
-Worktree ask for text inline.
-
-## Plugins
-
-Octet runs session plugins (event hooks, startup commands, panes, link
-handlers) unchanged, since the session server owns them. The palette's `!`
-filter adds what the server's hidden text UI would otherwise provide: invoke
-plugin actions (with the focused workspace/tab/pane as context), open plugin
-panes, enable/disable, browse run logs, and install from GitHub after
-reviewing the install preview in a confirmation dialog. Plugins that only
-render into the server's text sidebar have no effect in Octet; Octet's native
-sidebar covers that.
-
-## Session recovery
-
-Octet journals every agent pane it sees (agent, session id, working folder,
-workspace and tab labels) to `~/Library/Application Support/Octet/agent-sessions.json`.
-Session ids come from the session server's integration when one is installed
-(Settings → Agents & Recovery), and otherwise from the agents' own files:
-Claude's transcripts under `~/.claude/projects`, Codex's `session_meta`
-rollouts under `~/.codex/sessions`.
-
-When a shutdown, crash, or session server restart kills sessions that were running the
-last time Octet looked, a panel in the bottom right lists them and resumes the
-ones you pick with `claude --resume <id>` / `codex resume <id>` in their own
-workspaces, recreating a workspace that is gone. Each row can also copy its
-resume command. The palette's **Recover Agent Sessions…** lists past sessions
-at any time. Settings → Agents & Recovery turns the offer off.
-
-## Marketplace
-
-⌘⇧M (or the palette's **Marketplace…**) opens one window for every agent on
-the machine:
-
-| Section | Source | Installs into |
-| --- | --- | --- |
-| MCP Servers | `claude mcp list`, `codex mcp list` | `claude mcp add` / `codex mcp add`, from one definition |
-| Plugins | `<cli> plugin list --json --available` across all configured marketplaces | `<cli> plugin install` |
-| Skills | `~/.agents/skills/<name>/SKILL.md` | symlinked into each agent's `skills/` |
-| Prompts | `~/.agents/prompts/<name>.md` | symlinked into `~/.claude/commands` and `~/.codex/prompts` |
-
-A chip per agent shows where each item is installed; clicking it adds or
-removes it there. Skills and prompts are vendor-neutral: they live once in the
-shared library and are linked into each agent, so an edit reaches all of them.
-Octet can adopt skills and prompts an agent already had, import a folder of
-prompt files, and send a prompt straight to a running agent
-(the session server's `agent.prompt`).
-
-### Hot swap
-
-New MCP servers and plugins only load when an agent starts, so after a change
-the Marketplace offers **Reload Agents**: each running agent is relaunched in
-its own tab with `--resume`, keeping the conversation. Agents whose session id
-Octet doesn't know yet, or whose tab is split across panes, are skipped and
-named. Also in the palette as **Reload Running Agents**.
-
-## Slash menu
-
-Typing `/` at an empty agent prompt opens Octet's own command menu instead of
-the agent's in-terminal list: the agent's built-ins, your own and the
-project's prompt files, and every installed plugin's commands, fuzzy
-searchable. Octet replaces the prompt for these, so ↩ **runs** the command;
-⌘↩ types it without running, and esc passes through what you typed.
-
-Commands with arguments open a submenu filled from what the machine actually
-has: `/mcp` lists your configured servers, `/model` your agent's models (and
-each model's reasoning levels), `/resume` the sessions Octet can resume,
-`/agents` and `/output-style` what's on disk. Prompt files in folders nest as
-`/git` → `amend`, and a plugin with several commands gets its own submenu. →
-opens one, ← goes back. A command that still wants free text is always typed,
-never run blind.
-
-Settings → Agents & Recovery turns the menu, or just the running, off.
-
-## Tab names that follow the work
-
-Agents and shells publish what they're doing as the terminal title, so Octet
-renames a tab to match once the title holds still for a couple of seconds:
-switch task inside a workspace and the tab stops reading as the task you
-started with. A tab you rename yourself is never renamed again, and split
-tabs are left alone. Settings → Agents & Recovery turns it off.
-
-## Visual twin
-
-⌘⇧V draws Octet's own interface over the pane an agent is running in: its
-turns as messages, reasoning collapsed under a line you can open, each tool
-call with the result it got back, and the model and context in the header.
-What you type in the box at the bottom goes to the real agent, so nothing
-about the agent changes — Octet is the interface, not a second brain.
-
-It reads as the agent you know. Claude marks a step with `●`, writes
-`Bash(npm test)` and `Update(importer.py)`, puts what came back under `⎿`,
-keeps a to-do list while it works and a status line at the foot; Codex marks
-a step with `•`, calls the same edit a patch, and prompts with `›`. The twin
-keeps all of that — the same words, marks and layout — and draws it properly:
-a command's output collapses to its first line with the rest a click away, an
-edit is a real diff with added and removed lines, the to-do list is a
-checklist, and the status line carries the model, how full the context is,
-and the folder and branch you are working in.
-
-Nothing is scraped from the terminal to do this. Agents already write their
-turns to disk as structured lines, and the twin reads that: Claude's
-`~/.claude/projects/<project>/<session>.jsonl` and Codex's
-`~/.codex/sessions/<date>/rollout-*.jsonl` are read exactly, and any other
-agent is found the same way you would find it — the newest session file under
-the folder that agent keeps, preferring one that names the folder you are
-working in and that reads as a conversation rather than as the agent's
-command history. A format Octet doesn't know still parses if it writes a turn
-per line, which every agent seen so far does. When there is no session file
-to read, the twin says so and the terminal is still there.
-
-This is also the answer to the complaint Octet couldn't otherwise reach: an
-agent's TUI repainting the whole screen, thousands of lines for a screenful,
-is what makes a terminal agent feel heavy. The twin never repaints — it draws
-rows from a file, so scrolling is scrolling and nothing flickers.
-
-One thing never reaches those files: the question an agent is waiting on. A
-prompt is drawn on screen and nowhere else, so when an agent reports it is
-blocked, Octet reads the screen and turns the menu into buttons — the numbered
-lists agents draw and plain `(y/n)` prompts both work, whoever is asking.
-Answering sends the same keystroke you would have typed.
-
-⌘⇧V (or the palette) switches between the twin and the terminal for
-this window's focused pane. Settings → Agents & Recovery can enable
-**Open the twin for new agents**; it is off by default so the native-agent
-opening preference controls how agents launch. Closing the twin for a pane
-keeps it closed. Native conversations and agent boards take precedence over
-the twin.
-
-A message you send shows in the conversation as you send it and settles into
-the real turn when the agent writes it down a moment later, so nothing you
-typed is ever nowhere.
-
-An agent that has only just started hasn't written anything yet, and the twin
-says so rather than showing the conversation from the last time you worked in
-that folder — a session has to be about the folder the pane is in, or carry
-the id of the session that is running, before the twin will show it. It keeps
-looking while it waits, so the first turn appears as soon as it lands.
-
-## Confirmations
-
-Octet asks in its own dialog rather than a system alert, themed with the rest
-of the window: quitting, closing idle workspaces, reloading agents, removing
-a plugin, resetting settings, and the plugin install preview all use it.
-
-## Context in view
-
-Each agent's card in the sidebar carries how full its context is, read from
-the session file the agent already writes: a percentage when Octet can tell
-the window honestly, tokens when it can't. It stays grey until 70%, warns at
-90%, and the tooltip gives the numbers. Running out of context and hitting a
-limit are two things you only notice too late; this is the cheap fix.
-
-## Following your terminal's colours
-
-Settings → Appearance → **Follow your terminal's colours** reads the colours
-you already use — `~/.config/ghostty/config`, the theme that config names, or
-any `key = value` theme file you point Octet at — and uses them for the whole
-window instead of one of Octet's own. Colours the file doesn't set are filled
-in rather than left blank, and a light background switches the chrome with it.
-
-## Pasting an image to an agent
-
-⌘V with an image on the clipboard writes it into
-`~/Library/Application Support/Octet/pasted` and types the path into the pane,
-because a path is what agents read and binary is what terminals mangle. A
-file copied in Finder pastes its own path instead of being rewritten. Octet
-keeps the last fifty and drops the rest. Settings → Agents turns it off, and
-text pastes are untouched.
-
-## Octet's command line
-
-At a bare shell prompt, Octet takes the keyboard and edits the line itself:
-the command is highlighted as you type, a greyed-out
-suggestion from your history follows the caret, and the finished line goes to
-the shell on Return. Everything a shell's own editor offers is here: word
-moves and deletes (⌥←/→, ⌥⌫), ⌃A/⌃E, ⌃U/⌃K/⌃W, ↑/↓ through matching history,
-→ or ⌃F to take the suggestion, ⌥→ for one word of it.
-
-It only ever runs while the pane's foreground process is its own shell, which
-Octet reads from the engine rather than guessing, so an agent, an editor or a
-pager always gets your keys. Anything Octet doesn't handle (Tab, a control
-key it has no meaning for, Escape, losing the window) hands what you typed
-straight to the shell and steps aside, so nothing can be trapped in it.
-Settings → Agents turns it off.
-
-History comes from the shells' own files (zsh, bash and fish formats), ranked
-by how often and how recently you have run each command.
-
-**Completions.** Tab opens a menu for the word under the caret, built from
-what the machine actually has: executables on PATH and shell builtins in
-command position; this folder's files and directories; a command's
-subcommands; the flags that command has been given before; this repo's
-branches after `git switch`, `checkout`, `merge` and `rebase`; and whole
-lines from history. ↑/↓ move, Return or Tab accepts, Escape closes the menu
-without giving up the line. When Octet has nothing to offer, Tab goes to the
-shell so its own completion still works.
-
-**Where the completions come from.** Octet blends four sources, all local and
-all instant: command specs (subcommands, options and their descriptions),
-this folder's own scripts and targets (`package.json`, `Makefile`,
-`justfile`, compose services, your shell and git aliases), your history
-ranked by frecency, and what usually follows what: a sequence table built
-from history, so after `git add .` the line already reads your usual commit.
-Values that have to be live (branches, npm scripts, running containers)
-come from short generator commands whose output is cached per folder, so
-typing never waits on a process.
-
-Octet ships specs for a handful of commands; **Settings → Agents → Command
-specs** installs hundreds more from the MIT-licensed Fig corpus
-(`withfig/autocomplete`), converted into Octet's own format on your machine.
-The corpus is fetched on request rather than bundled, and its licence and a
-notice are written beside it. Everything else works without it.
-
-**Editing.** ⌃R searches history in the same menu. ⇧ with the arrows selects,
-⌘C/⌘X/⌘V copy, cut and paste, ⌘A selects the line, and ⌘Z/⇧⌘Z undo and redo.
-
-## Terminal text position
-
-Settings → Terminal chooses where a pane's output sits while it doesn't fill
-the pane: **Bottom** keeps the prompt at the foot of the pane, and **Top** is how a terminal normally fills from the first row. Octet
-bottom-anchors by moving the surface, never by resizing the grid, so the
-shell never reflows; the drop only applies while every row below the cursor
-is blank, which also leaves split panes alone.
-
-## Branches in the sidebar
-
-A workspace card shows the space and what is running in it; the branch sits
-in its own small chip below. Spaces that share a branch (or a worktree)
-stack together under one chip rather than repeating it, with a count when
-there are several.
-
-## Agent notices
-
-When an agent stops working (it finished, or it is waiting on you), Octet
-slides a notice into the window's top right, tinted with that agent's colour
-and naming the tab, how long it worked, and which agent it was. Click one to
-jump to that pane; they stack up to three and fade after eight seconds. Work
-you are already watching never interrupts you: a notice is skipped when Octet
-is active and that tab is on screen. Settings → Agents & Recovery switches
-between Octet's notices, system notifications, and none.
-
-## Clipboard
-
-Copying looks identical whether or not it worked, so Octet confirms it in its
-own toast with a line of what landed there. The session server publishes no
-clipboard event, so Octet watches the pasteboard while it is the active app,
-which catches every route: copy-on-select, ⌘C, copy mode, and plugins.
-Settings → Terminal turns it off. (If your agent notifications are set to
-"system", the session server may also post its own notification for copies
-made in copy mode; setting notifications to Octet or off leaves only this
-toast.)
-
-## Toasts
-
-Actions whose result isn't immediately visible or that take time show a
-progress toast (after 200 ms) and a confirmation or failure toast: plugin
-install (download → preview dialog → install), uninstall (with confirmation),
-enable/disable, link/unlink, plugin action runs (tracked until the command
-finishes), new worktree, terminal config reload, and the Claude hook. Instant,
-visible actions (tabs, panes, workspaces, renames) stay silent unless they fail.
-
-## Shortcuts
-
-| Keys | Action |
-| --- | --- |
-| ⌘P | Command palette |
-| ⌘O | Open folder as workspace |
-| ⌘D / ⌘⇧D | Split pane right / down |
-| ⌘⇧↩ | Toggle pane zoom |
-| ⌘⌥←↑→↓ | Focus pane in direction |
-| ⌘T / ⌘W | New / close tab |
-| ⌘1…⌘9 | Tab 1–9 (9 = last) |
-| ⌘⇧[ / ⌘⇧] | Previous / next tab |
-| ⌃⌘↑ / ⌃⌘↓ | Previous / next workspace |
-| ⌘N | New workspace |
-| ⌘B | Toggle sidebar |
-| ⌘⇧V | Visual twin / terminal |
-| ⌘⇧A | Agents |
-
-## License
-
-MIT, see `LICENSE`. Third-party notices: `Octet/Resources/ThirdPartyNotices.txt`
-(bundled in the app as `Contents/Resources/ThirdPartyNotices.txt`).
+Octet starts an isolated named session, `octet`, with managed configuration at:
+
+```text
+~/Library/Application Support/Octet/terminal.toml
+```
+
+That session does not modify a standalone Herdr session running elsewhere.
+
+### Run the tests
+
+```sh
+xcodebuild \
+  -project Octet.xcodeproj \
+  -scheme OctetCore \
+  -derivedDataPath build/DerivedData \
+  test
+```
+
+## Keyboard map
+
+Octet is designed to stay fast without leaving the keyboard.
+
+| Shortcut | Action | Shortcut | Action |
+| --- | --- | --- | --- |
+| `⌘P` | Command palette | `⌘⇧P` | Palette with all commands |
+| `⌘O` | Open folder | `⌥⌘N` | New window |
+| `⌘N` | New workspace | `⌃⌘↑` / `⌃⌘↓` | Previous / next workspace |
+| `⌘T` / `⌘W` | New / close tab | `⌘1`…`⌘9` | Select tab (`9` = last) |
+| `⌘⇧[` / `⌘⇧]` | Previous / next tab | `⌘B` | Toggle sidebar |
+| `⌘D` / `⌘⇧D` | Split right / down | `⌘⇧↩` | Toggle pane zoom |
+| `⌘⌥←↑→↓` | Focus pane | `⌘⇧V` | Visual Twin / terminal |
+| `⌘⇧A` | Agents board | `⌘⇧M` | Marketplace |
+| `⌘F` | Find in scrollback | `⌘G` / `⇧⌘G` | Next / previous result |
+
+The complete, authoritative shortcut list is also available in **Settings → Keyboard**.
+
+## Terminal details
+
+<details>
+<summary><strong>Persistent workspaces and native chrome</strong></summary>
+
+The bundled session server owns every pseudo-terminal. Octet subscribes to its socket API for workspace, tab, pane, and agent changes, then renders project navigation and tab management with native SwiftUI/AppKit controls.
+
+Workspaces remain in the named session when the app window closes. Git worktrees are grouped under their main repository, while branches receive their own visual identity in the sidebar.
+
+</details>
+
+<details>
+<summary><strong>Themes and terminal colors</strong></summary>
+
+Octet ships dark and light appearances and can follow the colors you already use. **Settings → Appearance → Follow your terminal's colours** reads Ghostty configuration or another `key = value` theme file. Missing values fall back safely, and light terminal backgrounds switch the surrounding chrome as well.
+
+</details>
+
+<details>
+<summary><strong>Images and clipboard behavior</strong></summary>
+
+Pasting an image writes it to `~/Library/Application Support/Octet/pasted` and inserts the path, which is what terminal agents can consume safely. Files copied in Finder use their existing paths. Octet retains the latest fifty generated paste files.
+
+Clipboard actions can display a confirmation toast with a preview, including copy-on-select and session copy mode.
+
+</details>
+
+<details>
+<summary><strong>Bottom-anchored output</strong></summary>
+
+Terminal content can start at the top of a pane or remain anchored near the bottom while output is short. Bottom anchoring moves the rendered surface instead of changing the grid, avoiding shell reflow and leaving split panes predictable.
+
+</details>
+
+## Architecture
+
+```text
+┌────────────────────────────── Octet.app ──────────────────────────────┐
+│                                                                      │
+│  Native sidebar · tabs · palette · marketplace · transcript views    │
+│                         │                            ▲                │
+│                         │ commands + snapshots       │ JSONL sessions │
+│                         ▼                            │                │
+│               Herdr session socket          Agent transcripts        │
+│                         │                                             │
+│                         ▼                                             │
+│              Persistent terminal session                             │
+│                   │             │                                     │
+│                   ▼             ▼                                     │
+│             GhosttyKit      Agent processes                           │
+│             rendering       Claude · Codex · OpenCode · …             │
+│                                                                      │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+- **Interface:** SwiftUI with AppKit integration for window and terminal behavior.
+- **Rendering:** a vendored GhosttyKit framework provides GPU terminal rendering.
+- **Persistence:** a bundled Herdr binary owns the named session and exposes its socket API.
+- **Agent data:** native CLI configuration and structured transcript files remain the source of truth.
+- **Local storage:** generated settings, recovery journals, and pasted images live under `~/Library/Application Support/Octet`.
+
+For the original implementation plan and protocol-level notes, see [docs/PLAN.md](docs/PLAN.md). The native-agent UI design is documented in [docs/NATIVE-AGENT-UI.md](docs/NATIVE-AGENT-UI.md).
+
+## Release builds
+
+The release script performs the full distribution pipeline: Release build, Developer ID signing, hardened-runtime validation, notarization, stapling, Gatekeeper assessment, and DMG packaging.
+
+```sh
+scripts/release.sh
+```
+
+One-time certificate and `notarytool` credential setup is documented at the top of [`scripts/release.sh`](scripts/release.sh). Successful artifacts are written to `build/release/Octet.dmg` and `build/release/Octet.zip`.
+
+To package an already-built app without running the full release flow:
+
+```sh
+scripts/make-dmg.sh /path/to/Octet.app build/Octet.dmg
+```
 
 ## Debugging
 
-`OCTET_SNAPSHOT_DIR=/tmp/snap open -n --env OCTET_SNAPSHOT_DIR=/tmp/snap Octet.app`
-writes `window.png` and `terminal.txt` every second (no Screen Recording
-permission needed).
+Set `OCTET_SNAPSHOT_DIR` to capture the current app window and terminal text once per second without Screen Recording permission:
+
+```sh
+OCTET_SNAPSHOT_DIR=/tmp/octet-snap \
+  open -n --env OCTET_SNAPSHOT_DIR=/tmp/octet-snap /path/to/Octet.app
+```
+
+This writes `window.png` and `terminal.txt` into the selected directory.
+
+## Project status
+
+The core application, terminal rendering, native sidebar and tabs, agent state, subagent hooks, recovery, marketplace, slash menu, Visual Twin, command palette, and distribution pipeline are implemented. The repository remains pre-1.0; see [TODO.md](TODO.md) for the current terminal audit and [docs/PLAN.md](docs/PLAN.md) for design history and verification notes.
+
+## Contributing
+
+Issues and pull requests are welcome. For code changes:
+
+1. Generate the Xcode project with `xcodegen generate`.
+2. Keep reusable, UI-independent logic in `Shared/` where practical.
+3. Add or update tests in `OctetTests/`.
+4. Run the `OctetCore` test scheme before opening a pull request.
+5. Keep vendor binaries and generated build output out of commits.
+
+## License
+
+Octet is available under the [MIT License](LICENSE).
+
+Third-party attributions are collected in [`Octet/Resources/ThirdPartyNotices.txt`](Octet/Resources/ThirdPartyNotices.txt) and bundled into release builds.
+
+---
+
+<div align="center">
+
+**Built for many agents, without becoming another agent.**
+
+</div>
