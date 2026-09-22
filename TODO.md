@@ -1,41 +1,19 @@
 # Terminal TODO
 
-From the terminal audit (2026-09-18). Ordered by priority; bugs first, then
-missing features. File references use Octet's own files; "the surface view"
-is the embedded terminal view under `Octet/Terminal/`.
+From the terminal audit (2026-09-18), rechecked against the code on
+2026-09-22. Ordered by priority: bugs first, then missing features. File
+references use Octet's own files. "The surface view" is the embedded
+terminal view under `Octet/Terminal/`.
 
 ## Bugs
 
-- [ ] **1. ⌘V and ⌘A never reach Octet's key hook (high).** The Edit menu
-  takes ⌘V first and pastes straight into the terminal, so image paste
-  (`PasteHandler`) and the prompt line's paste never run. With the prompt
-  line active, pasted text reaches the shell ahead of the held line and the
-  command comes out garbled. ⌘A selects the terminal instead of the line.
-  Fix: route inside the surface view's `paste(_:)` and `selectAll(_:)`
-  actions (`OctetKeyHook.paste()` runs `PasteHandler`, then inserts into the
-  prompt line when it's active), so menu, context menu and keys agree.
+- [x] **1. ⌘V and ⌘A never reach Octet's key hook (high).** Fixed: the surface view's `paste(_:)`, `pasteAsPlainText(_:)`, `pasteSelection(_:)` and `selectAll(_:)` go through `OctetKeyHook` first (SurfaceView_AppKit.swift).
 
-- [ ] **2. Paste protection never asks, and "clipboard read: Ask" means
-  Deny (med).** Unsafe bracketed pastes (the injection case) are confirmed
-  automatically, and OSC 52 clipboard reads under the default `.ask` are
-  silently answered with nothing. The prompt line also sends multi-line
-  pastes unbracketed. Fix: ask through `ConfirmCenter`, completing the
-  request with the text on OK and empty on Cancel; use the same dialog for
-  clipboard reads and multi-line prompt-line pastes.
+- [ ] **2. Paste protection never asks, and "clipboard read: Ask" means Deny (med).** *Partly fixed.* Done: Multi-line prompt-line text is bracketed, and pasted control bytes are filtered (`PromptLine`). Remaining: `confirmReadClipboard` (TerminalEngine.App.swift) still auto-confirms unsafe pastes and answers OSC 52 reads with nothing. Ask through `ConfirmCenter`.
 
-- [ ] **3. Font size changes leave the hidden top row wrong (med).**
-  `TopRowClippingView` (OctetTerminal.swift) only relayouts on frame or
-  backing changes, so after a font change the engine's tab row peeks through
-  or the first content row is clipped until the next resize. Fix: subscribe
-  to the surface's `cellSize` and set `needsLayout`. (⌘=/⌘-/⌘0 are now
-  Octet menu items, so this is only the relayout.)
+- [x] **3. Font size changes leave the hidden top row wrong (med).** Fixed: `TopRowClippingView` relayouts on `cellSize` changes (OctetTerminal.swift).
 
-- [ ] **4. Bottom anchoring lags output by up to 200 ms (med).** A 0.2 s
-  timer polls the cursor row, so every command's output visibly jumps, and
-  the timer reads screen text on the main thread 5 times a second forever,
-  even when the window is hidden. Fix: recompute from the engine's wakeup
-  path (coalesced), read the cursor row from grid metrics first, and skip
-  work when the window isn't visible.
+- [ ] **4. Bottom anchoring lags output by up to 200 ms (med).** *Partly fixed.* Done: The poll stops while the window is hidden, minimized or occluded, and pauses while scrolling. Remaining: It is still a 0.2 s timer that reads screen text each tick. Drive it from the engine's wakeup, and check grid metrics before reading text.
 
 - [ ] **5. The prompt line doesn't line up with the terminal grid (med).**
   With no font family set it renders in SF Mono while the terminal uses its
@@ -47,16 +25,9 @@ is the embedded terminal view under `Octet/Terminal/`.
   edge. Fix: use the terminal's own font, lay glyphs out per cell with
   East-Asian width, clip to the pane rectangle, and wrap or scroll.
 
-- [ ] **6. Drag and drop, Services and context-menu Paste bypass the prompt
-  line (med).** Dropped paths go straight to the pty, landing ahead of the
-  typed text. Fix: in those entry points, insert into the prompt line when
-  it's active; for agent panes, reuse `PasteHandler`'s image-to-path logic.
+- [ ] **6. Drag and drop, Services and context-menu Paste bypass the prompt line (med).** *Partly fixed.* Done: Drops, Services and context-menu Paste go to the prompt line when it's active. Remaining: Dropped images in agent panes don't go through `PasteHandler`'s image-to-path logic.
 
-- [ ] **7. Clicks and scrolling above bottom-anchored content go nowhere
-  (med).** Above the moved-down stage, hit testing returns
-  `TopRowClippingView` itself, so the click doesn't focus the terminal and
-  the scroll wheel never reaches the session. Fix: override `hitTest` in
-  `TopRowClippingView` to return the surface view for any point in bounds.
+- [x] **7. Clicks and scrolling above bottom-anchored content go nowhere (med).** Fixed: `TopRowClippingView.hitTest` returns the surface view for any point in bounds.
 
 - [ ] **8. When the terminal client exits, Octet quits (med).** `onExit`
   calls `NSApp.terminate` (RootView.swift), which shows "Quit Octet?" when
@@ -66,17 +37,9 @@ is the embedded terminal view under `Octet/Terminal/`.
   on `OctetTerminalView`; also disable the detach key in the generated
   session config.
 
-- [ ] **9. The slash menu's "empty prompt" check is guessed from keystrokes
-  (low-med).** `typed[pane]` (SlashController.swift) only tracks keyDown, so
-  paste, ↑ history, ⌥⌫/⌃U, mouse edits and the agent's own modes throw it
-  off. It also matches `charactersIgnoringModifiers`, so on layouts where /
-  is Shift+7 (German) the menu never opens. Fix: decide from the screen (read
-  the cursor row left of the cursor) and match `event.characters`.
+- [x] **9. The slash menu's "empty prompt" check is guessed from keystrokes (low-med).** No longer applies: `SlashController` was removed when slash commands started coming from the agents themselves (bc9ecc0).
 
-- [ ] **10. Text sent to panes can arrive out of order (low).** Prompt line
-  and slash menu sends go through the concurrent global queue, so a flush
-  followed by ⌃C, or two quick submits, can reorder. Fix: one private serial
-  queue for all Octet-to-pane writes.
+- [ ] **10. Text sent to panes can arrive out of order (low).** *Partly fixed.* Done: Prompt-line and paste writes share the serial `EngineClient.inputQueue`. Remaining: `TwinSession` and `SessionStore.runInPane` still write from the global queue. Move them onto `inputQueue`.
 
 - [ ] **11. Scroll speed may be multiplied three times over (low,
   unverified).** Trackpad deltas are doubled, the renderer sends one report
@@ -88,13 +51,7 @@ is the embedded terminal view under `Octet/Terminal/`.
 
 ## Missing features
 
-- [ ] **12. Find in scrollback (med).** ⌘F does nothing, and ⌘↑/⌘↓ (jump
-  to prompt) and ⌘Home/⌘PgUp are consumed with no effect. The renderer only
-  holds the viewport; the scrollback lives in the session server, which has
-  `pane.copy_search`, `pane.read`, `pane.scroll` and copy mode. Fix: a find
-  bar over the top right of the terminal driving `pane.copy_search`
-  (next/previous, Esc leaves copy mode); bind ⌘F, ⌘G, ⇧⌘G in the menus and
-  unbind them in the renderer; map ⌘↑/⌘↓ to `pane.scroll`.
+- [ ] **12. Find in scrollback (med).** *Partly fixed.* Done: ⌘F opens a find panel over the full scrollback (`OutputSearch.swift`), with ⌘G / ⇧⌘G for next and previous. Remaining: Matches aren't highlighted in the terminal, and ⌘↑/⌘↓ (jump to prompt) and ⌘Home/⌘PgUp still do nothing. Map them to `pane.scroll`.
 
 - [ ] **13. The terminal context menu is effectively unreachable and thin
   (med).** The session captures the mouse, so right-click is sent as a mouse
