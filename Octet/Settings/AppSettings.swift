@@ -264,10 +264,11 @@ struct OctetSettings: Codable, Equatable {
         case .roomy: (18, 12)
         }
         var lines = [
-            // This is deliberately the only color Octet supplies to the
-            // renderer. Claude Code and other TUIs keep Ghostty's native
-            // foreground, cursor, selection, and ANSI palette.
             "background = \(theme.background)",
+            "foreground = \(theme.foreground)",
+            "cursor-color = \(theme.accent)",
+            "selection-background = \(theme.accent)",
+            "selection-foreground = \(theme.background)",
             "font-size = \(Int(fontSize))",
             "font-thicken = \(fontThicken)",
             "adjust-cell-height = \(Int(lineHeightPercent) - 100)%",
@@ -284,6 +285,9 @@ struct OctetSettings: Codable, Equatable {
             "clipboard-read = \(clipboardRead.rawValue)",
         ]
         if !fontFamily.isEmpty { lines.append("font-family = \"\(fontFamily)\"") }
+        for (index, color) in theme.ansi.enumerated() {
+            lines.append("palette = \(index)=#\(color)")
+        }
         return lines.joined(separator: "\n")
     }
 
