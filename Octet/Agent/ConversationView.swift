@@ -8,6 +8,7 @@ struct ConversationView: View {
     let client: EngineClient
     @StateObject private var dropdowns = OctetDropdownState()
     @ObservedObject private var motion = MotionPreferences.shared
+    @ObservedObject private var settings = SettingsStore.shared
     @State private var enlarged: Data?
 
     var body: some View {
@@ -18,7 +19,8 @@ struct ConversationView: View {
             if session.conversation.isRunning && session.pendingPermission == nil && session.pendingQuestion == nil {
                 StatusLine(session: session)
             }
-            if let question = session.pendingQuestion, session.pendingPermission == nil {
+            if !settings.values.agentQuickAnswers,
+               let question = session.pendingQuestion, session.pendingPermission == nil {
                 QuestionCard(session: session, question: question)
                     .padding(.horizontal, 16)
                     .padding(.bottom, 8)
@@ -27,7 +29,7 @@ struct ConversationView: View {
                         ? .asymmetric(insertion: .opacity.combined(with: .offset(y: 14)), removal: .opacity)
                         : .identity)
             }
-            if let request = session.pendingPermission {
+            if !settings.values.agentQuickAnswers, let request = session.pendingPermission {
                 PermissionCard(session: session)
                     .padding(.horizontal, 16)
                     .padding(.bottom, 8)
@@ -37,6 +39,11 @@ struct ConversationView: View {
                     .transition(motion.animates(.approvals)
                         ? .asymmetric(insertion: .opacity.combined(with: .offset(y: 14)), removal: .opacity)
                         : .identity)
+            }
+            if !session.piWidgets.isEmpty {
+                PiWidgets(widgets: session.piWidgets)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
             }
             Composer(session: session, dropdowns: dropdowns)
         }
@@ -65,6 +72,7 @@ struct ConversationView: View {
         .onAppear {
             guard let id = ConversationDebug.openDropdown else { return }
             if id == "permission" { session.debugShowPermission(); return }
+            if id == "question" { session.debugShowQuestion(); return }
             if id == "sample" { session.debugLoadSample(); return }
             if id == "everything" { session.debugLoadEverything(); return }
             if id == "ultracode" { session.effort = "ultracode" }
@@ -456,7 +464,8 @@ private struct QuestionCard: View {
                     }
                     if item.custom {
                         OctetTextField(placeholder: item.options.isEmpty ? "Your answer" : "Or type your own answer",
-                                      text: Binding(get: { typed[index] ?? "" }, set: { typed[index] = $0 })) {
+                                      text: Binding(get: { typed[index] ?? item.initial }, set: { typed[index] = $0 }),
+                                      secure: item.secret) {
                             if ready { answer() }
                         }
                     }
@@ -516,7 +525,7 @@ private struct QuestionCard: View {
     /// One answer per question: the options picked, or what was typed.
     private var answers: [[String]] {
         question.items.indices.map { index in
-            let text = (typed[index] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let text = (typed[index] ?? question.items[index].initial).trimmingCharacters(in: .whitespacesAndNewlines)
             let chosen = question.items[index].options.map(\.label).filter { picked[index]?.contains($0) == true }
             return text.isEmpty ? chosen : chosen + [text]
         }
@@ -671,6 +680,9 @@ private struct Composer: View {
         case "new", "clear": window.newConversation(engine: session.engine)
         case "quit": AgentCenter.shared.close(session)
         case "rename" where arguments.isEmpty: text = "/rename "
+        case "compact" where session.engine == .pi,
+             "rename" where session.engine == .pi:
+            session.piCommand(command.name, arguments: arguments)
         case "compact", "review", "rename": session.codexCommand(command.name, arguments: arguments)
         default:
             session.send("/" + command.name + (arguments.isEmpty ? "" : " " + arguments))
@@ -685,7 +697,11 @@ private struct Composer: View {
             return AgentSession.models.first { $0.id.lowercased() == needle || $0.family.lowercased() == needle }?.id
         case .codex:
             return CodexCatalogStore.shared.models.first { $0.id.lowercased() == needle }?.id
-        case .opencode, .pi, .qwen:
+        case .pi:
+            return session.piModels.first {
+                $0.id.lowercased() == needle || $0.modelId.lowercased() == needle || $0.name.lowercased() == needle
+            }?.id
+        case .opencode, .qwen:
             return nil
         }
     }
@@ -784,6 +800,11 @@ private struct Composer: View {
                         highlighted = 0
                         refreshSuggestions()
                     }
+                    .onChange(of: session.piEditorRequest?.id) { _, _ in
+                        guard let request = session.piEditorRequest else { return }
+                        text = request.text
+                        focused = true
+                    }
                     .accessibilityLabel("Message \(session.engine.displayName)")
             }
             HStack(spacing: 6) {
@@ -833,6 +854,8 @@ private struct Composer: View {
                     CodexControls(session: session, dropdowns: dropdowns)
                 } else if session.engine == .opencode {
                     OpenCodeControls(session: session, dropdowns: dropdowns)
+                } else if session.engine == .pi {
+                    PiControls(session: session, dropdowns: dropdowns)
                 } else if let brand = AgentBrand.forAgent(session.engine.agent) {
                     HStack(spacing: 5) {
                         AgentLogo(brand: brand, size: 12)
@@ -912,6 +935,31 @@ private struct Composer: View {
         let images = attachments
         attachments = []
         session.send(message, attachments: images)
+    }
+}
+
+/// Status widgets Pi extensions place around the editor. RPC sends text
+/// lines rather than arbitrary terminal UI, which keeps this native view safe.
+private struct PiWidgets: View {
+    let widgets: [AgentSession.PiWidget]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            ForEach(widgets) { widget in
+                ForEach(Array(widget.lines.enumerated()), id: \.offset) { _, line in
+                    Text(line)
+                        .font(Theme.monoFont)
+                        .foregroundStyle(Theme.textSecondary)
+                        .textSelection(.enabled)
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.card.opacity(0.7))
+        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.border, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 }
 
@@ -1294,6 +1342,51 @@ private struct OpenCodeControls: View {
             }
         ), label: "Permissions", state: dropdowns)
         .help("What OpenCode may do without asking. Applies at once.")
+    }
+}
+
+/// Pi's live RPC controls. The model list and supported thinking levels come
+/// from the installed Pi instance and its configured providers.
+private struct PiControls: View {
+    @ObservedObject var session: AgentSession
+    @ObservedObject var dropdowns: OctetDropdownState
+
+    var body: some View {
+        let selected = session.piModels.first { $0.id == session.model }
+        OctetDropdown(spec: OctetDropdownSpec(
+            id: "model",
+            options: session.piModels.map {
+                OctetDropdownOption(id: $0.id, title: $0.name,
+                                    detail: $0.detail.isEmpty ? nil : $0.detail,
+                                    section: $0.provider)
+            },
+            selected: selected?.id ?? session.model,
+            select: { session.model = $0 }
+        ), label: "Model", state: dropdowns)
+        .disabled(session.piModels.isEmpty)
+        .help(session.piModels.isEmpty
+              ? "Pi has no authenticated models yet. Configure a provider with pi /login."
+              : "Pi models available through your configured providers. Applies at once.")
+
+        if session.piThinkingLevels.count > 1 || session.piThinkingLevels.first != "off" {
+            let details = Dictionary(uniqueKeysWithValues: session.piThinkingLevels.map { level in
+                (level, level == "off" ? "No extended reasoning" : "\(level.capitalized) reasoning")
+            })
+            let spec = OctetDropdownSpec(
+                id: "effort", options: [], selected: session.effort ?? "off", select: { _ in },
+                panel: { close in
+                    AnyView(EffortSliderPanel(initial: session.effort, implicit: "off",
+                                              levels: session.piThinkingLevels, detail: details,
+                                              apply: { session.effort = $0 }, close: close))
+                }
+            )
+            OctetDropdownAnchor(spec: spec, state: dropdowns) { open in
+                EffortChip(level: session.effort, implicit: "off", open: open)
+            }
+            .help("How hard Pi reasons. Applies at once.")
+            .accessibilityLabel("Thinking level")
+            .accessibilityValue(session.effort ?? "off")
+        }
     }
 }
 

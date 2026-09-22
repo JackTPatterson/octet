@@ -77,6 +77,7 @@ enum SettingsSearchIndex {
     ]
 
     private static let agents: [SettingsSearchEntry] = [
+        .init(.agents, "Quick answers", ["question", "prompt", "permission", "corner", "choice", "reply"]),
         .init(.agents, "Visual twin", ["terminal", "conversation", "transcript"]),
         .init(.agents, "Open the twin for new agents", ["automatic", "terminal", "conversation"]),
         .init(.agents, "Agent notifications", anchor: "When an agent finishes or needs you",

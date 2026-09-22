@@ -4,7 +4,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/octet-logo-dark.png">
     <source media="(prefers-color-scheme: light)" srcset="docs/assets/octet-logo-light.png">
-    <img src="docs/assets/octet-logo-light.png" alt="Octet logo" width="72" align="center">
+    <img src="docs/assets/octet-logo-light.png" alt="Octet logo" width="58" align="absmiddle">
   </picture>
   &nbsp;Octet
 </h1>

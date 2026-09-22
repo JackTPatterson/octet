@@ -505,9 +505,100 @@ final class CodexApprovalTests: XCTestCase {
         XCTAssertTrue(CodexApproval.approvals.contains("item/commandExecution/requestApproval"))
         XCTAssertTrue(CodexApproval.approvals.contains("item/fileChange/requestApproval"))
         XCTAssertTrue(CodexApproval.approvals.contains("item/permissions/requestApproval"))
-        // What Octet can't show yet still gets words for the transcript.
-        XCTAssertTrue(CodexApproval.unsupported("item/tool/requestUserInput").contains("Open in Terminal"))
+        // MCP elicitation still gets words for the transcript.
         XCTAssertTrue(CodexApproval.unsupported("mcpServer/elicitation/request").contains("MCP"))
+    }
+
+    func testUserInputMapsQuestionsAndAnswersByCodexId() throws {
+        let params: [String: Any] = [
+            "itemId": "ask-1", "threadId": "thread-1", "isBlocking": true,
+            "questions": [
+                ["id": "database", "header": "Database", "question": "Which one?", "isOther": true,
+                 "options": [["label": "Postgres", "description": "Shared service"]]],
+                ["id": "notes", "header": "Notes", "question": "Anything else?", "isSecret": true],
+            ],
+        ]
+        let question = try XCTUnwrap(CodexUserInput.question(params))
+        XCTAssertEqual(question.id, "ask-1")
+        XCTAssertEqual(question.items.map(\.question), ["Which one?", "Anything else?"])
+        XCTAssertEqual(question.items.map(\.custom), [true, true])
+        XCTAssertTrue(question.items[1].secret)
+
+        let ids = CodexUserInput.questionIds(params)
+        let result = CodexUserInput.response(questionIds: ids, answers: [["Postgres"], ["No"]])
+        let mapped = try XCTUnwrap(result["answers"] as? [String: Any])
+        XCTAssertEqual((mapped["database"] as? [String: [String]])?["answers"], ["Postgres"])
+        XCTAssertEqual((mapped["notes"] as? [String: [String]])?["answers"], ["No"])
+    }
+
+    func testPiExtensionDialogsMapToQuestionsAndResponses() throws {
+        let select: [String: Any] = [
+            "type": "extension_ui_request", "id": "pi-1", "method": "select",
+            "title": "Choose a branch", "options": ["main", "release"],
+        ]
+        let question = try XCTUnwrap(PiExtensionUI.question(select, sessionId: "session"))
+        XCTAssertEqual(question.items[0].options.map(\.label), ["main", "release"])
+        XCTAssertFalse(question.items[0].custom)
+        XCTAssertEqual(PiExtensionUI.response(select, answers: [["release"]])["value"] as? String, "release")
+
+        let confirm: [String: Any] = [
+            "type": "extension_ui_request", "id": "pi-2", "method": "confirm",
+            "title": "Clear session?", "message": "All messages will be lost.",
+        ]
+        XCTAssertEqual(PiExtensionUI.response(confirm, answers: [["Yes"]])["confirmed"] as? Bool, true)
+        XCTAssertEqual(PiExtensionUI.cancel(confirm)["cancelled"] as? Bool, true)
+
+        let editor: [String: Any] = [
+            "type": "extension_ui_request", "id": "pi-3", "method": "editor",
+            "title": "Edit the plan", "prefill": "Ship it\nVerify it",
+        ]
+        XCTAssertEqual(PiExtensionUI.question(editor, sessionId: "session")?.items[0].initial,
+                       "Ship it\nVerify it")
+    }
+
+    func testPiModelsKeepProviderAndSlashesInModelId() throws {
+        let model = try XCTUnwrap(PiModel([
+            "id": "qwen/qwen3.7-max", "name": "Qwen 3.7 Max", "provider": "qwen-token-plan",
+            "reasoning": true, "input": ["text", "image"], "contextWindow": 262_144, "maxTokens": 65_536,
+        ]))
+        XCTAssertEqual(model.id, "qwen-token-plan/qwen/qwen3.7-max")
+        XCTAssertEqual(model.detail, "Reasoning · Images · 262K context · 65K max output")
+        let selection = try XCTUnwrap(PiModel.selection(model.id))
+        XCTAssertEqual(selection.provider, "qwen-token-plan")
+        XCTAssertEqual(selection.modelId, "qwen/qwen3.7-max")
+    }
+
+    func testRestoresPiMessagesAndToolResults() {
+        var conversation = AgentConversation()
+        conversation.restorePi([
+            ["role": "user", "content": "Inspect the project"],
+            ["role": "assistant", "id": "answer-1", "content": [
+                ["type": "text", "text": "I will inspect it."],
+                ["type": "toolCall", "id": "call-1", "name": "read", "arguments": ["path": "README.md"]],
+            ]],
+            ["role": "toolResult", "toolCallId": "call-1", "toolName": "read",
+             "content": [["type": "text", "text": "# Project"]], "isError": false],
+            ["role": "bashExecution", "command": "pwd", "output": "/tmp/project\n", "exitCode": 0],
+        ])
+
+        XCTAssertEqual(conversation.items.count, 4)
+        guard case .user(let prompt) = conversation.items[0].kind else { return XCTFail("missing user message") }
+        XCTAssertEqual(prompt, "Inspect the project")
+        guard case .tool(let restored) = conversation.items[2].kind else { return XCTFail("missing restored tool") }
+        XCTAssertEqual(restored.result, "# Project")
+        guard case .tool(let bash) = conversation.items[3].kind else { return XCTFail("missing bash execution") }
+        XCTAssertEqual(bash.input, "pwd")
+    }
+
+    func testPiProviderErrorsAppearInTranscript() {
+        var conversation = AgentConversation()
+        conversation.applyPi(["type": "agent_start"])
+        conversation.applyPi(["type": "message_end", "message": [
+            "role": "assistant", "content": [], "stopReason": "error",
+            "errorMessage": "401 invalid API key",
+        ]])
+        XCTAssertEqual(conversation.lastError, "401 invalid API key")
+        XCTAssertEqual(conversation.items.last?.kind, .notice("401 invalid API key"))
     }
 
     func testGuardianWarningIsShown() {

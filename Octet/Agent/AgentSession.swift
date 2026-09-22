@@ -120,13 +120,17 @@ final class AgentSession: ObservableObject, Identifiable {
             // the session's, and change at once.
             updateOpenCodePermissions()
         case .pi:
-            break
+            updatePiSettings()
         case .qwen:
             needsRestart = true
         }
         AgentCenter.shared.save()
     }
-    @Published private(set) var pendingPermission: AgentPermissionRequest?
+    @Published private(set) var pendingPermission: AgentPermissionRequest? {
+        didSet {
+            if pendingPermission?.id != oldValue?.id { AgentCenter.shared.objectWillChange.send() }
+        }
+    }
     @Published var startupError: String?
 
     /// Assigned up front so the session can be resumed or opened in a pane.
@@ -148,8 +152,16 @@ final class AgentSession: ObservableObject, Identifiable {
     /// Reads the server's events for this conversation's session.
     var openCode = OpenCodeStream()
     /// A question OpenCode's agent is waiting on you to answer.
-    @Published var pendingQuestion: OpenCodeQuestion?
+    @Published var pendingQuestion: OpenCodeQuestion? {
+        didSet {
+            if pendingQuestion?.id != oldValue?.id { AgentCenter.shared.objectWillChange.send() }
+        }
+    }
     var questionQueue: [OpenCodeQuestion] = []
+    /// Non-OpenCode transports reuse the same question card and keep their
+    /// protocol-specific answer writers here, keyed by the visible request.
+    var questionAnswers: [String: ([[String]]) -> Void] = [:]
+    var questionRejects: [String: () -> Void] = [:]
     /// Messages written before the session existed, sent once it does.
     var openCodeQueue: [[String: Any]] = []
     var openCodeCreating = false
@@ -161,6 +173,32 @@ final class AgentSession: ObservableObject, Identifiable {
     /// The first message undone in OpenCode's own interface, from which
     /// the transcript is hidden, as OpenCode hides it.
     var openCodeRevertMessage: String?
+
+    // MARK: - Pi
+
+    /// Models and reasoning levels reported by the running Pi RPC session.
+    /// They reflect configured credentials, so an unauthenticated install
+    /// intentionally produces an empty model list.
+    @Published private(set) var piModels: [PiModel] = []
+    @Published private(set) var piThinkingLevels: [String] = ["off"]
+    @Published private(set) var piStatusText: String?
+    @Published private(set) var piWidgets: [PiWidget] = []
+    @Published private(set) var piEditorRequest: PiEditorRequest?
+    private var piStatuses: [String: String] = [:]
+    private var piApplyingState = false
+    private var piAppliedModel: String?
+    private var piAppliedThinking: String?
+
+    struct PiWidget: Identifiable, Equatable {
+        let id: String
+        let lines: [String]
+        let placement: String
+    }
+
+    struct PiEditorRequest: Identifiable, Equatable {
+        let id: String
+        let text: String
+    }
 
     // MARK: - Codex
 
@@ -318,7 +356,9 @@ final class AgentSession: ObservableObject, Identifiable {
                 prompt.handling = .octet
                 return prompt
             }
-        case .pi, .qwen:
+        case .pi:
+            commands = agentCommands + SlashCommands.piOctetCommands
+        case .qwen:
             commands = agentCommands
         }
         return commands.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
@@ -365,6 +405,7 @@ final class AgentSession: ObservableObject, Identifiable {
     /// What the agent is doing right now, in a few words.
     var activity: String {
         guard conversation.isRunning else { return "" }
+        if engine == .pi, let piStatusText, !piStatusText.isEmpty { return piStatusText }
         for item in conversation.items.reversed() {
             switch item.kind {
             case .tool(let call) where call.result == nil:
@@ -768,6 +809,22 @@ final class AgentSession: ObservableObject, Identifiable {
         receivePermission(["tool_name": "Bash", "tool_use_id": "debug",
                            "input": ["command": "rm -rf build/DerivedData", "description": "Clear the build folder"]]) { _ in }
     }
+
+    /// Verification hook for the corner panel's choices and typed answer.
+    func debugShowQuestion() {
+        pendingQuestion = OpenCodeQuestion([
+            "id": "debug-question", "sessionID": sessionId,
+            "questions": [
+                ["header": "Database", "question": "Which database should the new service use?",
+                 "options": [
+                    ["label": "Postgres", "description": "Matches the other services"],
+                    ["label": "SQLite", "description": "Simplest to run locally"],
+                 ]],
+                ["header": "Notes", "question": "Anything else the agent should know?",
+                 "options": [], "custom": true],
+            ],
+        ])
+    }
     #endif
 
     func receivePermission(_ prompt: [String: Any], reply: @escaping ([String: Any]) -> Void) {
@@ -877,11 +934,36 @@ final class AgentSession: ObservableObject, Identifiable {
     private func startPi() {
         guard let process = spawn(command: "exec pi --mode rpc") else { return }
         self.process = process
+        write(["type": "get_available_models"])
+        write(["type": "get_commands"])
         if let threadId {
             write(["type": "switch_session", "sessionPath": threadId])
+        } else {
+            refreshPiState(includeMessages: false)
         }
+    }
+
+    private func refreshPiState(includeMessages: Bool) {
         write(["type": "get_state"])
-        write(["type": "get_commands"])
+        write(["type": "get_available_thinking_levels"])
+        write(["type": "get_session_stats"])
+        if includeMessages { write(["type": "get_messages"]) }
+    }
+
+    /// Applies picker changes to a live Pi process. Tracking the last state
+    /// avoids resetting the model when only the thinking level moved.
+    private func updatePiSettings() {
+        guard !piApplyingState, process?.isRunning == true else { return }
+        if model != piAppliedModel, let choice = PiModel.selection(model) {
+            if write(["type": "set_model", "provider": choice.provider, "modelId": choice.modelId]) {
+                piAppliedModel = model
+            }
+            return
+        }
+        if let effort, effort != piAppliedThinking,
+           write(["type": "set_thinking_level", "level": effort]) {
+            piAppliedThinking = effort
+        }
     }
 
     /// Qwen's headless SDK transport uses the same stream-json event shapes
@@ -1048,8 +1130,26 @@ final class AgentSession: ObservableObject, Identifiable {
     }
 
     private func receivePi(_ event: [String: Any]) {
+        if let question = PiExtensionUI.question(event, sessionId: sessionId) {
+            enqueueQuestion(question, answer: { [weak self] answers in
+                self?.write(PiExtensionUI.response(event, answers: answers))
+            }, reject: { [weak self] in
+                self?.write(PiExtensionUI.cancel(event))
+            })
+            if let timeout = event["timeout"] as? Int, timeout > 0 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + Double(timeout) / 1000) { [weak self] in
+                    self?.advanceQuestion(question.id)
+                }
+            }
+            return
+        }
+        if event["type"] as? String == "extension_ui_request" {
+            receivePiExtensionUI(event)
+            return
+        }
         if event["type"] as? String == "response", event["success"] as? Bool == true,
-           let command = event["command"] as? String, let data = event["data"] as? [String: Any] {
+           let command = event["command"] as? String {
+            let data = event["data"] as? [String: Any] ?? [:]
             switch command {
             case "get_state":
                 if let path = data["sessionFile"] as? String, threadId != path {
@@ -1057,7 +1157,25 @@ final class AgentSession: ObservableObject, Identifiable {
                     AgentCenter.shared.save()
                 }
                 if let model = data["model"] as? [String: Any] {
-                    conversation.model = model["id"] as? String ?? model["name"] as? String
+                    applyPiModel(model, thinking: data["thinkingLevel"] as? String)
+                }
+                if title == engine.displayName, let name = data["sessionName"] as? String, !name.isEmpty { title = name }
+            case "get_available_models":
+                piModels = (data["models"] as? [[String: Any]] ?? []).compactMap(PiModel.init)
+            case "get_available_thinking_levels":
+                let levels = data["levels"] as? [String] ?? []
+                piThinkingLevels = levels.isEmpty ? ["off"] : levels
+            case "set_model":
+                applyPiModel(data, thinking: nil)
+                write(["type": "get_state"])
+                write(["type": "get_available_thinking_levels"])
+            case "set_thinking_level":
+                piAppliedThinking = effort
+            case "switch_session":
+                refreshPiState(includeMessages: true)
+            case "get_messages":
+                if conversation.items.isEmpty {
+                    conversation.restorePi(data["messages"] as? [[String: Any]] ?? [])
                 }
             case "get_commands":
                 let commands = data["commands"] as? [[String: Any]] ?? []
@@ -1079,6 +1197,55 @@ final class AgentSession: ObservableObject, Identifiable {
         }
         conversation.applyPi(event)
         if event["type"] as? String == "agent_settled" { write(["type": "get_session_stats"]) }
+    }
+
+    private func applyPiModel(_ json: [String: Any], thinking: String?) {
+        guard let model = PiModel(json) else { return }
+        piApplyingState = true
+        piAppliedModel = model.id
+        self.model = model.id
+        conversation.model = model.modelId
+        conversation.contextWindow = model.contextWindow > 0 ? model.contextWindow : conversation.contextWindow
+        if let thinking {
+            piAppliedThinking = thinking
+            effort = thinking
+        }
+        piApplyingState = false
+    }
+
+    /// Pi extensions can use a handful of fire-and-forget UI calls in RPC
+    /// mode. Surface each one in the native conversation instead of silently
+    /// dropping extension feedback.
+    private func receivePiExtensionUI(_ event: [String: Any]) {
+        let method = event["method"] as? String ?? ""
+        switch method {
+        case "notify":
+            let message = event["message"] as? String ?? "Pi notification"
+            if event["notifyType"] as? String == "error" {
+                ToastCenter.shared.fail(nil, message)
+            } else {
+                ToastCenter.shared.info(message)
+            }
+        case "setStatus":
+            let key = event["statusKey"] as? String ?? "pi"
+            if let text = event["statusText"] as? String, !text.isEmpty { piStatuses[key] = text }
+            else { piStatuses[key] = nil }
+            piStatusText = piStatuses.values.first
+        case "setWidget":
+            let key = event["widgetKey"] as? String ?? event["id"] as? String ?? UUID().uuidString
+            piWidgets.removeAll { $0.id == key }
+            if let lines = event["widgetLines"] as? [String], !lines.isEmpty {
+                piWidgets.append(PiWidget(id: key, lines: lines,
+                                          placement: event["widgetPlacement"] as? String ?? "aboveEditor"))
+            }
+        case "setTitle":
+            if let value = event["title"] as? String, !value.isEmpty { title = value }
+        case "set_editor_text":
+            piEditorRequest = PiEditorRequest(id: event["id"] as? String ?? UUID().uuidString,
+                                              text: event["text"] as? String ?? "")
+        default:
+            break
+        }
     }
 
     /// One JSON-RPC message from the app server: a question it is waiting on,
@@ -1173,10 +1340,39 @@ final class AgentSession: ObservableObject, Identifiable {
         }
     }
 
+    /// Runs the session actions Pi exposes over RPC.
+    func piCommand(_ name: String, arguments: String) {
+        guard engine == .pi else { return }
+        switch name {
+        case "compact":
+            var request: [String: Any] = ["type": "compact"]
+            if !arguments.isEmpty { request["customInstructions"] = arguments }
+            write(request)
+        case "rename":
+            guard !arguments.isEmpty else { return }
+            title = arguments
+            write(["type": "set_session_name", "name": arguments])
+        default:
+            break
+        }
+    }
+
     /// A request Codex is waiting on. Every one is answered, or the turn
     /// would wait forever: approvals go to the permission card, and anything
     /// Octet has no way to ask yet is refused and said in the transcript.
     private func answerCodexRequest(_ method: String, id: Any, params: [String: Any]) {
+        if method == "item/tool/requestUserInput",
+           let question = CodexUserInput.question(params) {
+            let ids = CodexUserInput.questionIds(params)
+            enqueueQuestion(question, answer: { [weak self] answers in
+                self?.write(["jsonrpc": "2.0", "id": id,
+                             "result": CodexUserInput.response(questionIds: ids, answers: answers)])
+            }, reject: { [weak self] in
+                self?.write(["jsonrpc": "2.0", "id": id,
+                             "result": CodexUserInput.response(questionIds: ids, answers: ids.map { _ in [] })])
+            })
+            return
+        }
         guard CodexApproval.approvals.contains(method) else {
             write(["jsonrpc": "2.0", "id": id,
                    "error": ["code": -32601, "message": "Octet can't answer \(method) yet."]])

@@ -118,10 +118,11 @@ final class TwinSession: ObservableObject {
                 open(agent.paneId, takeFocus: agent.paneId == focusedPaneId)
             }
         }
-        if isVisible {
-            refreshAttachment()
+        if shouldWatch {
+            if isVisible { refreshAttachment() }
             startTimer()
         } else {
+            approval = nil
             stopTimerIfIdle()
         }
     }
@@ -187,18 +188,26 @@ final class TwinSession: ObservableObject {
     }
 
     private func stopTimerIfIdle() {
-        guard !isVisible else { return }
+        guard !shouldWatch else { return }
         timer?.invalidate()
         timer = nil
     }
 
+    /// The twin also watches the focused terminal while hidden when quick
+    /// answers are enabled, so a prompt can slide out of the window corner.
+    private var shouldWatch: Bool {
+        isVisible || (SettingsStore.shared.values.agentQuickAnswers && focusedAgent?.agentStatus == .blocked)
+    }
+
     private func tick() {
-        guard isVisible else {
+        guard shouldWatch else {
             stopTimerIfIdle()
             return
         }
-        refreshAttachment()
-        read()
+        if isVisible {
+            refreshAttachment()
+            read()
+        }
         readApproval()
     }
 
@@ -262,7 +271,7 @@ final class TwinSession: ObservableObject {
 
     /// Answers the question on screen.
     func answer(_ option: TwinApproval.Option) {
-        guard let paneId = attachedPane else { return }
+        guard let paneId = attachedPane ?? focusedPaneId else { return }
         approval = nil
         send(option.needsReturn ? option.key + "\r" : option.key, to: paneId)
     }

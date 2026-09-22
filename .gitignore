@@ -8,3 +8,4 @@ Herd.xcodeproj/
 Vendor/herdr-radar/
 Spikes/TerminalSpike/*.xcodeproj/
 Vendor/engine/
+.firecrawl/

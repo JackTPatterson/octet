@@ -270,6 +270,16 @@ extension SlashCommands {
         SlashCommand(name: "review", summary: "Review the current changes, or against a branch", argumentHint: "[branch]", handling: .octet),
     ]
 
+    /// Pi exposes extension commands over RPC; these session actions are
+    /// native RPC calls that do not appear in that list.
+    static let piOctetCommands: [SlashCommand] = [
+        SlashCommand(name: "compact", summary: "Summarize the conversation to free context", argumentHint: "[instructions]", handling: .octet),
+        SlashCommand(name: "model", summary: "Change the model", argumentHint: "[model]", handling: .octet),
+        SlashCommand(name: "new", summary: "Start a new conversation", aliases: ["clear"], handling: .octet),
+        SlashCommand(name: "quit", summary: "Close this conversation", aliases: ["exit"], handling: .octet),
+        SlashCommand(name: "rename", summary: "Rename the conversation", argumentHint: "<name>", handling: .octet),
+    ]
+
     /// The command a message starts with, by name or alias, and the rest of
     /// the line as its arguments.
     static func invoked(_ text: String, in commands: [SlashCommand]) -> (command: SlashCommand, arguments: String)? {

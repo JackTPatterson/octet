@@ -230,3 +230,37 @@ enum CodexApproval {
         }
     }
 }
+
+/// Codex app-server's experimental `request_user_input` request translated
+/// into the common question shape drawn by Octet.
+enum CodexUserInput {
+    static func question(_ params: [String: Any]) -> OpenCodeQuestion? {
+        let questions = params["questions"] as? [[String: Any]] ?? []
+        return OpenCodeQuestion([
+            "id": params["itemId"] as? String ?? UUID().uuidString,
+            "sessionID": params["threadId"] as? String ?? "",
+            "questions": questions.map { item in
+                [
+                    "header": item["header"] as? String ?? "",
+                    "question": item["question"] as? String ?? "",
+                    "options": item["options"] as? [[String: Any]] ?? [],
+                    "multiple": false,
+                    "custom": (item["isOther"] as? Bool ?? false) || item["options"] == nil,
+                    "secret": item["isSecret"] as? Bool ?? false,
+                ] as [String: Any]
+            },
+        ])
+    }
+
+    static func questionIds(_ params: [String: Any]) -> [String] {
+        (params["questions"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String }
+    }
+
+    static func response(questionIds: [String], answers: [[String]]) -> [String: Any] {
+        var mapped: [String: Any] = [:]
+        for (index, id) in questionIds.enumerated() {
+            mapped[id] = ["answers": answers.indices.contains(index) ? answers[index] : []]
+        }
+        return ["answers": mapped]
+    }
+}

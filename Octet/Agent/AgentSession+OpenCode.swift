@@ -222,6 +222,12 @@ extension AgentSession: OpenCodeServer.Listener {
     // MARK: - Questions
 
     func answerQuestion(_ question: OpenCodeQuestion, answers: [[String]]) {
+        if let answer = questionAnswers.removeValue(forKey: question.id) {
+            questionRejects.removeValue(forKey: question.id)
+            answer(answers)
+            advanceQuestion(question.id)
+            return
+        }
         OpenCodeServer.shared.request("POST", "question/\(question.id)/reply", directory: cwd,
                                       body: ["answers": answers]) { [weak self] result in
             if case .failure(let failure) = result { self?.notice("Couldn't answer OpenCode: \(failure)") }
@@ -230,11 +236,28 @@ extension AgentSession: OpenCodeServer.Listener {
     }
 
     func rejectQuestion(_ question: OpenCodeQuestion) {
+        if let reject = questionRejects.removeValue(forKey: question.id) {
+            questionAnswers.removeValue(forKey: question.id)
+            reject()
+            advanceQuestion(question.id)
+            return
+        }
         OpenCodeServer.shared.request("POST", "question/\(question.id)/reject", directory: cwd) { _ in }
         advanceQuestion(question.id)
     }
 
-    private func advanceQuestion(_ id: String) {
+    func enqueueQuestion(_ question: OpenCodeQuestion,
+                         answer: (([[String]]) -> Void)? = nil,
+                         reject: (() -> Void)? = nil) {
+        if let answer { questionAnswers[question.id] = answer }
+        if let reject { questionRejects[question.id] = reject }
+        if pendingQuestion == nil { pendingQuestion = question } else { questionQueue.append(question) }
+        NSApp.requestUserAttention(.informationalRequest)
+    }
+
+    func advanceQuestion(_ id: String) {
+        questionAnswers.removeValue(forKey: id)
+        questionRejects.removeValue(forKey: id)
         questionQueue.removeAll { $0.id == id }
         guard pendingQuestion?.id == id else { return }
         pendingQuestion = questionQueue.isEmpty ? nil : questionQueue.removeFirst()
@@ -258,8 +281,7 @@ extension AgentSession: OpenCodeServer.Listener {
             }
         case "question.asked" where openCode.owns(session):
             guard let question = OpenCodeQuestion(properties) else { return }
-            if pendingQuestion == nil { pendingQuestion = question } else { questionQueue.append(question) }
-            NSApp.requestUserAttention(.informationalRequest)
+            enqueueQuestion(question)
         case "question.replied", "question.rejected":
             if let id = properties["requestID"] as? String { advanceQuestion(id) }
         case "session.updated" where session == threadId:

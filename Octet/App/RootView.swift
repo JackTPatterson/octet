@@ -54,6 +54,7 @@ struct RootView: View {
         }
         .onChange(of: window.focusedPaneId) { _, _ in twin.snapshotChanged() }
         .onChange(of: twin.isVisible) { _, visible in DebugSnapshot.overlay("twin", visible) }
+        .onChange(of: settings.values.agentQuickAnswers) { _, _ in twin.snapshotChanged() }
         .onChange(of: store.snapshot) { _, snapshot in
             twin.snapshotChanged()
             if !snapshot.workspaces.isEmpty {
@@ -135,14 +136,6 @@ struct RootView: View {
             }
             .padding(.top, contentTop)
         }
-        .overlay(alignment: .bottomTrailing) {
-            // Toasts sit above the recovery panel, both anchored bottom-right.
-            VStack(alignment: .trailing, spacing: 8) {
-                ToastStack(center: ToastCenter.shared)
-                RecoveryOverlay(recovery: store.recovery)
-            }
-            .id(settings.themeKey)
-        }
         .onAppear { appeared() }
         .modifier(TerminalWatchers(
             anchor: terminalAnchor, tabDrag: tabDrag,
@@ -168,6 +161,21 @@ struct RootView: View {
                         : .identity)
             }
         }
+        // Draw transient cards after the terminal chrome cover and prompt.
+        // The hosted terminal needs those root overlays, but neither should
+        // be able to paint a black strip through a toast or quick answer.
+        .overlay(alignment: .bottomTrailing) {
+            VStack(alignment: .trailing, spacing: 8) {
+                ToastStack(center: ToastCenter.shared)
+                AgentQuickAnswerHost(
+                    center: agents,
+                    twin: twin,
+                    workspaceId: window.focusedWorkspace?.workspaceId
+                )
+                RecoveryOverlay(recovery: store.recovery)
+            }
+            .id(settings.themeKey)
+        }
         // Above the palette, so a confirm raised while it's open isn't buried.
         .overlay { ConfirmDialog(center: confirmations) }
         .animation(motion.animation(.palette, .smooth(duration: 0.16)), value: ui.paletteVisible)
@@ -192,12 +200,14 @@ struct RootView: View {
                     ConversationDebug.scrollToItem = parts.count > 2 ? Int(parts[2]) : nil
                 }
             }
-            // Verification hook: "codex" (or "opencode") opens a native
-            // conversation; "codex:<text>" also sends that first message.
+            // Verification hook: an engine name opens its native conversation;
+            // "pi:<text>" also sends that first message.
             if let window = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"],
-               window.hasPrefix("codex") || window.hasPrefix("opencode") {
+               window.hasPrefix("codex") || window.hasPrefix("opencode") || window.hasPrefix("pi") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                    self.window.newConversation(engine: window.hasPrefix("opencode") ? .opencode : .codex)
+                    let engine: AgentSession.Engine = window.hasPrefix("opencode") ? .opencode
+                        : window.hasPrefix("pi") ? .pi : .codex
+                    self.window.newConversation(engine: engine)
                     let text = window.split(separator: ":", maxSplits: 1).dropFirst().first.map(String.init)
                     guard let text, let session = AgentCenter.shared.sessions.last else { return }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2) { session.send(text) }
@@ -246,6 +256,15 @@ struct RootView: View {
                         confirmTitle: "Quit",
                         suppressTitle: "Don't ask again"
                     ) { _ in }
+                }
+            }
+            if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "toast" {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    ToastCenter.shared.info(
+                        "Copied to clipboard",
+                        detail: "A compact preview of the copied text",
+                        after: 30
+                    )
                 }
             }
             #endif

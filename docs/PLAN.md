@@ -7,19 +7,24 @@ the server's socket API.
 
 ## Architecture
 
-```
-┌ Octet.app ──────────────────────────────────────────────────────────────┐
-│ Title bar: traffic lights · sidebar toggle · search (⌘K)               │
-├───────────────┬────────────────────────────────────────────────────────┤
-│ Sidebar       │ Tab bar (tabs of the focused workspace)                │
-│ projects      ├────────────────────────────────────────────────────────┤
-│  └ workspaces │ terminal surface running                               │
-│     agent     │   octet-engine --session octet                           │
-│     state/hue │   (config path → Octet's config: server sidebar         │
-│               │    hidden, own tab row hidden when possible)           │
-└───────────────┴────────────────────────────────────────────────────────┘
-        ▲ session.snapshot + events.subscribe      │ workspace.focus / tab.focus / tab.create
-        └──────────── session socket (sessions/octet) ◀────────────────────┘
+```mermaid
+flowchart LR
+    subgraph app[Octet.app]
+        direction TB
+        chrome[Title bar · sidebar · tabs · command palette]
+        transcript[Native agent transcript and approvals]
+        surface[GhosttyKit terminal surface]
+    end
+
+    server[octet-engine<br/>named session: octet]
+    workspace[Persistent workspaces<br/>tabs · panes · shells]
+    agents[Agent processes and subagents]
+
+    chrome <-->|snapshot · events · commands| server
+    surface <-->|terminal stream and input| server
+    server --> workspace
+    workspace --> agents
+    transcript <-->|structured agent protocols| agents
 ```
 
 - **Session:** Octet runs its own named session (`octet`) so a standalone

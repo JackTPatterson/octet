@@ -596,6 +596,13 @@ private struct AgentSettings: View {
 
     var body: some View {
         SettingsGroup(title: "Notifications") {
+            SettingsRow(
+                title: "Quick answers",
+                detail: "Open a small panel in the window corner when an agent needs a choice, answer, or permission."
+            ) {
+                Toggle("Quick answers", isOn: $settings.values.agentQuickAnswers).labelsHidden().toggleStyle(.switch)
+            }
+            SettingsDivider()
             SettingsRow(title: "When an agent finishes or needs you") {
                 Picker("When an agent finishes or needs you", selection: $settings.values.notifications) {
                     Text("macOS notification").tag(OctetSettings.NotificationDelivery.system)

@@ -207,12 +207,11 @@ private struct TabItem: View {
                 }
                 // A single selection surface slides between tabs.
                 if isActive {
-                    ZStack(alignment: .top) {
+                    ZStack {
                         Theme.terminalBackground
                         if let hue = brand?.hueHex { Color(hex: hue).opacity(0.08) }
                         Rectangle()
-                            .fill(brand?.hueHex.map { Color(hex: $0) } ?? Theme.accent)
-                            .frame(height: 2)
+                            .strokeBorder(Theme.textPrimary.opacity(0.72), lineWidth: 1)
                     }
                     .matchedGeometryEffect(id: "selectedTab", in: selection)
                 }
@@ -557,9 +556,10 @@ private struct ConversationTab: View {
             ZStack {
                 if hovered && !isActive { Theme.hover }
                 if isActive {
-                    ZStack(alignment: .top) {
+                    ZStack {
                         Theme.terminalBackground
-                        Rectangle().fill(brand?.hueHex.map { Color(hex: $0) } ?? Theme.accent).frame(height: 2)
+                        Rectangle()
+                            .strokeBorder(Theme.textPrimary.opacity(0.72), lineWidth: 1)
                     }
                     .matchedGeometryEffect(id: "selectedTab", in: selection)
                 }

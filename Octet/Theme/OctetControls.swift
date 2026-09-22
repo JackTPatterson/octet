@@ -60,6 +60,7 @@ struct OctetButton: View {
 struct OctetTextField: View {
     let placeholder: String
     @Binding var text: String
+    var secure = false
     var onSubmit: () -> Void = {}
     @FocusState private var focused: Bool
 
@@ -71,7 +72,10 @@ struct OctetTextField: View {
                     .foregroundStyle(Theme.textTertiary)
                     .allowsHitTesting(false)
             }
-            TextField("", text: $text)
+            Group {
+                if secure { SecureField("", text: $text) }
+                else { TextField("", text: $text) }
+            }
                 .textFieldStyle(.plain)
                 .font(Theme.uiFont)
                 .foregroundStyle(Theme.textPrimary)

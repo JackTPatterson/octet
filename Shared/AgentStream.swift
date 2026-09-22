@@ -1,5 +1,56 @@
 import Foundation
 
+/// One model Pi reports as configured for the current account. Pi identifies
+/// a choice by provider and model id; keeping those separate avoids guessing
+/// when a model id itself contains a slash (as OpenRouter ids often do).
+struct PiModel: Identifiable, Equatable {
+    let modelId: String
+    let name: String
+    let provider: String
+    let reasoning: Bool
+    let input: [String]
+    let contextWindow: Int
+    let maxTokens: Int
+
+    var id: String { "\(provider)/\(modelId)" }
+
+    var detail: String {
+        var parts: [String] = []
+        if reasoning { parts.append("Reasoning") }
+        if input.contains("image") { parts.append("Images") }
+        if contextWindow > 0 { parts.append("\(Self.short(contextWindow)) context") }
+        if maxTokens > 0 { parts.append("\(Self.short(maxTokens)) max output") }
+        return parts.joined(separator: " · ")
+    }
+
+    init?(_ json: [String: Any]) {
+        guard let modelId = json["id"] as? String, !modelId.isEmpty,
+              let provider = json["provider"] as? String, !provider.isEmpty else { return nil }
+        self.modelId = modelId
+        name = json["name"] as? String ?? modelId
+        self.provider = provider
+        reasoning = json["reasoning"] as? Bool ?? false
+        input = json["input"] as? [String] ?? []
+        contextWindow = json["contextWindow"] as? Int ?? 0
+        maxTokens = json["maxTokens"] as? Int ?? 0
+    }
+
+    static func selection(_ value: String) -> (provider: String, modelId: String)? {
+        guard let slash = value.firstIndex(of: "/"), slash != value.startIndex else { return nil }
+        let modelStart = value.index(after: slash)
+        guard modelStart < value.endIndex else { return nil }
+        return (String(value[..<slash]), String(value[modelStart...]))
+    }
+
+    private static func short(_ value: Int) -> String {
+        if value >= 1_000_000 {
+            let millions = Double(value) / 1_000_000
+            return millions == millions.rounded() ? "\(Int(millions))M" : String(format: "%.1fM", millions)
+        }
+        return value >= 1_000 ? "\(value / 1_000)K" : "\(value)"
+    }
+}
+
 /// A live conversation with an agent Octet drives headless, built from the
 /// agent's stream-json events (`claude -p --output-format stream-json
 /// --include-partial-messages`). Pure data: the driver feeds events in, the
@@ -93,7 +144,14 @@ struct AgentConversation: Equatable {
             applyPiUpdate(update)
             if let usage = event["usage"] as? [String: Any] { notePiUsage(usage) }
         case "message_end":
-            if let message = event["message"] as? [String: Any] { applyPiMessage(message) }
+            if let message = event["message"] as? [String: Any] {
+                applyPiMessage(message)
+                if message["stopReason"] as? String == "error",
+                   let error = message["errorMessage"] as? String, !error.isEmpty {
+                    lastError = error
+                    items.append(AgentItem(id: UUID().uuidString, kind: .notice(error)))
+                }
+            }
             openBlocks = [:]
         case "tool_execution_start", "tool_execution_update", "tool_execution_end":
             applyPiTool(event)
@@ -106,6 +164,47 @@ struct AgentConversation: Equatable {
         default:
             break
         }
+    }
+
+    /// Rebuilds a persisted Pi conversation from `get_messages`. The live
+    /// stream and restored history then share the same transcript rows.
+    mutating func restorePi(_ messages: [[String: Any]]) {
+        items = []
+        openBlocks = [:]
+        currentMessageId = nil
+        for message in messages {
+            switch message["role"] as? String {
+            case "user":
+                let text = Self.piText(message["content"])
+                let attachments = message["attachments"] as? [[String: Any]] ?? []
+                let images = attachments.compactMap { attachment -> Data? in
+                    guard attachment["type"] as? String == "image",
+                          let encoded = attachment["content"] as? String else { return nil }
+                    return Data(base64Encoded: encoded)
+                }
+                items.append(AgentItem(id: UUID().uuidString, kind: .user(text), images: images))
+            case "assistant":
+                applyPiMessage(message)
+                if let usage = message["usage"] as? [String: Any] { notePiUsage(usage) }
+            case "toolResult":
+                guard let id = message["toolCallId"] as? String else { continue }
+                upsertTool(id: id, name: Self.piToolName(message["toolName"] as? String ?? "tool"), input: nil, parent: nil)
+                guard let position = items.firstIndex(where: { $0.id == id }), case .tool(var call) = items[position].kind else { continue }
+                call.result = Self.resultText(message["content"])
+                call.isError = message["isError"] as? Bool ?? false
+                items[position].kind = .tool(call)
+            case "bashExecution":
+                let command = message["command"] as? String ?? "bash"
+                let output = message["output"] as? String ?? ""
+                let call = AgentToolCall(name: "Bash", summary: command, input: command, inputData: nil, result: output,
+                                         isError: (message["exitCode"] as? Int ?? 0) != 0)
+                items.append(AgentItem(id: UUID().uuidString, kind: .tool(call)))
+            default:
+                continue
+            }
+        }
+        isRunning = false
+        lastError = nil
     }
 
     private mutating func applyPiUpdate(_ update: [String: Any]) {
@@ -194,6 +293,15 @@ struct AgentConversation: Equatable {
         case "grep", "search": return "Grep"
         default: return name.prefix(1).uppercased() + name.dropFirst()
         }
+    }
+
+    private static func piText(_ content: Any?) -> String {
+        if let text = content as? String { return text }
+        guard let blocks = content as? [[String: Any]] else { return "" }
+        return blocks.compactMap { block in
+            guard block["type"] as? String == "text" else { return nil }
+            return block["text"] as? String
+        }.joined(separator: "\n")
     }
 
     private mutating func applyStreamEvent(_ event: [String: Any], parent: String?) {
@@ -372,6 +480,49 @@ struct AgentConversation: Equatable {
         lhs.sessionId == rhs.sessionId && lhs.model == rhs.model && lhs.permissionMode == rhs.permissionMode
             && lhs.items == rhs.items && lhs.isRunning == rhs.isRunning && lhs.costUSD == rhs.costUSD
             && lhs.contextUsed == rhs.contextUsed && lhs.contextWindow == rhs.contextWindow && lhs.lastError == rhs.lastError
+    }
+}
+
+/// Pi's RPC extension UI dialogs translated into the common question surface.
+enum PiExtensionUI {
+    static func question(_ event: [String: Any], sessionId: String) -> OpenCodeQuestion? {
+        guard event["type"] as? String == "extension_ui_request",
+              let id = event["id"] as? String,
+              let method = event["method"] as? String,
+              ["select", "confirm", "input", "editor"].contains(method) else { return nil }
+        let title = event["title"] as? String ?? "Pi needs an answer"
+        let message = event["message"] as? String
+        let prompt = message?.isEmpty == false ? message! : title
+        let header = message?.isEmpty == false ? title : ""
+        let labels: [String]
+        switch method {
+        case "select": labels = event["options"] as? [String] ?? []
+        case "confirm": labels = ["Yes", "No"]
+        default: labels = []
+        }
+        return OpenCodeQuestion([
+            "id": id, "sessionID": sessionId,
+            "questions": [[
+                "header": header, "question": prompt,
+                "options": labels.map { ["label": $0, "description": ""] },
+                "multiple": false, "custom": method == "input" || method == "editor",
+                "initial": event["prefill"] as? String ?? "",
+            ]],
+        ])
+    }
+
+    static func response(_ event: [String: Any], answers: [[String]]) -> [String: Any] {
+        let id = event["id"] as? String ?? ""
+        let answer = answers.first?.first ?? ""
+        if event["method"] as? String == "confirm" {
+            return ["type": "extension_ui_response", "id": id,
+                    "confirmed": answer.caseInsensitiveCompare("yes") == .orderedSame]
+        }
+        return ["type": "extension_ui_response", "id": id, "value": answer]
+    }
+
+    static func cancel(_ event: [String: Any]) -> [String: Any] {
+        ["type": "extension_ui_response", "id": event["id"] as? String ?? "", "cancelled": true]
     }
 }
 

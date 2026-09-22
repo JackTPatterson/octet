@@ -46,8 +46,8 @@ final class ToastCenter: ObservableObject {
         finish(handle, style: .failure, title: title, detail: detail, after: 8)
     }
 
-    func info(_ title: String, detail: String? = nil) {
-        finish(nil, style: .info, title: title, detail: detail, after: 3.5)
+    func info(_ title: String, detail: String? = nil, after seconds: TimeInterval = 3.5) {
+        finish(nil, style: .info, title: title, detail: detail, after: seconds)
     }
 
     /// Updates a running toast's text without finishing it.
@@ -108,9 +108,12 @@ struct ToastStack: View {
             // Toasts follow you: they show in whichever Octet window is in front.
             ForEach(host.isFront ? center.visibleToasts : []) { toast in
                 ToastCard(toast: toast) { center.dismiss(toast.id) }
+                    .frame(width: ToastCard.width, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
                     .transition(motion.animates(.toasts) ? .move(edge: .trailing).combined(with: .opacity) : .identity)
             }
         }
+        .fixedSize(horizontal: true, vertical: true)
         .animation(motion.animation(.toasts, .easeOut(duration: 0.18)), value: center.visibleToasts)
         .padding(16)
         .background(HostWindowReader(host: host))
@@ -118,6 +121,8 @@ struct ToastStack: View {
 }
 
 private struct ToastCard: View {
+    static let width: CGFloat = 360
+
     let toast: ToastCenter.Toast
     let dismiss: () -> Void
 
@@ -136,7 +141,8 @@ private struct ToastCard: View {
                         .lineLimit(4)
                 }
             }
-            .frame(maxWidth: 320, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
             if toast.style != .progress {
                 Button(action: dismiss) {
                     OctetIcon("xmark", size: 16)

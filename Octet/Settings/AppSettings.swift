@@ -67,6 +67,9 @@ struct OctetSettings: Codable, Equatable {
     /// A banner over an agent running in the terminal, offering Octet's
     /// conversation view.
     var agentBanner = true
+    /// Show a compact corner panel whenever an agent is waiting for a choice,
+    /// typed answer, or permission decision.
+    var agentQuickAnswers = true
     var promptEditor = true
     var promptCompletions = true
     var pasteImagesAsFiles = true
@@ -206,6 +209,7 @@ struct OctetSettings: Codable, Equatable {
         offerRecovery = value("offerRecovery", defaults.offerRecovery)
         agentOpening = value("agentOpening", defaults.agentOpening)
         agentBanner = value("agentBanner", defaults.agentBanner)
+        agentQuickAnswers = value("agentQuickAnswers", defaults.agentQuickAnswers)
         promptEditor = value("promptEditor", defaults.promptEditor)
         promptCompletions = value("promptCompletions", defaults.promptCompletions)
         pasteImagesAsFiles = value("pasteImagesAsFiles", defaults.pasteImagesAsFiles)

@@ -433,6 +433,10 @@ struct OpenCodeQuestion: Identifiable, Equatable {
         let multiple: Bool
         /// Whether a typed answer is accepted; OpenCode's default is yes.
         let custom: Bool
+        /// Hide typed text for credentials and other sensitive answers.
+        let secret: Bool
+        /// Optional starting text, used by editor-style prompts.
+        let initial: String
     }
 
     let id: String
@@ -450,7 +454,9 @@ struct OpenCodeQuestion: Identifiable, Equatable {
                      Item.Option(label: $0["label"] as? String ?? "", description: $0["description"] as? String ?? "")
                  },
                  multiple: question["multiple"] as? Bool ?? false,
-                 custom: question["custom"] as? Bool ?? true)
+                 custom: question["custom"] as? Bool ?? true,
+                 secret: question["secret"] as? Bool ?? false,
+                 initial: question["initial"] as? String ?? "")
         }
         guard !items.isEmpty else { return nil }
     }
