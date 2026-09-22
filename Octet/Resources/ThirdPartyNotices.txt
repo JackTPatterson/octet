@@ -18,9 +18,10 @@ Octet downloads them only on request and writes their license beside them.
 
 Project: https://github.com/ghostty-org/ghostty
 Used in Octet: the prebuilt libghostty framework (GhosttyKit.xcframework) that
-renders the terminal, and the macOS surface view and input glue under
-Octet/Terminal/Engine, copied or adapted from Ghostty's macOS sources
-(commit 4a0e9e1).
+renders the terminal, built from commit 4a0e9e1 of the manaflow-ai/ghostty
+fork (https://github.com/manaflow-ai/ghostty, MIT), and the macOS surface
+view and input glue under Octet/Terminal/Engine, copied or adapted from
+Ghostty's macOS sources at the same commit.
 
 MIT License
 
@@ -49,9 +50,15 @@ SOFTWARE.
 ================================================================================
 
 Project: https://github.com/herdrdev/herdr
-Used in Octet: the herdr binary (version 0.9.1), shipped unmodified inside
-Octet.app as Contents/MacOS/octet-engine, where it runs as Octet's session
-server. The upstream project ships no NOTICE file.
+Used in Octet: the herdr binary (version 0.9.1, upstream commit 621e6b7),
+shipped inside Octet.app as Contents/MacOS/octet-engine, where it runs as
+Octet's session server. The upstream project ships no NOTICE file.
+
+Modifications: Octet's build changes one file, src/ui/scrollbar.rs, so the
+pane scrollbar paints only a capped thumb with no track, and adds a unit test
+for it. The complete patch is scripts/engine-scrollbar-capsule.patch in the
+Octet repository, and scripts/build-engine.sh applies it. No other herdr
+source is changed.
 
                                  Apache License
                            Version 2.0, January 2004

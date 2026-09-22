@@ -42,8 +42,10 @@ Octet is a native terminal and workspace for people who run more than one coding
 
 It does not proxy prompts through a second service or replace your agent. Claude Code, Codex, OpenCode, and other installed CLIs keep their own configuration, credentials, models, tools, and transcripts. Octet gives them a shared place to work.
 
+**Built on two open-source projects.** Terminal sessions, panes, and agent-state detection come from [Herdr](https://github.com/herdrdev/herdr) (Apache-2.0), which Octet bundles as its session server with one small rendering patch. Terminal rendering comes from [Ghostty](https://github.com/ghostty-org/ghostty) (MIT) through GhosttyKit. Octet is the native macOS layer on top: the sidebar, tabs, Visual Twin, native agent conversations, recovery, palette, and marketplace.
+
 > [!NOTE]
-> Octet is under active development and is currently source-first. Expect the feature set and setup to evolve before a stable 1.0 release.
+> Octet is pre-1.0. Signed and notarized builds are on the [Releases](https://github.com/JackTPatterson/octet/releases) page as prereleases; expect the feature set to keep moving.
 
 ## Why Octet
 
@@ -147,11 +149,9 @@ Reinstall the hook after moving the app because its configuration stores the CLI
 - macOS 14 or newer on Apple Silicon
 - Xcode 26 or 27 with command-line tools
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen): `brew install xcodegen`
-- `Vendor/GhosttyKit.xcframework`
-- a Herdr session-server binary, installed through Homebrew or supplied directly
+- [Herdr](https://github.com/herdrdev/herdr): `brew install herdr` (or Rust, to build the patched engine yourself)
 
-> [!IMPORTANT]
-> `GhosttyKit.xcframework` and the prebuilt session server are vendored build inputs and are not committed to the repository. The project will not link without the framework, and the app target will stop with a clear error if the server binary is missing.
+Two build inputs are downloaded or built by script rather than committed: `Vendor/GhosttyKit.xcframework` (about 120 MB) and the session-server binary at `Vendor/engine/octet-engine`.
 
 ### Build and launch
 
@@ -159,8 +159,10 @@ Reinstall the hook after moving the app because its configuration stores the CLI
 git clone https://github.com/JackTPatterson/octet.git
 cd octet
 
+# Downloads the prebuilt GhosttyKit.xcframework and verifies its pinned SHA-256.
+scripts/fetch-ghosttykit.sh
+
 # Copies the Homebrew Herdr binary into Vendor/engine/octet-engine.
-# You can also pass an explicit binary path: scripts/fetch-engine.sh /path/to/herdr
 scripts/fetch-engine.sh
 
 xcodegen generate
@@ -169,9 +171,18 @@ xcodebuild \
   -scheme Octet \
   -configuration Debug \
   -derivedDataPath build/DerivedData \
+  CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= \
   build
 
 open build/DerivedData/Build/Products/Debug/Octet.app
+```
+
+`CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM=` signs the build ad hoc, so you don't need the maintainer's Apple team. With your own Apple Development certificate, pass `DEVELOPMENT_TEAM=<your team ID>` instead. Keychain "Always Allow" grants then survive rebuilds, which ad-hoc builds don't.
+
+Stock Homebrew Herdr works. Release builds bundle Herdr with one patch that draws its scrollbar as a capped thumb to match Octet's native scrollbars. To build that engine (needs Rust/cargo), run:
+
+```sh
+scripts/build-engine.sh
 ```
 
 Octet starts an isolated named session, `octet`, with managed configuration at:
@@ -189,8 +200,11 @@ xcodebuild \
   -project Octet.xcodeproj \
   -scheme OctetCore \
   -derivedDataPath build/DerivedData \
+  CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= \
   test
 ```
+
+The core tests need neither GhosttyKit nor the engine.
 
 ## Keyboard map
 
@@ -250,7 +264,7 @@ Terminal content can start at the top of a pane or remain anchored near the bott
 
 - **Interface:** SwiftUI with AppKit integration for window and terminal behavior.
 - **Rendering:** a vendored GhosttyKit framework provides GPU terminal rendering.
-- **Persistence:** a bundled Herdr binary owns the named session and exposes its socket API.
+- **Persistence:** a bundled Herdr binary owns the named session and exposes its socket API. It also detects agent state.
 - **Agent data:** native CLI configuration and structured transcript files remain the source of truth.
 - **Local storage:** generated settings, recovery journals, and pasted images live under `~/Library/Application Support/Octet`.
 
