@@ -52,7 +52,24 @@ enum UsageRate {
         ]
     }
 
-    private static func duration(named name: String) -> TimeInterval? {
+    /// Average pace across the current allowance window. Unlike the delta
+    /// between two fresh samples, this does not turn a tiny first change into
+    /// a misleading double-digit hourly spike.
+    static func averagePercentPerHour(window: UsageWindow, at readingDate: Date) -> Double? {
+        guard let resetsAt = window.resetsAt,
+              let duration = duration(named: window.name) else { return nil }
+        let startedAt = resetsAt.addingTimeInterval(-duration)
+        let elapsedHours = readingDate.timeIntervalSince(startedAt) / 3600
+        guard elapsedHours > 0, window.used > 0 else { return nil }
+        return window.used * 100 / elapsedHours
+    }
+
+    static func projectedLimitDate(window: UsageWindow, at readingDate: Date) -> Date? {
+        guard let rate = averagePercentPerHour(window: window, at: readingDate), rate > 0 else { return nil }
+        return readingDate.addingTimeInterval((100 - window.used * 100) / rate * 3600)
+    }
+
+    static func duration(named name: String) -> TimeInterval? {
         guard let token = name.split(separator: " ").first,
               let unit = token.last,
               let value = Double(token.dropLast()) else { return nil }

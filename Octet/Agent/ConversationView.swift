@@ -4,6 +4,7 @@ import SwiftUI
 /// terminal: a streaming transcript, a permission sheet when the agent asks,
 /// and a composer, with the model, effort and mode pickers Claude Code takes.
 struct ConversationView: View {
+    @EnvironmentObject private var window: WindowContext
     @ObservedObject var session: AgentSession
     let client: EngineClient
     @StateObject private var dropdowns = OctetDropdownState()
@@ -75,6 +76,11 @@ struct ConversationView: View {
             if id == "question" { session.debugShowQuestion(); return }
             if id == "sample" { session.debugLoadSample(); return }
             if id == "everything" { session.debugLoadEverything(); return }
+            if id == "monitor" {
+                session.debugLoadMonitor()
+                window.ui.runtimePanelVisible = true
+                return
+            }
             if id == "ultracode" { session.effort = "ultracode" }
             if id == "maxeffort" { session.effort = "max" }
             if id == "planmode" { session.permissionMode = .plan }
@@ -555,6 +561,7 @@ private struct ToolCard: View {
         let subtitle = todos.map { list in "\(list.filter { $0.state == .completed }.count) of \(list.count) done" } ?? call.summary
         Disclosure(title: call.displayName, subtitle: subtitle, tint: call.isError ? Theme.danger : Theme.textSecondary,
                    icon: call.iconName, logo: LanguageLogo(path: call.filePath),
+                   highlightsShell: call.name.caseInsensitiveCompare("Monitor") == .orderedSame,
                    initiallyOpen: diff != nil || todos != nil || !call.resultImages.isEmpty, trailing: { status(diff) }) {
             VStack(alignment: .leading, spacing: 8) {
                 if let todos {
@@ -608,11 +615,13 @@ private struct Disclosure<Trailing: View, Content: View>: View {
     var icon: String?
     /// Shown before the subtitle, e.g. the file's language.
     var logo: LanguageLogo?
+    var highlightsShell = false
     @ViewBuilder var trailing: () -> Trailing
     @ViewBuilder var content: () -> Content
     @State private var open: Bool
 
     init(title: String, subtitle: String = "", tint: Color, icon: String? = nil, logo: LanguageLogo? = nil,
+         highlightsShell: Bool = false,
          initiallyOpen: Bool = false,
          @ViewBuilder trailing: @escaping () -> Trailing = { EmptyView() },
          @ViewBuilder content: @escaping () -> Content) {
@@ -621,6 +630,7 @@ private struct Disclosure<Trailing: View, Content: View>: View {
         self.tint = tint
         self.icon = icon
         self.logo = logo
+        self.highlightsShell = highlightsShell
         _open = State(initialValue: initiallyOpen)
         self.trailing = trailing
         self.content = content
@@ -637,11 +647,17 @@ private struct Disclosure<Trailing: View, Content: View>: View {
                     Text(title).font(Theme.uiFontMedium).foregroundStyle(tint)
                     if let logo { logo }
                     if !subtitle.isEmpty {
-                        Text(subtitle)
-                            .font(Theme.monoFont)
-                            .foregroundStyle(Theme.textTertiary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
+                        if highlightsShell {
+                            ShellHighlightedText(subtitle)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        } else {
+                            Text(subtitle)
+                                .font(Theme.monoFont)
+                                .foregroundStyle(Theme.textTertiary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
                     }
                     Spacer(minLength: 4)
                     trailing()
@@ -652,6 +668,44 @@ private struct Disclosure<Trailing: View, Content: View>: View {
             .accessibilityLabel("\(title) \(subtitle)")
             .accessibilityValue(open ? "Expanded" : "Collapsed")
             if open { content() }
+        }
+    }
+}
+
+private struct ShellHighlightedText: View {
+    let source: String
+
+    init(_ source: String) { self.source = source }
+
+    var body: some View { highlighted.font(Theme.monoFont) }
+
+    private var highlighted: Text {
+        var rendered = Text("")
+        var cursor = source.startIndex
+        for span in ShellSyntax.spans(in: source) {
+            if cursor < span.range.lowerBound {
+                rendered = rendered + Text(String(source[cursor..<span.range.lowerBound]))
+                    .foregroundStyle(Theme.textTertiary)
+            }
+            rendered = rendered + Text(String(source[span.range])).foregroundStyle(color(for: span.role))
+            cursor = span.range.upperBound
+        }
+        if cursor < source.endIndex {
+            rendered = rendered + Text(String(source[cursor...])).foregroundStyle(Theme.textTertiary)
+        }
+        return rendered
+    }
+
+    private func color(for role: ShellSyntax.Role) -> Color {
+        switch role {
+        case .command: Theme.accent
+        case .builtin: Theme.palette.color(\.syntaxBuiltin)
+        case .flag: Theme.palette.color(\.syntaxFlag)
+        case .string: Theme.palette.color(\.syntaxString)
+        case .path: Theme.palette.color(\.syntaxPath)
+        case .variable: Theme.palette.color(\.syntaxVariable)
+        case .redirect, .separator: Theme.textSecondary
+        case .comment, .argument: Theme.textTertiary
         }
     }
 }

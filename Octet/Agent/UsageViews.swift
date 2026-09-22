@@ -144,7 +144,7 @@ struct AccountCard: View {
             }
             if account.kind == .subscription {
                 UsageRateGraph(samples: store.history[account.agent] ?? [],
-                               window: account.tightest,
+                               window: graphWindow,
                                updatedAt: account.updatedAt)
             }
         }
@@ -174,6 +174,14 @@ struct AccountCard: View {
         case .subscription: return account.plan ?? "Subscription"
         case .signedOut: return "Signed out"
         case .unknown: return "Available"
+        }
+    }
+
+    /// The chart uses the broadest reported allowance (normally the weekly
+    /// one); the compact chip still uses the tightest limit.
+    private var graphWindow: UsageWindow? {
+        account.live.max {
+            (UsageRate.duration(named: $0.name) ?? 0) < (UsageRate.duration(named: $1.name) ?? 0)
         }
     }
 
@@ -285,29 +293,63 @@ private struct UsageRateGraph: View {
     let window: UsageWindow?
     let updatedAt: Date?
 
-    private var points: [UsageRatePoint] {
-        guard let window else { return [] }
-        let measured = UsageRate.points(samples: samples, window: window.name)
-        if !measured.isEmpty { return Array(measured.suffix(48)) }
-        return UsageRate.bootstrap(window: window, at: updatedAt ?? Date())
+    private struct Point {
+        let at: Date
+        let used: Double
     }
 
-    private var isEstimated: Bool {
-        guard let window else { return false }
-        return UsageRate.points(samples: samples, window: window.name).isEmpty && !points.isEmpty
+    private var bounds: (start: Date, end: Date)? {
+        guard let window, let end = window.resetsAt,
+              let duration = UsageRate.duration(named: window.name) else { return nil }
+        return (end.addingTimeInterval(-duration), end)
+    }
+
+    private var observed: [Point] {
+        guard let window, let bounds else { return [] }
+        var values = samples.compactMap { sample -> Point? in
+            guard sample.at >= bounds.start, sample.at <= bounds.end,
+                  let reading = sample.windows.first(where: { $0.name == window.name }) else { return nil }
+            return Point(at: sample.at, used: reading.used)
+        }
+        let latestAt = updatedAt ?? Date()
+        if latestAt >= bounds.start, latestAt <= bounds.end,
+           values.last.map({ abs($0.at.timeIntervalSince(latestAt)) > 1 || $0.used != window.used }) ?? true {
+            values.append(Point(at: latestAt, used: window.used))
+        }
+        values.sort { $0.at < $1.at }
+        if values.first?.at != bounds.start { values.insert(Point(at: bounds.start, used: 0), at: 0) }
+        return values
+    }
+
+    private var projection: Point? {
+        guard let window, let bounds, let latest = observed.last,
+              let rate = UsageRate.averagePercentPerHour(window: window, at: latest.at), rate > 0 else { return nil }
+        let reaches = UsageRate.projectedLimitDate(window: window, at: latest.at)
+        let end = min(reaches ?? bounds.end, bounds.end)
+        let added = rate / 100 * end.timeIntervalSince(latest.at) / 3600
+        return Point(at: end, used: min(1, latest.used + added))
+    }
+
+    private var projectionLabel: String? {
+        guard let window, let bounds, let latest = observed.last,
+              let reaches = UsageRate.projectedLimitDate(window: window, at: latest.at) else { return nil }
+        if reaches <= bounds.end {
+            return "Limit \(reaches.formatted(.dateTime.weekday(.abbreviated).hour().minute()))"
+        }
+        return "No limit before reset"
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Rectangle().fill(Theme.divider).frame(height: 1)
             HStack {
-                Text("USAGE RATE")
+                Text((window?.name == "7d" ? "WEEKLY PACE" : "USAGE PACE"))
                     .font(Theme.headerFont)
                     .kerning(0.4)
                     .foregroundStyle(Theme.textTertiary)
                 Spacer()
-                if let latest = points.last {
-                    Text((isEstimated ? "~" : "") + Self.rate(latest.percentPerHour))
+                if let projectionLabel {
+                    Text(projectionLabel)
                         .font(Theme.captionFont.monospacedDigit())
                         .foregroundStyle(Theme.textSecondary)
                 }
@@ -315,37 +357,54 @@ private struct UsageRateGraph: View {
             chart
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(points.last.map { "Usage rate \(Self.rate($0.percentPerHour))" }
-            ?? "Usage rate history is being collected")
+        .accessibilityLabel(projectionLabel ?? "Usage pace history is being collected")
     }
 
     private var chart: some View {
-        Canvas { context, size in
-            let baseline = Path(CGRect(x: 0, y: size.height - 0.5, width: size.width, height: 0.5))
-            context.fill(baseline, with: .color(Theme.border))
-            guard !points.isEmpty else { return }
-            let first = points.first!.at.timeIntervalSinceReferenceDate
-            let span = max(1, points.last!.at.timeIntervalSinceReferenceDate - first)
-            let ceiling = max(1, points.map(\.percentPerHour).max() ?? 1)
-            func point(_ value: UsageRatePoint) -> CGPoint {
-                CGPoint(x: (value.at.timeIntervalSinceReferenceDate - first) / span * size.width,
-                        y: size.height - min(1, value.percentPerHour / ceiling) * (size.height - 4) - 2)
+        VStack(spacing: 3) {
+            Canvas { context, size in
+                let baseline = Path(CGRect(x: 0, y: size.height - 0.5, width: size.width, height: 0.5))
+                context.fill(baseline, with: .color(Theme.border))
+                guard let bounds, !observed.isEmpty else { return }
+                let first = bounds.start.timeIntervalSinceReferenceDate
+                let span = max(1, bounds.end.timeIntervalSinceReferenceDate - first)
+                func point(_ value: Point) -> CGPoint {
+                    CGPoint(x: (value.at.timeIntervalSinceReferenceDate - first) / span * size.width,
+                            y: size.height - min(1, value.used) * (size.height - 4) - 2)
+                }
+                var line = Path()
+                line.move(to: point(observed[0]))
+                for value in observed.dropFirst() { line.addLine(to: point(value)) }
+                context.stroke(line, with: .color(Theme.accent),
+                               style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+                let latest = point(observed.last!)
+                context.fill(Path(ellipseIn: CGRect(x: latest.x - 2, y: latest.y - 2, width: 4, height: 4)),
+                             with: .color(Theme.accent))
+                if let projection {
+                    var forecast = Path()
+                    forecast.move(to: latest)
+                    forecast.addLine(to: point(projection))
+                    context.stroke(forecast, with: .color(Theme.textTertiary),
+                                   style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                }
             }
-            var line = Path()
-            line.move(to: point(points[0]))
-            for value in points.dropFirst() { line.addLine(to: point(value)) }
-            context.stroke(line, with: .color(Theme.accent), style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
-            let latest = point(points.last!)
-            context.fill(Path(ellipseIn: CGRect(x: latest.x - 2, y: latest.y - 2, width: 4, height: 4)),
-                         with: .color(Theme.accent))
+            .frame(height: 48)
+            if let bounds {
+                HStack {
+                    Text(bounds.start.formatted(.dateTime.weekday(.abbreviated)))
+                    Spacer()
+                    Text("Reset \(bounds.end.formatted(.dateTime.weekday(.abbreviated)))")
+                }
+                .font(Theme.captionFont)
+                .foregroundStyle(Theme.textMuted)
+            }
         }
-        .frame(height: 58)
         .padding(6)
         .background(Theme.card)
         .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius).strokeBorder(Theme.border, lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
         .overlay {
-            if points.isEmpty {
+            if observed.isEmpty {
                 Text("Collecting history")
                     .font(Theme.captionFont)
                     .foregroundStyle(Theme.textTertiary)
@@ -353,9 +412,6 @@ private struct UsageRateGraph: View {
         }
     }
 
-    private static func rate(_ value: Double) -> String {
-        value < 0.1 ? "<0.1% / hr" : String(format: "%.1f%% / hr", value)
-    }
 }
 
 /// A ring that fills clockwise from the top with the fraction used.

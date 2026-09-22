@@ -625,6 +625,28 @@ final class AgentSession: ObservableObject, Identifiable {
     }
 
     #if DEBUG
+    /// Verification hook for the tab-scoped Runtime panel. It represents one
+    /// live Claude Monitor without starting a real command or spending usage.
+    func debugLoadMonitor() {
+        title = "Watch preview server"
+        conversation.appendUser("Watch the preview server until it reports ready.")
+        conversation.apply(["type": "assistant", "message": ["id": "monitor-debug", "content": [[
+            "type": "tool_use", "id": "monitor-debug-call", "name": "Monitor", "input": [
+                "command": "npm run preview 2>&1 | grep --line-buffered Ready",
+                "description": "Waiting for preview server to become ready",
+                "timeout_ms": 300_000,
+            ],
+        ]]]])
+        conversation.apply(["type": "user", "message": ["content": [[
+            "type": "tool_result", "tool_use_id": "monitor-debug-call",
+            "content": "Monitor started (task preview-test, expires in 5m unless the source ends first).",
+        ]]]])
+        conversation.apply(["type": "assistant", "message": ["id": "monitor-debug-reply", "content": [[
+            "type": "text", "text": "The preview monitor is active. I’ll let you know as soon as it reports ready.",
+        ]]]])
+        conversation.apply(["type": "result", "subtype": "success"])
+    }
+
     /// Verification hook: a made-up transcript covering every block kind,
     /// for checking the rendering without calling the agent.
     func debugLoadSample() {

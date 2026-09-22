@@ -112,7 +112,7 @@ struct RuntimePanel: View {
             for process in info.background where Self.isShell(process.name) {
                 let title = Self.commandName(process.name)
                 result.append(RuntimeEntry(id: "\(pane.paneId)-\(process.pid)", kind: .shell,
-                                           title: title, detail: "PID \(process.pid)",
+                                           title: title, detail: "Active",
                                            location: location, paneId: pane.paneId))
             }
         }
@@ -122,7 +122,7 @@ struct RuntimePanel: View {
             for process in store.nativeRuntimeProcesses[session.id] ?? [] where Self.isShell(process.name) {
                 let title = Self.commandName(process.name)
                 result.append(RuntimeEntry(id: "\(session.id)-\(process.pid)", kind: .shell,
-                                           title: title, detail: "PID \(process.pid)",
+                                           title: title, detail: "Active",
                                            location: session.title, paneId: nil, sessionId: session.id))
             }
         }
@@ -208,9 +208,16 @@ private struct RuntimeRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 8) {
-                OctetIcon(entry.kind == .monitor ? "clock" : "terminal", size: 14)
-                    .foregroundStyle(entry.kind == .monitor ? Theme.accent : Theme.textSecondary)
-                    .frame(width: 18)
+                Group {
+                    if entry.kind == .monitor {
+                        Image(systemName: "eye")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(Theme.accent)
+                    } else {
+                        OctetIcon("terminal", size: 14).foregroundStyle(Theme.textSecondary)
+                    }
+                }
+                .frame(width: 18)
                 VStack(alignment: .leading, spacing: 2) {
                     HStack {
                         Text(entry.title).font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary).lineLimit(1)

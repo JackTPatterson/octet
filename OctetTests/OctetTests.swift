@@ -2282,6 +2282,17 @@ final class UsageRateTests: XCTestCase {
         XCTAssertEqual(points.count, 2)
         XCTAssertEqual(points.last?.percentPerHour ?? 0, 20.0 / 3.0, accuracy: 0.0001)
     }
+
+    func testWeeklyProjectionUsesWholeWindowAverageInsteadOfFirstSampleDelta() {
+        let reading = Date(timeIntervalSince1970: 1_790_000_000)
+        let window = UsageWindow(name: "7d", used: 0.20,
+                                 resetsAt: reading.addingTimeInterval(5 * 24 * 3600))
+        XCTAssertEqual(UsageRate.averagePercentPerHour(window: window, at: reading) ?? 0,
+                       20.0 / 48.0, accuracy: 0.0001)
+        let projected = UsageRate.projectedLimitDate(window: window, at: reading)
+        XCTAssertEqual(projected?.timeIntervalSince(reading) ?? 0,
+                       8 * 24 * 3600, accuracy: 0.001)
+    }
 }
 
 final class NewTabFreshnessTests: XCTestCase {

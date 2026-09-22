@@ -266,7 +266,7 @@ private struct WorkspaceCard: View {
         .background(cardBackground(isSelected: isSelected, hue: brand?.hueHex))
         .overlay(
             RoundedRectangle(cornerRadius: Theme.rowRadius)
-                .strokeBorder(isSelected ? Theme.textPrimary.opacity(0.78)
+                .strokeBorder(isSelected ? Theme.textTertiary.opacity(0.55)
                     : (hovered ? Theme.border : Theme.border.opacity(0.6)), lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
