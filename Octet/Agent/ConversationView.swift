@@ -238,7 +238,14 @@ private struct Transcript: View {
     }
 
     private var blockingState: AgentBlockState? {
+        let transcriptMessages = session.conversation.items.compactMap { item -> String? in
+            switch item.kind {
+            case .text(let text), .notice(let text): return text
+            default: return nil
+            }
+        }
         let messages = [session.startupError, session.conversation.lastError].compactMap { $0 }
+            + Array(transcriptMessages.reversed())
         if let message = messages.first(where: { message in
             let lower = message.lowercased()
             return lower.contains("isn't installed") || lower.contains("not installed")
