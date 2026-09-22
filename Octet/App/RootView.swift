@@ -190,10 +190,19 @@ struct RootView: View {
             MarketplaceWindow.opener = { openWindow(id: MarketplaceWindow.id) }
             ClipboardWatcher.shared.start()
             #if DEBUG
+            let readmeDemo = ProcessInfo.processInfo.environment["OCTET_README_DEMO"] != nil
+            if readmeDemo {
+                let projects = ["web-app", "api-service", "design-system", "mobile-app"]
+                for (index, project) in projects.enumerated() {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.7 + Double(index) * 0.8) {
+                        self.window.openProject(path: "/private/tmp/octet-readme-projects/" + project)
+                    }
+                }
+            }
             // Verification hook: "conversation" opens a native conversation;
             // "conversation:model" also opens that dropdown.
             if let window = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], window.hasPrefix("conversation") {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + (readmeDemo ? 5.0 : 2.0)) {
                     self.window.newConversation()
                     let parts = window.split(separator: ":").map(String.init)
                     ConversationDebug.openDropdown = parts.dropFirst().first
