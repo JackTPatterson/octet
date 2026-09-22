@@ -9,26 +9,20 @@ struct LoadingLine: View {
     var width: CGFloat = 24
     var thickness: CGFloat = 2
     var color: Color = Theme.accent
+    @ObservedObject private var motion = MotionPreferences.shared
 
     /// Seconds for each stroke, and the pauses between them.
-    private static let stroke = 0.36
-    private static let hold = 0.2
-    private static let gap = 0.16
-    private static var cycle: Double { 4 * stroke + 2 * hold + 2 * gap }
+    fileprivate static let stroke = 0.36
+    fileprivate static let hold = 0.2
+    fileprivate static let gap = 0.16
+    fileprivate static var cycle: Double { 4 * stroke + 2 * hold + 2 * gap }
 
     var body: some View {
         Group {
-            if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            if !motion.animates(.agentStatus) {
                 Capsule().fill(color.opacity(0.5)).frame(width: width, height: thickness)
             } else {
-                TimelineView(.animation) { context in
-                    let (start, end) = Self.extent(at: context.date.timeIntervalSinceReferenceDate)
-                    Capsule()
-                        .fill(color)
-                        .frame(width: max(0, (end - start) * width), height: thickness)
-                        .offset(x: start * width)
-                        .frame(width: width, height: max(thickness, 4), alignment: .leading)
-                }
+                LoadingLineLayer(color: color, thickness: thickness, duration: Self.cycle)
             }
         }
         .frame(width: width, height: max(thickness, 4))
@@ -76,5 +70,99 @@ struct LoadingLine: View {
         t -= hold
         if t < stroke { return (0, 1 - eased(t / stroke)) }
         return (0, 0)
+    }
+}
+
+/// Runs the loading stroke on Core Animation's render server. The previous
+/// TimelineView implementation invalidated every SwiftUI row at display rate;
+/// a transcript with several live tools could therefore rebuild hundreds of
+/// view bodies per second. A stroked CAShapeLayer produces the same motion
+/// without waking the transcript tree for each frame.
+private struct LoadingLineLayer: NSViewRepresentable {
+    let color: Color
+    let thickness: CGFloat
+    let duration: TimeInterval
+
+    func makeNSView(context: Context) -> LoadingLineNSView {
+        let view = LoadingLineNSView()
+        view.configure(color: NSColor(color), thickness: thickness, duration: duration)
+        return view
+    }
+
+    func updateNSView(_ view: LoadingLineNSView, context: Context) {
+        view.configure(color: NSColor(color), thickness: thickness, duration: duration)
+    }
+}
+
+private final class LoadingLineNSView: NSView {
+    private let stroke = CAShapeLayer()
+    private var thickness: CGFloat = 0
+    private var duration: TimeInterval = 0
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.masksToBounds = true
+        stroke.fillColor = NSColor.clear.cgColor
+        stroke.lineCap = .round
+        layer?.addSublayer(stroke)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    func configure(color: NSColor, thickness: CGFloat, duration: TimeInterval) {
+        stroke.strokeColor = color.cgColor
+        stroke.lineWidth = thickness
+        let animationChanged = self.duration != duration || stroke.animation(forKey: "octet.loading") == nil
+        self.thickness = thickness
+        self.duration = duration
+        needsLayout = true
+        if animationChanged { installAnimation() }
+    }
+
+    override func layout() {
+        super.layout()
+        stroke.frame = bounds
+        let inset = min(thickness / 2, bounds.width / 2)
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: inset, y: bounds.midY))
+        path.addLine(to: CGPoint(x: max(inset, bounds.width - inset), y: bounds.midY))
+        stroke.path = path
+    }
+
+    private func installAnimation() {
+        guard duration > 0 else { return }
+        let strokeDuration = LoadingLine.stroke / duration
+        let holdDuration = LoadingLine.hold / duration
+        let gapDuration = LoadingLine.gap / duration
+        let a = strokeDuration
+        let b = a + holdDuration
+        let c = b + strokeDuration
+        let d = c + gapDuration
+        let e = d + strokeDuration
+        let f = e + holdDuration
+        let g = f + strokeDuration
+        let times = [0, a, b, c, d, e, f, g, 1].map { NSNumber(value: $0) }
+        let ease = CAMediaTimingFunction(controlPoints: 0, 0.55, 0.45, 1)
+        let linear = CAMediaTimingFunction(name: .linear)
+
+        let start = CAKeyframeAnimation(keyPath: "strokeStart")
+        start.values = [0, 0, 0, 1, 1, 0, 0, 0, 0]
+        start.keyTimes = times
+        start.timingFunctions = [linear, linear, ease, linear, ease, linear, linear, linear]
+
+        let end = CAKeyframeAnimation(keyPath: "strokeEnd")
+        end.values = [0, 1, 1, 1, 1, 1, 1, 0, 0]
+        end.keyTimes = times
+        end.timingFunctions = [ease, linear, linear, linear, linear, linear, ease, linear]
+
+        let group = CAAnimationGroup()
+        group.animations = [start, end]
+        group.duration = duration
+        group.repeatCount = .infinity
+        group.isRemovedOnCompletion = false
+        // A common media-time origin keeps every visible indicator in phase.
+        group.beginTime = 0
+        stroke.add(group, forKey: "octet.loading")
     }
 }

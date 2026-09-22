@@ -5,8 +5,8 @@ import SwiftUI
 ///
 /// Colors are derived from the selected terminal theme so the whole window
 /// matches it: surfaces step from the theme background toward its foreground,
-/// the way the Dark theme steps from #050505 (chrome #111111, cards #1B1B1B,
-/// borders #2A2A2A). Vertical tab metrics: 248pt panel, 4pt row radius, tab
+/// the way the Dark theme steps outward from its charcoal terminal surface.
+/// Vertical tab metrics: 248pt panel, 4pt row radius, tab
 /// colors at 15% opacity.
 enum Theme {
     /// The active palette; updated by `SettingsStore` when the theme changes.

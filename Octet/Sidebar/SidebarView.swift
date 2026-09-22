@@ -35,6 +35,7 @@ struct SidebarView: View {
                 .padding(.vertical, 8)
                 .animation(motion.animation(.sidebar), value: store.activeGroups)
             }
+            .scrollIndicators(.hidden)
             // Double-click empty sidebar space for a new workspace.
             .background {
                 Color.clear
@@ -192,6 +193,7 @@ private struct WorkspaceCard: View {
     @State private var hovered = false
     @State private var renaming = false
     @StateObject private var peek = HoverIntent()
+    @ObservedObject private var conversations = AgentCenter.shared
 
     var body: some View {
         let snapshot = store.snapshot
@@ -200,12 +202,23 @@ private struct WorkspaceCard: View {
         let elsewhere = WindowRegistry.shared.window(showing: workspace.workspaceId).map { $0 !== window } ?? false
         let agents = snapshot.agents(inWorkspace: workspace.workspaceId)
         let agent = store.primaryAgent(in: agents)
-        let brand = AgentBrand.forAgent(agent?.agent)
+        let session = conversations.active(in: workspace.workspaceId)
+            ?? conversations.sessions(in: workspace.workspaceId).first
+        let handoffAgent = window.agentUIHandoffWorkspaceId == workspace.workspaceId
+            ? window.agentUIHandoff : nil
+        // Once a native agent starts moving into Octet, the workspace adopts
+        // conversation styling immediately and keeps it after the terminal
+        // process disappears.
+        let brand = handoffAgent.flatMap(AgentBrand.forAgent)
+            ?? session.flatMap { AgentBrand.forAgent($0.engine.agent) }
+            ?? AgentBrand.forAgent(agent?.agent)
+        let status = handoffAgent != nil ? (agent?.agentStatus ?? .working)
+            : session.map(Self.status) ?? agent?.agentStatus ?? workspace.agentStatus
         let directory = snapshot.directory(ofWorkspace: workspace.workspaceId)
 
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                AgentStateGlyph(status: agent?.agentStatus ?? workspace.agentStatus)
+                AgentStateGlyph(status: status)
                     .frame(width: 12)
                 if renaming {
                     InlineRenameField(initial: workspace.label, placeholder: "Workspace name") { label in
@@ -242,7 +255,8 @@ private struct WorkspaceCard: View {
             HStack(spacing: 5) {
                 if let brand {
                     AgentLogo(brand: brand, size: 11)
-                    Text(agentLine(agent: agent, brand: brand, count: agents.count))
+                    Text(agentLine(status: status, brand: brand,
+                                   count: session == nil ? agents.count : 1))
                         .font(Theme.uiFont)
                         .foregroundStyle(Theme.textSecondary)
                         .lineLimit(1)
@@ -314,8 +328,13 @@ private struct WorkspaceCard: View {
         }
     }
 
-    private func agentLine(agent: EngineAgent?, brand: AgentBrand, count: Int) -> String {
-        let status = agent.map { stateLabel($0.agentStatus) } ?? ""
+    private static func status(_ session: AgentSession) -> EngineAgentStatus {
+        if session.pendingPermission != nil || session.pendingQuestion != nil { return .blocked }
+        return session.conversation.isRunning ? .working : .idle
+    }
+
+    private func agentLine(status: EngineAgentStatus, brand: AgentBrand, count: Int) -> String {
+        let status = stateLabel(status)
         let extra = count > 1 ? " · \(count) agents" : ""
         return "\(brand.displayName) \(status)\(extra)"
     }
@@ -445,6 +464,7 @@ struct IdleDock: View {
                     .padding(.horizontal, 6)
                     .padding(.bottom, 6)
                 }
+                .scrollIndicators(.hidden)
                 .frame(height: min(CGFloat(store.idleWorkspaces.count) * 25 + 6, 200))
                 .transition(motion.animates(.sidebar) ? .opacity : .identity)
             }

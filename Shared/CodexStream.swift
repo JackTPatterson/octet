@@ -43,9 +43,9 @@ extension AgentConversation {
             guard let text = params["message"] as? String, !text.isEmpty else { return }
             items.append(AgentItem(id: UUID().uuidString, kind: .notice(text)))
         case "turn/completed":
-            isRunning = false
+            isRunning = activateNextQueuedMessage()
         case "turn/failed", "turn/aborted":
-            isRunning = false
+            isRunning = activateNextQueuedMessage()
             let message = ((params["error"] as? [String: Any])?["message"] as? String)
                 ?? (method == "turn/aborted" ? "Stopped" : "The turn failed.")
             if method != "turn/aborted" { lastError = message }

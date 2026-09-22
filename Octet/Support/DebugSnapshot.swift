@@ -9,6 +9,8 @@ import IOSurface
 
 @MainActor
 enum DebugSnapshot {
+    private static let ciContext = CIContext(options: [.cacheIntermediates: false])
+    private static var writeInFlight = false
     /// What is covering the terminal right now, by name. One shared flag lost
     /// captures: whichever overlay changed last decided for all of them, and
     /// the terminal image landed on top of a panel that was still open.
@@ -36,7 +38,7 @@ enum DebugSnapshot {
         return
         #endif
         guard let dir = ProcessInfo.processInfo.environment["OCTET_SNAPSHOT_DIR"] else { return }
-        let timer = Timer(timeInterval: 0.5, repeats: true) { _ in
+        let timer = Timer(timeInterval: 1.0, repeats: true) { _ in
             MainActor.assumeIsolated { dump(to: dir) }
         }
         // .common keeps snapshots flowing while modal alerts run.
@@ -63,6 +65,7 @@ enum DebugSnapshot {
     }
 
     private static func dump(to dir: String) {
+        guard !writeInFlight else { return }
         guard let window = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil && findSurface(in: $0.contentView!) != nil }),
               let content = window.contentView,
               let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds) else { return }
@@ -90,7 +93,7 @@ enum DebugSnapshot {
             if !overlaysOnTop, toasts.isEmpty, let contents, CFGetTypeID(contents as CFTypeRef) == IOSurfaceGetTypeID() {
                 let ioSurface = unsafeBitCast(contents as AnyObject, to: IOSurfaceRef.self)
                 let image = CIImage(ioSurface: ioSurface)
-                if let cg = CIContext().createCGImage(image, from: image.extent) {
+                if let cg = ciContext.createCGImage(image, from: image.extent) {
                     NSImage(cgImage: cg, size: frame.size).draw(in: content.isFlipped
                         ? NSRect(x: frame.minX, y: content.bounds.height - frame.maxY, width: frame.width, height: frame.height)
                         : frame)
@@ -110,11 +113,16 @@ enum DebugSnapshot {
             }
         }
         composed.unlockFocus()
-        try? info.write(toFile: dir + "/terminal.txt", atomically: true, encoding: .utf8)
-        if let tiff = composed.tiffRepresentation,
-           let bitmap = NSBitmapImageRep(data: tiff),
-           let png = bitmap.representation(using: .png, properties: [:]) {
-            try? png.write(to: URL(fileURLWithPath: dir + "/window.png"))
+        guard let image = composed.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
+        writeInFlight = true
+        let snapshotInfo = info
+        DispatchQueue.global(qos: .utility).async {
+            try? snapshotInfo.write(toFile: dir + "/terminal.txt", atomically: true, encoding: .utf8)
+            let bitmap = NSBitmapImageRep(cgImage: image)
+            if let png = bitmap.representation(using: .png, properties: [:]) {
+                try? png.write(to: URL(fileURLWithPath: dir + "/window.png"))
+            }
+            DispatchQueue.main.async { writeInFlight = false }
         }
     }
 }

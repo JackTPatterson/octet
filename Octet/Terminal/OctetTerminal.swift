@@ -289,6 +289,7 @@ final class TopRowClippingView: NSView {
     /// the pane instead of clinging to the top.
     private var blankRowsBelow = 0
     private var anchorTimer: Timer?
+    private var anchorPollingSuppressedUntil = Date.distantPast
     private var observations = Set<AnyCancellable>()
     private let stage = FlippedView()
     private let anchor: TerminalAnchor
@@ -359,12 +360,20 @@ final class TopRowClippingView: NSView {
 
     @MainActor
     private func updateBottomAnchor() {
+        guard Date() >= anchorPollingSuppressedUntil else { return }
         let grid = measureGrid()
         if anchor.grid != grid { anchor.grid = grid }
         let rows = SettingsStore.shared.values.textPosition == .bottom ? measureBlankRowsBelowCursor() : 0
         guard rows != blankRowsBelow else { return }
         blankRowsBelow = rows
         needsLayout = true
+    }
+
+    /// Called by the hosted terminal for every wheel/trackpad event. The
+    /// renderer owns scroll feedback; anchor measurements can resume once the
+    /// gesture has settled.
+    func terminalDidScroll() {
+        anchorPollingSuppressedUntil = Date().addingTimeInterval(0.3)
     }
 
     /// How many rows the content can drop by: the run of blank rows under the

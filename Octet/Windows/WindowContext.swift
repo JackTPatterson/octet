@@ -56,6 +56,32 @@ final class WindowContext: ObservableObject, Identifiable {
     /// With more than one window: the workspace and tab this client shows.
     @Published private(set) var workspaceId: String?
     @Published private(set) var tabId: String?
+    /// Covers the terminal while a native agent is stopped and its saved
+    /// session is opened in Octet. Without this bridge, the replacement shell
+    /// flashes between the two interfaces.
+    @Published private(set) var agentUIHandoff: String?
+    @Published private(set) var agentUIHandoffTabId: String?
+    @Published private(set) var agentUIHandoffTitle: String?
+    @Published private(set) var agentUIHandoffWorkspaceId: String?
+    /// Remains true briefly after the handoff cover disappears because the
+    /// engine's replacement-tab snapshot can land a frame or two later.
+    @Published private(set) var suppressHandoffTabAnimations = false
+
+    /// Terminal tabs and Octet conversations are stored by different owners,
+    /// but share one strip. Keep their visual chronology on the window rather
+    /// than in TabBarView state so a rebuilt view never briefly falls back to
+    /// "all terminals, then all conversations" on its first frame.
+    private var visualTabOrder: [String] = []
+
+    func orderedVisualTabs(_ ids: [String]) -> [String] {
+        visualTabOrder = visualTabOrder.filter(ids.contains)
+            + ids.filter { !visualTabOrder.contains($0) }
+        return visualTabOrder
+    }
+    /// Empty terminal tabs retained only to keep a conversation's workspace
+    /// alive. The tab bar hides them until the conversation closes or the
+    /// person explicitly asks for a terminal.
+    @Published private var conversationBackingTabs: [String: String] = [:]
     /// A workspace to go to as soon as the client can be moved: a window made
     /// for a tab, or restored, opens wherever the engine was and is then sent.
     private var pendingWorkspace: String?
@@ -125,6 +151,7 @@ final class WindowContext: ObservableObject, Identifiable {
     // MARK: - Moving this window
 
     func focusTab(_ id: String) {
+        conversationBackingTabs = conversationBackingTabs.filter { $0.value != id }
         guard steers else { return store.focusTab(id) }
         AgentCenter.shared.setActive(nil, in: workspaceId)
         AgentCenter.shared.setBoard(nil, in: workspaceId)
@@ -207,6 +234,13 @@ final class WindowContext: ObservableObject, Identifiable {
     }
 
     func newTab() {
+        if let workspaceId = focusedWorkspace?.workspaceId,
+           let session = AgentCenter.shared.active(in: workspaceId),
+           let backing = conversationBackingTabs.removeValue(forKey: session.id),
+           displayedTabs.contains(where: { $0.tabId == backing }) {
+            focusTab(backing)
+            return
+        }
         guard steers else { return store.newTab() }
         guard let workspaceId else { return }
         var params: [String: Any] = ["workspace_id": workspaceId]
@@ -321,10 +355,17 @@ final class WindowContext: ObservableObject, Identifiable {
         create("pane.move", ["pane_id": pane, "destination": ["type": "new_tab"]], failure: "Couldn't move the pane to a new tab")
     }
 
-    func newConversation(engine: AgentSession.Engine = .claude, cwd: String? = nil) {
+    func newConversation(engine: AgentSession.Engine = .claude, cwd: String? = nil,
+                         replacingStarterTab starterTabId: String? = nil) {
         guard let workspace = focusedWorkspace else { return }
         let folder = cwd ?? store.snapshot.directory(ofWorkspace: workspace.workspaceId) ?? NSHomeDirectory()
-        AgentCenter.shared.newConversation(workspaceId: workspace.workspaceId, cwd: folder, engine: engine)
+        let session = AgentCenter.shared.newConversation(workspaceId: workspace.workspaceId, cwd: folder, engine: engine)
+        if let starterTabId { conversationBackingTabs[session.id] = starterTabId }
+    }
+
+    func hidesAsConversationBackingTab(_ tabId: String, sessions: [AgentSession]) -> Bool {
+        let liveIds = Set(sessions.map(\.id))
+        return conversationBackingTabs.contains { liveIds.contains($0.key) && $0.value == tabId }
     }
 
     // MARK: - Agents in the terminal or in Octet
@@ -372,41 +413,116 @@ final class WindowContext: ObservableObject, Identifiable {
         let sessionId = agent.sessionReference ?? agent.terminalId.flatMap { store.recovery.sessionId(forTerminal: $0) }
         let label = snapshot.tabs.first { $0.tabId == agent.tabId }.map { TabAutoName.display(label: $0.label, number: $0.number) }
         let title = label.flatMap { TabAutoName.isUnnamed($0) ? nil : $0 }
+        beginAgentUIHandoff(engine.agent, workspaceId: workspaceId,
+                            tabId: agent.tabId, title: title ?? engine.displayName)
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        let session: AgentSession = withTransaction(transaction) {
+            let staged: AgentSession
+            if let sessionId {
+                staged = AgentCenter.shared.resume(engine: engine, sessionId: sessionId, cwd: cwd,
+                                                   workspaceId: workspaceId, title: title, start: false)
+            } else {
+                staged = AgentCenter.shared.newConversation(workspaceId: workspaceId, cwd: cwd,
+                                                            engine: engine, start: false)
+            }
+            if snapshot.panes.filter({ $0.tabId == agent.tabId }).count <= 1,
+               let oldTabId = agent.tabId {
+                conversationBackingTabs[staged.id] = oldTabId
+            }
+            agentUIHandoff = nil
+            agentUIHandoffTabId = nil
+            agentUIHandoffTitle = nil
+            agentUIHandoffWorkspaceId = nil
+            return staged
+        }
+        if sessionId == nil {
+            ToastCenter.shared.info("Started a new \(engine.displayName) conversation",
+                                    detail: "Octet couldn't tell which session the terminal was on. Its history stays in \(engine.displayName).")
+        }
         AgentOfferCenter.shared.dismiss(agent)
-        endTerminalAgent(agent, workspaceId: workspaceId) {
-            // The process needs a moment to let go of its session.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                if let sessionId {
-                    AgentCenter.shared.resume(engine: engine, sessionId: sessionId, cwd: cwd, workspaceId: workspaceId, title: title)
+        endTerminalAgent(agent, workspaceId: workspaceId) { backingTabId in
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                if let backingTabId {
+                    self.conversationBackingTabs[session.id] = backingTabId
                 } else {
-                    AgentCenter.shared.newConversation(workspaceId: workspaceId, cwd: cwd, engine: engine)
-                    ToastCenter.shared.info("Started a new \(engine.displayName) conversation",
-                                            detail: "Octet couldn't tell which session the terminal was on. Its history stays in \(engine.displayName).")
+                    self.conversationBackingTabs[session.id] = nil
                 }
+            }
+            session.startRestoredProcess()
+            // Snapshot delivery for the closed and backing tabs is
+            // asynchronous. Keep their later diffs animation-free too.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) { self.suppressHandoffTabAnimations = false }
             }
         }
     }
 
+    private func beginAgentUIHandoff(_ agent: String, workspaceId: String?, tabId: String?, title: String) {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            suppressHandoffTabAnimations = true
+            agentUIHandoff = agent
+            agentUIHandoffWorkspaceId = workspaceId
+            agentUIHandoffTabId = tabId
+            agentUIHandoffTitle = title
+        }
+        // A failed engine close reports its own toast. Do not leave the
+        // transition cover stranded if that callback never arrives.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+            guard self?.agentUIHandoff == agent else { return }
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                self?.agentUIHandoff = nil
+                self?.agentUIHandoffTabId = nil
+                self?.agentUIHandoffTitle = nil
+                self?.agentUIHandoffWorkspaceId = nil
+                self?.suppressHandoffTabAnimations = false
+            }
+        }
+    }
+
+    #if DEBUG
+    func debugShowAgentUIHandoff(_ agent: String = "claude") {
+        beginAgentUIHandoff(agent, workspaceId: focusedWorkspace?.workspaceId,
+                            tabId: displayedFocusedTabId,
+                            title: AgentBrand.forAgent(agent)?.displayName ?? "Agent")
+    }
+    #endif
+
     /// Closes the terminal the agent runs in (its pane in a split, else its
     /// tab), leaving the workspace a terminal: a workspace with no tab closes,
     /// and a conversation belongs to its workspace.
-    private func endTerminalAgent(_ agent: EngineAgent, workspaceId: String, then done: @escaping () -> Void) {
+    private func endTerminalAgent(_ agent: EngineAgent, workspaceId: String,
+                                  then done: @escaping (String?) -> Void) {
         let snapshot = store.snapshot
         let panesInTab = snapshot.panes.filter { $0.tabId == agent.tabId }.count
-        let close: () -> Void = { [store] in
+        let close: (String?) -> Void = { [store] backingTabId in
             if panesInTab > 1 || agent.tabId == nil {
-                store.call("pane.close", ["pane_id": agent.paneId], failure: "Couldn't close the terminal") { _ in done() }
+                store.call("pane.close", ["pane_id": agent.paneId], failure: "Couldn't close the terminal") { _ in
+                    done(backingTabId)
+                }
             } else if let tab = agent.tabId {
-                store.call("tab.close", ["tab_id": tab], failure: "Couldn't close the terminal") { _ in done() }
+                store.call("tab.close", ["tab_id": tab], failure: "Couldn't close the terminal") { _ in
+                    done(backingTabId)
+                }
             }
         }
         guard panesInTab <= 1, snapshot.tabs(inWorkspace: workspaceId).count <= 1 else {
-            close()
+            close(nil)
             return
         }
         var params: [String: Any] = ["workspace_id": workspaceId, "focus": false]
         if let cwd = snapshot.directory(ofWorkspace: workspaceId) { params["cwd"] = cwd }
-        store.call("tab.create", params, failure: "Couldn't open a terminal") { _ in close() }
+        store.call("tab.create", params, failure: "Couldn't open a terminal") { created in
+            close(created.tabId)
+        }
     }
 
     /// ⌘⇧A: this window's agents board, for the agent in its tab.

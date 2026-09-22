@@ -264,11 +264,10 @@ struct OctetSettings: Codable, Equatable {
         case .roomy: (18, 12)
         }
         var lines = [
+            // This is deliberately the only color Octet supplies to the
+            // renderer. Claude Code and other TUIs keep Ghostty's native
+            // foreground, cursor, selection, and ANSI palette.
             "background = \(theme.background)",
-            "foreground = \(theme.foreground)",
-            "cursor-color = \(theme.accent)",
-            "selection-background = \(theme.accent)",
-            "selection-foreground = \(theme.background)",
             "font-size = \(Int(fontSize))",
             "font-thicken = \(fontThicken)",
             "adjust-cell-height = \(Int(lineHeightPercent) - 100)%",
@@ -285,9 +284,6 @@ struct OctetSettings: Codable, Equatable {
             "clipboard-read = \(clipboardRead.rawValue)",
         ]
         if !fontFamily.isEmpty { lines.append("font-family = \"\(fontFamily)\"") }
-        for (index, color) in theme.ansi.enumerated() {
-            lines.append("palette = \(index)=#\(color)")
-        }
         return lines.joined(separator: "\n")
     }
 
@@ -406,12 +402,30 @@ final class SettingsStore: ObservableObject {
         } else {
             values = OctetSettings()
         }
+        #if DEBUG
+        // Visual QA can exercise both palettes without rewriting the user's
+        // saved appearance. This is intentionally unavailable in release
+        // builds and skipped by the launch-time migration save below.
+        let debugThemeOverride = ProcessInfo.processInfo.environment["OCTET_THEME_OVERRIDE"]
+            .flatMap { name in TerminalTheme.selectable.contains(where: { $0.name == name }) ? name : nil }
+        if let debugThemeOverride {
+            values.themeName = debugThemeOverride
+            values.matchSystemAppearance = false
+        }
+        #else
+        let debugThemeOverride: String? = nil
+        #endif
+        // Restore the imported terminal palette before resolving its name.
+        // Otherwise a saved imported theme falls through to `Dark` during
+        // launch, leaving the terminal surface nearly black until Settings is
+        // changed once.
+        TerminalTheme.imported = values.importedTheme
         values.themeName = values.resolvedThemeName(systemIsDark: SystemDisplay.isDark)
         Theme.palette = ThemePalette(theme: .named(values.themeName))
         themeKey = Self.makeThemeKey(values.themeName)
         observeSystem()
         // Rewrites settings read under older key names with the current ones.
-        save()
+        if debugThemeOverride == nil { save() }
     }
 
     private static func makeThemeKey(_ themeName: String) -> String {

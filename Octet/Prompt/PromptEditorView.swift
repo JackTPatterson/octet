@@ -31,6 +31,7 @@ struct PromptEditorView: View {
                     .offset(x: CGFloat(editor.line.caret) * anchor.cellWidth)
             }
             .frame(height: anchor.cellHeight, alignment: .topLeading)
+            .clipped()
             .onAppear { blink() }
         }
     }

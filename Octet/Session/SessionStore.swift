@@ -4,7 +4,23 @@ import SwiftUI
 
 struct RuntimeChildProcess: Equatable, Identifiable {
     let pid: Int
+    let parentPid: Int
     let name: String
+    var id: Int { pid }
+}
+
+/// An agent executable launched beneath another terminal or native agent.
+/// These do not own a pane, so the session server cannot report them in its
+/// ordinary agent list; Runtime discovery supplies them to the global board.
+struct SpawnedRuntimeAgent: Equatable, Identifiable {
+    let pid: Int
+    let parentPid: Int
+    let agent: String
+    let name: String
+    let paneId: String?
+    let tabId: String?
+    let workspaceId: String?
+    let cwd: String?
     var id: Int { pid }
 }
 
@@ -55,6 +71,8 @@ final class SessionStore: ObservableObject {
     @Published private(set) var paneProcesses: [String: ShellPrompt.ProcessInfo] = [:]
     /// Descendants of native agent processes, keyed by conversation id.
     @Published private(set) var nativeRuntimeProcesses: [String: [RuntimeChildProcess]] = [:]
+    /// Model CLIs launched by an agent, including cross-model children.
+    @Published private(set) var spawnedRuntimeAgents: [SpawnedRuntimeAgent] = []
     private var loadingPaneProcesses = false
     /// True while the focused pane sits at its shell's own prompt.
     var focusedPaneAtPrompt: Bool { ShellPrompt.isAtPrompt(focusedProcess) }
@@ -188,10 +206,14 @@ final class SessionStore: ObservableObject {
 
     func refreshPaneProcesses(in workspaceId: String?, nativeRoots: [String: Int] = [:]) {
         guard !loadingPaneProcesses else { return }
-        let panes = workspaceId.map { id in snapshot.panes.filter { $0.workspaceId == id } } ?? snapshot.panes
+        // Inspect all panes so the global agent board includes model CLIs
+        // spawned outside the workspace currently in front. RuntimePanel
+        // still filters what it draws to the selected tab/session.
+        let panes = snapshot.panes
         guard !panes.isEmpty || !nativeRoots.isEmpty else {
             paneProcesses = [:]
             nativeRuntimeProcesses = [:]
+            spawnedRuntimeAgents = []
             return
         }
         loadingPaneProcesses = true
@@ -234,13 +256,39 @@ final class SessionStore: ObservableObject {
             var nativeFound: [String: [RuntimeChildProcess]] = [:]
             for (sessionId, pid) in nativeRoots {
                 nativeFound[sessionId] = Self.descendants(of: [pid], in: processTree)
-                    .map { RuntimeChildProcess(pid: $0.pid, name: $0.name) }
+                    .map { RuntimeChildProcess(pid: $0.pid, parentPid: $0.parent, name: $0.name) }
+            }
+            var spawned: [Int: SpawnedRuntimeAgent] = [:]
+            for pane in panes {
+                guard let processes = found[pane.paneId]?.background else { continue }
+                for process in processes {
+                    guard let agent = AgentBrand.runtimeAgentID(forExecutable: process.name) else { continue }
+                    let parent = processTree.first { $0.pid == process.pid }?.parent ?? 0
+                    spawned[process.pid] = SpawnedRuntimeAgent(
+                        pid: process.pid, parentPid: parent, agent: agent,
+                        name: AgentBrand.forAgent(agent)?.displayName ?? agent,
+                        paneId: pane.paneId, tabId: pane.tabId, workspaceId: pane.workspaceId,
+                        cwd: pane.foregroundCwd ?? pane.cwd
+                    )
+                }
+            }
+            for processes in nativeFound.values {
+                for process in processes {
+                    guard let agent = AgentBrand.runtimeAgentID(forExecutable: process.name),
+                          spawned[process.pid] == nil else { continue }
+                    spawned[process.pid] = SpawnedRuntimeAgent(
+                        pid: process.pid, parentPid: process.parentPid, agent: agent,
+                        name: AgentBrand.forAgent(agent)?.displayName ?? agent,
+                        paneId: nil, tabId: nil, workspaceId: workspaceId, cwd: nil
+                    )
+                }
             }
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.loadingPaneProcesses = false
                 self.paneProcesses = found
                 self.nativeRuntimeProcesses = nativeFound
+                self.spawnedRuntimeAgents = spawned.values.sorted { $0.pid < $1.pid }
             }
         }
     }

@@ -7,19 +7,19 @@ struct TabBarView: View {
     @ObservedObject var store: SessionStore
     @ObservedObject var ui: UIState
     @EnvironmentObject private var window: WindowContext
-    @ObservedObject private var motion = MotionPreferences.shared
     @ObservedObject private var agents = AgentCenter.shared
     @Namespace private var selection
     /// Where a dragged tab would land: the gap before this index.
     @State private var dropGap: Int?
-
-    /// One spring for every tab change so moves, opens, and closes stay in step.
-    static let spring = Animation.spring(response: 0.26, dampingFraction: 0.88)
-
     var body: some View {
-        let tabs = window.displayedTabs
         let workspaceId = window.focusedWorkspace?.workspaceId
         let conversations = agents.sessions(in: workspaceId)
+        let tabs = window.displayedTabs.filter {
+            !window.hidesAsConversationBackingTab($0.tabId, sessions: conversations)
+        }
+        let currentIds = tabs.map { "terminal:\($0.tabId)" }
+            + conversations.map { "conversation:\($0.id)" }
+        let orderedIds = window.orderedVisualTabs(currentIds)
         let showingConversation = agents.active(in: workspaceId) != nil
         // A conversation in front means no terminal tab is.
         let focusedId = showingConversation ? nil : window.displayedFocusedTabId
@@ -28,41 +28,42 @@ struct TabBarView: View {
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 0) {
-                        ForEach(tabs) { tab in
-                            let index = tabs.firstIndex(of: tab) ?? 0
-                            TabItem(store: store, tab: tab, index: index, count: tabs.count,
-                                    isActive: tab.tabId == focusedId, selection: selection)
-                                .onDrag {
-                                    // Dropped on the terminal, the tab becomes a split.
-                                    TabDrag.shared.begin(tab.tabId, store: store)
-                                    return NSItemProvider(object: tab.tabId as NSString)
-                                }
-                                .onDrop(of: [.text], delegate: TabDropDelegate(
-                                    window: window, index: index, tabs: tabs, gap: $dropGap))
-                                .overlay(alignment: .leading) { insertionBar(visible: dropGap == index) }
-                                .overlay(alignment: .trailing) {
-                                    insertionBar(visible: index == tabs.count - 1 && dropGap == tabs.count)
-                                }
-                                .id(tab.tabId)
-                                .transition(motion.animates(.tabs) ? .tabCollapse : .identity)
-                        }
-                        ForEach(conversations) { session in
-                            ConversationTab(session: session, isActive: agents.active(in: workspaceId)?.id == session.id, selection: selection)
-                                .id(session.id)
-                                .transition(motion.animates(.tabs) ? .tabCollapse : .identity)
+                        ForEach(orderedIds, id: \.self) { id in
+                            if id.hasPrefix("terminal:"),
+                               let tab = tabs.first(where: { "terminal:\($0.tabId)" == id }) {
+                                let index = tabs.firstIndex(of: tab) ?? 0
+                                TabItem(store: store, tab: tab, index: index, count: tabs.count,
+                                        isActive: tab.tabId == focusedId, selection: selection,
+                                        handoffTitle: window.agentUIHandoffTabId == tab.tabId
+                                            ? window.agentUIHandoffTitle : nil)
+                                    .onDrag {
+                                        // Dropped on the terminal, the tab becomes a split.
+                                        TabDrag.shared.begin(tab.tabId, store: store)
+                                        return NSItemProvider(object: tab.tabId as NSString)
+                                    }
+                                    .onDrop(of: [.text], delegate: TabDropDelegate(
+                                        window: window, index: index, tabs: tabs, gap: $dropGap))
+                                    .overlay(alignment: .leading) { insertionBar(visible: dropGap == index) }
+                                    .overlay(alignment: .trailing) {
+                                        insertionBar(visible: index == tabs.count - 1 && dropGap == tabs.count)
+                                    }
+                                    .id(tab.tabId)
+                            } else if id.hasPrefix("conversation:"),
+                                      let session = conversations.first(where: { "conversation:\($0.id)" == id }) {
+                                ConversationTab(session: session,
+                                                isActive: agents.active(in: workspaceId)?.id == session.id,
+                                                selection: selection)
+                                    .id(session.id)
+                            }
                         }
                         NewTabButton(newTab: { window.newTab() },
                                      newConversation: { window.newConversation(engine: $0) },
                                      newAgentTab: { window.newTab(running: $0) })
                     }
-                    .animation(motion.animation(.tabs, Self.spring), value: tabs.map(\.tabId))
-                    .animation(motion.animation(.tabs, Self.spring), value: focusedId)
-                    .animation(motion.animation(.tabs, Self.spring), value: conversations.map(\.id))
-                    .animation(motion.animation(.tabs, Self.spring), value: agents.active(in: workspaceId)?.id)
                 }
                 .onChange(of: focusedId) { _, id in
                     guard let id else { return }
-                    motion.perform(.tabs, Self.spring) { proxy.scrollTo(id) }
+                    proxy.scrollTo(id)
                 }
             }
             Spacer(minLength: 0)
@@ -186,6 +187,7 @@ private struct TabItem: View {
     let count: Int
     let isActive: Bool
     let selection: Namespace.ID
+    let handoffTitle: String?
     @ObservedObject private var motion = MotionPreferences.shared
     @State private var hovered = false
     @State private var renaming = false
@@ -197,7 +199,7 @@ private struct TabItem: View {
         let brand = AgentBrand.forAgent(agent?.agent)
 
         HStack(spacing: 6) {
-            if let agent {
+            if let agent, handoffTitle == nil {
                 AgentStateGlyph(status: agent.agentStatus, size: 9)
                     .frame(width: 10)
             }
@@ -210,7 +212,7 @@ private struct TabItem: View {
                     if let label { store.renameTab(tab.tabId, to: label) }
                 }
             } else {
-                Text(title)
+                Text(handoffTitle ?? title)
                     .font(Theme.uiFont)
                     .fontWeight(isActive ? .medium : .regular)
                     .foregroundStyle(isActive ? Theme.textPrimary : Theme.textSecondary)
@@ -274,7 +276,7 @@ private struct TabItem: View {
             }.disabled(count < 2)
             Button("Close Tabs to the Right") { store.closeTabs(rightOf: tab.tabId) }.disabled(index >= count - 1)
         }
-        .help(index < 9 ? "\(title)  ⌘\(index + 1)" : title)
+        .help(index < 9 ? "\(handoffTitle ?? title)  ⌘\(index + 1)" : handoffTitle ?? title)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(agent.map { "\(title), \(brand?.displayName ?? "agent") \(stateLabel($0.agentStatus))" } ?? title)
         .accessibilityAddTraits(isActive ? [.isButton, .isSelected] : .isButton)
@@ -300,45 +302,6 @@ private struct TabCloseButton: View {
         .onHover { hovered = $0 }
         .help("Close Tab (⌘W)")
         .accessibilityLabel("Close tab")
-    }
-}
-
-/// Opening a tab grows it from zero width and closing shrinks it away, so
-/// neighbors glide instead of jumping.
-private struct WidthCollapse: Layout {
-    var progress: CGFloat
-
-    var animatableData: CGFloat {
-        get { progress }
-        set { progress = newValue }
-    }
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let ideal = subviews.first?.sizeThatFits(ProposedViewSize(width: nil, height: proposal.height)) ?? .zero
-        return CGSize(width: ideal.width * progress, height: ideal.height)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        guard let child = subviews.first else { return }
-        let ideal = child.sizeThatFits(ProposedViewSize(width: nil, height: bounds.height))
-        child.place(at: bounds.origin, anchor: .topLeading, proposal: ProposedViewSize(width: ideal.width, height: bounds.height))
-    }
-}
-
-private struct TabCollapseModifier: ViewModifier {
-    let progress: CGFloat
-
-    func body(content: Content) -> some View {
-        WidthCollapse(progress: progress) {
-            content.opacity(progress)
-        }
-        .clipped()
-    }
-}
-
-private extension AnyTransition {
-    static var tabCollapse: AnyTransition {
-        .modifier(active: TabCollapseModifier(progress: 0), identity: TabCollapseModifier(progress: 1))
     }
 }
 

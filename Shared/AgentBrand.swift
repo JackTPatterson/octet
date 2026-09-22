@@ -27,6 +27,19 @@ struct AgentBrand: Equatable {
         )
     }
 
+    /// A process-table executable that represents a model CLI. This is kept
+    /// deliberately narrower than every branded integration: Runtime should
+    /// not call an unrelated helper process an agent merely because it has a
+    /// logo elsewhere in Octet.
+    static func runtimeAgentID(forExecutable raw: String) -> String? {
+        let command = (raw as NSString).lastPathComponent
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+            .lowercased()
+        let ids = ["claude": "claude", "codex": "codex", "pi": "pi", "qwen": "qwen",
+                   "qwen-code": "qwen", "opencode": "opencode"]
+        return ids[command]
+    }
+
     // Brand hues.
     static let hues: [String: String] = [
         "claude": "#d97757",

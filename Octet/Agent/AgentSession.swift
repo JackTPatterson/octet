@@ -270,7 +270,7 @@ final class AgentSession: ObservableObject, Identifiable {
               permissionProfile: permissionProfile, agent: agentName)
     }
 
-    static func restore(_ saved: Saved, workspaceId: String) -> AgentSession {
+    static func restore(_ saved: Saved, workspaceId: String, start: Bool = true) -> AgentSession {
         let engine = saved.engine ?? .claude
         let session = AgentSession(workspaceId: workspaceId, cwd: saved.cwd, engine: engine, model: saved.model,
                                    permissionMode: PermissionMode(rawValue: saved.permissionMode) ?? .default,
@@ -300,14 +300,22 @@ final class AgentSession: ObservableObject, Identifiable {
         case .opencode:
             // OpenCode keeps the history; its server hands it back.
             session.openCode.sessionId = saved.threadId
-            if saved.hasTurns {
+            if start, saved.hasTurns {
                 session.startOpenCode()
                 session.restoreOpenCodeTranscript()
             }
         case .pi, .qwen:
-            session.prewarm()
+            if start { session.prewarm() }
         }
         return session
+    }
+
+    /// Starts a session that was restored without launching its transport.
+    /// Used by the terminal-to-Octet handoff so its real UI can exist before
+    /// the native process releases the underlying session.
+    func startRestoredProcess() {
+        prewarm()
+        if engine == .opencode, hasTurns { restoreOpenCodeTranscript() }
     }
 
     /// The transcript as the agent's own log has it: Claude Code's session
@@ -435,6 +443,7 @@ final class AgentSession: ObservableObject, Identifiable {
     func send(_ text: String, attachments: [Attachment] = []) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !attachments.isEmpty else { return }
+        let wasRunning = conversation.isRunning
         // `/rename` renames the session in Claude Code and the tab here.
         if trimmed.hasPrefix("/rename ") {
             let name = trimmed.dropFirst("/rename ".count).trimmingCharacters(in: .whitespaces)
@@ -442,7 +451,7 @@ final class AgentSession: ObservableObject, Identifiable {
         }
         if engine == .opencode {
             if !conversation.isRunning { turnStartedAt = Date() }
-            conversation.appendUser(trimmed, images: attachments.map(\.data))
+            conversation.appendUser(trimmed, images: attachments.map(\.data), queued: wasRunning)
             if title == engine.displayName, !trimmed.hasPrefix("/") {
                 title = String(trimmed.prefix(40))
                 provisionalTitle = title
@@ -453,7 +462,11 @@ final class AgentSession: ObservableObject, Identifiable {
         if needsRestart || process?.isRunning != true { restart() }
         guard stdin != nil else { return }
         if !conversation.isRunning { turnStartedAt = Date() }
-        conversation.appendUser(trimmed, images: attachments.map(\.data))
+        conversation.appendUser(trimmed, images: attachments.map(\.data), queued: wasRunning)
+        if trimmed == "/compact" {
+            conversation.items.append(AgentItem(id: UUID().uuidString,
+                                                kind: .notice("Compacting the conversation to free context…")))
+        }
         if title == engine.displayName, !trimmed.hasPrefix("/") { title = String(trimmed.prefix(40)) }
         switch engine {
         case .claude, .qwen:
@@ -470,6 +483,7 @@ final class AgentSession: ObservableObject, Identifiable {
             }
             // The thread may still be opening, and a turn needs its id.
             guard let threadId else { queuedTurns.append(trimmed); return }
+            if wasRunning { queuedTurns.append(trimmed); return }
             startTurn(trimmed, threadId: threadId)
         case .opencode:
             break
@@ -645,6 +659,40 @@ final class AgentSession: ObservableObject, Identifiable {
             "type": "text", "text": "The preview monitor is active. I’ll let you know as soon as it reports ready.",
         ]]]])
         conversation.apply(["type": "result", "subtype": "success"])
+        conversation.apply(["type": "assistant", "message": ["id": "agent-debug", "content": [[
+            "type": "tool_use", "id": "agent-debug-call", "name": "Agent", "input": [
+                "description": "Checking the preview response",
+                "prompt": "Open the local preview, verify the response, and report any console errors.",
+                "subagent_type": "general-purpose",
+            ],
+        ]]]])
+        conversation.apply(["type": "assistant", "parent_tool_use_id": "agent-debug-call",
+                            "message": ["id": "child-agent-debug", "content": [[
+            "type": "text", "text": "The preview responds. I’m delegating schema validation before I report back.",
+        ], [
+            "type": "tool_use", "id": "child-agent-debug-call", "name": "Agent", "input": [
+                "description": "Inspecting the API response",
+                "prompt": "Ask a focused helper to validate the response schema while you inspect the UI.",
+                "subagent_type": "general-purpose",
+            ],
+        ]]]])
+        conversation.apply(["type": "assistant", "parent_tool_use_id": "child-agent-debug-call",
+                            "message": ["id": "grandchild-agent-debug", "content": [[
+            "type": "text", "text": "I found the response payload and am checking its required fields now.",
+        ], [
+            "type": "tool_use", "id": "grandchild-agent-debug-call", "name": "Agent", "input": [
+                "description": "Validating response fields",
+                "prompt": "Check the returned JSON fields and report any missing values.",
+                "subagent_type": "general-purpose",
+            ],
+        ]]]])
+        conversation.apply(["type": "assistant", "parent_tool_use_id": "grandchild-agent-debug-call",
+                            "message": ["id": "grandchild-work-debug", "content": [[
+            "type": "tool_use", "id": "grandchild-bash-debug", "name": "Bash", "input": [
+                "command": "curl -s http://127.0.0.1:4173/api/health | jq .",
+            ],
+        ]]]])
+        conversation.isRunning = true
     }
 
     /// Verification hook: a made-up transcript covering every block kind,
@@ -829,7 +877,10 @@ final class AgentSession: ObservableObject, Identifiable {
         ]]])
         conversation.appendUser("Now also run the full test suite.")
         conversation.apply(["type": "result", "subtype": "error_during_execution"])
-        conversation.appendUser("Actually, just the settings tests, then open a PR.")
+        conversation.appendUser("Actually, just the settings tests, then open a PR.", queued: true)
+        conversation.items.append(AgentItem(id: "compaction-debug", kind: .notice(
+            "Compacting the conversation to free context…"
+        )))
         turnStartedAt = Date().addingTimeInterval(-37)
         conversation.apply(["type": "stream_event", "event": ["type": "message_start", "message": ["id": "e6", "usage": ["input_tokens": 84_000]]]])
         conversation.apply(["type": "assistant", "message": ["id": "e6", "content": [
@@ -846,7 +897,7 @@ final class AgentSession: ObservableObject, Identifiable {
 
     /// Verification hook for the corner panel's choices and typed answer.
     func debugShowQuestion() {
-        pendingQuestion = OpenCodeQuestion([
+        guard let question = OpenCodeQuestion([
             "id": "debug-question", "sessionID": sessionId,
             "questions": [
                 ["header": "Database", "question": "Which database should the new service use?",
@@ -857,7 +908,12 @@ final class AgentSession: ObservableObject, Identifiable {
                 ["header": "Notes", "question": "Anything else the agent should know?",
                  "options": [], "custom": true],
             ],
-        ])
+        ]) else { return }
+        enqueueQuestion(question, answer: { _ in }, reject: {})
+    }
+
+    func debugShowError() {
+        notice(#"Couldn't answer OpenCode: OpenCode answered 400: Expected a string starting with "que", got "debug-question" at ["requestID"]"#)
     }
     #endif
 
@@ -1256,7 +1312,10 @@ final class AgentSession: ObservableObject, Identifiable {
             }
         }
         conversation.applyPi(event)
-        if event["type"] as? String == "agent_settled" { write(["type": "get_session_stats"]) }
+        if event["type"] as? String == "agent_settled" {
+            conversation.isRunning = conversation.activateNextQueuedMessage()
+            write(["type": "get_session_stats"])
+        }
     }
 
     private func applyPiModel(_ json: [String: Any], thinking: String?) {
@@ -1323,6 +1382,11 @@ final class AgentSession: ObservableObject, Identifiable {
             return
         }
         conversation.applyCodex(message)
+        if ["turn/completed", "turn/failed", "turn/aborted"].contains(method),
+           let threadId, !queuedTurns.isEmpty {
+            let next = queuedTurns.removeFirst()
+            startTurn(next, threadId: threadId)
+        }
         if method == "account/rateLimits/updated", !conversation.usageWindows.isEmpty {
             AccountStore.shared.updateCodexWindows(conversation.usageWindows)
         }
@@ -1387,6 +1451,8 @@ final class AgentSession: ObservableObject, Identifiable {
         guard let threadId else { return notice("Send a message first; Codex hasn't opened the conversation yet.") }
         switch name {
         case "compact":
+            conversation.items.append(AgentItem(id: UUID().uuidString,
+                                                kind: .notice("Compacting the conversation to free context…")))
             call("thread/compact/start", ["threadId": threadId], as: .command(name))
         case "review":
             // `/review main` compares with a branch; bare, the working tree.
@@ -1405,6 +1471,8 @@ final class AgentSession: ObservableObject, Identifiable {
         guard engine == .pi else { return }
         switch name {
         case "compact":
+            conversation.items.append(AgentItem(id: UUID().uuidString,
+                                                kind: .notice("Compacting the conversation to free context…")))
             var request: [String: Any] = ["type": "compact"]
             if !arguments.isEmpty { request["customInstructions"] = arguments }
             write(request)
@@ -1624,11 +1692,12 @@ final class AgentCenter: ObservableObject {
     }
 
     @discardableResult
-    func newConversation(workspaceId: String, cwd: String, engine: AgentSession.Engine = .claude) -> AgentSession {
+    func newConversation(workspaceId: String, cwd: String, engine: AgentSession.Engine = .claude,
+                         start: Bool = true) -> AgentSession {
         let session = AgentSession(workspaceId: workspaceId, cwd: cwd, engine: engine)
         sessions.append(session)
         setActive(session.id, in: workspaceId)
-        session.prewarm()
+        if start { session.prewarm() }
         save()
         return session
     }
@@ -1637,16 +1706,16 @@ final class AgentCenter: ObservableObject {
     /// reported: Claude Code's session, Codex's thread, or OpenCode's session.
     @discardableResult
     func resume(engine: AgentSession.Engine, sessionId: String, cwd: String, workspaceId: String,
-                title: String? = nil) -> AgentSession {
+                title: String? = nil, start: Bool = true) -> AgentSession {
         let saved = AgentSession.Saved(
             sessionId: engine == .claude ? sessionId : UUID().uuidString,
             cwd: cwd, title: title ?? engine.displayName, model: AgentSession.defaultModel, effort: nil,
             permissionMode: AgentSession.PermissionMode.auto.rawValue, hasTurns: true, engine: engine,
             threadId: engine == .claude ? nil : sessionId, permissionProfile: nil, agent: nil)
-        let session = AgentSession.restore(saved, workspaceId: workspaceId)
+        let session = AgentSession.restore(saved, workspaceId: workspaceId, start: false)
         sessions.append(session)
         setActive(session.id, in: workspaceId)
-        session.prewarm()
+        if start { session.startRestoredProcess() }
         save()
         return session
     }

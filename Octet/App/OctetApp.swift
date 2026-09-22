@@ -48,6 +48,7 @@ struct OctetApp: App {
                     AgentsStore.shared.start()
                     CodexAgentsStore.shared.start()
                     AgentDiscoveryStore.shared.scanIfStale()
+                    repairInstalledSubagentHooks()
                     DebugSnapshot.start()
                 }
         } defaultValue: {
@@ -72,6 +73,16 @@ struct OctetApp: App {
             }
         }
         .defaultSize(width: 620, height: 460)
+    }
+
+    /// Preserve the user's existing opt-in while repairing paths after an
+    /// app rename, a new build location, or an update. Hooks that were never
+    /// installed remain untouched.
+    private func repairInstalledSubagentHooks() {
+        guard let cli = Bundle.main.url(forAuxiliaryExecutable: "octet-cli")?.path else { return }
+        for spec in SubagentHookInstaller.available() where SubagentHookInstaller.isInstalled(spec) {
+            _ = try? SubagentHookInstaller.install(cliPath: cli, spec: spec)
+        }
     }
 }
 

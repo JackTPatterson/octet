@@ -112,6 +112,7 @@ struct TwinView: View {
                 .padding(.vertical, 14)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .octetScrollIndicators()
             .onChange(of: rows.count + twin.pending.count) { _, _ in
                 withAnimation(MotionPreferences.shared.animation(.palette, .smooth(duration: 0.2))) {
                     proxy.scrollTo(Self.bottomId, anchor: .bottom)

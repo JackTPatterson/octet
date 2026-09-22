@@ -24,9 +24,21 @@ struct AgentBoardView: View {
                         ForEach(rows, id: \.agent.paneId) { row in
                             AgentBoardRow(row: row) { focus(row.agent) }
                         }
+                        ForEach(store.spawnedRuntimeAgents) { agent in
+                            SpawnedAgentBoardRow(agent: agent,
+                                                 workspace: workspaceName(agent.workspaceId),
+                                                 tab: tabName(agent.tabId)) {
+                                guard let paneId = agent.paneId else { return }
+                                focus(EngineAgent(paneId: paneId, tabId: agent.tabId,
+                                                  workspaceId: agent.workspaceId, agent: agent.agent,
+                                                  name: agent.name, displayAgent: agent.name,
+                                                  agentStatus: .working, cwd: agent.cwd))
+                            }
+                        }
                     }
                     .padding(10)
                 }
+                .scrollIndicators(.hidden)
             }
         }
         .frame(minWidth: 520, minHeight: 360)
@@ -52,12 +64,23 @@ struct AgentBoardView: View {
     }
 
     private var summary: String {
-        let working = rows.filter { $0.agent.agentStatus == .working }.count
+        let working = rows.filter { $0.agent.agentStatus == .working }.count + store.spawnedRuntimeAgents.count
         let waiting = rows.filter { $0.agent.agentStatus == .blocked }.count
-        var parts: [String] = ["\(rows.count) running"]
+        var parts: [String] = ["\(rows.count + store.spawnedRuntimeAgents.count) running"]
         if working > 0 { parts.append("\(working) working") }
         if waiting > 0 { parts.append("\(waiting) waiting on you") }
         return parts.joined(separator: " · ")
+    }
+
+    private func workspaceName(_ id: String?) -> String {
+        guard let id else { return "Native conversation" }
+        return store.snapshot.workspaces.first { $0.workspaceId == id }?.label ?? "Workspace"
+    }
+
+    private func tabName(_ id: String?) -> String {
+        guard let id else { return "" }
+        guard let tab = store.snapshot.tabs.first(where: { $0.tabId == id }) else { return "" }
+        return TabAutoName.display(label: tab.label, number: tab.number)
     }
 
     /// Agents that want you first, then the busy ones, then the rest.
@@ -81,6 +104,63 @@ struct AgentBoardView: View {
             let secondRank = rank[second.agent.agentStatus] ?? 9
             return firstRank == secondRank ? first.tab < second.tab : firstRank < secondRank
         }
+    }
+}
+
+private struct SpawnedAgentBoardRow: View {
+    let agent: SpawnedRuntimeAgent
+    let workspace: String
+    let tab: String
+    let focus: () -> Void
+    @State private var hovered = false
+
+    var body: some View {
+        let brand = AgentBrand.forAgent(agent.agent)
+        let tint = brand?.hueHex.map { Color(hex: $0) } ?? Theme.accent
+        Button(action: focus) {
+            HStack(alignment: .top, spacing: 10) {
+                AgentStateGlyph(status: .working, size: 10)
+                    .frame(width: 12)
+                    .padding(.top, 3)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        if let brand { AgentLogo(brand: brand, size: 12) }
+                        Text(agent.name)
+                            .font(Theme.uiFontMedium)
+                            .foregroundStyle(Theme.textPrimary)
+                        Text("spawned")
+                            .font(Theme.captionFont)
+                            .foregroundStyle(tint)
+                        Spacer(minLength: 4)
+                        Text("Working")
+                            .font(Theme.captionFont)
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                    Text("Started by another agent")
+                        .font(Theme.captionFont)
+                        .foregroundStyle(Theme.textSecondary)
+                    HStack(spacing: 5) {
+                        if !tab.isEmpty { Text(tab) }
+                        if !tab.isEmpty { Text("·") }
+                        Text(workspace)
+                        Text("·")
+                        Text(agent.agent).font(Theme.monoFont)
+                    }
+                    .font(Theme.captionFont)
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 8)
+            .background(hovered ? Theme.hover : Theme.card.opacity(0.55))
+            .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(agent.paneId == nil)
+        .onHover { hovered = $0 }
+        .accessibilityLabel("\(agent.name), spawned by another agent, working")
     }
 }
 

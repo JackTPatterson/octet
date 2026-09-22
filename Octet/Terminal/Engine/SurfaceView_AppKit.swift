@@ -676,6 +676,11 @@ extension TerminalEngine {
         override func scrollWheel(with event: NSEvent) {
             guard let surfaceModel else { return }
 
+            // Bottom anchoring reads the visible grid. Suppress that polling
+            // during a live wheel/trackpad gesture so scrolling never competes
+            // with a synchronous terminal text scan on the main thread.
+            (superview?.superview as? TopRowClippingView)?.terminalDidScroll()
+
             var x = event.scrollingDeltaX
             var y = event.scrollingDeltaY
             let precision = event.hasPreciseScrollingDeltas

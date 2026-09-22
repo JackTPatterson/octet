@@ -55,6 +55,47 @@ final class AgentStreamTests: XCTestCase {
         XCTAssertEqual(conversation.items.first?.kind, .text("from the subagent"))
     }
 
+    func testNestedSubagentOwnershipKeepsEveryGeneration() {
+        var conversation = AgentConversation()
+        conversation.apply(["type": "assistant", "message": ["id": "root-message", "content": [[
+            "type": "tool_use", "id": "root-agent", "name": "Agent",
+            "input": ["description": "Root", "prompt": "Delegate the audit"],
+        ]]]])
+        conversation.apply(["type": "assistant", "parent_tool_use_id": "root-agent",
+                            "message": ["id": "child-message", "content": [[
+            "type": "tool_use", "id": "child-agent", "name": "Agent",
+            "input": ["description": "Child", "prompt": "Delegate schema validation"],
+        ]]]])
+        conversation.apply(["type": "assistant", "parent_tool_use_id": "child-agent",
+                            "message": ["id": "grandchild-message", "content": [[
+            "type": "tool_use", "id": "grandchild-agent", "name": "Agent",
+            "input": ["description": "Grandchild", "prompt": "Validate the schema"],
+        ]]]])
+
+        XCTAssertEqual(conversation.items.map(\.id), ["root-agent", "child-agent", "grandchild-agent"])
+        XCTAssertEqual(conversation.items.map(\.parent), [nil, "root-agent", "child-agent"])
+    }
+
+    func testQueuedFollowUpActivatesWhenCurrentTurnCompletes() {
+        var conversation = AgentConversation()
+        conversation.appendUser("Run the tests")
+        conversation.appendUser("Then summarize failures", queued: true)
+        XCTAssertTrue(conversation.items[1].queued)
+
+        conversation.apply(["type": "result", "subtype": "success"])
+
+        XCTAssertFalse(conversation.items[1].queued)
+        XCTAssertTrue(conversation.isRunning)
+    }
+
+    func testCrossModelRuntimeExecutableDiscovery() {
+        XCTAssertEqual(AgentBrand.runtimeAgentID(forExecutable: "/opt/homebrew/bin/claude"), "claude")
+        XCTAssertEqual(AgentBrand.runtimeAgentID(forExecutable: "codex"), "codex")
+        XCTAssertEqual(AgentBrand.runtimeAgentID(forExecutable: "qwen-code"), "qwen")
+        XCTAssertNil(AgentBrand.runtimeAgentID(forExecutable: "node"))
+        XCTAssertNil(AgentBrand.runtimeAgentID(forExecutable: "zsh"))
+    }
+
     func testInterruptedTurnSaysStopped() {
         var conversation = AgentConversation()
         conversation.appendUser("count")

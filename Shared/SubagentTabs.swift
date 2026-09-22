@@ -160,9 +160,12 @@ enum SubagentHookInstaller {
         specs(home: home).first { $0.hostId == hostId }
     }
 
-    /// Whether a hook command is one Octet installed (any octet-cli path).
+    /// Whether a hook command is one Octet installed. `herd-cli` is the
+    /// pre-rename spelling and must remain recognizable so upgrades can
+    /// replace its now-stale app-bundle path.
     static func isOctetHookCommand(_ command: String) -> Bool {
-        command.contains("octet-cli") && command.range(of: " hook [a-z_-]+$", options: .regularExpression) != nil
+        (command.contains("octet-cli") || command.contains("herd-cli"))
+            && command.range(of: " hook [a-z_-]+$", options: .regularExpression) != nil
     }
 
     static func isInstalled(_ spec: SubagentHookSpec) -> Bool {

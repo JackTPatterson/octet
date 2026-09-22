@@ -21,32 +21,35 @@ struct ConversationView: View {
             if session.conversation.isRunning && session.pendingPermission == nil && session.pendingQuestion == nil {
                 StatusLine(session: session)
             }
-            if let question = session.pendingQuestion, session.pendingPermission == nil {
-                QuestionCard(session: session, question: question)
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 8)
-                    .id(question.id)
-                    .transition(motion.animates(.approvals)
-                        ? .asymmetric(insertion: .opacity.combined(with: .offset(y: 14)), removal: .opacity)
-                        : .identity)
+            // Interactive agent UI belongs to the input dock. Keeping it in
+            // one clipped stack lets a new panel rise from behind the composer
+            // instead of appearing as a detached card above it.
+            VStack(spacing: 0) {
+                if let question = session.pendingQuestion, session.pendingPermission == nil {
+                    QuestionCard(session: session, question: question)
+                        .id(question.id)
+                        .zIndex(0)
+                        .transition(motion.animates(.approvals)
+                            ? .asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity)
+                            : .identity)
+                }
+                if let request = session.pendingPermission {
+                    PermissionCard(session: session)
+                        // Keyed by request, so each one rises in independently,
+                        // including the next queued one after an answer.
+                        .id(request.id)
+                        .zIndex(0)
+                        .transition(motion.animates(.approvals)
+                            ? .asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity)
+                            : .identity)
+                }
+                if !session.piWidgets.isEmpty {
+                    PiWidgets(widgets: session.piWidgets)
+                }
+                Composer(session: session, dropdowns: dropdowns)
+                    .zIndex(1)
             }
-            if let request = session.pendingPermission {
-                PermissionCard(session: session)
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 8)
-                    // Keyed by request, so each one fades up in its own right,
-                    // including the next queued one after an answer.
-                    .id(request.id)
-                    .transition(motion.animates(.approvals)
-                        ? .asymmetric(insertion: .opacity.combined(with: .offset(y: 14)), removal: .opacity)
-                        : .identity)
-            }
-            if !session.piWidgets.isEmpty {
-                PiWidgets(widgets: session.piWidgets)
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 8)
-            }
-            Composer(session: session, dropdowns: dropdowns)
+            .clipped()
         }
         .animation(motion.animation(.approvals, .smooth(duration: 0.26)), value: session.pendingPermission?.id)
         .animation(motion.animation(.approvals, .smooth(duration: 0.26)), value: session.pendingQuestion?.id)
@@ -74,11 +77,17 @@ struct ConversationView: View {
             guard let id = ConversationDebug.openDropdown else { return }
             if id == "permission" { session.debugShowPermission(); return }
             if id == "question" { session.debugShowQuestion(); return }
+            if id == "error" { session.debugShowError(); return }
             if id == "sample" { session.debugLoadSample(); return }
             if id == "everything" { session.debugLoadEverything(); return }
-            if id == "monitor" {
+            if id == "monitor" || id == "monitor-detail" {
                 session.debugLoadMonitor()
                 window.ui.runtimePanelVisible = true
+                if id == "monitor-detail" {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        window.ui.runtimeInspectorEntryID = "agent-agent-debug-call"
+                    }
+                }
                 return
             }
             if id == "ultracode" { session.effort = "ultracode" }
@@ -293,6 +302,7 @@ private struct Transcript: View {
                 .padding(.vertical, 16)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .octetScrollIndicators()
             // Follow the stream only while at the end, so reading back isn't
             // yanked away; a button jumps to the latest instead.
             .onChange(of: items) { _, _ in
@@ -323,7 +333,11 @@ private struct Transcript: View {
     private var blockingState: AgentBlockState? {
         let transcriptMessages = session.conversation.items.compactMap { item -> String? in
             switch item.kind {
-            case .text(let text), .notice(let text): return text
+            // A normal assistant answer can legitimately discuss resetting a
+            // limit (retry code is a common example). Only lifecycle notices
+            // and explicit errors are allowed to replace the transcript with
+            // a blocking splash.
+            case .notice(let text): return text
             default: return nil
             }
         }
@@ -546,6 +560,14 @@ struct ItemRow: View, Equatable {
         switch item.kind {
         case .user(let text):
             VStack(alignment: .leading, spacing: 8) {
+                if item.queued {
+                    HStack(spacing: 5) {
+                        OctetIcon("clock", size: 11)
+                        Text("Queued")
+                    }
+                    .font(Theme.captionFont)
+                    .foregroundStyle(Theme.accent)
+                }
                 if !item.images.isEmpty { ImageGallery(images: item.images) }
                 if !text.isEmpty {
                     Text(text)
@@ -557,7 +579,13 @@ struct ItemRow: View, Equatable {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Theme.card)
+                .background(item.queued ? Theme.accent.opacity(0.07) : Theme.card)
+                .overlay {
+                    if item.queued {
+                        RoundedRectangle(cornerRadius: 6)
+                            .strokeBorder(Theme.accent.opacity(0.35), lineWidth: 1)
+                    }
+                }
                 .clipShape(RoundedRectangle(cornerRadius: 6))
         case .text(let text):
             MarkdownView(text: text)
@@ -571,11 +599,123 @@ struct ItemRow: View, Equatable {
         case .tool(let call):
             ToolCard(call: call, running: running)
         case .notice(let text):
-            Text(text)
-                .font(Theme.captionFont)
-                .foregroundStyle(Theme.textTertiary)
-                .frame(maxWidth: .infinity)
+            if CompactionNotice.isCompaction(text) {
+                CompactionNotice(text: text, running: running)
+            } else if ErrorNotice.isError(text) {
+                ErrorNotice(text: text)
+            } else {
+                Text(text)
+                    .font(Theme.captionFont)
+                    .foregroundStyle(Theme.textTertiary)
+                    .frame(maxWidth: .infinity)
+            }
         }
+    }
+}
+
+/// Compaction is a conversation lifecycle event, not a low-priority log line.
+/// Give it a stable place in the transcript while context is summarized.
+private struct CompactionNotice: View {
+    let text: String
+    let running: Bool
+
+    static func isCompaction(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        return lower.contains("compact") && lower.contains("conversation")
+    }
+
+    private var complete: Bool { text.lowercased().contains("was compacted") }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 9) {
+            ZStack {
+                Circle().fill(Theme.accent.opacity(0.14))
+                if !complete && running {
+                    LoadingLine(width: 12)
+                } else {
+                    OctetIcon(complete ? "checkmark" : "arrow.counterclockwise.circle", size: 13)
+                        .foregroundStyle(Theme.accent)
+                }
+            }
+            .frame(width: 22, height: 22)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(complete ? "Conversation compacted" : "Compacting conversation")
+                    .font(Theme.uiFontMedium)
+                    .foregroundStyle(Theme.textPrimary)
+                Text(complete ? "Earlier context was summarized and the conversation can continue."
+                              : "Summarizing earlier context to make room for the next turn.")
+                    .font(Theme.captionFont)
+                    .foregroundStyle(Theme.textTertiary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 11)
+        .padding(.vertical, 9)
+        .background(Theme.card.opacity(0.65))
+        .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.border, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 7))
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// Errors stay in the transcript, but read as a structured state rather than
+/// a raw log line. The first clause is the action that failed; protocol and
+/// server detail sits below it in selectable monospace text.
+private struct ErrorNotice: View {
+    let text: String
+
+    var body: some View {
+        let content = Self.parts(text)
+        HStack(alignment: .top, spacing: 10) {
+            ZStack {
+                Circle().fill(Color(hex: AgentStateColor.blocked))
+                OctetIcon("xmark", size: 12)
+                    .foregroundStyle(.white)
+            }
+            .frame(width: 22, height: 22)
+            .padding(.top, 1)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(content.title)
+                    .font(Theme.uiFontMedium)
+                    .foregroundStyle(Theme.textPrimary)
+                if !content.detail.isEmpty {
+                    Text(content.detail)
+                        .font(Theme.monoFont)
+                        .foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 11)
+        .padding(.vertical, 9)
+        .background(Color(hex: AgentStateColor.blocked).opacity(0.08))
+        .overlay(alignment: .top) {
+            Rectangle().fill(Color(hex: AgentStateColor.blocked).opacity(0.38)).frame(height: 1)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Error. \(text)")
+    }
+
+    static func isError(_ text: String) -> Bool {
+        let lower = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return lower.hasPrefix("couldn't") || lower.hasPrefix("could not")
+            || lower.hasPrefix("failed") || lower.hasPrefix("error")
+            || lower.hasPrefix("unable") || lower.contains(" answered 4")
+            || lower.contains(" answered 5") || lower.contains(" exited (")
+    }
+
+    static func parts(_ text: String) -> (title: String, detail: String) {
+        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let separator = value.range(of: ": ") else { return (value, "") }
+        let title = String(value[..<separator.lowerBound])
+        var detail = String(value[separator.upperBound...])
+        detail = detail.replacingOccurrences(of: #": (?=(Expected|Invalid|Missing|Unexpected)\b)"#,
+                                             with: "\n", options: .regularExpression)
+        detail = detail.replacingOccurrences(of: #"\s+at (\[[^\n]+\])$"#,
+                                             with: "\nat $1", options: .regularExpression)
+        return (title, detail)
     }
 }
 
@@ -789,8 +929,8 @@ private struct QuestionCard: View {
         }
         .padding(12)
         .background(Theme.card)
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.accent.opacity(0.6), lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay(alignment: .top) { Rectangle().fill(Theme.divider).frame(height: 1) }
     }
 
     private func optionRow(_ option: OpenCodeQuestion.Item.Option, item: OpenCodeQuestion.Item, index: Int) -> some View {
@@ -910,8 +1050,8 @@ private struct PermissionCard: View {
             }
             .padding(12)
             .background(Theme.card)
-            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.accent.opacity(0.6), lineWidth: 1))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .overlay(alignment: .top) { Rectangle().fill(Theme.divider).frame(height: 1) }
             .onAppear {
                 AccessibilityNotification.Announcement("\(session.engine.displayName) asks to use \(request.toolName)").post()
             }
@@ -1190,10 +1330,7 @@ private struct Composer: View {
         }
         .padding(12)
         .background(Theme.card)
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(focused ? Theme.accent.opacity(0.7) : Theme.border, lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .padding(.horizontal, 16)
-        .padding(.bottom, 14)
+        .overlay(alignment: .top) { Rectangle().fill(Theme.divider).frame(height: 1) }
         .onAppear { DispatchQueue.main.async { focused = true } }
         .onPasteCommand(of: [.image, .fileURL]) { providers in load(providers) }
         .onDrop(of: [.image, .fileURL], isTargeted: nil) { providers in

@@ -20,7 +20,7 @@ final class MotionPreferences: ObservableObject {
             case .palette: return "Command palette"
             case .toasts: return "Toasts"
             case .approvals: return "Approval prompts"
-            case .agentStatus: return "Agent status spinner"
+            case .agentStatus: return "Agent status indicators"
             }
         }
 
@@ -31,7 +31,7 @@ final class MotionPreferences: ObservableObject {
             case .palette: return "Palette opening and closing, the selection highlight"
             case .toasts: return "Toasts sliding in and out"
             case .approvals: return "An agent's permission request fading up above the composer"
-            case .agentStatus: return "The spinning indicator for working agents"
+            case .agentStatus: return "The loading line shown for working agents and active tools"
             }
         }
     }

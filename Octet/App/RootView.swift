@@ -27,6 +27,7 @@ struct RootView: View {
     /// Where the terminal starts across the window.
     private var sidebarInset: CGFloat { ui.sidebarVisible ? ui.sidebarWidth + 1 : 0 }
     private var windowHeight: CGFloat { NSApp.keyWindow?.contentView?.bounds.height ?? 800 }
+    private var runtimePanelWidth: CGFloat { ui.runtimeInspectorEntryID == nil ? 293 : 441 }
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -135,11 +136,11 @@ struct RootView: View {
                     Rectangle().fill(Theme.divider).frame(width: 1)
                         .frame(maxHeight: .infinity, alignment: .leading)
                     RuntimePanel(store: store)
-                        .frame(width: 292)
+                        .frame(width: runtimePanelWidth - 1)
                         .padding(.leading, 1)
-                        .offset(x: ui.runtimePanelVisible ? 0 : 293)
+                        .offset(x: ui.runtimePanelVisible ? 0 : runtimePanelWidth)
                 }
-                .frame(width: ui.runtimePanelVisible ? 293 : 0, alignment: .leading)
+                .frame(width: ui.runtimePanelVisible ? runtimePanelWidth : 0, alignment: .leading)
                 .clipped()
                 .allowsHitTesting(ui.runtimePanelVisible)
                 .accessibilityHidden(!ui.runtimePanelVisible)
@@ -283,6 +284,11 @@ struct RootView: View {
                     )
                 }
             }
+            if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "handoff" {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    window.debugShowAgentUIHandoff()
+                }
+            }
             #endif
         }
 
@@ -295,7 +301,9 @@ struct RootView: View {
     /// area, so a board slides out from behind the sidebar, not over it.
     private var terminalOverlay: some View {
         ZStack {
-                    if boardHere == .claude {
+                    if let agent = window.agentUIHandoff {
+                        AgentUIHandoffView(agent: agent)
+                    } else if boardHere == .claude {
                         AgentsBoard(store: store)
                             .transition(motion.animates(.sidebar) ? .move(edge: .leading).combined(with: .opacity) : .identity)
                     } else if boardHere == .codex {
@@ -324,9 +332,37 @@ struct RootView: View {
                 .clipped()
     }
 
+    /// A short visual bridge between an agent's terminal interface and the
+    /// same saved session rendered as an Octet conversation.
+    private struct AgentUIHandoffView: View {
+        let agent: String
+
+        var body: some View {
+            VStack(spacing: 13) {
+                if let brand = AgentBrand.forAgent(agent) {
+                    AgentLogo(brand: brand, size: 30)
+                }
+                Text("Opening in Octet")
+                    .font(Theme.uiFontMedium)
+                    .foregroundStyle(Theme.textPrimary)
+                Capsule()
+                    .fill(Theme.accent.opacity(0.55))
+                    .frame(width: 44, height: 2)
+                Text("Keeping the conversation and working directory")
+                    .font(Theme.captionFont)
+                    .foregroundStyle(Theme.textTertiary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Theme.terminalBackground)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Opening \(AgentBrand.forAgent(agent)?.displayName ?? "agent") in Octet")
+        }
+    }
+
     /// Octet's own command line and its completions, drawn over the shell's prompt.
     @ViewBuilder
     private var promptOverlay: some View {
+        ZStack(alignment: .topLeading) {
             // Octet's own command line, drawn over the shell's prompt.
             if prompt.isActive, let anchor = prompt.anchor {
                 PromptEditorView(editor: prompt)
@@ -341,11 +377,28 @@ struct RootView: View {
                 let top = contentTop + anchor.origin.y
                 let below = top + anchor.cellHeight + 4
                 let fitsBelow = below + 240 < windowHeight
-                CompletionMenuView(editor: prompt)
-                    .offset(x: sidebarInset + anchor.origin.x + CGFloat(prompt.completionColumn) * anchor.cellWidth,
-                            y: fitsBelow ? below : max(0, top - 244))
+                let left = sidebarInset + anchor.origin.x + CGFloat(prompt.completionColumn) * anchor.cellWidth
+                if fitsBelow {
+                    CompletionMenuView(editor: prompt)
+                        .fixedSize(horizontal: true, vertical: true)
+                        .offset(x: left, y: below)
+                } else {
+                    // The result count changes the menu's height. Anchor its
+                    // bottom to the prompt instead of reserving the maximum
+                    // height, so a short menu does not float above the cursor.
+                    VStack(spacing: 0) {
+                        Spacer(minLength: 0)
+                        CompletionMenuView(editor: prompt)
+                            .fixedSize(horizontal: true, vertical: true)
+                    }
+                    .frame(width: 340, height: max(0, top - 4), alignment: .bottom)
+                    .offset(x: left)
+                }
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .clipped()
+    }
 
     @ViewBuilder
     private var chromeCover: some View {
@@ -425,10 +478,18 @@ struct RootView: View {
                 openFolder: { window.runInFocusedPane("cd " + shellQuote($0)) },
                 shortcuts: [
                     .init(title: "Command Palette", keys: OctetShortcut.palette.display) { ui.paletteVisible = true },
-                    .init(title: "New Claude Conversation", keys: OctetShortcut.newConversation.display, agent: "claude") { window.newConversation() },
-                    .init(title: "New Codex Conversation", agent: "codex") { window.newConversation(engine: .codex) },
-                    .init(title: "New Pi Conversation", agent: "pi") { window.newConversation(engine: .pi) },
-                    .init(title: "New Qwen Conversation", agent: "qwen") { window.newConversation(engine: .qwen) },
+                    .init(title: "New Claude Conversation", keys: OctetShortcut.newConversation.display, agent: "claude") {
+                        window.newConversation(replacingStarterTab: window.displayedFocusedTabId)
+                    },
+                    .init(title: "New Codex Conversation", agent: "codex") {
+                        window.newConversation(engine: .codex, replacingStarterTab: window.displayedFocusedTabId)
+                    },
+                    .init(title: "New Pi Conversation", agent: "pi") {
+                        window.newConversation(engine: .pi, replacingStarterTab: window.displayedFocusedTabId)
+                    },
+                    .init(title: "New Qwen Conversation", agent: "qwen") {
+                        window.newConversation(engine: .qwen, replacingStarterTab: window.displayedFocusedTabId)
+                    },
                     .init(title: "Split Right", keys: OctetShortcut.splitRight.display) { window.splitPane(.right) },
                     .init(title: "Agents Board", keys: OctetShortcut.agents.display) { window.toggleAgentsBoard() },
                 ]
@@ -498,6 +559,12 @@ final class UIState: ObservableObject {
         didSet { UserDefaults.standard.set(sidebarVisible, forKey: "octet.sidebarVisible") }
     }
     @Published var runtimePanelVisible = false
+    /// Runtime identities already announced in this window. Views are rebuilt
+    /// during tab switches, but old processes must not look newly created.
+    var seenRuntimeEntryIDs: Set<String> = []
+    /// Selecting a runtime collapses the list to an icon rail and opens its
+    /// inspector immediately to the rail's left.
+    @Published var runtimeInspectorEntryID: String?
     @Published var paletteVisible = false
     /// Drag the sidebar's edge to resize it (200pt up to half the window).
     @Published var sidebarWidth: CGFloat = {

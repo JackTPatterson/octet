@@ -20,7 +20,7 @@ struct CommandHistory {
 
     mutating func add(_ entry: Entry) {
         let command = entry.command.trimmingCharacters(in: .whitespaces)
-        guard !command.isEmpty else { return }
+        guard !command.isEmpty, Self.isUserCommand(command) else { return }
         if let index = seen[command] {
             entries[index].count += 1
             // Keep the most recent timestamp.
@@ -31,6 +31,15 @@ struct CommandHistory {
             seen[command] = entries.count
             entries.append(Entry(command: command, at: entry.at, count: entry.count))
         }
+    }
+
+    /// Test and screenshot launchers set these variables in front of Octet's
+    /// executable. They are implementation details, not useful shell history,
+    /// and otherwise become enormous inline suggestions for ordinary prefixes
+    /// such as `env`.
+    private static func isUserCommand(_ command: String) -> Bool {
+        !command.contains("OCTET_OPEN_WINDOW=")
+            && !command.contains("OCTET_SNAPSHOT_DIR=")
     }
 
     /// The best completion for what has been typed: the most useful command

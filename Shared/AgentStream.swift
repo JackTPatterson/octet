@@ -81,10 +81,19 @@ struct AgentConversation: Equatable {
     private var currentMessageId: String?
     private var currentParent: String?
 
-    mutating func appendUser(_ text: String, images: [Data] = []) {
-        items.append(AgentItem(id: UUID().uuidString, kind: .user(text), images: images))
+    mutating func appendUser(_ text: String, images: [Data] = [], queued: Bool = false) {
+        items.append(AgentItem(id: UUID().uuidString, kind: .user(text), images: images, queued: queued))
         isRunning = true
         lastError = nil
+    }
+
+    /// Promotes the oldest follow-up from queued to active when the turn in
+    /// front of it settles. Returns whether another turn is ready to run.
+    @discardableResult
+    mutating func activateNextQueuedMessage() -> Bool {
+        guard let index = items.firstIndex(where: { $0.queued }) else { return false }
+        items[index].queued = false
+        return true
     }
 
     /// Applies one Claude Code or Qwen Code stream-json line (already decoded).
@@ -387,7 +396,7 @@ struct AgentConversation: Equatable {
     }
 
     private mutating func applyResult(_ event: [String: Any]) {
-        isRunning = false
+        isRunning = activateNextQueuedMessage()
         openBlocks = [:]
         costUSD = event["total_cost_usd"] as? Double ?? costUSD
         if let usage = event["modelUsage"] as? [String: [String: Any]],
@@ -577,6 +586,8 @@ struct AgentItem: Identifiable, Equatable {
     var parent: String?
     /// Images the person attached to a message, as sent.
     var images: [Data] = []
+    /// A follow-up entered while the current turn is still running.
+    var queued = false
     /// When the item began. Runtime uses this with a Monitor call's timeout
     /// to distinguish a live watch from historical tool output.
     var createdAt = Date()
@@ -773,6 +784,7 @@ extension AgentToolCall {
         case "WebSearch": return "tool.web"
         case "WebFetch": return "tool.fetch"
         case "Bash", "BashOutput", "KillShell", "KillBash": return "tool.run"
+        case "Monitor": return "eye"
         case "Task", "Agent": return "tool.agent"
         case "TodoWrite", "TaskCreate", "TaskUpdate": return "tool.todo"
         case "NotebookEdit", "NotebookRead": return "tool.notebook"

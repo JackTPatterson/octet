@@ -134,7 +134,10 @@ enum Completions {
             candidates += predictions.map { Completion(value: $0, kind: .history, detail: "next") }
         } else {
             if let command = context.command {
-                let second = secondWord(of: history, command: command)
+                // A historical `cd foo` is only valid in the directory where
+                // it was run. Current filesystem entries are the source of
+                // truth for cd; never mix stale history paths into its menu.
+                let second = command == "cd" ? [] : secondWord(of: history, command: command)
                 // Subcommands belong right after the command, not deeper in.
                 if let subs = subcommands[command], context.previousWord == command {
                     candidates += subs.map { Completion(value: $0, kind: .command, detail: command) }
@@ -148,7 +151,10 @@ enum Completions {
             if token.hasPrefix("-") {
                 candidates += flags(in: history, command: context.command).map { Completion(value: $0, kind: .flag) }
             }
-            candidates += entries.map { entry in
+            let relevantEntries = context.command == "cd"
+                ? entries.filter { $0.isDirectory }
+                : entries
+            candidates += relevantEntries.map { entry in
                 Completion(value: entry.isDirectory ? entry.name + "/" : entry.name,
                            kind: entry.isDirectory ? .directory : .file)
             }

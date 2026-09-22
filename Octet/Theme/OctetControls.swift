@@ -1,7 +1,45 @@
+import AppKit
 import SwiftUI
 
 // Octet's own controls, drawn from Theme instead of the system's, so every
 // surface matches the chrome in any theme.
+
+/// Forces SwiftUI's backing scroll view to use the compact overlay scroller.
+/// This keeps the visible thumb as a rounded pill even when macOS is set to
+/// always show legacy scroll bars. The system still owns scrolling, sizing,
+/// accessibility and pointer interaction.
+private final class OctetScrollProbeView: NSView {
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        DispatchQueue.main.async { [weak self] in self?.configureScrollView() }
+    }
+
+    private func configureScrollView() {
+        var ancestor = superview
+        while let view = ancestor {
+            if let scrollView = view as? NSScrollView {
+                scrollView.scrollerStyle = .overlay
+                scrollView.autohidesScrollers = true
+                scrollView.verticalScroller?.controlSize = .small
+                scrollView.horizontalScroller?.controlSize = .small
+                return
+            }
+            ancestor = view.superview
+        }
+    }
+}
+
+private struct OctetScrollProbe: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { OctetScrollProbeView(frame: .zero) }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+}
+
+extension View {
+    /// A compact capsule thumb with no permanent gutter or square-ended track.
+    func octetScrollIndicators() -> some View {
+        background(OctetScrollProbe().frame(width: 0, height: 0))
+    }
+}
 
 /// A themed push button.
 struct OctetButton: View {

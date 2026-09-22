@@ -80,7 +80,7 @@ struct OpenCodeStream: Equatable {
             applyStatus(status, to: &conversation)
         case "session.idle":
             guard session == sessionId else { return }
-            conversation.isRunning = false
+            conversation.isRunning = conversation.activateNextQueuedMessage()
             announcedRetry = nil
         case "session.error":
             // Only this conversation's own session ends the turn; a subagent's
@@ -264,7 +264,7 @@ struct OpenCodeStream: Equatable {
         case "busy":
             conversation.isRunning = true
         case "idle":
-            conversation.isRunning = false
+            conversation.isRunning = conversation.activateNextQueuedMessage()
             announcedRetry = nil
         case "retry":
             conversation.isRunning = true

@@ -159,6 +159,7 @@ private struct CodexDetail: View {
                     }
                     .padding(20)
                 }
+                .octetScrollIndicators()
                 .onChange(of: conversation.items.count) { _, _ in proxy.scrollTo("end", anchor: .bottom) }
             }
             HStack(spacing: 6) {

@@ -158,6 +158,18 @@ final class SubagentTabTests: XCTestCase {
         XCTAssertEqual(commands, ["guard.sh", "'/B/octet-cli' hook claude"])
         XCTAssertEqual(twice["model"] as? String, "opus")
 
+        var legacy = existing
+        legacy["hooks"] = ["PreToolUse": [[
+            "matcher": "Agent|Task",
+            "hooks": [["type": "command", "command": "'/old/Herd.app/Contents/MacOS/herd-cli' hook claude"]],
+        ]]]
+        let migrated = SubagentHookInstaller.installing(into: legacy, cliPath: "/B/octet-cli", spec: spec)
+        let migratedEntries = try XCTUnwrap((migrated["hooks"] as? [String: Any])?["PreToolUse"] as? [[String: Any]])
+        let migratedCommands = migratedEntries.flatMap {
+            ($0["hooks"] as? [[String: Any]] ?? []).compactMap { $0["command"] as? String }
+        }
+        XCTAssertEqual(migratedCommands, ["'/B/octet-cli' hook claude"])
+
         let removed = SubagentHookInstaller.removing(from: twice, spec: spec)
         let remaining = (removed["hooks"] as? [String: Any])?["PreToolUse"] as? [[String: Any]]
         XCTAssertEqual(remaining?.count, 1)
@@ -1032,6 +1044,18 @@ final class CommandHistoryTests: XCTestCase {
         XCTAssertEqual(history.suggestion(for: " ca"), "cargo test")
         XCTAssertEqual(history.ranked(matching: "cargo"), ["cargo test"])
     }
+
+    func testInternalOctetLaunchCommandsAreNotSuggested() {
+        var history = CommandHistory()
+        history.add(.init(
+            command: "env OCTET_OPEN_WINDOW=toast OCTET_SNAPSHOT_DIR=/tmp/snap /tmp/Octet",
+            at: Date()
+        ))
+        history.add(.init(command: "env | sort", at: Date().addingTimeInterval(-10)))
+
+        XCTAssertEqual(history.suggestion(for: "env"), "env | sort")
+        XCTAssertEqual(history.entries.map(\.command), ["env | sort"])
+    }
 }
 
 final class ShellPromptTests: XCTestCase {
@@ -1211,6 +1235,16 @@ final class CompletionTests: XCTestCase {
         XCTAssertEqual(Completions.flags(in: history, command: "git"), ["--amend", "--force-with-lease", "-m"])
         XCTAssertEqual(Completions.secondWord(of: history, command: "npm"), ["run", "test"])
         XCTAssertTrue(Completions.flags(in: history, command: "cargo").isEmpty)
+    }
+
+    func testCdOnlyOffersDirectoriesThatExistInTheCurrentListing() {
+        let results = Completions.suggestions(
+            for: CompletionContext.at(caret: 6, in: "cd her"),
+            entries: [("herd", true), ("hero.txt", false)],
+            history: ["cd herd-release", "cd her-old"]
+        )
+
+        XCTAssertEqual(results, [Completion(value: "herd/", kind: .directory)])
     }
 }
 

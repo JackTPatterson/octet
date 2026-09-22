@@ -48,6 +48,7 @@ struct OctetIcon: View {
         "tool.mcp": .init("share"),
         "tool.notebook": .init("note-2"),
         "tool.other": .init("hierarchy-3"),
+        "eye": .init("eye"),
         "tool.todo.done": .init("tick-square"),
         "tool.todo.open": .init("stop"),
         "tool.todo.active": .init("timer-start"),

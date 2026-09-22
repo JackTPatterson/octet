@@ -90,6 +90,7 @@ struct AgentsBoard: View {
                 }
                 .padding(.vertical, 6)
             }
+            .scrollIndicators(.hidden)
         }
         .background(Theme.sidebar)
     }
@@ -228,6 +229,7 @@ private struct AgentDetail: View {
                     }
                     .padding(20)
                 }
+                .scrollIndicators(.hidden)
                 .onChange(of: conversation.items.count) { _, _ in proxy.scrollTo("end", anchor: .bottom) }
             }
         }
