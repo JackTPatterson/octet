@@ -1,9 +1,9 @@
 import Combine
 import SwiftUI
 
-/// A live inventory of what the focused workspace is keeping alive. Unlike
-/// the project sidebar, this opens from the right so it can stay visible while
-/// the person moves between the terminals it describes.
+/// Monitors and shells that are descendants of the Claude instance in front.
+/// The process-tree boundary is important: a workspace can contain many agents
+/// and terminals, but this panel describes only the Claude session being viewed.
 struct RuntimePanel: View {
     @EnvironmentObject private var window: WindowContext
     @ObservedObject var store: SessionStore
@@ -12,24 +12,25 @@ struct RuntimePanel: View {
     private let refresh = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
     private var workspaceId: String? { window.focusedWorkspace?.workspaceId }
-    private var workspacePanes: [EnginePane] {
-        guard let workspaceId else { return [] }
-        return store.snapshot.panes.filter { $0.workspaceId == workspaceId }
+    private var activeClaude: AgentSession? {
+        guard let session = center.active(in: workspaceId), session.engine == .claude else { return nil }
+        return session
+    }
+    private var targetPanes: [EnginePane] {
+        guard activeClaude == nil, let tabId = window.displayedFocusedTabId else { return [] }
+        let snapshot = store.snapshot
+        return snapshot.panes.filter { pane in
+            guard pane.tabId == tabId,
+                  let agent = snapshot.agents.first(where: { $0.paneId == pane.paneId }) else { return false }
+            return AgentBrand.forAgent(agent.agent)?.id == AgentSession.Engine.claude.agent
+        }
     }
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Rectangle().fill(Theme.divider).frame(height: 1)
-            if entries.isEmpty && !workspacePanes.isEmpty {
-                VStack(spacing: 9) {
-                    LoadingLine(width: 34)
-                    Text("Inspecting runtimes")
-                        .font(Theme.captionFont)
-                        .foregroundStyle(Theme.textTertiary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if entries.isEmpty {
+            if entries.isEmpty {
                 empty
             } else {
                 ScrollView {
@@ -51,7 +52,7 @@ struct RuntimePanel: View {
 
     private var header: some View {
         HStack(spacing: 7) {
-            OctetIcon("terminal", size: 15).foregroundStyle(Theme.textSecondary)
+            OctetIcon("point.3.connected.trianglepath.dotted", size: 15).foregroundStyle(Theme.textSecondary)
             Text("Runtime").font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary)
             Text("\(entries.count)")
                 .font(Theme.captionFont.monospacedDigit())
@@ -71,11 +72,11 @@ struct RuntimePanel: View {
 
     private var empty: some View {
         VStack(spacing: 8) {
-            OctetIcon("terminal", size: 28).foregroundStyle(Theme.textTertiary)
-            Text("Nothing running here")
+            OctetIcon("point.3.connected.trianglepath.dotted", size: 28).foregroundStyle(Theme.textTertiary)
+            Text("No active runtimes")
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
-            Text("Shells, monitors, agents, and other processes appear here.")
+            Text("Monitors and shells started by this Claude instance appear here.")
                 .font(Theme.captionFont)
                 .foregroundStyle(Theme.textTertiary)
                 .multilineTextAlignment(.center)
@@ -101,53 +102,37 @@ struct RuntimePanel: View {
     }
 
     private var entries: [RuntimeEntry] {
-        guard let workspaceId else { return [] }
         let snapshot = store.snapshot
-        let panes = snapshot.panes.filter { $0.workspaceId == workspaceId }
         var result: [RuntimeEntry] = []
 
-        for pane in panes {
+        for pane in targetPanes {
             guard let info = store.paneProcesses[pane.paneId] else { continue }
             let tab = snapshot.tabs.first { $0.tabId == pane.tabId }
             let location = tab.map { TabAutoName.display(label: $0.label, number: $0.number) } ?? "Terminal"
-            let agent = snapshot.agents.first { $0.paneId == pane.paneId }
-            let processes = (info.foreground + info.background).filter { process in
-                let name = Self.commandName(process.name)
-                return !ShellPrompt.shells.contains(name) && !ShellPrompt.shells.contains("-" + name)
-            }
-
-            if let agent, let brand = AgentBrand.forAgent(agent.agent) {
-                result.append(RuntimeEntry(id: "agent-\(pane.paneId)", kind: .agent,
-                                           title: brand.displayName, detail: stateLabel(agent.agentStatus),
+            for process in info.background {
+                let title = Self.commandName(process.name)
+                result.append(RuntimeEntry(id: "\(pane.paneId)-\(process.pid)", kind: Self.kind(for: title),
+                                           title: title, detail: "PID \(process.pid)",
                                            location: location, paneId: pane.paneId))
-            }
-
-            if processes.isEmpty {
-                let shell = info.foreground.first.map { Self.commandName($0.name) } ?? "shell"
-                result.append(RuntimeEntry(id: "shell-\(pane.paneId)", kind: .shell,
-                                           title: shell, detail: "Ready", location: location,
-                                           paneId: pane.paneId))
-            } else {
-                for process in processes where agent == nil || AgentBrand.forAgent(process.name)?.id != AgentBrand.forAgent(agent?.agent)?.id {
-                    let title = Self.commandName(process.name)
-                    let kind: RuntimeKind = Self.looksLikeMonitor(title, pane.terminalTitle) ? .monitor : .process
-                    result.append(RuntimeEntry(id: "\(pane.paneId)-\(process.pid)", kind: kind,
-                                               title: title, detail: "PID \(process.pid)",
-                                               location: location, paneId: pane.paneId))
-                }
             }
         }
 
-        for session in center.sessions(in: workspaceId) {
-            result.append(RuntimeEntry(id: "native-\(session.id)", kind: .agent,
-                                       title: session.engine.displayName,
-                                       detail: session.conversation.isRunning ? "Working" : "Ready",
-                                       location: session.title, paneId: nil, sessionId: session.id))
+        if let session = activeClaude {
+            for process in store.nativeRuntimeProcesses[session.id] ?? [] {
+                let title = Self.commandName(process.name)
+                result.append(RuntimeEntry(id: "\(session.id)-\(process.pid)", kind: Self.kind(for: title),
+                                           title: title, detail: "PID \(process.pid)",
+                                           location: session.title, paneId: nil, sessionId: session.id))
+            }
         }
         return result
     }
 
-    private func reload() { store.refreshPaneProcesses(in: workspaceId) }
+    private func reload() {
+        var roots: [String: Int] = [:]
+        if let session = activeClaude, let pid = session.runtimePID { roots[session.id] = pid }
+        store.refreshPaneProcesses(in: workspaceId, nativeRoots: roots)
+    }
 
     private func focus(_ entry: RuntimeEntry) {
         if let pane = entry.paneId {
@@ -163,21 +148,19 @@ struct RuntimePanel: View {
         return name.hasPrefix("-") ? String(name.dropFirst()) : name
     }
 
-    private static func looksLikeMonitor(_ command: String, _ title: String?) -> Bool {
-        let text = ([command, title].compactMap { $0 }.joined(separator: " ")).lowercased()
-        return ["monitor", "watch", "tail", "nodemon", "watchexec", "vite", "webpack", "dev server"]
-            .contains { text.contains($0) }
+    private static func kind(for command: String) -> RuntimeKind {
+        let normalized = command.lowercased()
+        return ShellPrompt.shells.contains(normalized) || ShellPrompt.shells.contains("-" + normalized)
+            ? .shell : .monitor
     }
 }
 
 private enum RuntimeKind: String, CaseIterable, Identifiable {
-    case monitor, agent, process, shell
+    case monitor, shell
     var id: String { rawValue }
     var title: String {
         switch self {
         case .monitor: "Monitors"
-        case .agent: "Agents"
-        case .process: "Processes"
         case .shell: "Shells"
         }
     }
@@ -201,7 +184,7 @@ private struct RuntimeRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 8) {
-                OctetIcon(entry.kind == .agent ? "tool.agent" : entry.kind == .monitor ? "clock" : "terminal", size: 14)
+                OctetIcon(entry.kind == .monitor ? "clock" : "terminal", size: 14)
                     .foregroundStyle(entry.kind == .monitor ? Theme.accent : Theme.textSecondary)
                     .frame(width: 18)
                 VStack(alignment: .leading, spacing: 2) {

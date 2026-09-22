@@ -2,6 +2,12 @@ import AppKit
 import Foundation
 import SwiftUI
 
+struct RuntimeChildProcess: Equatable, Identifiable {
+    let pid: Int
+    let name: String
+    var id: Int { pid }
+}
+
 /// Live mirror of Octet's session: subscribes to session server events and
 /// re-fetches `session.snapshot` (coalesced) whenever anything changes.
 @MainActor
@@ -47,6 +53,8 @@ final class SessionStore: ObservableObject {
     /// Process trees for the runtime panel, fetched only while that panel is
     /// open so ordinary snapshot polling stays light.
     @Published private(set) var paneProcesses: [String: ShellPrompt.ProcessInfo] = [:]
+    /// Descendants of native agent processes, keyed by conversation id.
+    @Published private(set) var nativeRuntimeProcesses: [String: [RuntimeChildProcess]] = [:]
     private var loadingPaneProcesses = false
     /// True while the focused pane sits at its shell's own prompt.
     var focusedPaneAtPrompt: Bool { ShellPrompt.isAtPrompt(focusedProcess) }
@@ -178,11 +186,12 @@ final class SessionStore: ObservableObject {
         }
     }
 
-    func refreshPaneProcesses(in workspaceId: String?) {
+    func refreshPaneProcesses(in workspaceId: String?, nativeRoots: [String: Int] = [:]) {
         guard !loadingPaneProcesses else { return }
         let panes = workspaceId.map { id in snapshot.panes.filter { $0.workspaceId == id } } ?? snapshot.panes
-        guard !panes.isEmpty else {
+        guard !panes.isEmpty || !nativeRoots.isEmpty else {
             paneProcesses = [:]
+            nativeRuntimeProcesses = [:]
             return
         }
         loadingPaneProcesses = true
@@ -197,16 +206,41 @@ final class SessionStore: ObservableObject {
             let processTree = Self.processTree()
             for (paneId, info) in found {
                 var enriched = info
-                let foreground = Set(info.foreground.map(\.pid))
-                enriched.background = Self.descendants(of: foreground, in: processTree)
-                    .filter { !foreground.contains($0.pid) }
+                let namedAgentRoots = info.foreground.filter { process in
+                    let command = (process.name as NSString).lastPathComponent
+                        .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+                    return AgentBrand.forAgent(command)?.id == "claude"
+                }
+                let directChildren = info.foreground.filter { foreground in
+                    processTree.contains { $0.pid == foreground.pid && $0.parent == info.shellPid }
+                }
+                let nonShell = info.foreground.filter { process in
+                    let command = (process.name as NSString).lastPathComponent.lowercased()
+                    return !ShellPrompt.shells.contains(command) && !ShellPrompt.shells.contains("-" + command)
+                }
+                let rootProcesses: [(name: String, pid: Int)]
+                if !namedAgentRoots.isEmpty {
+                    rootProcesses = namedAgentRoots
+                } else if !directChildren.isEmpty {
+                    rootProcesses = directChildren
+                } else {
+                    rootProcesses = Array(nonShell.prefix(1))
+                }
+                let roots = Set(rootProcesses.map(\.pid))
+                enriched.background = Self.descendants(of: roots, in: processTree)
                     .map { (name: $0.name, pid: $0.pid) }
                 found[paneId] = enriched
+            }
+            var nativeFound: [String: [RuntimeChildProcess]] = [:]
+            for (sessionId, pid) in nativeRoots {
+                nativeFound[sessionId] = Self.descendants(of: [pid], in: processTree)
+                    .map { RuntimeChildProcess(pid: $0.pid, name: $0.name) }
             }
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.loadingPaneProcesses = false
                 self.paneProcesses = found
+                self.nativeRuntimeProcesses = nativeFound
             }
         }
     }

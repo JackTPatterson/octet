@@ -146,6 +146,12 @@ final class AgentSession: ObservableObject, Identifiable {
     }
     private var needsRestart = false
     private var process: Process?
+    /// The live CLI process behind this conversation. Runtime inspection uses
+    /// it as the root so unrelated shells and agents never leak into the panel.
+    var runtimePID: Int? {
+        guard let process, process.isRunning else { return nil }
+        return Int(process.processIdentifier)
+    }
     private var stdin: FileHandle?
     private var lineBuffer = Data()
     private var stderrTail = ""

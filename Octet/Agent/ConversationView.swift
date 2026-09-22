@@ -259,15 +259,63 @@ private struct Transcript: View {
                 || lower.contains("quota exceeded") || lower.contains("insufficient_quota")
                 || (lower.contains("limit") && lower.contains("reset"))
         }) else { return nil }
-        let url = message.split(whereSeparator: \.isWhitespace)
-            .map { String($0).trimmingCharacters(in: CharacterSet(charactersIn: "·,.;()")) }
-            .first { $0.hasPrefix("https://") || $0.hasPrefix("http://") }
-            .flatMap(URL.init(string:))
-        let copy = url.map { message.replacingOccurrences(of: $0.absoluteString, with: "") }
-            .map { $0.replacingOccurrences(of: " ·  · ", with: " · ").trimmingCharacters(in: .whitespaces) }
-            ?? message
+        let parts = message.split(separator: "·").map {
+            String($0).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        var lines: [String] = []
+        var actions: [AgentBlockAction] = []
+        for part in parts {
+            if let url = Self.link(in: part) {
+                let lower = part.lowercased()
+                let title = lower.contains("raise") ? "Raise limit"
+                    : lower.contains("usage") || lower.contains("settings") ? "Manage usage" : "Open link"
+                actions.append(AgentBlockAction(title: title, url: url))
+            } else if !part.isEmpty {
+                lines.append(Self.sentence(part))
+            }
+        }
         return AgentBlockState(title: "\(session.engine.displayName) usage limit reached",
-                               message: copy, actionURL: url)
+                               message: lines.joined(separator: "\n"), actions: actions,
+                               resetAt: Self.resetDate(in: message))
+    }
+
+    /// CLI notices sometimes omit the scheme (`claude.ai/settings/...`).
+    /// Accept web-looking tokens, while leaving ordinary dotted prose alone.
+    private static func link(in text: String) -> URL? {
+        let token = text.split(whereSeparator: \.isWhitespace)
+            .map { String($0).trimmingCharacters(in: CharacterSet(charactersIn: "·,.;()")) }
+            .first { value in
+                value.hasPrefix("https://") || value.hasPrefix("http://")
+                    || (value.contains(".") && value.contains("/"))
+            }
+        guard let token else { return nil }
+        return URL(string: token.contains("://") ? token : "https://" + token)
+    }
+
+    private static func sentence(_ text: String) -> String {
+        guard let first = text.first else { return text }
+        return first.uppercased() + text.dropFirst()
+    }
+
+    private static func resetDate(in message: String, now: Date = Date()) -> Date? {
+        guard message.lowercased().contains("reset"),
+              let expression = try? NSRegularExpression(pattern: #"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b"#,
+                                                        options: .caseInsensitive),
+              let match = expression.firstMatch(in: message, range: NSRange(message.startIndex..., in: message)),
+              let hourRange = Range(match.range(at: 1), in: message),
+              var hour = Int(message[hourRange]) else { return nil }
+        let minute = Range(match.range(at: 2), in: message).flatMap { Int(message[$0]) } ?? 0
+        let meridiem = Range(match.range(at: 3), in: message).map { message[$0].lowercased() } ?? "am"
+        if meridiem == "pm", hour < 12 { hour += 12 }
+        if meridiem == "am", hour == 12 { hour = 0 }
+        let timezone = message.split(separator: "(").dropFirst().first
+            .flatMap { $0.split(separator: ")").first }
+            .flatMap { TimeZone(identifier: String($0)) }
+            ?? .current
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timezone
+        return calendar.nextDate(after: now, matching: DateComponents(hour: hour, minute: minute),
+                                 matchingPolicy: .nextTime)
     }
 }
 
@@ -319,7 +367,14 @@ private struct EmptyConversation: View {
 private struct AgentBlockState {
     let title: String
     let message: String
-    var actionURL: URL?
+    var actions: [AgentBlockAction] = []
+    var resetAt: Date? = nil
+}
+
+private struct AgentBlockAction: Identifiable {
+    let title: String
+    let url: URL
+    var id: String { url.absoluteString }
 }
 
 private struct AgentBlockingState: View {
@@ -339,19 +394,26 @@ private struct AgentBlockingState: View {
                 .foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
-            if let url = state.actionURL {
-                Link(destination: url) {
-                    HStack(spacing: 5) {
-                        Text("Manage usage")
-                        OctetIcon("arrow.right", size: 12)
+            if let resetAt = state.resetAt {
+                LimitCountdown(resetAt: resetAt)
+            }
+            if !state.actions.isEmpty {
+                HStack(spacing: 8) {
+                    ForEach(state.actions) { action in
+                        Link(destination: action.url) {
+                            HStack(spacing: 5) {
+                                Text(action.title)
+                                OctetIcon("arrow.right", size: 12)
+                            }
+                            .font(Theme.uiFontMedium)
+                            .foregroundStyle(Theme.textPrimary)
+                            .padding(.horizontal, 12)
+                            .frame(height: 28)
+                            .background(Theme.cardSelected)
+                            .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius).strokeBorder(Theme.border, lineWidth: 1))
+                            .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
+                        }
                     }
-                    .font(Theme.uiFontMedium)
-                    .foregroundStyle(Theme.textPrimary)
-                    .padding(.horizontal, 12)
-                    .frame(height: 28)
-                    .background(Theme.cardSelected)
-                    .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius).strokeBorder(Theme.border, lineWidth: 1))
-                    .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
                 }
             }
         }
@@ -359,6 +421,35 @@ private struct AgentBlockingState: View {
         .frame(maxWidth: .infinity, minHeight: 360, alignment: .center)
         .padding(.horizontal, 24)
         .accessibilityElement(children: .combine)
+    }
+}
+
+private struct LimitCountdown: View {
+    let resetAt: Date
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            Text(label(at: context.date))
+                .font(Theme.captionFont.monospacedDigit())
+                .foregroundStyle(Theme.textPrimary)
+                .padding(.horizontal, 10)
+                .frame(height: 24)
+                .background(Capsule().fill(Theme.card))
+                .overlay(Capsule().strokeBorder(Theme.border, lineWidth: 1))
+        }
+        .accessibilityAddTraits(.updatesFrequently)
+    }
+
+    private func label(at now: Date) -> String {
+        let remaining = max(0, Int(resetAt.timeIntervalSince(now)))
+        guard remaining > 0 else { return "Available now" }
+        let days = remaining / 86_400
+        let hours = remaining % 86_400 / 3_600
+        let minutes = remaining % 3_600 / 60
+        let seconds = remaining % 60
+        if days > 0 { return "Available in \(days)d \(hours)h \(minutes)m" }
+        if hours > 0 { return "Available in \(hours)h \(minutes)m \(seconds)s" }
+        return "Available in \(minutes)m \(seconds)s"
     }
 }
 

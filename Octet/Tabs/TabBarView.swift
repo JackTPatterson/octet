@@ -69,8 +69,10 @@ struct TabBarView: View {
             // The agents boards sit at the far right, for the tab in front.
             if showsAgentsButton { AgentsButton().padding(.trailing, 8) }
             if showsCodexButton { CodexAgentsButton().padding(.trailing, 8) }
-            RuntimePanelButton(isShowing: $ui.runtimePanelVisible)
-                .padding(.trailing, 8)
+            if showsAgentsButton || ui.runtimePanelVisible {
+                RuntimePanelButton(isShowing: $ui.runtimePanelVisible)
+                    .padding(.trailing, 8)
+            }
         }
         .frame(height: Theme.tabBarHeight)
         // The rest of the strip takes a tab too, onto the end, as a
@@ -123,7 +125,7 @@ private struct RuntimePanelButton: View {
     var body: some View {
         Button { isShowing.toggle() } label: {
             HStack(spacing: 5) {
-                OctetIcon("terminal", size: 14)
+                OctetIcon("point.3.connected.trianglepath.dotted", size: 14)
                 Text("Runtime").font(Theme.uiFontMedium)
             }
             .foregroundStyle(isShowing ? Theme.textPrimary : Theme.textSecondary)
@@ -134,7 +136,7 @@ private struct RuntimePanelButton: View {
         }
         .buttonStyle(.plain)
         .onHover { hovered = $0 }
-        .help("Show shells, monitors, and running processes")
+        .help("Show monitors and shells started by this Claude instance")
         .accessibilityLabel(isShowing ? "Hide runtime panel" : "Show runtime panel")
     }
 }
