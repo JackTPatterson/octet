@@ -5,30 +5,51 @@ import SwiftUI
 struct AgentStateGlyph: View {
     let status: EngineAgentStatus
     var size: CGFloat = 10
+    @ObservedObject private var motion = MotionPreferences.shared
+    @State private var appeared = false
 
     var body: some View {
-        switch status {
-        case .working:
-            if MotionPreferences.shared.animates(.agentStatus) {
-                SpinnerArc(size: size)
-            } else {
-                Circle()
-                    .trim(from: 0.15, to: 0.85)
-                    .stroke(Theme.accent, style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
-                    .frame(width: size - 1, height: size - 1)
-            }
-        case .blocked:
-            Image("state-blocked")
-                .resizable()
+        Group {
+            switch status {
+            case .working:
+                if motion.animates(.agentStatus) {
+                    SpinnerArc(size: size)
+                } else {
+                    Circle()
+                        .trim(from: 0.15, to: 0.85)
+                        .stroke(Theme.accent, style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
+                        .frame(width: size - 1, height: size - 1)
+                }
+            case .blocked:
+                ZStack {
+                    Circle().fill(Color(hex: AgentStateColor.blocked))
+                    Text("?")
+                        .font(.system(size: size * 0.78, weight: .black, design: .rounded))
+                        .foregroundStyle(Color.white)
+                        .offset(y: -0.25)
+                }
                 .frame(width: size + 2, height: size + 2)
-                .foregroundStyle(Color(hex: AgentStateColor.blocked))
-        case .done:
-            OctetIcon("checkmark", size: (size - 1) * 1.35)
-                .foregroundStyle(Color(hex: AgentStateColor.done))
-        case .idle:
-            Circle().fill(Theme.textTertiary).frame(width: size - 4, height: size - 4)
-        case .unknown:
-            Circle().strokeBorder(Theme.textTertiary, lineWidth: 1).frame(width: size - 3, height: size - 3)
+            case .done:
+                OctetIcon("checkmark", size: (size - 1) * 1.35)
+                    .foregroundStyle(Color(hex: AgentStateColor.done))
+            case .idle:
+                Circle().fill(Theme.textTertiary).frame(width: size - 4, height: size - 4)
+            case .unknown:
+                Circle().strokeBorder(Theme.textTertiary, lineWidth: 1).frame(width: size - 3, height: size - 3)
+            }
+        }
+        .scaleEffect(appeared ? 1 : 0.55)
+        .opacity(appeared ? 1 : 0)
+        .onAppear { animateIn() }
+        .onChange(of: status) { _, _ in
+            appeared = false
+            DispatchQueue.main.async { animateIn() }
+        }
+    }
+
+    private func animateIn() {
+        motion.perform(.agentStatus, .spring(response: 0.28, dampingFraction: 0.62)) {
+            appeared = true
         }
     }
 }

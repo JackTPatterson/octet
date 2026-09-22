@@ -266,18 +266,9 @@ private struct WorkspaceCard: View {
         .background(cardBackground(isSelected: isSelected, hue: brand?.hueHex))
         .overlay(
             RoundedRectangle(cornerRadius: Theme.rowRadius)
-                .strokeBorder(isSelected || hovered ? Theme.border : Theme.border.opacity(0.6), lineWidth: 1)
+                .strokeBorder(isSelected ? Theme.textPrimary.opacity(0.78)
+                    : (hovered ? Theme.border : Theme.border.opacity(0.6)), lineWidth: 1)
         )
-        // A leading rail marks the focused workspace even under a hue tint.
-        .overlay(alignment: .leading) {
-            if isSelected {
-                Capsule()
-                    .fill(brand?.hueHex.map { Color(hex: $0) } ?? Theme.accent)
-                    .frame(width: 3)
-                    .padding(.vertical, 6)
-                    .padding(.leading, 2)
-            }
-        }
         .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
         .contentShape(Rectangle())
         .onHover { hovering in
