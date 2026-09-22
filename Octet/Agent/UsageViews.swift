@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Allowance windows as small rings: "5h ◔ 6%  7d ◑ 55%". Amber from 70%,
@@ -50,25 +51,32 @@ struct UsageMeter: View {
 /// One chip per agent CLI in the title bar: its mark and plan, then its
 /// allowance for subscriptions or "API" for pay-as-you-go keys.
 struct AccountChips: View {
+    let runningAgents: Set<String>
     @ObservedObject private var store = AccountStore.shared
+    @ObservedObject private var discovery = AgentDiscoveryStore.shared
     /// The agent whose card is up. Hovering a chip opens it.
     @State private var hovered: String?
 
     var body: some View {
         HStack(spacing: 8) {
-            ForEach(["claude", "codex"], id: \.self) { agent in
-                if let account = store.accounts[agent], account.kind == .subscription || account.kind == .apiKey {
-                    chip(account)
-                        .onHover { inside in
-                            if inside { hovered = account.agent }
-                            else if hovered == account.agent { hovered = nil }
-                        }
-                        .popover(isPresented: card(account.agent), arrowEdge: .bottom) {
-                            AccountCard(account: account)
-                        }
-                }
+            ForEach(availableAgents) { agent in
+                let account = store.accounts[agent.id] ?? AgentAccount(agent: agent.id, kind: .unknown)
+                chip(account)
+                    .onHover { inside in
+                        if inside { hovered = account.agent }
+                        else if hovered == account.agent { hovered = nil }
+                    }
+                    .popover(isPresented: card(account.agent), arrowEdge: .bottom) {
+                        AccountCard(account: account, isRunning: runningAgents.contains(account.agent))
+                    }
             }
         }
+    }
+
+    /// Usage support varies by CLI, but the title bar should still represent
+    /// every agent that can actually be started on this machine.
+    private var availableAgents: [DiscoveredAgent] {
+        discovery.agents.filter { $0.executablePath != nil }
     }
 
     /// Bound to the card, so dismissing it any other way (Esc, a click
@@ -87,8 +95,10 @@ struct AccountChips: View {
                 // Only the window closest to its limit, which is the one worth
                 // knowing at a glance. The hover card has the rest.
                 UsageMeter(windows: [tightest], updatedAt: account.updatedAt)
+            } else if account.kind == .signedOut {
+                Text("Signed out").font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
             } else {
-                Text(account.plan ?? "Plan").font(Theme.captionFont).foregroundStyle(Theme.textSecondary)
+                Text(account.plan ?? "Ready").font(Theme.captionFont).foregroundStyle(Theme.textSecondary)
             }
         }
         .padding(.horizontal, 8)
@@ -105,6 +115,8 @@ struct AccountChips: View {
 /// much of it is gone and when it comes back, or why there is nothing to show.
 struct AccountCard: View {
     let account: AgentAccount
+    let isRunning: Bool
+    @ObservedObject private var store = AccountStore.shared
 
     private var brand: AgentBrand? { AgentBrand.forAgent(account.agent) }
     private var name: String { brand?.displayName ?? account.agent.capitalized }
@@ -114,6 +126,10 @@ struct AccountCard: View {
             header
             if account.kind == .apiKey {
                 note("\(name) is signed in with an API key, so there is no allowance to spend. Conversations show what each one cost.")
+            } else if account.kind == .signedOut {
+                note("\(name) is installed, but it is not signed in. Sign in with its CLI to make account usage available.")
+            } else if account.kind == .unknown {
+                note("\(name) is installed and available. Its CLI does not currently expose account-level usage to Octet.")
             } else if account.live.isEmpty {
                 note(pending)
             } else {
@@ -126,6 +142,11 @@ struct AccountCard: View {
                         .foregroundStyle(Theme.textTertiary)
                 }
             }
+            if account.kind == .subscription {
+                UsageRateGraph(samples: store.history[account.agent] ?? [],
+                               window: account.tightest,
+                               updatedAt: account.updatedAt)
+            }
         }
         .padding(12)
         .frame(width: 256, alignment: .leading)
@@ -137,13 +158,22 @@ struct AccountCard: View {
             if let brand { AgentLogo(brand: brand, size: 13) }
             Text(name).font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary)
             Spacer(minLength: 8)
-            Text(account.kind == .apiKey ? (account.plan ?? "API key") : (account.plan ?? "Subscription"))
+            Text(accountLabel)
                 .font(Theme.captionFont)
                 .foregroundStyle(Theme.textSecondary)
                 .padding(.horizontal, 6)
                 .frame(height: 16)
                 .background(Theme.card)
                 .clipShape(Capsule())
+        }
+    }
+
+    private var accountLabel: String {
+        switch account.kind {
+        case .apiKey: return account.plan ?? "API key"
+        case .subscription: return account.plan ?? "Subscription"
+        case .signedOut: return "Signed out"
+        case .unknown: return "Available"
         }
     }
 
@@ -193,11 +223,19 @@ struct AccountCard: View {
 
     private func bar(_ used: Double) -> some View {
         GeometryReader { proxy in
+            let filledWidth = max(3, proxy.size.width * min(1, max(0, used)))
             ZStack(alignment: .leading) {
                 Capsule().fill(Theme.border)
                 Capsule()
                     .fill(UsageMeter.color(used))
-                    .frame(width: max(3, proxy.size.width * min(1, max(0, used))))
+                    .frame(width: filledWidth)
+                    .overlay(alignment: .leading) {
+                        if isRunning {
+                            UsageBarBeam()
+                                .frame(width: filledWidth)
+                                .clipShape(Capsule())
+                        }
+                    }
             }
         }
         .frame(height: 5)
@@ -209,6 +247,114 @@ struct AccountCard: View {
         Calendar.current.isDateInToday(date)
             ? date.formatted(date: .omitted, time: .shortened)
             : date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
+    }
+}
+
+/// A narrow highlight that travels through a live allowance bar. It is shown
+/// only while that agent is actively working; Reduce Motion keeps the bar
+/// static instead of substituting another animation.
+private struct UsageBarBeam: View {
+    var body: some View {
+        if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            TimelineView(.animation) { context in
+                GeometryReader { proxy in
+                    let width = proxy.size.width
+                    let beam = max(10, width * 0.28)
+                    let phase = context.date.timeIntervalSinceReferenceDate
+                        .truncatingRemainder(dividingBy: 1.35) / 1.35
+                    LinearGradient(
+                        colors: [.clear, .white.opacity(0.75), .clear],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    .frame(width: beam)
+                    .offset(x: -beam + (width + beam) * phase)
+                }
+            }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
+    }
+}
+
+/// Consumption speed for the allowance currently closest to its limit.
+/// Samples persist across launches, so the graph becomes useful without the
+/// popover having to remain open.
+private struct UsageRateGraph: View {
+    let samples: [UsageHistorySample]
+    let window: UsageWindow?
+    let updatedAt: Date?
+
+    private var points: [UsageRatePoint] {
+        guard let window else { return [] }
+        let measured = UsageRate.points(samples: samples, window: window.name)
+        if !measured.isEmpty { return Array(measured.suffix(48)) }
+        return UsageRate.bootstrap(window: window, at: updatedAt ?? Date())
+    }
+
+    private var isEstimated: Bool {
+        guard let window else { return false }
+        return UsageRate.points(samples: samples, window: window.name).isEmpty && !points.isEmpty
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Rectangle().fill(Theme.divider).frame(height: 1)
+            HStack {
+                Text("USAGE RATE")
+                    .font(Theme.headerFont)
+                    .kerning(0.4)
+                    .foregroundStyle(Theme.textTertiary)
+                Spacer()
+                if let latest = points.last {
+                    Text((isEstimated ? "~" : "") + Self.rate(latest.percentPerHour))
+                        .font(Theme.captionFont.monospacedDigit())
+                        .foregroundStyle(Theme.textSecondary)
+                }
+            }
+            chart
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(points.last.map { "Usage rate \(Self.rate($0.percentPerHour))" }
+            ?? "Usage rate history is being collected")
+    }
+
+    private var chart: some View {
+        Canvas { context, size in
+            let baseline = Path(CGRect(x: 0, y: size.height - 0.5, width: size.width, height: 0.5))
+            context.fill(baseline, with: .color(Theme.border))
+            guard !points.isEmpty else { return }
+            let first = points.first!.at.timeIntervalSinceReferenceDate
+            let span = max(1, points.last!.at.timeIntervalSinceReferenceDate - first)
+            let ceiling = max(1, points.map(\.percentPerHour).max() ?? 1)
+            func point(_ value: UsageRatePoint) -> CGPoint {
+                CGPoint(x: (value.at.timeIntervalSinceReferenceDate - first) / span * size.width,
+                        y: size.height - min(1, value.percentPerHour / ceiling) * (size.height - 4) - 2)
+            }
+            var line = Path()
+            line.move(to: point(points[0]))
+            for value in points.dropFirst() { line.addLine(to: point(value)) }
+            context.stroke(line, with: .color(Theme.accent), style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+            let latest = point(points.last!)
+            context.fill(Path(ellipseIn: CGRect(x: latest.x - 2, y: latest.y - 2, width: 4, height: 4)),
+                         with: .color(Theme.accent))
+        }
+        .frame(height: 58)
+        .padding(6)
+        .background(Theme.card)
+        .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius).strokeBorder(Theme.border, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
+        .overlay {
+            if points.isEmpty {
+                Text("Collecting history")
+                    .font(Theme.captionFont)
+                    .foregroundStyle(Theme.textTertiary)
+            }
+        }
+    }
+
+    private static func rate(_ value: Double) -> String {
+        value < 0.1 ? "<0.1% / hr" : String(format: "%.1f%% / hr", value)
     }
 }
 

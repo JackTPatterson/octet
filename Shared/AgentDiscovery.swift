@@ -47,6 +47,13 @@ enum AgentDiscovery {
     static func searchDirectories(shellPath: String?, home: String = NSHomeDirectory()) -> [String] {
         var directories = (shellPath?.components(separatedBy: ":") ?? []).filter { !$0.isEmpty }
         directories += extraDirectories.map { $0.hasPrefix("~") ? home + $0.dropFirst() : $0 }
+        // NVM keeps executables under a versioned directory. GUI launches
+        // often do not source the shell line that adds the active one to PATH.
+        let nvmRoot = home + "/.nvm/versions/node"
+        if let versions = try? FileManager.default.contentsOfDirectory(atPath: nvmRoot) {
+            directories += versions.sorted(by: { $0.localizedStandardCompare($1) == .orderedDescending })
+                .map { nvmRoot + "/" + $0 + "/bin" }
+        }
         directories += AgentHosts.all(home: home).map { "\($0.home)/bin" }
         var seen = Set<String>()
         return directories.filter { seen.insert($0).inserted }

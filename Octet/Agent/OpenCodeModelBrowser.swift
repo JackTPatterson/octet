@@ -84,7 +84,7 @@ struct OpenCodeModelBrowser: View {
             Text(error).font(Theme.uiFont).foregroundStyle(Theme.danger)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            ProgressView().controlSize(.small).frame(maxWidth: .infinity, maxHeight: .infinity)
+            LoadingLine(width: 40).frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 

@@ -16,11 +16,16 @@ enum ShellPrompt {
         var shellPid: Int?
         /// name and pid of each foreground process.
         var foreground: [(name: String, pid: Int)]
+        /// Descendants kept alive behind the foreground command. Populated by
+        /// the runtime inspector, not required for prompt detection.
+        var background: [(name: String, pid: Int)] = []
 
         static func == (lhs: ProcessInfo, rhs: ProcessInfo) -> Bool {
             lhs.shellPid == rhs.shellPid
                 && lhs.foreground.map(\.pid) == rhs.foreground.map(\.pid)
                 && lhs.foreground.map(\.name) == rhs.foreground.map(\.name)
+                && lhs.background.map(\.pid) == rhs.background.map(\.pid)
+                && lhs.background.map(\.name) == rhs.background.map(\.name)
         }
     }
 

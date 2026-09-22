@@ -53,6 +53,9 @@ struct RootView: View {
             }
         }
         .onChange(of: window.focusedPaneId) { _, _ in twin.snapshotChanged() }
+        // Process discovery lands after the first grid reading. Recheck once
+        // the shell is recognized so an untouched initial tab gets its splash.
+        .onChange(of: window.focusedPaneAtPrompt) { _, _ in observeSplash(terminalAnchor.grid) }
         .onChange(of: twin.isVisible) { _, visible in DebugSnapshot.overlay("twin", visible) }
         .onChange(of: settings.values.agentQuickAnswers) { _, _ in twin.snapshotChanged() }
         .onChange(of: store.snapshot) { _, snapshot in
@@ -115,7 +118,7 @@ struct RootView: View {
                     .transition(motion.animates(.sidebar) ? .move(edge: .leading) : .identity)
                 }
                 VStack(spacing: 0) {
-                    TabBarView(store: store)
+                    TabBarView(store: store, ui: ui)
                         .id(settings.themeKey)
                     if let offer = agentOffer {
                         AgentOfferBanner(agent: offer,
@@ -127,6 +130,12 @@ struct RootView: View {
                     }
                     terminal
                         .overlay { terminalOverlay }
+                }
+                if ui.runtimePanelVisible {
+                    Rectangle().fill(Theme.divider).frame(width: 1)
+                    RuntimePanel(store: store)
+                        .frame(width: 292)
+                        .transition(motion.animates(.sidebar) ? .move(edge: .trailing) : .identity)
                 }
             }
         }
@@ -180,6 +189,7 @@ struct RootView: View {
         .overlay { ConfirmDialog(center: confirmations) }
         .animation(motion.animation(.palette, .smooth(duration: 0.16)), value: ui.paletteVisible)
         .animation(motion.animation(.sidebar), value: ui.sidebarVisible)
+        .animation(motion.animation(.sidebar), value: ui.runtimePanelVisible)
         .animation(motion.animation(.sidebar), value: boardHere)
     }
 
@@ -340,7 +350,7 @@ struct RootView: View {
             // A conversation covers the terminal, so the patch over the engine's
             // tab row would only show through it.
             if let cover = terminalAnchor.chromeCover, !twin.isVisible, agents.active(in: window.focusedWorkspace?.workspaceId) == nil, boardHere == nil {
-                Color(hex: TerminalTheme.named(settings.values.themeName).background)
+                Theme.terminalBackground
                     .frame(width: cover.width, height: cover.height)
                     .offset(x: sidebarInset + cover.minX,
                             y: contentTop + cover.minY)
@@ -409,10 +419,10 @@ struct RootView: View {
                 openFolder: { window.runInFocusedPane("cd " + shellQuote($0)) },
                 shortcuts: [
                     .init(title: "Command Palette", keys: OctetShortcut.palette.display) { ui.paletteVisible = true },
-                    .init(title: "New Claude Conversation", keys: OctetShortcut.newConversation.display) { window.newConversation() },
-                    .init(title: "New Codex Conversation") { window.newConversation(engine: .codex) },
-                    .init(title: "New Pi Conversation") { window.newConversation(engine: .pi) },
-                    .init(title: "New Qwen Conversation") { window.newConversation(engine: .qwen) },
+                    .init(title: "New Claude Conversation", keys: OctetShortcut.newConversation.display, agent: "claude") { window.newConversation() },
+                    .init(title: "New Codex Conversation", agent: "codex") { window.newConversation(engine: .codex) },
+                    .init(title: "New Pi Conversation", agent: "pi") { window.newConversation(engine: .pi) },
+                    .init(title: "New Qwen Conversation", agent: "qwen") { window.newConversation(engine: .qwen) },
                     .init(title: "Split Right", keys: OctetShortcut.splitRight.display) { window.splitPane(.right) },
                     .init(title: "Agents Board", keys: OctetShortcut.agents.display) { window.toggleAgentsBoard() },
                 ]
@@ -441,8 +451,7 @@ struct RootView: View {
                 },
                 onSurface: { window.surface = $0 }
             )
-            .background(Color(hex: TerminalTheme.named(settings.values.themeName).background)
-                .opacity(settings.values.effectiveBackgroundOpacity))
+            .background(Theme.terminalBackground.opacity(settings.values.effectiveBackgroundOpacity))
 
         } else {
             VStack(spacing: 8) {
@@ -482,6 +491,7 @@ final class UIState: ObservableObject {
     @Published var sidebarVisible = UserDefaults.standard.object(forKey: "octet.sidebarVisible") as? Bool ?? true {
         didSet { UserDefaults.standard.set(sidebarVisible, forKey: "octet.sidebarVisible") }
     }
+    @Published var runtimePanelVisible = false
     @Published var paletteVisible = false
     /// Drag the sidebar's edge to resize it (200pt up to half the window).
     @Published var sidebarWidth: CGFloat = {
@@ -557,7 +567,7 @@ private struct TitleBar: View {
             // A connected engine is the normal state and says nothing worth a
             // badge; only the wait for one does.
             if !store.isConnected { connectingIndicator }
-            AccountChips()
+            AccountChips(runningAgents: runningAgents)
                 .padding(.trailing, 12)
         }
         // Centered on the window, not between the uneven side groups.
@@ -592,6 +602,17 @@ private struct TitleBar: View {
             }
         }
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.divider).frame(height: 1) }
+    }
+
+    private var runningAgents: Set<String> {
+        let terminal = store.snapshot.agents.compactMap { agent -> String? in
+            guard agent.agentStatus == .working else { return nil }
+            return AgentBrand.forAgent(agent.agent ?? agent.displayAgent ?? agent.name)?.id
+        }
+        let native = agents.sessions.compactMap { session in
+            session.conversation.isRunning ? session.engine.agent : nil
+        }
+        return Set(terminal + native)
     }
 
     private var titleText: String {

@@ -23,9 +23,9 @@ final class AgentDiscoveryStore: ObservableObject {
         scannedAt = UserDefaults.standard.object(forKey: Self.scannedKey) as? Date
     }
 
-    /// Scans once at launch, and whenever a day has passed since the last
-    /// one: agents are installed and updated rarely.
-    func scanIfStale(after interval: TimeInterval = 86400) {
+    /// Keeps the cached list for immediate UI, then scans each launch by
+    /// default so an agent installed between launches appears straight away.
+    func scanIfStale(after interval: TimeInterval = 0) {
         guard let scannedAt else { return scan() }
         // A scan saved before `onShellPath` existed would make the splash type
         // full paths where a name would do, so it doesn't wait out the day.

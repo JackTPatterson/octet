@@ -2237,6 +2237,15 @@ final class AgentDiscoveryTests: XCTestCase {
         XCTAssertTrue(directories.contains("/Users/test/.opencode/bin"))
     }
 
+    func testSearchDirectoriesIncludesVersionedNVMBins() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
+        defer { try? FileManager.default.removeItem(atPath: home) }
+        try FileManager.default.createDirectory(atPath: home + "/.nvm/versions/node/v24.1.0/bin",
+                                                withIntermediateDirectories: true)
+        let directories = AgentDiscovery.searchDirectories(shellPath: nil, home: home)
+        XCTAssertTrue(directories.contains(home + "/.nvm/versions/node/v24.1.0/bin"))
+    }
+
     func testVersionIgnoresCommandsThatSayTooMuch() throws {
         let home = try makeHome()
         defer { try? FileManager.default.removeItem(atPath: home) }
@@ -2249,6 +2258,29 @@ final class AgentDiscoveryTests: XCTestCase {
         FileManager.default.createFile(atPath: quiet, contents: Data("#!/bin/sh\necho\necho 'agent 1.2.3'\n".utf8),
                                        attributes: [.posixPermissions: 0o755])
         XCTAssertEqual(AgentDiscovery.version(of: quiet), "agent 1.2.3")
+    }
+}
+
+final class UsageRateTests: XCTestCase {
+    func testRateUsesIncreasePerHourAndIgnoresResets() {
+        let start = Date(timeIntervalSince1970: 1_790_000_000)
+        let samples = [
+            UsageHistorySample(at: start, windows: [UsageWindow(name: "5h", used: 0.10, resetsAt: nil)]),
+            UsageHistorySample(at: start.addingTimeInterval(3600), windows: [UsageWindow(name: "5h", used: 0.15, resetsAt: nil)]),
+            UsageHistorySample(at: start.addingTimeInterval(7200), windows: [UsageWindow(name: "5h", used: 0.02, resetsAt: nil)]),
+        ]
+        let points = UsageRate.points(samples: samples, window: "5h")
+        XCTAssertEqual(points.count, 1)
+        XCTAssertEqual(points[0].percentPerHour, 5, accuracy: 0.0001)
+    }
+
+    func testRateBootstrapsFromWindowResetBeforeHistoryExists() {
+        let reading = Date(timeIntervalSince1970: 1_790_000_000)
+        let window = UsageWindow(name: "5h", used: 0.20,
+                                 resetsAt: reading.addingTimeInterval(2 * 3600))
+        let points = UsageRate.bootstrap(window: window, at: reading)
+        XCTAssertEqual(points.count, 2)
+        XCTAssertEqual(points.last?.percentPerHour ?? 0, 20.0 / 3.0, accuracy: 0.0001)
     }
 }
 

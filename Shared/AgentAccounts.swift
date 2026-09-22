@@ -10,6 +10,61 @@ struct UsageWindow: Codable, Equatable {
     let resetsAt: Date?
 }
 
+/// One account allowance reading retained for the usage-rate graph.
+struct UsageHistorySample: Codable, Equatable {
+    let at: Date
+    let windows: [UsageWindow]
+}
+
+struct UsageRatePoint: Equatable, Identifiable {
+    let at: Date
+    /// Percentage points of the allowance consumed per hour.
+    let percentPerHour: Double
+    var id: Date { at }
+}
+
+enum UsageRate {
+    static func points(samples: [UsageHistorySample], window name: String) -> [UsageRatePoint] {
+        zip(samples, samples.dropFirst()).compactMap { previous, current in
+            guard current.at > previous.at,
+                  let before = previous.windows.first(where: { $0.name == name })?.used,
+                  let after = current.windows.first(where: { $0.name == name })?.used,
+                  after >= before else { return nil } // A falling value is a reset.
+            let hours = current.at.timeIntervalSince(previous.at) / 3600
+            guard hours > 0 else { return nil }
+            return UsageRatePoint(at: current.at, percentPerHour: (after - before) * 100 / hours)
+        }
+    }
+
+    /// Before Octet has observed two readings, estimate the average rate from
+    /// the current window's known start and reset. Once history exists the UI
+    /// replaces this with the measured interval rate above.
+    static func bootstrap(window: UsageWindow, at readingDate: Date) -> [UsageRatePoint] {
+        guard let resetsAt = window.resetsAt,
+              let duration = duration(named: window.name) else { return [] }
+        let startedAt = resetsAt.addingTimeInterval(-duration)
+        let elapsedHours = readingDate.timeIntervalSince(startedAt) / 3600
+        guard elapsedHours > 0 else { return [] }
+        let rate = window.used * 100 / elapsedHours
+        return [
+            UsageRatePoint(at: startedAt, percentPerHour: rate),
+            UsageRatePoint(at: readingDate, percentPerHour: rate),
+        ]
+    }
+
+    private static func duration(named name: String) -> TimeInterval? {
+        guard let token = name.split(separator: " ").first,
+              let unit = token.last,
+              let value = Double(token.dropLast()) else { return nil }
+        switch unit {
+        case "m": return value * 60
+        case "h": return value * 3600
+        case "d": return value * 24 * 3600
+        default: return nil
+        }
+    }
+}
+
 /// How an agent CLI is signed in: a subscription (show allowance) or an API
 /// key (show cost).
 struct AgentAccount: Codable, Equatable {

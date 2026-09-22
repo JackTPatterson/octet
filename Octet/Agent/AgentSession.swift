@@ -85,7 +85,13 @@ final class AgentSession: ObservableObject, Identifiable {
     let engine: Engine
     let workspaceId: String
     let cwd: String
-    @Published var conversation = AgentConversation()
+    @Published var conversation = AgentConversation() {
+        didSet {
+            if conversation.isRunning != oldValue.isRunning {
+                AgentCenter.shared.objectWillChange.send()
+            }
+        }
+    }
     @Published var title: String {
         // The title bar and tab strip watch the center, not each session.
         didSet {
@@ -890,11 +896,14 @@ final class AgentSession: ObservableObject, Identifiable {
         args += hasTurns ? ["--resume", sessionId] : ["--session-id", sessionId]
 
         // Through the login shell, so the agent sees the same PATH and
-        // environment it gets in a terminal.
+        // environment it gets in a terminal. GUI login shells do not always
+        // source the file that adds ~/.local/bin, so use discovery's absolute
+        // executable when it found one instead of relying on PATH again.
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+        let claude = executable("claude")
         let process = Process()
         process.executableURL = URL(fileURLWithPath: shell)
-        process.arguments = ["-l", "-c", "exec claude \"$@\"", "claude"] + args
+        process.arguments = ["-l", "-c", "exec \(shellQuote(claude)) \"$@\"", "claude"] + args
         process.currentDirectoryURL = URL(fileURLWithPath: cwd)
         let input = Pipe(), output = Pipe(), errors = Pipe()
         process.standardInput = input
@@ -932,7 +941,7 @@ final class AgentSession: ObservableObject, Identifiable {
     /// Pi's documented RPC mode stays alive for the conversation and emits
     /// one JSON event per line. Its session file is retained for reopening.
     private func startPi() {
-        guard let process = spawn(command: "exec pi --mode rpc") else { return }
+        guard let process = spawn(command: "exec \(shellQuote(executable("pi"))) --mode rpc") else { return }
         self.process = process
         write(["type": "get_available_models"])
         write(["type": "get_commands"])
@@ -971,7 +980,7 @@ final class AgentSession: ObservableObject, Identifiable {
     private func startQwen() {
         var args = ["qwen", "--input-format", "stream-json", "--output-format", "stream-json", "--include-partial-messages"]
         if hasTurns, let threadId { args += ["--resume", threadId] }
-        guard let process = spawn(command: "exec qwen \"$@\"", arguments: args) else { return }
+        guard let process = spawn(command: "exec \(shellQuote(executable("qwen"))) \"$@\"", arguments: args) else { return }
         self.process = process
     }
 
@@ -982,7 +991,7 @@ final class AgentSession: ObservableObject, Identifiable {
     /// It asks for its own approvals inside its sandbox, so there's no
     /// permission channel to open the way Claude Code needs.
     private func startCodex() {
-        guard let process = spawn(command: "exec codex app-server") else {
+        guard let process = spawn(command: "exec \(shellQuote(executable("codex"))) app-server") else {
             startupError = "Couldn't start Codex."
             return
         }
@@ -1067,6 +1076,17 @@ final class AgentSession: ObservableObject, Identifiable {
             startupError = "Couldn't start \(engine.displayName): \(error.localizedDescription)"
             return nil
         }
+    }
+
+    /// Discovery searches installer-specific locations that a GUI login shell
+    /// may not source (notably ~/.local/bin and versioned NVM bins).
+    private func executable(_ agent: String) -> String {
+        if let path = AgentDiscoveryStore.shared.agents.first(where: { $0.id == agent })?.executablePath {
+            return path
+        }
+        let command = AgentHosts.executables[agent] ?? agent
+        return AgentDiscovery.locate(command: command,
+                                     in: AgentDiscovery.searchDirectories(shellPath: nil)) ?? command
     }
 
     private func stopProcess() {

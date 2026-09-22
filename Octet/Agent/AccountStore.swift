@@ -9,13 +9,19 @@ final class AccountStore: ObservableObject {
     static let shared = AccountStore()
 
     @Published private(set) var accounts: [String: AgentAccount] = [:]
+    @Published private(set) var history: [String: [UsageHistorySample]] = [:]
     private var timer: Timer?
     private static let savedKey = "octet.accounts.v1"
+    private static let historyKey = "octet.accounts.history.v1"
 
     private init() {
         if let data = UserDefaults.standard.data(forKey: Self.savedKey),
            let saved = try? JSONDecoder().decode([String: AgentAccount].self, from: data) {
             accounts = saved
+        }
+        if let data = UserDefaults.standard.data(forKey: Self.historyKey),
+           let saved = try? JSONDecoder().decode([String: [UsageHistorySample]].self, from: data) {
+            history = saved
         }
     }
 
@@ -112,9 +118,34 @@ final class AccountStore: ObservableObject {
     }
 
     private func set(_ account: AgentAccount) {
+        record(account)
         guard accounts[account.agent] != account else { return }
         accounts[account.agent] = account
         if let data = try? JSONEncoder().encode(accounts) { UserDefaults.standard.set(data, forKey: Self.savedKey) }
+    }
+
+    private func record(_ account: AgentAccount) {
+        guard account.kind == .subscription, !account.windows.isEmpty else { return }
+        let sample = UsageHistorySample(at: account.updatedAt ?? Date(), windows: account.windows)
+        var samples = history[account.agent] ?? []
+        if let last = samples.last {
+            if last == sample { return }
+            // Several windows can arrive in one event. Keep its final reading
+            // rather than creating a zero-width spike in the graph.
+            if abs(last.at.timeIntervalSince(sample.at)) < 1 {
+                samples[samples.count - 1] = sample
+            } else {
+                samples.append(sample)
+            }
+        } else {
+            samples.append(sample)
+        }
+        let cutoff = Date().addingTimeInterval(-8 * 24 * 3600)
+        samples = Array(samples.filter { $0.at >= cutoff }.suffix(2048))
+        history[account.agent] = samples
+        if let data = try? JSONEncoder().encode(history) {
+            UserDefaults.standard.set(data, forKey: Self.historyKey)
+        }
     }
 
     /// Runs a command through the login shell (the CLIs live on the user's

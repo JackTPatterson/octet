@@ -55,6 +55,7 @@ struct NewTabSplash: View {
     struct Shortcut: Identifiable {
         let title: String
         var keys: String?
+        var agent: String?
         let run: () -> Void
         var id: String { title }
     }
@@ -68,6 +69,10 @@ struct NewTabSplash: View {
     @State private var folders: [String] = RecentFolders.cached
 
     private var agents: [DiscoveredAgent] { discovery.agents.filter { $0.executablePath != nil } }
+    private var availableShortcuts: [Shortcut] {
+        let installed = Set(agents.map(\.id))
+        return shortcuts.filter { $0.agent.map(installed.contains) ?? true }
+    }
 
     private var recent: [String] {
         folders.filter { $0 != currentDirectory }.prefix(4).map { $0 }
@@ -109,7 +114,7 @@ struct NewTabSplash: View {
             }
             if showShortcuts {
                 VStack(spacing: 1) {
-                    ForEach(shortcuts) { shortcut in
+                    ForEach(availableShortcuts) { shortcut in
                         ShortcutRow(shortcut: shortcut)
                     }
                 }

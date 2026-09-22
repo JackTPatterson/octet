@@ -5,6 +5,7 @@ import SwiftUI
 /// tabs are named after the subagent.
 struct TabBarView: View {
     @ObservedObject var store: SessionStore
+    @ObservedObject var ui: UIState
     @EnvironmentObject private var window: WindowContext
     @ObservedObject private var motion = MotionPreferences.shared
     @ObservedObject private var agents = AgentCenter.shared
@@ -68,6 +69,8 @@ struct TabBarView: View {
             // The agents boards sit at the far right, for the tab in front.
             if showsAgentsButton { AgentsButton().padding(.trailing, 8) }
             if showsCodexButton { CodexAgentsButton().padding(.trailing, 8) }
+            RuntimePanelButton(isShowing: $ui.runtimePanelVisible)
+                .padding(.trailing, 8)
         }
         .frame(height: Theme.tabBarHeight)
         // The rest of the strip takes a tab too, onto the end, as a
@@ -110,6 +113,29 @@ struct TabBarView: View {
         if visible {
             Rectangle().fill(Theme.accent).frame(width: 2).padding(.vertical, 5).allowsHitTesting(false)
         }
+    }
+}
+
+private struct RuntimePanelButton: View {
+    @Binding var isShowing: Bool
+    @State private var hovered = false
+
+    var body: some View {
+        Button { isShowing.toggle() } label: {
+            HStack(spacing: 5) {
+                OctetIcon("terminal", size: 14)
+                Text("Runtime").font(Theme.uiFontMedium)
+            }
+            .foregroundStyle(isShowing ? Theme.textPrimary : Theme.textSecondary)
+            .padding(.horizontal, 7)
+            .frame(height: 24)
+            .background(isShowing ? Theme.cardSelected : hovered ? Theme.hover : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
+        .help("Show shells, monitors, and running processes")
+        .accessibilityLabel(isShowing ? "Hide runtime panel" : "Show runtime panel")
     }
 }
 

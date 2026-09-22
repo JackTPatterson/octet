@@ -13,12 +13,11 @@ struct AgentStateGlyph: View {
             switch status {
             case .working:
                 if motion.animates(.agentStatus) {
-                    SpinnerArc(size: size)
+                    LoadingLine(width: size + 2, thickness: max(1.5, size * 0.16))
                 } else {
-                    Circle()
-                        .trim(from: 0.15, to: 0.85)
-                        .stroke(Theme.accent, style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
-                        .frame(width: size - 1, height: size - 1)
+                    Capsule()
+                        .fill(Theme.accent.opacity(0.5))
+                        .frame(width: size + 2, height: max(1.5, size * 0.16))
                 }
             case .blocked:
                 ZStack {
@@ -51,21 +50,6 @@ struct AgentStateGlyph: View {
         motion.perform(.agentStatus, .spring(response: 0.28, dampingFraction: 0.62)) {
             appeared = true
         }
-    }
-}
-
-private struct SpinnerArc: View {
-    let size: CGFloat
-    @State private var rotating = false
-
-    var body: some View {
-        Circle()
-            .trim(from: 0.15, to: 0.85)
-            .stroke(Theme.accent, style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
-            .frame(width: size - 1, height: size - 1)
-            .rotationEffect(.degrees(rotating ? 360 : 0))
-            .animation(.linear(duration: 0.9).repeatForever(autoreverses: false), value: rotating)
-            .onAppear { rotating = true }
     }
 }
 

@@ -44,6 +44,10 @@ final class SessionStore: ObservableObject {
     /// What the focused pane is running, for the prompt editor: nil until
     /// the first look.
     @Published private(set) var focusedProcess: ShellPrompt.ProcessInfo?
+    /// Process trees for the runtime panel, fetched only while that panel is
+    /// open so ordinary snapshot polling stays light.
+    @Published private(set) var paneProcesses: [String: ShellPrompt.ProcessInfo] = [:]
+    private var loadingPaneProcesses = false
     /// True while the focused pane sits at its shell's own prompt.
     var focusedPaneAtPrompt: Bool { ShellPrompt.isAtPrompt(focusedProcess) }
     /// The pane `focusedProcess` describes.
@@ -172,6 +176,77 @@ final class SessionStore: ObservableObject {
             self?.refreshScheduled = false
             self?.refresh()
         }
+    }
+
+    func refreshPaneProcesses(in workspaceId: String?) {
+        guard !loadingPaneProcesses else { return }
+        let panes = workspaceId.map { id in snapshot.panes.filter { $0.workspaceId == id } } ?? snapshot.panes
+        guard !panes.isEmpty else {
+            paneProcesses = [:]
+            return
+        }
+        loadingPaneProcesses = true
+        let client = self.client
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            var found: [String: ShellPrompt.ProcessInfo] = [:]
+            for pane in panes {
+                if let info = (try? client.call("pane.process_info", ["pane_id": pane.paneId])).flatMap(ShellPrompt.parse) {
+                    found[pane.paneId] = info
+                }
+            }
+            let processTree = Self.processTree()
+            for (paneId, info) in found {
+                var enriched = info
+                let foreground = Set(info.foreground.map(\.pid))
+                enriched.background = Self.descendants(of: foreground, in: processTree)
+                    .filter { !foreground.contains($0.pid) }
+                    .map { (name: $0.name, pid: $0.pid) }
+                found[paneId] = enriched
+            }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.loadingPaneProcesses = false
+                self.paneProcesses = found
+            }
+        }
+    }
+
+    private struct RuntimeProcess {
+        let pid: Int
+        let parent: Int
+        let name: String
+    }
+
+    /// One process-table read enriches every pane. This is intentionally only
+    /// called while the Runtime panel is open.
+    private nonisolated static func processTree() -> [RuntimeProcess] {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/ps")
+        process.arguments = ["-axo", "pid=,ppid=,comm="]
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        do { try process.run() } catch { return [] }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return String(decoding: data, as: UTF8.self).split(separator: "\n").compactMap { line in
+            let fields = line.split(maxSplits: 2, whereSeparator: \.isWhitespace)
+            guard fields.count == 3, let pid = Int(fields[0]), let parent = Int(fields[1]) else { return nil }
+            return RuntimeProcess(pid: pid, parent: parent, name: String(fields[2]))
+        }
+    }
+
+    private nonisolated static func descendants(of roots: Set<Int>, in tree: [RuntimeProcess]) -> [RuntimeProcess] {
+        var family = roots
+        var changed = true
+        while changed {
+            changed = false
+            for process in tree where family.contains(process.parent) && !family.contains(process.pid) {
+                family.insert(process.pid)
+                changed = true
+            }
+        }
+        return tree.filter { family.contains($0.pid) && !roots.contains($0.pid) }
     }
 
     /// `then` runs once the new snapshot is applied, or it failed.

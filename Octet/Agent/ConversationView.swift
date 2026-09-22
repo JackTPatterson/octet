@@ -179,22 +179,27 @@ private struct Transcript: View {
 
     var body: some View {
         let items = session.conversation.items
+        let blocking = blockingState
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
-                    if items.isEmpty {
+                    if let blocking {
+                        AgentBlockingState(session: session, state: blocking)
+                    } else if items.isEmpty {
                         EmptyConversation(session: session)
                     }
-                    ForEach(items.filter(Self.isShown)) { item in
-                        ItemRow(item: item, running: session.conversation.isRunning)
-                            .equatable()
-                            .padding(.leading, item.parent == nil ? 0 : 18)
-                            .overlay(alignment: .leading) {
-                                if item.parent != nil {
-                                    Rectangle().fill(Theme.border).frame(width: 2).padding(.leading, 6)
+                    if blocking == nil {
+                        ForEach(items.filter(Self.isShown)) { item in
+                            ItemRow(item: item, running: session.conversation.isRunning)
+                                .equatable()
+                                .padding(.leading, item.parent == nil ? 0 : 18)
+                                .overlay(alignment: .leading) {
+                                    if item.parent != nil {
+                                        Rectangle().fill(Theme.border).frame(width: 2).padding(.leading, 6)
+                                    }
                                 }
-                            }
-                            .id(item.id)
+                                .id(item.id)
+                        }
                     }
                     // Visible only when scrolled to the end.
                     Color.clear.frame(height: 1).id("bottom")
@@ -230,6 +235,32 @@ private struct Transcript: View {
                 }
             }
         }
+    }
+
+    private var blockingState: AgentBlockState? {
+        let messages = [session.startupError, session.conversation.lastError].compactMap { $0 }
+        if let message = messages.first(where: { message in
+            let lower = message.lowercased()
+            return lower.contains("isn't installed") || lower.contains("not installed")
+                || lower.contains("command not found") || lower.contains("no such file")
+        }) {
+            return AgentBlockState(title: "\(session.engine.displayName) isn’t installed", message: message)
+        }
+        guard let message = messages.first(where: { message in
+            let lower = message.lowercased()
+            return lower.contains("spend limit") || lower.contains("usage limit")
+                || lower.contains("quota exceeded") || lower.contains("insufficient_quota")
+                || (lower.contains("limit") && lower.contains("reset"))
+        }) else { return nil }
+        let url = message.split(whereSeparator: \.isWhitespace)
+            .map { String($0).trimmingCharacters(in: CharacterSet(charactersIn: "·,.;()")) }
+            .first { $0.hasPrefix("https://") || $0.hasPrefix("http://") }
+            .flatMap(URL.init(string:))
+        let copy = url.map { message.replacingOccurrences(of: $0.absoluteString, with: "") }
+            .map { $0.replacingOccurrences(of: " ·  · ", with: " · ").trimmingCharacters(in: .whitespaces) }
+            ?? message
+        return AgentBlockState(title: "\(session.engine.displayName) usage limit reached",
+                               message: copy, actionURL: url)
     }
 }
 
@@ -275,6 +306,52 @@ private struct EmptyConversation: View {
             }
         }
         .padding(.top, 24)
+    }
+}
+
+private struct AgentBlockState {
+    let title: String
+    let message: String
+    var actionURL: URL?
+}
+
+private struct AgentBlockingState: View {
+    @ObservedObject var session: AgentSession
+    let state: AgentBlockState
+
+    var body: some View {
+        VStack(spacing: 12) {
+            if let brand = AgentBrand.forAgent(session.engine.agent) {
+                AgentLogo(brand: brand, size: 48)
+            }
+            Text(state.title)
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary)
+            Text(state.message)
+                .font(Theme.uiFont)
+                .foregroundStyle(Theme.textSecondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            if let url = state.actionURL {
+                Link(destination: url) {
+                    HStack(spacing: 5) {
+                        Text("Manage usage")
+                        OctetIcon("arrow.right", size: 12)
+                    }
+                    .font(Theme.uiFontMedium)
+                    .foregroundStyle(Theme.textPrimary)
+                    .padding(.horizontal, 12)
+                    .frame(height: 28)
+                    .background(Theme.cardSelected)
+                    .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius).strokeBorder(Theme.border, lineWidth: 1))
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
+                }
+            }
+        }
+        .frame(maxWidth: 440)
+        .frame(maxWidth: .infinity, minHeight: 360, alignment: .center)
+        .padding(.horizontal, 24)
+        .accessibilityElement(children: .combine)
     }
 }
 
