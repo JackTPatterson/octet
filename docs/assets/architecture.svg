@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 610" role="img" aria-labelledby="title desc">
+  <title id="title">Octet architecture</title>
+  <desc id="desc">The native Octet interface communicates with the persistent Herdr session server, GhosttyKit terminal renderer, agent command line processes, transcripts, and native configuration files.</desc>
+  <defs>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#24b7e5"/>
+      <stop offset="1" stop-color="#167da3"/>
+    </linearGradient>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0 0 8 4 0 8Z" class="arrowhead"/>
+    </marker>
+    <style>
+      .canvas { fill: #f6f7f8; }
+      .shell { fill: #ffffff; stroke: #d9dde2; }
+      .card { fill: #f7f8f9; stroke: #d9dde2; }
+      .subtle { fill: #eef1f3; stroke: #d9dde2; }
+      .ink { fill: #17191c; }
+      .muted { fill: #646b73; }
+      .line { fill: none; stroke: #9098a1; stroke-width: 2; marker-end: url(#arrow); }
+      .arrowhead { fill: #9098a1; }
+      .accentText { fill: #087da5; }
+      text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      @media (prefers-color-scheme: dark) {
+        .canvas { fill: #0d0e10; }
+        .shell { fill: #141517; stroke: #303338; }
+        .card { fill: #191b1e; stroke: #303338; }
+        .subtle { fill: #212328; stroke: #34373d; }
+        .ink { fill: #f1f2f3; }
+        .muted { fill: #979da5; }
+        .line { stroke: #626973; }
+        .arrowhead { fill: #626973; }
+        .accentText { fill: #39bfe9; }
+      }
+    </style>
+  </defs>
+
+  <rect class="canvas" width="1200" height="610" rx="24"/>
+
+  <rect class="shell" x="38" y="34" width="1124" height="542" rx="20"/>
+  <circle cx="68" cy="64" r="6" fill="#ff605c"/>
+  <circle cx="88" cy="64" r="6" fill="#ffbd44"/>
+  <circle cx="108" cy="64" r="6" fill="#00ca4e"/>
+  <text x="600" y="70" text-anchor="middle" class="muted" font-size="13" font-weight="700" letter-spacing="2">OCTET.APP</text>
+
+  <rect class="card" x="78" y="102" width="1044" height="132" rx="15"/>
+  <text x="108" y="136" class="accentText" font-size="13" font-weight="700" letter-spacing="1.5">NATIVE WORKSPACE</text>
+  <text x="108" y="169" class="ink" font-size="25" font-weight="700">The interface you work in</text>
+  <text x="108" y="199" class="muted" font-size="15">SwiftUI + AppKit coordinate projects, agents, commands, and conversations.</text>
+
+  <rect class="subtle" x="668" y="126" width="126" height="80" rx="12"/>
+  <text x="731" y="160" text-anchor="middle" class="ink" font-size="15" font-weight="650">Projects</text>
+  <text x="731" y="183" text-anchor="middle" class="muted" font-size="13">tabs · panes</text>
+  <rect class="subtle" x="806" y="126" width="134" height="80" rx="12"/>
+  <text x="873" y="160" text-anchor="middle" class="ink" font-size="15" font-weight="650">Agents</text>
+  <text x="873" y="183" text-anchor="middle" class="muted" font-size="13">state · context</text>
+  <rect class="subtle" x="952" y="126" width="140" height="80" rx="12"/>
+  <text x="1022" y="160" text-anchor="middle" class="ink" font-size="15" font-weight="650">Conversation</text>
+  <text x="1022" y="183" text-anchor="middle" class="muted" font-size="13">tools · diffs</text>
+
+  <path class="line" d="M420 234 V276"/>
+  <text x="431" y="260" class="muted" font-size="12">commands + snapshots</text>
+  <path class="line" d="M951 276 V234"/>
+  <text x="964" y="260" class="muted" font-size="12">structured turns</text>
+
+  <rect x="78" y="278" width="706" height="112" rx="15" fill="url(#accent)"/>
+  <text x="108" y="315" fill="#ffffff" font-size="13" font-weight="700" letter-spacing="1.5">PERSISTENT SESSION</text>
+  <text x="108" y="348" fill="#ffffff" font-size="23" font-weight="700">Herdr session server</text>
+  <text x="108" y="375" fill="#dff7ff" font-size="15">Owns workspaces, tabs, panes, PTYs, and agent state after the window closes.</text>
+  <rect x="636" y="305" width="118" height="56" rx="28" fill="#ffffff" fill-opacity=".16" stroke="#ffffff" stroke-opacity=".28"/>
+  <circle cx="665" cy="333" r="7" fill="#78e3ff"/>
+  <text x="682" y="338" fill="#ffffff" font-size="14" font-weight="650">socket API</text>
+
+  <rect class="card" x="816" y="278" width="306" height="112" rx="15"/>
+  <text x="846" y="315" class="accentText" font-size="13" font-weight="700" letter-spacing="1.5">AGENT DATA</text>
+  <text x="846" y="348" class="ink" font-size="21" font-weight="700">Transcripts</text>
+  <text x="846" y="374" class="muted" font-size="14">JSONL stays the source of truth.</text>
+
+  <path class="line" d="M300 390 V438"/>
+  <text x="312" y="420" class="muted" font-size="12">terminal surfaces</text>
+  <path class="line" d="M572 390 V438"/>
+  <text x="584" y="420" class="muted" font-size="12">native processes</text>
+  <path class="line" d="M968 438 V390"/>
+  <text x="980" y="420" class="muted" font-size="12">events + history</text>
+
+  <rect class="card" x="78" y="440" width="324" height="102" rx="15"/>
+  <text x="108" y="475" class="accentText" font-size="13" font-weight="700" letter-spacing="1.5">RENDERING</text>
+  <text x="108" y="508" class="ink" font-size="21" font-weight="700">GhosttyKit</text>
+  <text x="108" y="531" class="muted" font-size="14">GPU terminal surface</text>
+
+  <rect class="card" x="420" y="440" width="364" height="102" rx="15"/>
+  <text x="450" y="475" class="accentText" font-size="13" font-weight="700" letter-spacing="1.5">AGENT PROCESSES</text>
+  <text x="450" y="508" class="ink" font-size="21" font-weight="700">Claude · Codex · OpenCode · …</text>
+  <text x="450" y="531" class="muted" font-size="14">Own CLIs, credentials, models, and tools</text>
+
+  <rect class="card" x="816" y="440" width="306" height="102" rx="15"/>
+  <text x="846" y="475" class="accentText" font-size="13" font-weight="700" letter-spacing="1.5">NATIVE CONFIG</text>
+  <text x="846" y="508" class="ink" font-size="21" font-weight="700">Skills · MCP · prompts</text>
+  <text x="846" y="531" class="muted" font-size="14">Read and managed in place</text>
+</svg>

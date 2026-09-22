@@ -1,8 +1,13 @@
 <div align="center">
 
-<img src="Octet/AppIcon.icon/Assets/image.png" alt="Octet" width="640">
-
-# Octet
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/octet-logo-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/octet-logo-light.png">
+    <img src="docs/assets/octet-logo-light.png" alt="Octet logo" width="72" align="center">
+  </picture>
+  &nbsp;Octet
+</h1>
 
 ### The native macOS terminal built for coding agents
 
@@ -28,6 +33,10 @@ Run agents side by side, see what each one is doing, and move between projects w
 </div>
 
 ---
+
+<img src="docs/assets/sample-conversation.png" alt="Octet showing the built-in sample agent conversation with an edit diff, test run, formatted explanation, and code blocks" width="100%">
+
+<p align="center"><em>A real agent process, rendered as a native conversation.</em></p>
 
 Octet is a native terminal and workspace for people who run more than one coding agent. It combines a GPU-rendered terminal with native project navigation, agent-aware tabs, session recovery, a universal marketplace, and an optional conversation view over the real agent process.
 
@@ -237,24 +246,7 @@ Terminal content can start at the top of a pane or remain anchored near the bott
 
 ## Architecture
 
-```text
-┌────────────────────────────── Octet.app ──────────────────────────────┐
-│                                                                      │
-│  Native sidebar · tabs · palette · marketplace · transcript views    │
-│                         │                            ▲                │
-│                         │ commands + snapshots       │ JSONL sessions │
-│                         ▼                            │                │
-│               Herdr session socket          Agent transcripts        │
-│                         │                                             │
-│                         ▼                                             │
-│              Persistent terminal session                             │
-│                   │             │                                     │
-│                   ▼             ▼                                     │
-│             GhosttyKit      Agent processes                           │
-│             rendering       Claude · Codex · OpenCode · …             │
-│                                                                      │
-└──────────────────────────────────────────────────────────────────────┘
-```
+<img src="docs/assets/architecture.svg" alt="Octet architecture: the native workspace communicates with Herdr's persistent session, GhosttyKit rendering, agent processes, transcripts, and native agent configuration" width="100%">
 
 - **Interface:** SwiftUI with AppKit integration for window and terminal behavior.
 - **Rendering:** a vendored GhosttyKit framework provides GPU terminal rendering.
