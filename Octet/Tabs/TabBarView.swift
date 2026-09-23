@@ -19,10 +19,11 @@ struct TabBarView: View {
         }
         let currentIds = tabs.map { "terminal:\($0.tabId)" }
             + conversations.map { "conversation:\($0.id)" }
+            + (window.editor.documents.isEmpty ? [] : ["editor:\(window.id.uuidString)"])
         let orderedIds = window.orderedVisualTabs(currentIds)
         let showingConversation = agents.active(in: workspaceId) != nil
         // A conversation in front means no terminal tab is.
-        let focusedId = showingConversation ? nil : window.displayedFocusedTabId
+        let focusedId = (showingConversation || window.editor.isPresented) ? nil : window.displayedFocusedTabId
 
         HStack(spacing: 0) {
             ScrollViewReader { proxy in
@@ -54,6 +55,11 @@ struct TabBarView: View {
                                                 isActive: agents.active(in: workspaceId)?.id == session.id,
                                                 selection: selection)
                                     .id(session.id)
+                            } else if id.hasPrefix("editor:") {
+                                EditorOuterTab(workspace: window.editor,
+                                               isActive: window.editor.isPresented,
+                                               selection: selection)
+                                    .id(id)
                             }
                         }
                         NewTabButton(newTab: { window.newTab() },
@@ -515,6 +521,7 @@ private struct ConversationTab: View {
     let isActive: Bool
     let selection: Namespace.ID
     @State private var hovered = false
+    @EnvironmentObject private var window: WindowContext
 
     var body: some View {
         let brand = AgentBrand.forAgent(session.engine.agent)
@@ -555,7 +562,10 @@ private struct ConversationTab: View {
         .overlay { MiddleClickCatcher { AgentCenter.shared.close(session) } }
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
-        .onTapGesture { AgentCenter.shared.activeId = session.id }
+        .onTapGesture {
+            window.editor.dismiss()
+            AgentCenter.shared.activeId = session.id
+        }
         .contextMenu {
             Button("Close Conversation") { AgentCenter.shared.close(session) }
         }
@@ -563,8 +573,67 @@ private struct ConversationTab: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(session.engine.displayName) conversation, \(session.title)")
         .accessibilityAddTraits(isActive ? [.isButton, .isSelected] : .isButton)
-        .accessibilityAction { AgentCenter.shared.activeId = session.id }
+        .accessibilityAction {
+            window.editor.dismiss()
+            AgentCenter.shared.activeId = session.id
+        }
         .accessibilityAction(named: "Close") { AgentCenter.shared.close(session) }
+    }
+}
+
+/// The editor is one outer tab even when it contains several files. Its inner
+/// tabs carry the individual buffer names, matching the grouped viewer model.
+private struct EditorOuterTab: View {
+    @ObservedObject var workspace: EditorWorkspace
+    let isActive: Bool
+    let selection: Namespace.ID
+    @EnvironmentObject private var window: WindowContext
+    @State private var hovered = false
+
+    var body: some View {
+        HStack(spacing: 7) {
+            OctetIcon("tool.edit", size: 13)
+                .foregroundStyle(isActive ? Theme.textPrimary : Theme.textSecondary)
+            Text(workspace.activeDocument?.name ?? "Editor")
+                .font(Theme.uiFont)
+                .fontWeight(isActive ? .medium : .regular)
+                .foregroundStyle(isActive ? Theme.textPrimary : Theme.textSecondary)
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            if !workspace.dirtyDocuments.isEmpty {
+                Circle().fill(Theme.textSecondary).frame(width: 6, height: 6)
+            }
+            TabCloseButton { workspace.closeEditor() }
+                .opacity(hovered || isActive ? 1 : 0)
+        }
+        .padding(.leading, 12).padding(.trailing, 6)
+        .frame(width: Theme.tabWidth).frame(maxHeight: .infinity)
+        .background {
+            ZStack {
+                if hovered && !isActive { Theme.hover }
+                if isActive {
+                    ZStack(alignment: .top) {
+                        Theme.terminalBackground
+                        Rectangle().fill(Color.white.opacity(0.9)).frame(height: 2)
+                    }
+                    .matchedGeometryEffect(id: "selectedTab", in: selection)
+                }
+            }
+        }
+        .overlay(alignment: .trailing) { Rectangle().fill(Theme.divider).frame(width: 1) }
+        .contentShape(Rectangle())
+        .onTapGesture { window.showEditor() }
+        .onHover { hovered = $0 }
+        .contextMenu {
+            Button("Save") { workspace.save() }.disabled(workspace.activeDocument?.isDirty != true)
+            Button("Save All") { workspace.saveAll() }.disabled(workspace.dirtyDocuments.isEmpty)
+            Divider()
+            Button("Close Editor") { workspace.closeEditor() }
+        }
+        .help(workspace.activeDocument?.url.path ?? "Editor")
+        .accessibilityLabel("Editor")
+        .accessibilityAddTraits(isActive ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction { window.showEditor() }
     }
 }
 

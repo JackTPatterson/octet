@@ -73,6 +73,11 @@ final class SessionStore: ObservableObject {
     @Published private(set) var nativeRuntimeProcesses: [String: [RuntimeChildProcess]] = [:]
     /// Model CLIs launched by an agent, including cross-model children.
     @Published private(set) var spawnedRuntimeAgents: [SpawnedRuntimeAgent] = []
+    /// Background commands, monitors and subagents a Claude Code session in
+    /// a terminal pane has running, from its session log, by pane.
+    @Published private(set) var terminalRuntimes: [String: [HandoffRuntime]] = [:]
+    /// Session logs already read, so each refresh reads only what was added.
+    private let runtimeLogs = RuntimeLogTails()
     private var loadingPaneProcesses = false
     /// True while the focused pane sits at its shell's own prompt.
     var focusedPaneAtPrompt: Bool { ShellPrompt.isAtPrompt(focusedProcess) }
@@ -214,10 +219,19 @@ final class SessionStore: ObservableObject {
             paneProcesses = [:]
             nativeRuntimeProcesses = [:]
             spawnedRuntimeAgents = []
+            terminalRuntimes = [:]
             return
         }
         loadingPaneProcesses = true
         let client = self.client
+        let runtimeLogs = self.runtimeLogs
+        // The session each Claude Code pane is on, for reading its log.
+        let claudeSessions: [String: (sessionId: String, cwds: [String])] = snapshot.agents.reduce(into: [:]) { found, agent in
+            guard AgentBrand.forAgent(agent.agent)?.id == "claude",
+                  let sessionId = agent.sessionReference ?? agent.terminalId.flatMap({ recovery.sessionId(forTerminal: $0) })
+            else { return }
+            found[agent.paneId] = (sessionId, agent.searchCwds)
+        }
         DispatchQueue.global(qos: .utility).async { [weak self] in
             var found: [String: ShellPrompt.ProcessInfo] = [:]
             for pane in panes {
@@ -253,6 +267,20 @@ final class SessionStore: ObservableObject {
                     .map { (name: $0.name, pid: $0.pid) }
                 found[paneId] = enriched
             }
+            var logRuntimes: [String: [HandoffRuntime]] = [:]
+            for (paneId, session) in claudeSessions {
+                let claude = found[paneId]?.foreground.first { process in
+                    let command = (process.name as NSString).lastPathComponent
+                        .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+                    return AgentBrand.forAgent(command)?.id == "claude"
+                }
+                // No Claude process in the pane means nothing it started runs.
+                guard let claude else { continue }
+                let live = runtimeLogs.live(sessionId: session.sessionId, cwds: session.cwds,
+                                            processStart: AgentRuntimeHandoff.processStart(pid: claude.pid))
+                if !live.isEmpty { logRuntimes[paneId] = live }
+            }
+            runtimeLogs.forget(except: Set(claudeSessions.values.map(\.sessionId)))
             var nativeFound: [String: [RuntimeChildProcess]] = [:]
             for (sessionId, pid) in nativeRoots {
                 nativeFound[sessionId] = Self.descendants(of: [pid], in: processTree)
@@ -289,6 +317,7 @@ final class SessionStore: ObservableObject {
                 self.paneProcesses = found
                 self.nativeRuntimeProcesses = nativeFound
                 self.spawnedRuntimeAgents = spawned.values.sorted { $0.pid < $1.pid }
+                if logRuntimes != self.terminalRuntimes { self.terminalRuntimes = logRuntimes }
             }
         }
     }
@@ -1266,5 +1295,51 @@ final class SessionStore: ObservableObject {
     func primaryAgent(in agents: [EngineAgent]) -> EngineAgent? {
         let rank: [EngineAgentStatus: Int] = [.blocked: 0, .working: 1, .done: 2, .idle: 3, .unknown: 4]
         return agents.min { (rank[$0.agentStatus] ?? 9) < (rank[$1.agentStatus] ?? 9) }
+    }
+}
+
+/// Claude Code session logs followed for their runtimes. Only the runtime
+/// refresh touches it, one pass at a time, off the main thread.
+final class RuntimeLogTails: @unchecked Sendable {
+    private struct Tail {
+        var path: String
+        var offset: UInt64 = 0
+        var partial = Data()
+        var ledger = RuntimeLedger()
+    }
+
+    private var tails: [String: Tail] = [:]
+
+    func live(sessionId: String, cwds: [String], processStart: Date?) -> [HandoffRuntime] {
+        var tail = tails[sessionId] ?? {
+            let path = cwds.lazy.compactMap { AgentConversation.findLog(sessionIds: [sessionId], cwd: $0) }.first
+            return path.map { Tail(path: $0) }
+        }() ?? Tail(path: "")
+        guard !tail.path.isEmpty, let handle = FileHandle(forReadingAtPath: tail.path) else { return [] }
+        defer { try? handle.close() }
+        let size = (try? handle.seekToEnd()) ?? 0
+        // A log rewritten shorter is read again from the start.
+        if size < tail.offset { tail = Tail(path: tail.path) }
+        if size > tail.offset {
+            try? handle.seek(toOffset: tail.offset)
+            var data = tail.partial
+            data.append((try? handle.readToEnd()) ?? Data())
+            tail.offset = size
+            // A line still being written stays for the next pass.
+            if let lastNewline = data.lastIndex(of: UInt8(ascii: "\n")) {
+                tail.partial = Data(data[data.index(after: lastNewline)...])
+                for line in data[..<lastNewline].split(separator: UInt8(ascii: "\n")) {
+                    tail.ledger.consume(String(decoding: line, as: UTF8.self))
+                }
+            } else {
+                tail.partial = data
+            }
+        }
+        tails[sessionId] = tail
+        return tail.ledger.live(processStart: processStart)
+    }
+
+    func forget(except sessionIds: Set<String>) {
+        tails = tails.filter { sessionIds.contains($0.key) }
     }
 }

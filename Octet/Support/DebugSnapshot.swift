@@ -80,6 +80,7 @@ enum DebugSnapshot {
         let toasts = ToastCenter.shared.visibleToasts
         var info = "window=\(window.frame) key=\(window.isKeyWindow)\n"
         info += "toasts=\(toasts.map { "[\($0.style)] \($0.title)\($0.detail.map { " — \($0)" } ?? "")" })\n"
+        info += "overlays=\(overlays.sorted()) cover=\(coverActive)\n"
         if let surfaceView = findSurface(in: content) {
             let frame = surfaceView.convert(surfaceView.bounds, to: content)
             if let clip = surfaceView.superview as? TopRowClippingView {

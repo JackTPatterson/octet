@@ -89,9 +89,18 @@ final class AgentSession: ObservableObject, Identifiable {
         didSet {
             if conversation.isRunning != oldValue.isRunning {
                 AgentCenter.shared.objectWillChange.send()
+                // The turn that restarts carried work has had its chance;
+                // whatever it started again now shows up on its own.
+                if !conversation.isRunning, !carriedRuntimes.isEmpty { carriedRuntimes = [] }
             }
         }
     }
+    /// Work the terminal process had running when this conversation took
+    /// over from it, shown until the first turn here has started it again.
+    @Published private(set) var carriedRuntimes: [HandoffRuntime] = []
+    /// When the current CLI process started. Replayed history is older, so
+    /// Runtime can tell calls this process made from ones it only read.
+    private(set) var processStartedAt: Date?
     @Published var title: String {
         // The title bar and tab strip watch the center, not each session.
         didSet {
@@ -1062,6 +1071,7 @@ final class AgentSession: ObservableObject, Identifiable {
         do {
             try process.run()
             self.process = process
+            processStartedAt = Date()
             stdin = input.fileHandleForWriting
             // Claude Code's own list of what this session can run: built-ins,
             // plugins, skills and the person's commands, described.
@@ -1554,6 +1564,36 @@ final class AgentSession: ObservableObject, Identifiable {
 
     func notice(_ text: String) {
         conversation.items.append(AgentItem(id: UUID().uuidString, kind: .notice(text)))
+    }
+
+    /// Picks up after a terminal session moved here: its log may have grown
+    /// while the terminal closed, and the work it had running is started
+    /// again by a first turn the person doesn't have to type.
+    func continueAfterHandoff(transcript: AgentConversation?, runtimes: [HandoffRuntime], turnInterrupted: Bool) {
+        guard engine == .claude, !conversation.isRunning else { return }
+        if let transcript, !transcript.items.isEmpty, transcript.items.count >= conversation.items.count {
+            conversation.items = transcript.items
+        }
+        guard let prompt = AgentRuntimeHandoff.continuationPrompt(runtimes, turnInterrupted: turnInterrupted) else { return }
+        if needsRestart || process?.isRunning != true { restart() }
+        guard stdin != nil else { return }
+        let carried = AgentRuntimeHandoff.summary(runtimes)
+        notice(carried.isEmpty
+               ? "Moved from the terminal. Continuing the turn that was in progress."
+               : "Moved from the terminal. Restarting \(carried) it had running.")
+        carriedRuntimes = runtimes
+        turnStartedAt = Date()
+        conversation.isRunning = true
+        conversation.lastError = nil
+        let message: [String: Any] = [
+            "type": "user",
+            "message": ["role": "user", "content": prompt],
+            "parent_tool_use_id": NSNull(),
+        ]
+        if !write(message) {
+            conversation.isRunning = false
+            carriedRuntimes = []
+        }
     }
 
     // MARK: - Background

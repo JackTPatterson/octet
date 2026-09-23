@@ -52,7 +52,9 @@ extension OctetShortcut {
     static let agents = OctetShortcut(title: "Agents Board", key: "a", modifiers: [.command, .shift])
     static let newWorkspace = OctetShortcut(title: "New Workspace", key: "n")
     static let newWindow = OctetShortcut(title: "New Window", key: "n", modifiers: [.command, .option])
-    static let openFolder = OctetShortcut(title: "Open Folder as Workspace…", key: "o")
+    static let openFile = OctetShortcut(title: "Open File…", key: "o")
+    static let openFolder = OctetShortcut(title: "Open Folder as Workspace…", key: "o", modifiers: [.command, .shift])
+    static let saveFile = OctetShortcut(title: "Save", key: "s")
     static let closeTab = OctetShortcut(title: "Close Tab", key: "w")
 
     // View
@@ -95,7 +97,7 @@ extension OctetShortcut {
     /// The Keyboard page, in menu order.
     static let groups: [(title: String, shortcuts: [OctetShortcut])] = [
         ("Octet", [settings, marketplace, quit]),
-        ("File", [newTab, newConversation, agents, newWorkspace, newWindow, openFolder, closeTab]),
+        ("File", [newTab, newConversation, agents, newWorkspace, newWindow, openFile, openFolder, saveFile, closeTab]),
         ("View", [palette, paletteAll, toggleSidebar, visualTwin, increaseFontSize, decreaseFontSize, resetFontSize]),
         ("Pane", [splitRight, splitDown, toggleZoom, focusLeft, focusRight, focusUp, focusDown]),
         ("Navigate", [nextTab, previousTab, nextWorkspace, previousWorkspace, tabNumber, lastTab]),

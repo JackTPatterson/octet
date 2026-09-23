@@ -258,12 +258,10 @@ struct OctetSettings: Codable, Equatable {
     /// Config lines for the embedded renderer.
     var rendererConfig: String {
         let theme = TerminalTheme.named(themeName)
-        // Claude Code draws its splash with the terminal's default foreground,
-        // not an ANSI color. Ghostty's default is near-white, while Claude's
-        // native Warp presentation is a quieter neutral gray. Keep that voice
-        // independent of the selected theme; only flip polarity for light
-        // backgrounds. Cursor, selection, and ANSI colors remain untouched.
-        let terminalForeground = theme.isLight ? "3f3f3f" : "a9a9a9"
+        // Default terminal text should be unambiguously legible on every
+        // theme. Programs remain free to draw their own ANSI colors; this only
+        // controls cells that use the terminal's default foreground.
+        let terminalForeground = theme.isLight ? "000000" : "ffffff"
         let padding: (Int, Int) = switch windowPadding {
         case .compact: (4, 2)
         case .normal: (10, 6)
@@ -284,6 +282,10 @@ struct OctetSettings: Codable, Equatable {
             "window-padding-y = 0,\(padding.1)",
             "macos-option-as-alt = \(optionAsAlt == .off ? "false" : optionAsAlt.rawValue == "both" ? "true" : optionAsAlt.rawValue)",
             "mouse-hide-while-typing = \(hideMouseWhileTyping)",
+            // Ghostty recognizes ordinary URLs and opens them with the system
+            // handler on ⌘-click. Keep it explicit because Octet builds a
+            // renderer config from scratch instead of loading user defaults.
+            "link-url = true",
             "clipboard-paste-protection = \(pasteProtection)",
             "clipboard-read = \(clipboardRead.rawValue)",
         ]

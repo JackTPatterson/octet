@@ -272,13 +272,13 @@ For the original implementation plan and protocol-level notes, see [docs/PLAN.md
 
 ## Release builds
 
-The release script performs the full distribution pipeline: Release build, Developer ID signing, hardened-runtime validation, notarization, stapling, Gatekeeper assessment, and DMG packaging.
+The release script performs the full distribution pipeline: Release build, Developer ID signing, hardened-runtime validation, notarization, stapling, Gatekeeper assessment, DMG packaging, Sparkle archive signing, and appcast generation.
 
 ```sh
 scripts/release.sh
 ```
 
-One-time certificate and `notarytool` credential setup is documented at the top of [`scripts/release.sh`](scripts/release.sh). Successful artifacts are written to `build/release/Octet.dmg` and `build/release/Octet.zip`.
+One-time certificate and `notarytool` credential setup is documented at the top of [`scripts/release.sh`](scripts/release.sh). Sparkle's `generate_keys` must also have created the EdDSA key in the release Mac's Keychain. Versioned DMG and ZIP artifacts are written to `build/release/`; publish both under the tag printed by the script, then commit and push the refreshed `appcast.xml`.
 
 To package an already-built app without running the full release flow:
 

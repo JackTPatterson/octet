@@ -213,9 +213,14 @@ struct RuntimePanel: View {
             }
             let spawned = store.spawnedRuntimeAgents.filter { $0.paneId == pane.paneId }
             result += processAgents(spawned, location: location, sessionId: nil)
+            // Claude Code in the terminal: its log says what it has running.
+            result += (store.terminalRuntimes[pane.paneId] ?? []).map { runtime in
+                entry(runtime, location: location, paneId: pane.paneId, session: nil)
+            }
         }
 
         if let session = activeSession {
+            result += carriedRuntimes(in: session)
             result += activeMonitors(in: session)
             result += activeBackgroundTasks(in: session)
             result += activeSubagents(in: session)
@@ -322,10 +327,60 @@ struct RuntimePanel: View {
         URL(fileURLWithPath: path).standardizedFileURL.path
     }
 
+    /// Work the terminal had running when this conversation took over,
+    /// until the agent has started each again (its new call takes the row).
+    private func carriedRuntimes(in session: AgentSession) -> [RuntimeEntry] {
+        guard !session.carriedRuntimes.isEmpty else { return [] }
+        let started = session.processStartedAt ?? .distantFuture
+        let restarted = session.conversation.items.compactMap { item -> String? in
+            guard item.createdAt >= started, case .tool(let call) = item.kind, let input = call.inputObject else { return nil }
+            return (input["command"] as? String) ?? (input["description"] as? String) ?? (input["name"] as? String)
+        }
+        return session.carriedRuntimes.compactMap { runtime in
+            let key = runtime.command ?? runtime.title
+            guard !restarted.contains(key) else { return nil }
+            return entry(runtime, location: session.title, paneId: nil, session: session, carried: true)
+        }
+    }
+
+    /// A row for work a Claude Code session log reports: live in a terminal
+    /// pane, or carried into a conversation that is starting it again.
+    private func entry(_ runtime: HandoffRuntime, location: String, paneId: String?,
+                       session: AgentSession?, carried: Bool = false) -> RuntimeEntry {
+        let now = Date()
+        let kind: RuntimeKind
+        let detail: String
+        let process: String
+        switch runtime.kind {
+        case .task:
+            kind = .task
+            detail = "Running"
+            process = runtime.command?.split(whereSeparator: \.isWhitespace).first.map(String.init) ?? "Background command"
+        case .monitor:
+            kind = .monitor
+            detail = runtime.expiresAt.map { Self.remaining(until: $0, now: now) } ?? "Watching"
+            process = "Watching"
+        case .agent:
+            kind = .agent
+            detail = runtime.startedAt.map { "\(max(0, Int(now.timeIntervalSince($0))))s" } ?? "Working"
+            process = "Working"
+        }
+        return RuntimeEntry(id: (carried ? "carried-" : "log-") + runtime.id, kind: kind, title: runtime.title,
+                            detail: carried ? "Restarting" : detail, location: location, command: runtime.command,
+                            prompt: runtime.kind == .agent ? runtime.prompt : runtime.title, output: nil,
+                            process: carried ? "Moving from the terminal" : process, depth: 0,
+                            accentSeed: Self.seed(runtime.id),
+                            agentID: runtime.kind == .agent ? "claude" : nil,
+                            modelName: runtime.kind == .agent ? session.map(modelName(for:)) : nil,
+                            paneId: paneId, sessionId: session?.id, autoReveal: true)
+    }
+
     private func activeMonitors(in session: AgentSession) -> [RuntimeEntry] {
         let now = Date()
+        let started = session.processStartedAt ?? .distantFuture
         return session.conversation.items.compactMap { item in
-            guard case .tool(let call) = item.kind, call.name.caseInsensitiveCompare("Monitor") == .orderedSame,
+            guard item.createdAt >= started,
+                  case .tool(let call) = item.kind, call.name.caseInsensitiveCompare("Monitor") == .orderedSame,
                   call.result?.localizedCaseInsensitiveContains("monitor started") == true,
                   let input = call.inputObject else { return nil }
             let timeout = (input["timeout_ms"] as? NSNumber)?.doubleValue ?? 120_000
@@ -365,7 +420,10 @@ struct RuntimePanel: View {
                     Self.commandName($0.name).caseInsensitiveCompare(expected) == .orderedSame
                 }
             } ?? false
-            guard call.result == nil || session.conversation.isRunning || hasProcess else { return nil }
+            // A replayed log is full of background calls from processes that
+            // have since exited; only this process's own may still be running.
+            let current = session.processStartedAt.map { item.createdAt >= $0 } ?? false
+            guard hasProcess || (current && (call.result == nil || session.conversation.isRunning)) else { return nil }
             return RuntimeEntry(id: "task-\(item.id)", kind: .task,
                                 title: description ?? (call.summary.isEmpty ? "Background command" : call.summary),
                                 detail: call.result == nil ? "Running" : "Background",
@@ -391,7 +449,10 @@ struct RuntimePanel: View {
         let childrenByParent = Dictionary(grouping: session.conversation.items.compactMap { item in
             item.parent.map { ($0, item) }
         }, by: \.0).mapValues { $0.map(\.1) }
-        var visible = Set(calls.filter { $0.call.result == nil }.map { $0.item.id })
+        // Replayed launches without a result were cut off with an earlier
+        // process, not running now.
+        let started = session.processStartedAt ?? .distantFuture
+        var visible = Set(calls.filter { $0.call.result == nil && $0.item.createdAt >= started }.map { $0.item.id })
         // Keep the ownership chain visible even if an agent's launch call has
         // already returned while one of its descendants is still working.
         var frontier = Array(visible)

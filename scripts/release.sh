@@ -12,7 +12,9 @@
 #          --apple-id <you@example.com> --team-id <TEAMID> --password <app-specific password>
 #      (an app-specific password is made at account.apple.com).
 #
-# Usage: scripts/release.sh   (OCTET_NOTARY_PROFILE picks another profile)
+# Usage: scripts/release.sh
+# OCTET_NOTARY_PROFILE picks another profile. OCTET_RELEASE_TAG overrides the
+# default prerelease tag inferred from the marketing version and build number.
 set -eu
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -66,16 +68,36 @@ xcrun stapler staple "$app"
 echo "==> Checking Gatekeeper"
 spctl --assess --type execute --verbose=2 "$app"
 
-# The ticket is stapled into the app, so zip it again for shipping.
-ditto -c -k --keepParent "$app" "$out/Octet.zip"
+# The ticket is stapled into the app, so zip it again for shipping. Keep the
+# release filename stable between the GitHub asset and Sparkle's appcast.
+short_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")"
+build_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Contents/Info.plist")"
+release_tag="${OCTET_RELEASE_TAG:-v${short_version}-alpha.${build_version}}"
+asset_stem="Octet-${release_tag#v}-arm64"
+zip="$out/$asset_stem.zip"
+dmg="$out/$asset_stem.dmg"
+ditto -c -k --keepParent "$app" "$zip"
 rm -f "$out/Octet-notarize.zip"
 
 # The disk image is what people download. It holds the stapled app, and is
 # notarized and stapled itself so it opens cleanly on a Mac that is offline.
-"$root/scripts/make-dmg.sh" "$app" "$out/Octet.dmg"
+"$root/scripts/make-dmg.sh" "$app" "$dmg"
 echo "==> Notarizing the disk image"
-xcrun notarytool submit "$out/Octet.dmg" --keychain-profile "$profile" --wait
-xcrun stapler staple "$out/Octet.dmg"
-spctl --assess --type open --context context:primary-signature --verbose=2 "$out/Octet.dmg"
+xcrun notarytool submit "$dmg" --keychain-profile "$profile" --wait
+xcrun stapler staple "$dmg"
+spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
 
-echo "==> Ready: $out/Octet.dmg (and $out/Octet.zip)"
+echo "==> Signing the update and refreshing appcast.xml"
+updates="$out/updates"
+mkdir -p "$updates"
+cp "$zip" "$updates/"
+cp "$root/appcast.xml" "$updates/appcast.xml"
+generate_appcast="$("$root/scripts/fetch-sparkle-tools.sh")"
+"$generate_appcast" \
+    --download-url-prefix "https://github.com/JackTPatterson/octet/releases/download/$release_tag/" \
+    --link "https://github.com/JackTPatterson/octet" \
+    "$updates"
+cp "$updates/appcast.xml" "$root/appcast.xml"
+
+echo "==> Ready: $dmg (and $zip)"
+echo "==> Commit and push appcast.xml when the GitHub release is published."

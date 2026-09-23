@@ -33,6 +33,10 @@ settings:
       # Apple silicon only: GhosttyKit and the terminal engine are vendored
       # as arm64 builds, so an Intel slice has nothing to link against.
       ARCHS: arm64
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.10.0
 targets:
   Octet:
     type: application
@@ -41,6 +45,7 @@ targets:
       - path: Octet
       - path: Shared
     dependencies:
+      - package: Sparkle
       - framework: Vendor/GhosttyKit.xcframework
         embed: false
       - sdk: Carbon.framework
@@ -58,12 +63,10 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.jpxsoftware.octet
         PRODUCT_NAME: Octet
-        GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: Octet
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Octet/Info.plist
         # Built from the layered Icon Composer source at Octet/AppIcon.icon.
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        INFOPLIST_KEY_NSPrincipalClass: NSApplication
-        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
         OTHER_LDFLAGS: "-lc++"
         ENABLE_APP_SANDBOX: NO
     postBuildScripts:
@@ -109,6 +112,8 @@ targets:
     sources:
       - path: OctetTests
       - path: Shared
+    dependencies:
+      - target: Octet
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES

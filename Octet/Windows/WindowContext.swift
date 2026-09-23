@@ -28,6 +28,7 @@ final class WindowContext: ObservableObject, Identifiable {
     let id: UUID
     let store: SessionStore
     let ui = UIState()
+    let editor = EditorWorkspace()
     private(set) lazy var twin = TwinSession(window: self)
     weak var nsWindow: NSWindow?
     /// This window's terminal, the only way to move this window's client.
@@ -89,6 +90,7 @@ final class WindowContext: ObservableObject, Identifiable {
     /// arrived: tells an arrival apart from a move made in the engine itself.
     fileprivate var expected: (workspace: String, tab: String?)?
     private var watch: AnyCancellable?
+    private var editorWatch: AnyCancellable?
 
     init(spec: OctetWindowSpec, store: SessionStore) {
         id = spec.id
@@ -96,6 +98,7 @@ final class WindowContext: ObservableObject, Identifiable {
         pendingWorkspace = spec.workspaceId
         // The chrome reads through here, so a store change is a change here.
         watch = store.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
+        editorWatch = editor.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
     }
 
     private var registry: WindowRegistry { .shared }
@@ -151,10 +154,12 @@ final class WindowContext: ObservableObject, Identifiable {
     // MARK: - Moving this window
 
     func focusTab(_ id: String) {
+        editor.dismiss()
+        DebugSnapshot.overlay("editor", false)
         conversationBackingTabs = conversationBackingTabs.filter { $0.value != id }
-        guard steers else { return store.focusTab(id) }
         AgentCenter.shared.setActive(nil, in: workspaceId)
         AgentCenter.shared.setBoard(nil, in: workspaceId)
+        guard steers else { return store.focusTab(id) }
         guard let tab = store.snapshot.tabs.first(where: { $0.tabId == id }) else { return }
         focusTabAnywhere(tab)
     }
@@ -234,6 +239,7 @@ final class WindowContext: ObservableObject, Identifiable {
     }
 
     func newTab() {
+        editor.dismiss()
         if let workspaceId = focusedWorkspace?.workspaceId,
            let session = AgentCenter.shared.active(in: workspaceId),
            let backing = conversationBackingTabs.removeValue(forKey: session.id),
@@ -249,6 +255,7 @@ final class WindowContext: ObservableObject, Identifiable {
     }
 
     func newTab(running agent: DiscoveredAgent) {
+        editor.dismiss()
         guard steers else { return store.newTab(running: agent) }
         guard let params = store.agentTabParams(agent, workspaceId: workspaceId) else { return }
         create("layout.apply", params, failure: "Couldn't open \(agent.displayName) in a tab")
@@ -321,6 +328,10 @@ final class WindowContext: ObservableObject, Identifiable {
     }
 
     func closeFocusedTab() {
+        if editor.isPresented {
+            editor.closeEditor()
+            return
+        }
         if let session = AgentCenter.shared.active(in: focusedWorkspace?.workspaceId) {
             conversationBackingTabs[session.id] = nil
             AgentCenter.shared.close(session)
@@ -362,10 +373,52 @@ final class WindowContext: ObservableObject, Identifiable {
 
     func newConversation(engine: AgentSession.Engine = .claude, cwd: String? = nil,
                          replacingStarterTab starterTabId: String? = nil) {
+        editor.dismiss()
         guard let workspace = focusedWorkspace else { return }
         let folder = cwd ?? store.snapshot.directory(ofWorkspace: workspace.workspaceId) ?? NSHomeDirectory()
         let session = AgentCenter.shared.newConversation(workspaceId: workspace.workspaceId, cwd: folder, engine: engine)
         if let starterTabId { conversationBackingTabs[session.id] = starterTabId }
+    }
+
+    // MARK: - Inline editor
+
+    var editorRootDirectory: String {
+        if let workspaceId = focusedWorkspace?.workspaceId,
+           let path = store.snapshot.directory(ofWorkspace: workspaceId) {
+            if let document = editor.activeDocument,
+               document.url.path != path && !document.url.path.hasPrefix(path + "/") {
+                return ProjectRootResolver.projectRoot(forDirectory: document.directory,
+                                                       projectParentDirectories: ProjectGrouping.defaultParentDirectories)
+                    ?? document.directory
+            }
+            return path
+        }
+        return editor.activeDocument?.directory ?? NSHomeDirectory()
+    }
+
+    func showEditor() {
+        guard !editor.documents.isEmpty else {
+            editor.filePickerVisible = true
+            return
+        }
+        AgentCenter.shared.setActive(nil, in: focusedWorkspace?.workspaceId)
+        AgentCenter.shared.setBoard(nil, in: focusedWorkspace?.workspaceId)
+        twin.hide()
+        editor.isPresented = true
+        DebugSnapshot.overlay("editor", true)
+    }
+
+    func openFile(_ url: URL, presentation: EditorWorkspace.Presentation = .split) {
+        AgentCenter.shared.setActive(nil, in: focusedWorkspace?.workspaceId)
+        AgentCenter.shared.setBoard(nil, in: focusedWorkspace?.workspaceId)
+        twin.hide()
+        editor.open(url, presentation: presentation)
+        DebugSnapshot.overlay("editor", editor.isPresented)
+    }
+
+    func showFilePicker() {
+        editor.requestedPresentation = editor.isPresented ? editor.presentation : .split
+        editor.filePickerVisible = true
     }
 
     func hidesAsConversationBackingTab(_ tabId: String, sessions: [AgentSession]) -> Bool {
@@ -410,7 +463,7 @@ final class WindowContext: ObservableObject, Identifiable {
         }
         ConfirmCenter.shared.ask(
             title: "\(name) is working",
-            message: "Switching to conversation view ends this terminal session and continues from what \(name) has saved, so the turn in progress stops.",
+            message: "Switching to conversation view restarts \(name) in Octet. The step in progress runs again, and background commands, monitors and subagents are started again there.",
             confirmTitle: "Switch to Octet UI"
         ) { _ in proceed() }
     }
@@ -450,23 +503,73 @@ final class WindowContext: ObservableObject, Identifiable {
                                     detail: "Octet couldn't tell which session the terminal was on. Its history stays in \(engine.displayName).")
         }
         AgentOfferCenter.shared.dismiss(agent)
-        endTerminalAgent(agent, workspaceId: workspaceId) { backingTabId in
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) {
-                if let backingTabId {
-                    self.conversationBackingTabs[session.id] = backingTabId
-                } else {
-                    self.conversationBackingTabs[session.id] = nil
-                }
-            }
-            session.startRestoredProcess()
-            // Snapshot delivery for the closed and backing tabs is
-            // asynchronous. Keep their later diffs animation-free too.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+        let turnInterrupted = agent.agentStatus == .working
+        let finish: (Date?) -> Void = { [weak self] processStart in
+            guard let self else { return }
+            self.endTerminalAgent(agent, workspaceId: workspaceId) { backingTabId in
                 var transaction = Transaction()
                 transaction.disablesAnimations = true
-                withTransaction(transaction) { self.suppressHandoffTabAnimations = false }
+                withTransaction(transaction) {
+                    if let backingTabId {
+                        self.conversationBackingTabs[session.id] = backingTabId
+                    } else {
+                        self.conversationBackingTabs[session.id] = nil
+                    }
+                }
+                session.startRestoredProcess()
+                if let sessionId, engine == .claude {
+                    Self.carryRuntimes(into: session, sessionId: sessionId, cwd: cwd,
+                                       processStart: processStart, turnInterrupted: turnInterrupted)
+                }
+                // Snapshot delivery for the closed and backing tabs is
+                // asynchronous. Keep their later diffs animation-free too.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    var transaction = Transaction()
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) { self.suppressHandoffTabAnimations = false }
+                }
+            }
+        }
+        guard sessionId != nil, engine == .claude else { return finish(nil) }
+        // Which background work is still live depends on when the terminal's
+        // process started, and that is only readable while it runs.
+        let client = store.client
+        let paneId = agent.paneId
+        DispatchQueue.global(qos: .userInitiated).async {
+            let start = Self.claudeProcessStart(client: client, paneId: paneId)
+            DispatchQueue.main.async { MainActor.assumeIsolated { finish(start) } }
+        }
+    }
+
+    /// The start of the Claude Code process in `paneId`'s foreground.
+    private nonisolated static func claudeProcessStart(client: EngineClient, paneId: String) -> Date? {
+        guard let info = (try? client.call("pane.process_info", ["pane_id": paneId])).flatMap(ShellPrompt.parse) else { return nil }
+        let claude = info.foreground.first { process in
+            let command = (process.name as NSString).lastPathComponent
+                .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+            return AgentBrand.forAgent(command)?.id == "claude"
+        }
+        return claude.flatMap { AgentRuntimeHandoff.processStart(pid: $0.pid) }
+    }
+
+    /// Reads the terminal session's final log and has the conversation start
+    /// again whatever the terminal process was still running: background
+    /// commands, monitors and subagents all end with the process that owns them.
+    private static func carryRuntimes(into session: AgentSession, sessionId: String, cwd: String,
+                                      processStart: Date?, turnInterrupted: Bool) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let lines = AgentConversation.findLog(sessionIds: [sessionId], cwd: cwd)
+                .flatMap { try? String(contentsOfFile: $0, encoding: .utf8) }?
+                .components(separatedBy: "\n") ?? []
+            let runtimes = AgentRuntimeHandoff.liveRuntimes(lines: lines, processStart: processStart)
+            var transcript = lines.isEmpty ? nil : AgentConversation.replay(lines: lines)
+            transcript?.cwd = cwd
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard AgentCenter.shared.sessions.contains(where: { $0 === session }) else { return }
+                    session.continueAfterHandoff(transcript: transcript, runtimes: runtimes,
+                                                 turnInterrupted: turnInterrupted)
+                }
             }
         }
     }

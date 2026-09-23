@@ -89,7 +89,9 @@ enum PaletteCatalog {
             action("moveTabLeft", "Move Tab Left", "arrow.left.to.line", keywords: ["reorder"]) { store.moveFocusedTab(by: -1) },
             action("moveTabRight", "Move Tab Right", "arrow.right.to.line", keywords: ["reorder"]) { store.moveFocusedTab(by: 1) },
             action("newWorkspace", "New Workspace", "rectangle.stack.badge.plus", shortcut: "⌘N", keywords: ["space"]) { window.newWorkspace() },
-            action("openFolder", "Open Folder as Workspace…", "folder.badge.plus", shortcut: "⌘O", keywords: ["project", "directory"]) { openFolder(window: window) },
+            action("openFile", "Open File…", "tool.edit", shortcut: "⌘O", keywords: ["code", "editor", "search"]) { window.showFilePicker() },
+            action("openFolder", "Open Folder as Workspace…", "folder.badge.plus", shortcut: "⌘⇧O", keywords: ["project", "directory"]) { openFolder(window: window) },
+            action("saveFile", "Save File", "tool.write", shortcut: "⌘S", keywords: ["code", "editor"]) { window.editor.save() },
             action("nextWorkspace", "Next Workspace", "chevron.down.square", shortcut: "⌃⌘↓") { window.selectAdjacentWorkspace(offset: 1) },
             action("previousWorkspace", "Previous Workspace", "chevron.up.square", shortcut: "⌃⌘↑") { window.selectAdjacentWorkspace(offset: -1) },
             action("splitRight", "Split Pane Right", "rectangle.split.2x1", shortcut: "⌘D", keywords: ["vertical"]) { window.splitPane(.right) },
@@ -549,4 +551,3 @@ enum PluginDialogs {
         ))
     }
 }
-

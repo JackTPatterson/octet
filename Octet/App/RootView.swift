@@ -58,6 +58,8 @@ struct RootView: View {
         // the shell is recognized so an untouched initial tab gets its splash.
         .onChange(of: window.focusedPaneAtPrompt) { _, _ in observeSplash(terminalAnchor.grid) }
         .onChange(of: twin.isVisible) { _, visible in DebugSnapshot.overlay("twin", visible) }
+        .onChange(of: window.editor.isPresented) { _, visible in DebugSnapshot.overlay("editor", visible) }
+        .onChange(of: window.editor.filePickerVisible) { _, visible in DebugSnapshot.overlay("editor-picker", visible) }
         .onChange(of: settings.values.agentQuickAnswers) { _, _ in twin.snapshotChanged() }
         .onChange(of: store.snapshot) { _, snapshot in
             twin.snapshotChanged()
@@ -129,8 +131,7 @@ struct RootView: View {
                             // Keyed by agent, so each one's banner arrives afresh.
                             .id(AgentOffer.key(offer))
                     }
-                    terminal
-                        .overlay { terminalOverlay }
+                    contentArea
                 }
                 ZStack(alignment: .leading) {
                     Rectangle().fill(Theme.divider).frame(width: 1)
@@ -174,6 +175,14 @@ struct RootView: View {
                 CommandPaletteView(model: palette) { closePalette() }
                     .transition(motion.animates(.palette)
                         ? .opacity.combined(with: .scale(scale: 0.97, anchor: .top))
+                        : .identity)
+            }
+        }
+        .overlay {
+            if window.editor.filePickerVisible {
+                EditorFilePickerView(rootDirectory: window.editorRootDirectory, workspace: window.editor)
+                    .transition(motion.animates(.palette)
+                        ? .opacity.combined(with: .scale(scale: 0.98, anchor: .top))
                         : .identity)
             }
         }
@@ -289,11 +298,36 @@ struct RootView: View {
                     window.debugShowAgentUIHandoff()
                 }
             }
+            if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "editor" {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    let candidate = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+                        .appendingPathComponent("Octet/Editor/CodeEditorView.swift")
+                    let split = ProcessInfo.processInfo.environment["OCTET_EDITOR_SPLIT"] != nil
+                    window.openFile(candidate, presentation: split ? .split : .full)
+                }
+            }
             #endif
         }
 
     private func closePalette() {
         ui.paletteVisible = false
+    }
+
+    /// Files opened from terminal context begin beside the live terminal, so
+    /// commands and source stay in one flow. External “Open in Octet” requests
+    /// use the full editor surface instead.
+    @ViewBuilder
+    private var contentArea: some View {
+        if window.editor.isPresented, window.editor.presentation == .split {
+            HStack(spacing: 0) {
+                terminal.frame(maxWidth: .infinity, maxHeight: .infinity)
+                Rectangle().fill(Theme.divider).frame(width: 1)
+                CodeEditorView(workspace: window.editor, rootDirectory: window.editorRootDirectory)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        } else {
+            terminal.overlay { terminalOverlay }
+        }
     }
 
     /// What covers the terminal: a board, a conversation, or a new tab's
@@ -303,6 +337,8 @@ struct RootView: View {
         ZStack {
                     if let agent = window.agentUIHandoff {
                         AgentUIHandoffView(agent: agent)
+                    } else if window.editor.isPresented, window.editor.presentation == .full {
+                        CodeEditorView(workspace: window.editor, rootDirectory: window.editorRootDirectory)
                     } else if boardHere == .claude {
                         AgentsBoard(store: store)
                             .transition(motion.animates(.sidebar) ? .move(edge: .leading).combined(with: .opacity) : .identity)
@@ -690,6 +726,9 @@ private struct TitleBar: View {
 
     private var titleText: String {
         guard let workspace = window.focusedWorkspace else { return "Octet" }
+        if window.editor.isPresented, let document = window.editor.activeDocument {
+            return [workspace.label, document.name].filter { !$0.isEmpty }.joined(separator: " · ")
+        }
         // A conversation in front names itself, not the terminal behind it.
         if let conversation = agents.active(in: workspace.workspaceId) {
             return [workspace.label, conversation.title].filter { !$0.isEmpty }.joined(separator: " · ")

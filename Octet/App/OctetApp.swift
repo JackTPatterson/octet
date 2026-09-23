@@ -1,4 +1,5 @@
 import Carbon
+import Sparkle
 import SwiftUI
 
 @main
@@ -8,10 +9,18 @@ struct OctetApp: App {
     @StateObject private var marketplace: MarketplaceStore
     @StateObject private var prompt: PromptEditor
     private let session: EngineSession?
+    private let updaterController: SPUStandardUpdaterController
 
     @MainActor private static var started = false
 
     init() {
+        // Sparkle owns the native update-found, install, and relaunch prompts.
+        // Its schedule and signing configuration live in Info.plist.
+        updaterController = SPUStandardUpdaterController(
+            startingUpdater: true,
+            updaterDelegate: nil,
+            userDriverDelegate: nil
+        )
         // IDEs and parent agents commonly export NO_COLOR for their own logs.
         // Octet is a real PTY, so that host-only preference must not erase the
         // native colors of Claude, Codex, shells, or any other terminal app.
@@ -60,7 +69,7 @@ struct OctetApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1280, height: 820)
-        .commands { OctetCommands(store: store) }
+        .commands { OctetCommands(store: store, updater: updaterController.updater) }
 
         Settings {
             SettingsView(store: store)
@@ -101,6 +110,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
+    /// Finder's “Open With Octet” and `open -a Octet file` are full-editor
+    /// intents. In-app ⌘O is terminal context and starts as a split instead.
+    @MainActor
+    func application(_ sender: NSApplication, openFiles filenames: [String]) {
+        openWhenReady(filenames.map(URL.init(fileURLWithPath:)))
+        sender.reply(toOpenOrPrint: .success)
+    }
+
+    @MainActor
+    private func openWhenReady(_ urls: [URL], attempts: Int = 0) {
+        guard let window = WindowRegistry.shared.key else {
+            guard attempts < 30 else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                self?.openWhenReady(urls, attempts: attempts + 1)
+            }
+            return
+        }
+        window.bringForward()
+        for url in urls { window.openFile(url, presentation: .full) }
+    }
+
     @MainActor
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard SettingsStore.shared.values.confirmQuit else { return .terminateNow }
@@ -124,8 +154,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 /// Each acts on the terminal window in front.
 struct OctetCommands: Commands {
     let store: SessionStore
+    let updater: SPUUpdater
 
     var body: some Commands {
+        CommandGroup(after: .appInfo) {
+            CheckForUpdatesView(updater: updater)
+        }
         CommandGroup(replacing: .newItem) {
             Button(OctetShortcut.newTab.title) { KeyWindow.act { $0.newTab() } }
                 .keyboardShortcut(OctetShortcut.newTab.keyboardShortcut)
@@ -143,6 +177,8 @@ struct OctetCommands: Commands {
                 .keyboardShortcut(OctetShortcut.newWorkspace.keyboardShortcut)
             Button(OctetShortcut.newWindow.title) { WindowActions.newWindow(store: store) }
                 .keyboardShortcut(OctetShortcut.newWindow.keyboardShortcut)
+            Button(OctetShortcut.openFile.title) { KeyWindow.act { $0.showFilePicker() } }
+                .keyboardShortcut(OctetShortcut.openFile.keyboardShortcut)
             Button(OctetShortcut.openFolder.title) { KeyWindow.act { PaletteCatalog.openFolder(window: $0) } }
                 .keyboardShortcut(OctetShortcut.openFolder.keyboardShortcut)
             Divider()
@@ -152,17 +188,35 @@ struct OctetCommands: Commands {
             }
             .keyboardShortcut(OctetShortcut.closeTab.keyboardShortcut)
         }
+        CommandGroup(replacing: .saveItem) {
+            Button(OctetShortcut.saveFile.title) { KeyWindow.act { $0.editor.save() } }
+                .keyboardShortcut(OctetShortcut.saveFile.keyboardShortcut)
+            Button("Save All") { KeyWindow.act { $0.editor.saveAll() } }
+                .keyboardShortcut("s", modifiers: [.command, .option])
+        }
         CommandGroup(after: .appSettings) {
             Button(OctetShortcut.marketplace.title) { MarketplaceWindow.open() }
                 .keyboardShortcut(OctetShortcut.marketplace.keyboardShortcut)
             SecureKeyboardEntryToggle()
         }
         CommandGroup(after: .textEditing) {
-            Button("Find in Terminal Output…") { OutputSearch.perform() }
+            Button("Find…") {
+                KeyWindow.act { context in
+                    context.editor.isPresented ? context.editor.find() : context.findOutput()
+                }
+            }
                 .keyboardShortcut("f", modifiers: .command)
-            Button("Find Next") { OutputSearch.perform(.nextMatch) }
+            Button("Find Next") {
+                KeyWindow.act { context in
+                    context.editor.isPresented ? context.editor.find(.nextMatch) : context.findOutput(.nextMatch)
+                }
+            }
                 .keyboardShortcut("g", modifiers: .command)
-            Button("Find Previous") { OutputSearch.perform(.previousMatch) }
+            Button("Find Previous") {
+                KeyWindow.act { context in
+                    context.editor.isPresented ? context.editor.find(.previousMatch) : context.findOutput(.previousMatch)
+                }
+            }
                 .keyboardShortcut("g", modifiers: [.command, .shift])
         }
         CommandGroup(after: .sidebar) {
@@ -233,6 +287,32 @@ struct OctetCommands: Commands {
             Button("Octet Help") { OctetHelp.openReadme() }
             KeyboardShortcutsMenuItem()
         }
+    }
+}
+
+/// Keeps the application-menu item's enabled state in sync with Sparkle while
+/// Sparkle performs a check, download, or pending installation.
+private final class CheckForUpdatesViewModel: ObservableObject {
+    @Published var canCheckForUpdates = false
+
+    init(updater: SPUUpdater) {
+        updater.publisher(for: \.canCheckForUpdates)
+            .assign(to: &$canCheckForUpdates)
+    }
+}
+
+private struct CheckForUpdatesView: View {
+    @ObservedObject private var model: CheckForUpdatesViewModel
+    private let updater: SPUUpdater
+
+    init(updater: SPUUpdater) {
+        self.updater = updater
+        model = CheckForUpdatesViewModel(updater: updater)
+    }
+
+    var body: some View {
+        Button("Check for Updates…") { updater.checkForUpdates() }
+            .disabled(!model.canCheckForUpdates)
     }
 }
 
