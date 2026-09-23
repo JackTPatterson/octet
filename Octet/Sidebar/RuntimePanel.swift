@@ -1,24 +1,27 @@
 import Combine
 import SwiftUI
 
-/// Monitors and shells that are descendants of the Claude instance in front.
+/// Monitors, background tasks, agents and shells owned by the agent in front.
 /// The process-tree boundary is important: a workspace can contain many agents
 /// and terminals, but this panel describes only the Claude session being viewed.
 struct RuntimePanel: View {
     @EnvironmentObject private var window: WindowContext
     @ObservedObject var store: SessionStore
     @ObservedObject private var center = AgentCenter.shared
+    @ObservedObject private var claudeAgents = AgentsStore.shared
+    @ObservedObject private var codexAgents = CodexAgentsStore.shared
     @ObservedObject private var motion = MotionPreferences.shared
     @State private var flashingEntryIDs: Set<String> = []
     private let refresh = Timer.publish(every: 4, on: .main, in: .common).autoconnect()
 
     private var workspaceId: String? { window.focusedWorkspace?.workspaceId }
-    private var activeClaude: AgentSession? {
-        guard let session = center.active(in: workspaceId), session.engine == .claude else { return nil }
-        return session
+    private var activeSession: AgentSession? { center.active(in: workspaceId) }
+    private var scopeID: String? {
+        if let activeSession { return "conversation:\(activeSession.id)" }
+        return window.displayedFocusedTabId.map { "tab:\($0)" }
     }
     private var targetPanes: [EnginePane] {
-        guard activeClaude == nil, let tabId = window.displayedFocusedTabId else { return [] }
+        guard activeSession == nil, let tabId = window.displayedFocusedTabId else { return [] }
         // Agent discovery can lag behind the process itself (and new Claude
         // versions do not always emit the same marker). Inspect every pane in
         // the selected tab, then root its descendants at Claude in reload().
@@ -28,7 +31,6 @@ struct RuntimePanel: View {
 
     var body: some View {
         runtimeContent
-        .background(Theme.sidebar)
         .onAppear {
             window.ui.seenRuntimeEntryIDs.formUnion(entries.map(\.id))
             reload()
@@ -37,6 +39,14 @@ struct RuntimePanel: View {
             window.ui.seenRuntimeEntryIDs.formUnion(entries.map(\.id))
             flashingEntryIDs = []
             window.ui.runtimeInspectorEntryID = nil
+            reload()
+        }
+        .onChange(of: scopeID) { _, _ in
+            // Details belong to one tab/conversation. Never let an inspector
+            // from the previous scope linger while the new list is loading.
+            withoutLayoutAnimation { window.ui.runtimeInspectorEntryID = nil }
+            flashingEntryIDs = []
+            window.ui.seenRuntimeEntryIDs.formUnion(entries.map(\.id))
             reload()
         }
         .onChange(of: entries.map(\.id)) { _, ids in
@@ -50,37 +60,46 @@ struct RuntimePanel: View {
 
     @ViewBuilder private var runtimeContent: some View {
         let current = entries
-        if let selectedID = window.ui.runtimeInspectorEntryID,
-           let selected = current.first(where: { $0.id == selectedID }) {
+        let selected = window.ui.runtimeInspectorEntryID.flatMap { id in
+            current.first(where: { $0.id == id })
+        }
+        if let selected {
             HStack(spacing: 0) {
-                RuntimeInspector(entry: selected) { focus(selected) }
+                RuntimeInspector(entry: selected,
+                                 close: showList)
                     .frame(width: 387)
                 Rectangle().fill(Theme.divider).frame(width: 1)
-                RuntimeRail(entries: current, selectedID: selectedID,
-                            select: select, showList: showList,
-                            close: close)
+                RuntimeRail(entries: current,
+                            selectedID: selected.id,
+                            select: select)
                     .frame(width: 52)
             }
         } else {
-            VStack(spacing: 0) {
-                header
-                Rectangle().fill(Theme.divider).frame(height: 1)
-                if current.isEmpty {
-                    empty
-                } else {
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 14) {
-                            ForEach(RuntimeKind.allCases) { kind in
-                                let rows = current.filter { $0.kind == kind }
-                                if !rows.isEmpty { section(kind, rows: rows) }
-                            }
+            runtimeList(current)
+        }
+    }
+
+    private func runtimeList(_ current: [RuntimeEntry]) -> some View {
+        let selectedID = window.ui.runtimeInspectorEntryID
+        return VStack(spacing: 0) {
+            header
+            Rectangle().fill(Theme.divider).frame(height: 1)
+            if current.isEmpty {
+                empty
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 14) {
+                        ForEach(RuntimeKind.allCases) { kind in
+                            let rows = current.filter { $0.kind == kind }
+                            if !rows.isEmpty { section(kind, rows: rows, selectedID: selectedID) }
                         }
-                        .padding(10)
                     }
-                    .scrollIndicators(.hidden)
+                    .padding(10)
                 }
+                .scrollIndicators(.hidden)
             }
         }
+        .background(Theme.sidebar)
     }
 
     private func close() {
@@ -91,12 +110,15 @@ struct RuntimePanel: View {
     }
 
     private func showList() {
-        withoutLayoutAnimation { window.ui.runtimeInspectorEntryID = nil }
+        motion.perform(.sidebar, .smooth(duration: 0.16)) {
+            window.ui.runtimeInspectorEntryID = nil
+        }
     }
 
     private func select(_ entry: RuntimeEntry) {
-        withoutLayoutAnimation { window.ui.runtimeInspectorEntryID = entry.id }
-        focus(entry)
+        motion.perform(.sidebar, .smooth(duration: 0.18)) {
+            window.ui.runtimeInspectorEntryID = entry.id
+        }
     }
 
     private func withoutLayoutAnimation(_ changes: () -> Void) {
@@ -107,7 +129,6 @@ struct RuntimePanel: View {
 
     private var header: some View {
         HStack(spacing: 7) {
-            OctetIcon("point.3.connected.trianglepath.dotted", size: 15).foregroundStyle(Theme.textSecondary)
             Text("Runtime").font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary)
             Text("\(entries.count)")
                 .font(Theme.captionFont.monospacedDigit())
@@ -127,11 +148,10 @@ struct RuntimePanel: View {
 
     private var empty: some View {
         VStack(spacing: 8) {
-            OctetIcon("point.3.connected.trianglepath.dotted", size: 28).foregroundStyle(Theme.textTertiary)
             Text("No active runtimes")
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
-            Text("Monitors and shells started by this Claude instance appear here.")
+            Text("Tasks, agents, monitors and shells created by this tab's agent appear here.")
                 .font(Theme.captionFont)
                 .foregroundStyle(Theme.textTertiary)
                 .multilineTextAlignment(.center)
@@ -140,7 +160,7 @@ struct RuntimePanel: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func section(_ kind: RuntimeKind, rows: [RuntimeEntry]) -> some View {
+    private func section(_ kind: RuntimeKind, rows: [RuntimeEntry], selectedID: String?) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack {
                 Text(kind.title.uppercased())
@@ -151,14 +171,17 @@ struct RuntimePanel: View {
                 Text("\(rows.count)").font(Theme.captionFont).foregroundStyle(Theme.textMuted)
             }
             ForEach(rows) { row in
-                RuntimeRow(entry: row, flashes: flashingEntryIDs.contains(row.id)) { select(row) }
+                RuntimeRow(entry: row,
+                           flashes: flashingEntryIDs.contains(row.id),
+                           selected: row.id == selectedID) { select(row) }
             }
         }
     }
 
     private func revealNewEntries(_ ids: [String]) {
         let current = Set(ids)
-        let added = current.subtracting(window.ui.seenRuntimeEntryIDs)
+        let revealable = Set(entries.filter(\.autoReveal).map(\.id))
+        let added = current.subtracting(window.ui.seenRuntimeEntryIDs).intersection(revealable)
         window.ui.seenRuntimeEntryIDs.formUnion(current)
         flashingEntryIDs.formIntersection(current)
         guard !added.isEmpty else { return }
@@ -192,8 +215,9 @@ struct RuntimePanel: View {
             result += processAgents(spawned, location: location, sessionId: nil)
         }
 
-        if let session = activeClaude {
+        if let session = activeSession {
             result += activeMonitors(in: session)
+            result += activeBackgroundTasks(in: session)
             result += activeSubagents(in: session)
             var shownShells = Set<String>()
             for process in store.nativeRuntimeProcesses[session.id] ?? [] where Self.isShell(process.name) {
@@ -204,7 +228,7 @@ struct RuntimePanel: View {
                                            location: session.title, command: process.name,
                                            prompt: nil, output: nil, process: title,
                                            depth: 0, accentSeed: 0, agentID: nil, modelName: nil,
-                                           paneId: nil, sessionId: session.id))
+                                           paneId: nil, sessionId: session.id, autoReveal: true))
             }
             let processes = store.nativeRuntimeProcesses[session.id] ?? []
             let spawned = processes.compactMap { process -> SpawnedRuntimeAgent? in
@@ -215,6 +239,9 @@ struct RuntimePanel: View {
             }
             result += processAgents(spawned, location: session.title, sessionId: session.id)
         }
+        let scopeDirectories = Set((activeSession.map { [$0.cwd] }
+            ?? targetPanes.flatMap(\.searchCwds)).map(Self.canonicalDirectory))
+        result += backgroundTasks(in: scopeDirectories)
         return result
     }
 
@@ -224,15 +251,6 @@ struct RuntimePanel: View {
             if let pid = session.runtimePID { roots[session.id] = pid }
         }
         store.refreshPaneProcesses(in: workspaceId, nativeRoots: roots)
-    }
-
-    private func focus(_ entry: RuntimeEntry) {
-        if let pane = entry.paneId {
-            window.focusAgent(paneId: pane)
-            OctetTerminalRuntime.focusTerminal()
-        } else if let session = entry.sessionId {
-            center.setActive(session, in: workspaceId)
-        }
     }
 
     private static func commandName(_ raw: String) -> String {
@@ -263,8 +281,45 @@ struct RuntimePanel: View {
                                 process: Self.commandName(agent.agent), depth: depth,
                                 accentSeed: Self.seed(agent.agent), agentID: agent.agent, modelName: nil,
                                 paneId: agent.paneId,
-                                sessionId: sessionId)
+                                sessionId: sessionId, autoReveal: true)
         }
+    }
+
+    private func backgroundTasks(in directories: Set<String>) -> [RuntimeEntry] {
+        guard !directories.isEmpty else { return [] }
+        let claude = claudeAgents.agents.filter {
+            $0.kind == .background && ($0.state == .working || $0.state == .needsInput)
+                && directories.contains(Self.canonicalDirectory($0.cwd))
+        }.map { agent in
+            let job = BackgroundJob.load(id: agent.id)
+            return RuntimeEntry(id: "background-claude-\(agent.id)", kind: .agent,
+                                title: agent.name,
+                                detail: agent.state == .needsInput ? "Needs input" : "Background",
+                                location: abbreviateHome(agent.cwd), command: nil,
+                                prompt: job?.needs ?? job?.detail,
+                                output: claudeAgents.lastLines[agent.sessionId],
+                                process: "Background task", depth: 0,
+                                accentSeed: Self.seed(agent.id), agentID: "claude", modelName: nil,
+                                paneId: nil, autoReveal: false)
+        }
+        let codex = codexAgents.agents.filter {
+            ($0.state == .working || $0.state == .needsInput)
+                && directories.contains(Self.canonicalDirectory($0.cwd))
+        }.map { agent in
+            RuntimeEntry(id: "background-codex-\(agent.id)", kind: .agent,
+                         title: agent.name,
+                         detail: agent.state == .needsInput ? "Needs input" : "Background",
+                         location: abbreviateHome(agent.cwd), command: nil,
+                         prompt: codexAgents.previews[agent.id], output: codexAgents.previews[agent.id],
+                         process: "Background task", depth: 0,
+                         accentSeed: Self.seed(agent.id), agentID: "codex", modelName: nil,
+                         paneId: nil, autoReveal: false)
+        }
+        return claude + codex
+    }
+
+    private static func canonicalDirectory(_ path: String) -> String {
+        URL(fileURLWithPath: path).standardizedFileURL.path
     }
 
     private func activeMonitors(in session: AgentSession) -> [RuntimeEntry] {
@@ -284,7 +339,42 @@ struct RuntimePanel: View {
                                 prompt: input["description"] as? String, output: call.result,
                                 process: "Watching", depth: 0, accentSeed: 0,
                                 agentID: nil, modelName: nil,
-                                paneId: nil, sessionId: session.id)
+                                paneId: nil, sessionId: session.id, autoReveal: true)
+        }
+    }
+
+    /// Claude and compatible agents mark asynchronous shell calls in their
+    /// tool input. Their shell may be re-parented immediately, so the stream
+    /// is a more reliable ownership signal than the process tree alone.
+    private func activeBackgroundTasks(in session: AgentSession) -> [RuntimeEntry] {
+        session.conversation.items.compactMap { item in
+            guard case .tool(let call) = item.kind,
+                  (call.name.caseInsensitiveCompare("Bash") == .orderedSame
+                    || call.name.caseInsensitiveCompare("Shell") == .orderedSame),
+                  let input = call.inputObject else { return nil }
+            let requested = input["run_in_background"] as? Bool == true
+                || input["background"] as? Bool == true
+            let reported = call.result?.localizedCaseInsensitiveContains("background") == true
+            guard requested || reported else { return nil }
+            let command = input["command"] as? String ?? call.input
+            let description = input["description"] as? String
+            let executable = command.split(whereSeparator: \.isWhitespace).first
+                .map { Self.commandName(String($0)) }
+            let hasProcess = executable.map { expected in
+                (store.nativeRuntimeProcesses[session.id] ?? []).contains {
+                    Self.commandName($0.name).caseInsensitiveCompare(expected) == .orderedSame
+                }
+            } ?? false
+            guard call.result == nil || session.conversation.isRunning || hasProcess else { return nil }
+            return RuntimeEntry(id: "task-\(item.id)", kind: .task,
+                                title: description ?? (call.summary.isEmpty ? "Background command" : call.summary),
+                                detail: call.result == nil ? "Running" : "Background",
+                                location: session.title, command: command,
+                                prompt: description, output: call.result,
+                                process: command.split(whereSeparator: \.isWhitespace).first.map(String.init),
+                                depth: 0, accentSeed: Self.seed(item.id),
+                                agentID: nil, modelName: nil,
+                                paneId: nil, sessionId: session.id, autoReveal: true)
         }
     }
 
@@ -350,7 +440,7 @@ struct RuntimePanel: View {
                                 prompt: prompt, output: output, process: process,
                                 depth: depth, accentSeed: Self.seed(item.id),
                                 agentID: session.engine.agent, modelName: modelName(for: session),
-                                paneId: nil, sessionId: session.id)
+                                paneId: nil, sessionId: session.id, autoReveal: true)
         }
     }
 
@@ -392,11 +482,12 @@ struct RuntimePanel: View {
 }
 
 private enum RuntimeKind: String, CaseIterable, Identifiable {
-    case monitor, agent, shell
+    case monitor, task, agent, shell
     var id: String { rawValue }
     var title: String {
         switch self {
         case .monitor: "Monitors"
+        case .task: "Background tasks"
         case .agent: "Agents"
         case .shell: "Shells"
         }
@@ -419,9 +510,14 @@ private struct RuntimeEntry: Identifiable {
     let modelName: String?
     let paneId: String?
     var sessionId: String?
+    /// Discovery can add account-wide background work to the requested panel,
+    /// but only a child/event created by this tab's agent may open it.
+    var autoReveal = false
 
     var tint: Color {
-        guard kind == .agent else { return kind == .monitor ? Theme.accent : Theme.textSecondary }
+        guard kind == .agent else {
+            return kind == .monitor ? Theme.accent : kind == .task ? Theme.palette.color(\.syntaxBuiltin) : Theme.textSecondary
+        }
         let colors = [Theme.palette.syntaxBuiltin, Theme.palette.syntaxFlag, Theme.palette.syntaxString,
                       Theme.palette.syntaxPath, Theme.palette.syntaxVariable]
         return Color(hex: colors[accentSeed % colors.count])
@@ -431,6 +527,7 @@ private struct RuntimeEntry: Identifiable {
 private struct RuntimeRow: View {
     let entry: RuntimeEntry
     let flashes: Bool
+    let selected: Bool
     let action: () -> Void
     @ObservedObject private var motion = MotionPreferences.shared
     @State private var hovered = false
@@ -472,8 +569,11 @@ private struct RuntimeRow: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 7)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(flashes ? entry.tint.opacity(0.22) : hovered ? Theme.hover : Theme.card)
-                .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius).strokeBorder(Theme.border, lineWidth: 1))
+                .background(flashes ? entry.tint.opacity(0.22)
+                            : selected ? entry.tint.opacity(0.11)
+                            : hovered ? Theme.hover : Theme.card)
+                .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius)
+                    .strokeBorder(selected ? entry.tint.opacity(0.5) : Theme.border, lineWidth: 1))
                 .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -482,6 +582,8 @@ private struct RuntimeRow: View {
         .onHover { hovered = $0 }
         .animation(motion.animation(.sidebar, .easeOut(duration: 0.55)), value: flashes)
         .accessibilityLabel("\(entry.title), level \(entry.depth + 1), \(entry.detail), \(entry.location)")
+        .accessibilityValue(selected ? "Selected" : "")
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 
@@ -495,6 +597,8 @@ private struct RuntimeGlyph: View {
                 Image(systemName: "eye")
                     .font(.system(size: size, weight: .medium))
                     .foregroundStyle(entry.tint)
+            } else if entry.kind == .task {
+                OctetIcon("clock.arrow.circlepath", size: size).foregroundStyle(entry.tint)
             } else if entry.kind == .agent, let brand = AgentBrand.forAgent(entry.agentID) {
                 AgentLogo(brand: brand, size: size)
             } else if entry.kind == .agent {
@@ -507,23 +611,15 @@ private struct RuntimeGlyph: View {
     }
 }
 
+/// The runtime list collapsed in place. Its trailing edge never moves, so a
+/// user can move between related runtimes without the targets jumping around.
 private struct RuntimeRail: View {
     let entries: [RuntimeEntry]
-    let selectedID: String
+    let selectedID: String?
     let select: (RuntimeEntry) -> Void
-    let showList: () -> Void
-    let close: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
-            Button(action: showList) {
-                OctetIcon("chevron.left", size: 13)
-                    .foregroundStyle(Theme.textSecondary)
-                    .frame(width: 32, height: 30)
-            }
-            .buttonStyle(.plain)
-            .help("Show runtime list")
-            Rectangle().fill(Theme.divider).frame(height: 1)
             ScrollView {
                 LazyVStack(spacing: 7) {
                     ForEach(entries) { entry in
@@ -542,20 +638,13 @@ private struct RuntimeRail: View {
                         .help(entry.title)
                         .accessibilityLabel(entry.title)
                         .accessibilityValue(entry.id == selectedID ? "Selected" : "")
+                        .accessibilityAddTraits(entry.id == selectedID ? .isSelected : [])
                     }
                 }
                 .padding(.vertical, 8)
             }
             .scrollIndicators(.hidden)
             Spacer(minLength: 0)
-            Rectangle().fill(Theme.divider).frame(height: 1)
-            Button(action: close) {
-                OctetIcon("xmark", size: 12)
-                    .foregroundStyle(Theme.textSecondary)
-                    .frame(width: 32, height: 30)
-            }
-            .buttonStyle(.plain)
-            .help("Close runtime panel")
         }
         .background(Theme.chrome)
     }
@@ -563,12 +652,12 @@ private struct RuntimeRail: View {
 
 private struct RuntimeInspector: View {
     let entry: RuntimeEntry
-    let focus: () -> Void
+    let close: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 9) {
-                RuntimeGlyph(entry: entry, size: 18).frame(width: 22)
+                RuntimeGlyph(entry: entry, size: 13).frame(width: 18)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(entry.title)
                         .font(Theme.uiFontMedium)
@@ -583,13 +672,14 @@ private struct RuntimeInspector: View {
                     .font(Theme.captionFont.monospacedDigit())
                 }
                 Spacer(minLength: 8)
-                Button(action: focus) {
-                    OctetIcon("arrow.right", size: 12)
+                Button(action: close) {
+                    OctetIcon("chevron.right", size: 12)
                         .foregroundStyle(Theme.textSecondary)
                         .frame(width: 26, height: 26)
                 }
                 .buttonStyle(.plain)
-                .help("Focus source")
+                .help("Close details")
+                .accessibilityLabel("Close runtime details")
             }
             .padding(.horizontal, 12)
             .frame(height: Theme.tabBarHeight + 8)
@@ -635,6 +725,7 @@ private struct RuntimeInspector: View {
             .scrollIndicators(.hidden)
         }
         .background(Theme.sidebar)
+        .overlay(alignment: .leading) { Rectangle().fill(Theme.divider).frame(width: 1) }
     }
 
     private func inspectorMetadata(_ label: String, _ value: String) -> some View {

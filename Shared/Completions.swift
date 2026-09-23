@@ -270,6 +270,8 @@ enum Completions {
 
     /// Files beside the token being typed, for path completion.
     static func entries(for token: String, cwd: String) -> [(name: String, isDirectory: Bool)] {
+        if token == "." { return [(".", true), ("..", true)] }
+        if token == ".." { return [("..", true)] }
         let expanded = (token as NSString).expandingTildeInPath
         let directoryPart = expanded.contains("/") ? (expanded as NSString).deletingLastPathComponent : ""
         let base: String
@@ -282,7 +284,10 @@ enum Completions {
         }
         let manager = FileManager.default
         let names = (try? manager.contentsOfDirectory(atPath: base)) ?? []
-        let prefix = directoryPart.isEmpty ? "" : directoryPart + "/"
+        // Keep a typed tilde in what is inserted even though filesystem
+        // lookup uses its expanded path.
+        let typedDirectory = token.contains("/") ? (token as NSString).deletingLastPathComponent : ""
+        let prefix = typedDirectory.isEmpty ? "" : typedDirectory + "/"
         return names.filter { !$0.hasPrefix(".") }.sorted().map { name in
             var isDirectory: ObjCBool = false
             manager.fileExists(atPath: base + "/" + name, isDirectory: &isDirectory)

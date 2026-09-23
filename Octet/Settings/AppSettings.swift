@@ -258,21 +258,12 @@ struct OctetSettings: Codable, Equatable {
     /// Config lines for the embedded renderer.
     var rendererConfig: String {
         let theme = TerminalTheme.named(themeName)
-        // Octet owns the surface; terminal programs own their visual voice.
-        // Keep text and ANSI colors stable instead of recoloring Claude Code
-        // for every Octet theme. The dark foreground is intentionally an
-        // off-white, matching native terminal UI rather than #fff.
-        let content = theme.isLight ? TerminalTheme.named("Light") : TerminalTheme(
-            name: "Native terminal dark",
-            background: theme.background,
-            foreground: "d4d4d4",
-            accent: "7aa2f7",
-            ansi: [
-                "1f1f1f", "e06c75", "98c379", "d19a66", "61afef", "c678dd", "56b6c2", "d4d4d4",
-                "7f848e", "e88388", "a9cf8d", "e5c07b", "79b8ff", "d291e4", "70c0ca", "ececec",
-            ],
-            isLight: false
-        )
+        // Claude Code draws its splash with the terminal's default foreground,
+        // not an ANSI color. Ghostty's default is near-white, while Claude's
+        // native Warp presentation is a quieter neutral gray. Keep that voice
+        // independent of the selected theme; only flip polarity for light
+        // backgrounds. Cursor, selection, and ANSI colors remain untouched.
+        let terminalForeground = theme.isLight ? "3f3f3f" : "a9a9a9"
         let padding: (Int, Int) = switch windowPadding {
         case .compact: (4, 2)
         case .normal: (10, 6)
@@ -280,10 +271,7 @@ struct OctetSettings: Codable, Equatable {
         }
         var lines = [
             "background = \(theme.background)",
-            "foreground = \(content.foreground)",
-            "cursor-color = \(content.accent)",
-            "selection-background = \(content.accent)",
-            "selection-foreground = \(theme.background)",
+            "foreground = \(terminalForeground)",
             "font-size = \(Int(fontSize))",
             "font-thicken = \(fontThicken)",
             "adjust-cell-height = \(Int(lineHeightPercent) - 100)%",
@@ -300,9 +288,6 @@ struct OctetSettings: Codable, Equatable {
             "clipboard-read = \(clipboardRead.rawValue)",
         ]
         if !fontFamily.isEmpty { lines.append("font-family = \"\(fontFamily)\"") }
-        for (index, color) in content.ansi.enumerated() {
-            lines.append("palette = \(index)=#\(color)")
-        }
         return lines.joined(separator: "\n")
     }
 

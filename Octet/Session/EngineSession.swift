@@ -41,12 +41,8 @@ struct EngineSession {
     }
 
     var environment: [String: String] {
-        var env = [
-            EngineProtocol.configPathVariable: configPath,
-            "TERM": "xterm-256color",
-            "COLORTERM": "truecolor",
-            "TERM_PROGRAM": "Octet",
-        ]
+        var env = TerminalEnvironment.colorCapability
+        env[EngineProtocol.configPathVariable] = configPath
         // The session server spawns every pane with its own $SHELL, and it
         // outlives Octet, so hand it the login shell rather than whatever
         // environment launched us (a stripped one falls back to /bin/sh).

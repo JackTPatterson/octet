@@ -41,6 +41,99 @@ extension View {
     }
 }
 
+// MARK: - Panels and interactive lists
+
+/// The shared surface for UI that docks against the composer. Keeping the
+/// fill and separator here prevents slash commands, file references, queued
+/// messages and approvals from slowly developing different panel chrome.
+struct OctetPalettePanel<Content: View>: View {
+    enum Style { case docked, floating }
+    enum DividerEdge { case top, bottom, none }
+
+    var style: Style = .docked
+    var divider: DividerEdge = .top
+    var clips = true
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        content()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.card)
+            .overlay(alignment: divider == .bottom ? .bottom : .top) {
+                if style == .docked, divider != .none {
+                    Rectangle().fill(Theme.divider).frame(height: 1)
+                }
+            }
+            .modifier(PaletteSurfaceModifier(floating: style == .floating, clips: clips))
+    }
+}
+
+private struct PaletteSurfaceModifier: ViewModifier {
+    let floating: Bool
+    let clips: Bool
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if floating {
+            content
+                .clipShape(RoundedRectangle(cornerRadius: 7))
+                .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.border, lineWidth: 1))
+                .shadow(color: .black.opacity(0.35), radius: 14, y: 6)
+        } else if clips {
+            content.clipped()
+        } else {
+            content
+        }
+    }
+}
+
+/// One implementation of the moving selection used by command palettes.
+/// Mouse, keyboard-selected state, animation, hit targets and accessibility
+/// now behave identically anywhere this list is used.
+struct OctetAnimatedList<Item: Identifiable, Row: View>: View where Item.ID: Hashable {
+    let items: [Item]
+    let highlighted: Int
+    var horizontalPadding: CGFloat = 8
+    var verticalPadding: CGFloat = 5
+    let highlight: (Int) -> Void
+    let choose: (Item) -> Void
+    @ViewBuilder let row: (Item, Bool) -> Row
+
+    @ObservedObject private var motion = MotionPreferences.shared
+    @Namespace private var selection
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                row(item, index == highlighted)
+                    .padding(.horizontal, horizontalPadding)
+                    .padding(.vertical, verticalPadding)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background {
+                        if index == highlighted {
+                            RoundedRectangle(cornerRadius: Theme.rowRadius)
+                                .fill(Theme.cardSelected)
+                                .matchedGeometryEffect(id: "highlight", in: selection)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                    .id(item.id)
+                    .onHover { hovering in
+                        if hovering, index != highlighted { highlight(index) }
+                    }
+                    .onTapGesture { choose(item) }
+                    .transition(motion.animates(.palette)
+                        ? .opacity.combined(with: .offset(y: 6))
+                        : .identity)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityAddTraits(index == highlighted ? [.isButton, .isSelected] : .isButton)
+                    .accessibilityAction { choose(item) }
+            }
+        }
+        .animation(motion.animation(.palette, .smooth(duration: 0.14)), value: highlighted)
+        .animation(motion.animation(.palette, .smooth(duration: 0.14)), value: items.map(\.id))
+    }
+}
+
 /// A themed push button.
 struct OctetButton: View {
     enum Kind { case primary, secondary, ghost, destructive }
@@ -155,6 +248,8 @@ struct OctetDropdownSpec {
     let options: [OctetDropdownOption]
     let selected: String
     let select: (String) -> Void
+    /// When set, the menu opens as an autocomplete and filters as the person types.
+    var searchPlaceholder: String? = nil
     /// A panel drawn instead of the option list; it gets a close action.
     var panel: ((@escaping () -> Void) -> AnyView)?
 }
@@ -293,25 +388,51 @@ private struct DropdownMenu: View {
     var maxHeight: CGFloat = .infinity
     let close: () -> Void
     @State private var highlighted: String?
-    @FocusState private var focused: Bool
+    @State private var query = ""
+    @FocusState private var focus: FocusTarget?
+
+    private enum FocusTarget { case menu, search }
+
+    private var filtered: [OctetDropdownOption] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return spec.options }
+        return spec.options.filter { option in
+            [option.title, option.id, option.detail ?? "", option.section ?? ""]
+                .contains { FuzzyMatcher.match(needle, in: $0) != nil }
+        }
+    }
 
     var body: some View {
-        ViewThatFits(in: .vertical) {
-            options
-            ScrollView { options }.frame(height: maxHeight)
+        VStack(spacing: 0) {
+            if let placeholder = spec.searchPlaceholder {
+                HStack(spacing: 7) {
+                    OctetIcon("magnifyingglass", size: 12).foregroundStyle(Theme.textTertiary)
+                    TextField(placeholder, text: $query)
+                        .textFieldStyle(.plain)
+                        .font(Theme.uiFont)
+                        .foregroundStyle(Theme.textPrimary)
+                        .focused($focus, equals: .search)
+                        .onSubmit { choose(highlighted ?? filtered.first?.id ?? spec.selected) }
+                }
+                .padding(.horizontal, 9)
+                .frame(height: 32)
+                .overlay(alignment: .bottom) { Rectangle().fill(Theme.divider).frame(height: 1) }
+            }
+            ViewThatFits(in: .vertical) {
+                options
+                ScrollView { options }.frame(height: maxHeight)
+            }
         }
         .frame(maxHeight: maxHeight)
-        .background(Theme.card)
-        .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.border, lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: 7))
-        .shadow(color: .black.opacity(0.35), radius: 14, y: 6)
+        .modifier(DropdownPaletteSurface())
         .focusable()
         .focusEffectDisabled()
-        .focused($focused)
+        .focused($focus, equals: .menu)
         .onAppear {
             highlighted = spec.selected
-            DispatchQueue.main.async { focused = true }
+            DispatchQueue.main.async { focus = spec.searchPlaceholder == nil ? .menu : .search }
         }
+        .onChange(of: query) { _, _ in highlighted = filtered.first?.id }
         .onKeyPress(.upArrow) { move(-1); return .handled }
         .onKeyPress(.downArrow) { move(1); return .handled }
         .onKeyPress(.return) { choose(highlighted ?? spec.selected); return .handled }
@@ -320,9 +441,16 @@ private struct DropdownMenu: View {
 
     private var options: some View {
         VStack(alignment: .leading, spacing: 1) {
-            ForEach(Array(spec.options.enumerated()), id: \.element.id) { index, option in
+            if filtered.isEmpty {
+                Text("No matching models")
+                    .font(Theme.uiFont)
+                    .foregroundStyle(Theme.textTertiary)
+                    .padding(12)
+                    .frame(minWidth: 220, alignment: .leading)
+            }
+            ForEach(Array(filtered.enumerated()), id: \.element.id) { index, option in
                 let selected = option.id == spec.selected
-                if let section = option.section, index == 0 || spec.options[index - 1].section != section {
+                if let section = option.section, index == 0 || filtered[index - 1].section != section {
                     Text(section.uppercased())
                         .font(Theme.headerFont)
                         .kerning(0.4)
@@ -373,7 +501,8 @@ private struct DropdownMenu: View {
     }
 
     private func move(_ delta: Int) {
-        let ids = spec.options.map(\.id)
+        let ids = filtered.map(\.id)
+        guard !ids.isEmpty else { return }
         let current = ids.firstIndex(of: highlighted ?? spec.selected) ?? 0
         highlighted = ids[(current + delta + ids.count) % ids.count]
     }
@@ -381,6 +510,14 @@ private struct DropdownMenu: View {
     private func choose(_ id: String) {
         spec.select(id)
         close()
+    }
+}
+
+/// Adapts the shared palette surface without changing DropdownMenu's focus
+/// and sizing semantics.
+private struct DropdownPaletteSurface: ViewModifier {
+    func body(content: Content) -> some View {
+        OctetPalettePanel(style: .floating, divider: .none) { content }
     }
 }
 

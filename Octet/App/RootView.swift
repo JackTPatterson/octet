@@ -211,10 +211,10 @@ struct RootView: View {
             // "conversation:model" also opens that dropdown.
             if let window = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], window.hasPrefix("conversation") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                    self.window.newConversation()
                     let parts = window.split(separator: ":").map(String.init)
                     ConversationDebug.openDropdown = parts.dropFirst().first
                     ConversationDebug.scrollToItem = parts.count > 2 ? Int(parts[2]) : nil
+                    self.window.newConversation()
                 }
             }
             // Verification hook: an engine name opens its native conversation;

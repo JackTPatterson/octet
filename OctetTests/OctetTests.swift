@@ -1,5 +1,37 @@
 import XCTest
 
+final class TerminalEnvironmentTests: XCTestCase {
+    func testAdvertisesTruecolorAndOverridesInheritedNoColor() {
+        let environment = TerminalEnvironment.sanitized([
+            "NO_COLOR": "1",
+            "PATH": "/usr/bin",
+        ])
+
+        XCTAssertNil(environment["NO_COLOR"])
+        XCTAssertEqual(environment["PATH"], "/usr/bin")
+        XCTAssertEqual(TerminalEnvironment.colorCapability["TERM"], "xterm-256color")
+        XCTAssertEqual(TerminalEnvironment.colorCapability["COLORTERM"], "truecolor")
+        XCTAssertEqual(TerminalEnvironment.colorCapability["FORCE_COLOR"], "3")
+    }
+}
+
+final class GitHubPullRequestTests: XCTestCase {
+    func testParsesReviewAndFailingChecks() throws {
+        let data = Data(#"{"number":42,"title":"Polish runtime panels","state":"OPEN","url":"https://github.com/acme/app/pull/42","isDraft":false,"reviewDecision":"CHANGES_REQUESTED","statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"},{"status":"COMPLETED","conclusion":"FAILURE"}]}"#.utf8)
+        let pullRequest = try XCTUnwrap(GitHubPullRequest.parse(data))
+        XCTAssertEqual(pullRequest.number, 42)
+        XCTAssertEqual(pullRequest.checks, .failing)
+        XCTAssertEqual(pullRequest.statusText, "Changes requested")
+    }
+
+    func testDraftAndPendingChecks() throws {
+        let data = Data(#"{"number":7,"title":"Draft","state":"OPEN","url":"https://github.com/acme/app/pull/7","isDraft":true,"statusCheckRollup":[{"status":"IN_PROGRESS","conclusion":""}]}"#.utf8)
+        let pullRequest = try XCTUnwrap(GitHubPullRequest.parse(data))
+        XCTAssertEqual(pullRequest.checks, .pending)
+        XCTAssertEqual(pullRequest.statusText, "Draft")
+    }
+}
+
 final class EngineModelTests: XCTestCase {
     func testDecodesLiveSnapshotShape() throws {
         // Captured from the session server's `api snapshot` (0.9.1).
@@ -1002,6 +1034,31 @@ final class ShellSyntaxTests: XCTestCase {
         XCTAssertTrue(ShellSyntax.spans(in: "   ").isEmpty)
         XCTAssertTrue(ShellSyntax.looksLikePath("~/x"))
         XCTAssertFalse(ShellSyntax.looksLikePath("https://example.com"))
+    }
+
+    func testAssignmentsOperatorsRedirectionsExpansionsAndGlobsFollowShellGrammar() {
+        let parsed = roles("MODE=test env npm test&&cat 2>./errors.log $HOME/*.txt")
+        XCTAssertEqual(parsed.map(\.0),
+                       ["MODE=test", "env", "npm", "test", "&&", "cat", "2>", "./errors.log", "$HOME/*.txt"])
+        XCTAssertEqual(parsed.map(\.1),
+                       [.assignment, .reserved, .command, .argument, .separator, .command,
+                        .redirect, .path, .variable])
+    }
+}
+
+final class AgentComposerSyntaxTests: XCTestCase {
+    func testFindsFileMentionAtTheCaretButNotEmail() {
+        let text = "Review @Sources/App"
+        let mention = AgentComposerSyntax.mention(in: text)
+        XCTAssertEqual(mention?.query, "Sources/App")
+        XCTAssertNil(AgentComposerSyntax.mention(in: "person@example.com"))
+    }
+
+    func testOnlyExplicitUnfencedBangLinesBecomeSuggestedCommands() {
+        let items = [
+            AgentItem(id: "a", kind: .text("Try this:\n! npm test\n```sh\n! rm -rf build\n```\n! git status"))
+        ]
+        XCTAssertEqual(AgentComposerSyntax.suggestedShellCommands(in: items), ["npm test", "git status"])
     }
 }
 

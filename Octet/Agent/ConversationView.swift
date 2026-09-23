@@ -25,6 +25,13 @@ struct ConversationView: View {
             // one clipped stack lets a new panel rise from behind the composer
             // instead of appearing as a detached card above it.
             VStack(spacing: 0) {
+                if !session.queuedMessages.isEmpty {
+                    QueuedMessagesPanel(items: session.queuedMessages)
+                }
+                let suggestedCommands = AgentComposerSyntax.suggestedShellCommands(in: session.conversation.items)
+                if !session.conversation.isRunning, !suggestedCommands.isEmpty {
+                    SuggestedCommandsPanel(session: session, commands: suggestedCommands)
+                }
                 if let question = session.pendingQuestion, session.pendingPermission == nil {
                     QuestionCard(session: session, question: question)
                         .id(question.id)
@@ -80,11 +87,16 @@ struct ConversationView: View {
             if id == "error" { session.debugShowError(); return }
             if id == "sample" { session.debugLoadSample(); return }
             if id == "everything" { session.debugLoadEverything(); return }
+            if id == "commands" { session.debugLoadSuggestedCommands(); return }
+            if id == "queued" { session.debugLoadQueuedMessages(); return }
             if id == "monitor" || id == "monitor-detail" {
                 session.debugLoadMonitor()
                 window.ui.runtimePanelVisible = true
                 if id == "monitor-detail" {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    // Let the Runtime panel ingest the fixture entries before
+                    // selecting one; an early selection is correctly cleared
+                    // as stale while its list is still empty.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
                         window.ui.runtimeInspectorEntryID = "agent-agent-debug-call"
                     }
                 }
@@ -119,7 +131,6 @@ private struct ConversationHeader: View {
     var body: some View {
         let conversation = session.conversation
         HStack(spacing: 10) {
-            if let brand = AgentBrand.forAgent(session.engine.agent) { AgentLogo(brand: brand, size: 14) }
             ProjectLocation(directory: session.cwd, branch: branch, worktree: workspace?.worktree)
             Spacer(minLength: 8)
             if let used = conversation.contextUsed {
@@ -155,11 +166,15 @@ private struct ConversationHeader: View {
 }
 
 private struct ProjectLocation: View {
+    @Environment(\.openURL) private var openURL
     let directory: String
     let branch: String?
     let worktree: EngineWorktree?
     @State private var changes: WorkingTreeChanges?
+    @State private var pullRequest: GitHubPullRequest?
+    @State private var loadingPullRequest = false
     private let refresh = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
+    private let pullRequestRefresh = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
     var body: some View {
         HStack(spacing: 7) {
@@ -183,6 +198,22 @@ private struct ProjectLocation: View {
                 .foregroundStyle(Color(hex: AgentStateColor.done))
                 .help(sourceHelp)
             }
+            if let pullRequest {
+                Button { openURL(pullRequest.url) } label: {
+                    HStack(spacing: 4) {
+                        Circle().fill(pullRequestColor(pullRequest)).frame(width: 5, height: 5)
+                        OctetIcon("arrow.triangle.pull", size: 10)
+                        Text("#\(pullRequest.number)")
+                            .font(Theme.captionFont.monospacedDigit())
+                    }
+                    .foregroundStyle(Theme.textSecondary)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("\(pullRequest.title)\n\(pullRequest.statusText) · Open on GitHub")
+                .accessibilityLabel("Pull request \(pullRequest.number), \(pullRequest.title)")
+                .accessibilityValue(pullRequest.statusText)
+            }
             if let changes, !changes.isEmpty {
                 HStack(spacing: 5) {
                     Text("±")
@@ -200,9 +231,18 @@ private struct ProjectLocation: View {
             }
         }
         .layoutPriority(1)
-        .onAppear { reloadChanges() }
-        .onChange(of: directory) { _, _ in reloadChanges() }
+        .onAppear {
+            reloadChanges()
+            reloadPullRequest()
+        }
+        .onChange(of: directory) { _, _ in
+            changes = nil
+            pullRequest = nil
+            reloadChanges()
+            reloadPullRequest()
+        }
         .onReceive(refresh) { _ in reloadChanges() }
+        .onReceive(pullRequestRefresh) { _ in reloadPullRequest() }
     }
 
     private var sourceLabel: String? {
@@ -228,6 +268,35 @@ private struct ProjectLocation: View {
                 changes = value
             }
         }
+    }
+
+    private func reloadPullRequest() {
+        guard !loadingPullRequest else { return }
+        loadingPullRequest = true
+        let path = directory
+        DispatchQueue.global(qos: .utility).async {
+            let result = LoginShell.run([
+                "gh", "pr", "view", "--json",
+                "number,title,state,url,isDraft,reviewDecision,statusCheckRollup",
+            ], in: path)
+            let value = result.status == 0 ? GitHubPullRequest.parse(Data(result.output.utf8)) : nil
+            DispatchQueue.main.async {
+                guard path == directory else { return }
+                loadingPullRequest = false
+                // A successful empty lookup means the branch has no PR. A
+                // transient auth/network failure keeps the last useful chip.
+                if result.status == 0 { pullRequest = value }
+            }
+        }
+    }
+
+    private func pullRequestColor(_ pullRequest: GitHubPullRequest) -> Color {
+        if pullRequest.isDraft { return Theme.textTertiary }
+        if pullRequest.reviewDecision == "CHANGES_REQUESTED" || pullRequest.checks == .failing {
+            return Color(hex: AgentStateColor.blocked)
+        }
+        if pullRequest.checks == .pending { return Theme.accent }
+        return Color(hex: AgentStateColor.done)
     }
 }
 
@@ -420,8 +489,75 @@ extension Transcript {
     /// Thinking blocks arrive empty when the model keeps its reasoning to
     /// itself; there's nothing to expand.
     static func isShown(_ item: AgentItem) -> Bool {
+        if item.queued { return false }
         if case .thinking(let text) = item.kind { return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         return true
+    }
+}
+
+private struct QueuedMessagesPanel: View {
+    let items: [AgentItem]
+
+    var body: some View {
+        OctetPalettePanel {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(items) { item in
+                    if case .user(let text) = item.kind {
+                        HStack(alignment: .top, spacing: 8) {
+                            OctetIcon("clock", size: 12).foregroundStyle(Theme.textTertiary)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("QUEUED").font(Theme.headerFont).kerning(0.4).foregroundStyle(Theme.textTertiary)
+                                Text(text).font(Theme.uiFont).foregroundStyle(Theme.textPrimary)
+                                    .lineLimit(3).textSelection(.enabled)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 9)
+                        if item.id != items.last?.id { Rectangle().fill(Theme.divider).frame(height: 1) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct SuggestedCommandsPanel: View {
+    @ObservedObject var session: AgentSession
+    let commands: [String]
+    @State private var dismissed = false
+
+    var body: some View {
+        if !dismissed {
+            OctetPalettePanel {
+                VStack(alignment: .leading, spacing: 9) {
+                    HStack(spacing: 7) {
+                        OctetIcon("terminal", size: 13).foregroundStyle(Theme.accent)
+                        Text(commands.count == 1 ? "Run the suggested command?" : "Run the suggested commands?")
+                            .font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary)
+                        Spacer()
+                        OctetButton(title: "Dismiss", kind: .ghost, compact: true) { dismissed = true }
+                        OctetButton(title: "Run", kind: .primary, compact: true) { confirmRun() }
+                    }
+                    CodePanel(text: commands.map { "! \($0)" }.joined(separator: "\n"),
+                              language: "shell", maxLines: 8)
+                }
+                .padding(12)
+            }
+            .onChange(of: commands) { _, _ in dismissed = false }
+        }
+    }
+
+    private func confirmRun() {
+        ConfirmCenter.shared.ask(
+            title: commands.count == 1 ? "Run this command?" : "Run these commands?",
+            message: "The commands will run through \(session.engine.displayName) in \(abbreviateHome(session.cwd)).",
+            detail: commands.joined(separator: "\n"),
+            confirmTitle: "Run"
+        ) { _ in
+            dismissed = true
+            for command in commands { session.send("!" + command) }
+        }
     }
 }
 
@@ -874,6 +1010,10 @@ private struct ShellHighlightedText: View {
         case .string: Theme.palette.color(\.syntaxString)
         case .path: Theme.palette.color(\.syntaxPath)
         case .variable: Theme.palette.color(\.syntaxVariable)
+        case .assignment: Theme.palette.color(\.syntaxVariable)
+        case .reserved: Theme.palette.color(\.syntaxBuiltin)
+        case .expansion: Theme.palette.color(\.syntaxVariable)
+        case .glob: Theme.palette.color(\.syntaxPath)
         case .redirect, .separator: Theme.textSecondary
         case .comment, .argument: Theme.textTertiary
         }
@@ -892,45 +1032,44 @@ private struct QuestionCard: View {
     @State private var typed: [Int: String] = [:]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            ForEach(Array(question.items.enumerated()), id: \.offset) { index, item in
-                VStack(alignment: .leading, spacing: 6) {
-                    if !item.header.isEmpty {
-                        Text(item.header.uppercased())
-                            .font(Theme.headerFont)
-                            .kerning(0.4)
-                            .foregroundStyle(Theme.textTertiary)
-                    }
-                    Text(item.question)
-                        .font(Theme.uiFontMedium)
-                        .foregroundStyle(Theme.textPrimary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    ForEach(item.options, id: \.label) { option in
-                        optionRow(option, item: item, index: index)
-                    }
-                    if item.custom {
-                        OctetTextField(placeholder: item.options.isEmpty ? "Your answer" : "Or type your own answer",
-                                      text: Binding(get: { typed[index] ?? item.initial }, set: { typed[index] = $0 }),
-                                      secure: item.secret) {
-                            if ready { answer() }
+        OctetPalettePanel {
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(Array(question.items.enumerated()), id: \.offset) { index, item in
+                    VStack(alignment: .leading, spacing: 6) {
+                        if !item.header.isEmpty {
+                            Text(item.header.uppercased())
+                                .font(Theme.headerFont)
+                                .kerning(0.4)
+                                .foregroundStyle(Theme.textTertiary)
+                        }
+                        Text(item.question)
+                            .font(Theme.uiFontMedium)
+                            .foregroundStyle(Theme.textPrimary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        ForEach(item.options, id: \.label) { option in
+                            optionRow(option, item: item, index: index)
+                        }
+                        if item.custom {
+                            OctetTextField(placeholder: item.options.isEmpty ? "Your answer" : "Or type your own answer",
+                                          text: Binding(get: { typed[index] ?? item.initial }, set: { typed[index] = $0 }),
+                                          secure: item.secret) {
+                                if ready { answer() }
+                            }
                         }
                     }
                 }
+                HStack(spacing: 8) {
+                    Spacer()
+                    OctetButton(title: "Skip", kind: .secondary) { session.rejectQuestion(question) }
+                        .keyboardShortcut(.cancelAction)
+                        .help("Tell the agent you won't answer; its turn ends")
+                    OctetButton(title: "Answer", kind: .primary) { answer() }
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(!ready)
+                }
             }
-            HStack(spacing: 8) {
-                Spacer()
-                OctetButton(title: "Skip", kind: .secondary) { session.rejectQuestion(question) }
-                    .keyboardShortcut(.cancelAction)
-                    .help("Tell the agent you won't answer; its turn ends")
-                OctetButton(title: "Answer", kind: .primary) { answer() }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(!ready)
-            }
+            .padding(12)
         }
-        .padding(12)
-        .background(Theme.card)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .overlay(alignment: .top) { Rectangle().fill(Theme.divider).frame(height: 1) }
     }
 
     private func optionRow(_ option: OpenCodeQuestion.Item.Option, item: OpenCodeQuestion.Item, index: Int) -> some View {
@@ -992,66 +1131,65 @@ private struct PermissionCard: View {
 
     var body: some View {
         if let request = session.pendingPermission {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 8) {
-                    OctetIcon("exclamationmark.triangle.fill", size: 15).foregroundStyle(Theme.accent)
-                    Text("Allow \(request.toolName)?")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Theme.textPrimary)
-                    if let path = request.inputObject["file_path"] as? String {
-                        LanguageLogo(path: path)
-                        Text((path as NSString).lastPathComponent)
-                            .font(Theme.monoFont)
-                            .foregroundStyle(Theme.textSecondary)
+            OctetPalettePanel {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 8) {
+                        OctetIcon("exclamationmark.triangle.fill", size: 15).foregroundStyle(Theme.accent)
+                        Text("Allow \(request.toolName)?")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Theme.textPrimary)
+                        if let path = request.inputObject["file_path"] as? String {
+                            LanguageLogo(path: path)
+                            Text((path as NSString).lastPathComponent)
+                                .font(Theme.monoFont)
+                                .foregroundStyle(Theme.textSecondary)
+                        }
+                        Spacer()
                     }
-                    Spacer()
-                }
-                if let diff = AgentToolCall.diff(tool: request.toolName, input: request.inputObject) {
-                    DiffView(lines: diff, path: request.inputObject["file_path"] as? String,
-                             startLine: AgentToolCall.startLine(tool: request.toolName, input: request.inputObject, applied: false),
-                             maxLines: 14)
-                } else if !request.summary.isEmpty {
-                    CodePanel(text: request.summary, language: request.toolName, maxLines: 8)
-                }
-                OctetButton(title: showInput ? "Hide details" : "Show details",
-                           icon: showInput ? "chevron.down" : "chevron.right", kind: .ghost, compact: true) {
-                    showInput.toggle()
-                }
-                if showInput { CodePanel(text: request.input, language: "input", tint: Theme.textSecondary, maxLines: 12, highlights: false) }
-                HStack(spacing: 8) {
-                    // Claude Code carries a note back with a refusal; Codex's
-                    // answer is only a decision, so a note there would vanish.
-                    if session.engine != .codex {
-                        OctetTextField(placeholder: session.engine == .opencode
-                                        ? "Note for OpenCode when denying (optional; without one the turn stops)"
-                                        : "Note for Claude when denying (optional)", text: $note) {
+                    if let diff = AgentToolCall.diff(tool: request.toolName, input: request.inputObject) {
+                        DiffView(lines: diff, path: request.inputObject["file_path"] as? String,
+                                 startLine: AgentToolCall.startLine(tool: request.toolName, input: request.inputObject, applied: false),
+                                 maxLines: 14)
+                    } else if !request.summary.isEmpty {
+                        CodePanel(text: request.summary, language: request.toolName, maxLines: 8)
+                    }
+                    OctetButton(title: showInput ? "Hide details" : "Show details",
+                               icon: showInput ? "chevron.down" : "chevron.right", kind: .ghost, compact: true) {
+                        showInput.toggle()
+                    }
+                    if showInput { CodePanel(text: request.input, language: "input", tint: Theme.textSecondary, maxLines: 12, highlights: false) }
+                    HStack(spacing: 8) {
+                        // Claude Code carries a note back with a refusal; Codex's
+                        // answer is only a decision, so a note there would vanish.
+                        if session.engine != .codex {
+                            OctetTextField(placeholder: session.engine == .opencode
+                                            ? "Note for OpenCode when denying (optional; without one the turn stops)"
+                                            : "Note for Claude when denying (optional)", text: $note) {
+                                session.answerPermission(allow: false, note: note)
+                                note = ""
+                            }
+                        } else {
+                            Spacer()
+                        }
+                        OctetButton(title: "Deny", kind: .secondary) {
                             session.answerPermission(allow: false, note: note)
                             note = ""
                         }
-                    } else {
-                        Spacer()
+                        .keyboardShortcut(.cancelAction)
+                        OctetButton(title: AgentSession.sessionAllowTitle(request), kind: .secondary) {
+                            session.answerPermission(allow: true, forSession: true)
+                            note = ""
+                        }
+                        .help("Allow this now and stop asking about it until the conversation closes")
+                        OctetButton(title: "Allow", kind: .primary) {
+                            session.answerPermission(allow: true)
+                            note = ""
+                        }
+                        .keyboardShortcut(.defaultAction)
                     }
-                    OctetButton(title: "Deny", kind: .secondary) {
-                        session.answerPermission(allow: false, note: note)
-                        note = ""
-                    }
-                    .keyboardShortcut(.cancelAction)
-                    OctetButton(title: AgentSession.sessionAllowTitle(request), kind: .secondary) {
-                        session.answerPermission(allow: true, forSession: true)
-                        note = ""
-                    }
-                    .help("Allow this now and stop asking about it until the conversation closes")
-                    OctetButton(title: "Allow", kind: .primary) {
-                        session.answerPermission(allow: true)
-                        note = ""
-                    }
-                    .keyboardShortcut(.defaultAction)
                 }
+                .padding(12)
             }
-            .padding(12)
-            .background(Theme.card)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .overlay(alignment: .top) { Rectangle().fill(Theme.divider).frame(height: 1) }
             .onAppear {
                 AccessibilityNotification.Announcement("\(session.engine.displayName) asks to use \(request.toolName)").post()
             }
@@ -1070,6 +1208,8 @@ private struct Composer: View {
     @State private var highlighted = 0
     @State private var dismissedFor: String?
     @State private var attachments: [AgentSession.Attachment] = []
+    @State private var referenceSuggestions: [AgentComposerSyntax.Reference] = []
+    @State private var referenceTask: Task<Void, Never>?
     @ObservedObject private var motion = MotionPreferences.shared
     /// The commands on show, changed inside an animation so the list, the
     /// composer card around it and the transcript above all move together.
@@ -1097,6 +1237,37 @@ private struct Composer: View {
         let next = suggestions
         guard next.map(\.id) != shownSuggestions.map(\.id) else { return }
         motion.perform(.palette, .smooth(duration: 0.22)) { shownSuggestions = next }
+    }
+
+    private func refreshReferences() {
+        referenceTask?.cancel()
+        guard let mention = AgentComposerSyntax.mention(in: text) else {
+            motion.perform(.palette, .smooth(duration: 0.22)) { referenceSuggestions = [] }
+            return
+        }
+        let expected = text
+        let cwd = session.cwd
+        referenceTask = Task {
+            // Avoid walking the project once per keystroke while someone is
+            // typing quickly; only the settled @ query starts filesystem work.
+            try? await Task.sleep(for: .milliseconds(120))
+            guard !Task.isCancelled else { return }
+            let matches = await Task.detached(priority: .userInitiated) {
+                AgentComposerSyntax.references(in: cwd, matching: mention.query)
+            }.value
+            guard !Task.isCancelled, text == expected else { return }
+            motion.perform(.palette, .smooth(duration: 0.22)) {
+                referenceSuggestions = matches
+                highlighted = min(highlighted, max(0, matches.count - 1))
+            }
+        }
+    }
+
+    private func accept(_ reference: AgentComposerSyntax.Reference) {
+        guard let mention = AgentComposerSyntax.mention(in: text) else { return }
+        text.replaceSubrange(mention.range, with: "@" + reference.path + " ")
+        referenceSuggestions = []
+        highlighted = 0
     }
 
     private func accept(_ command: SlashCommand) {
@@ -1155,10 +1326,22 @@ private struct Composer: View {
     var body: some View {
         let running = session.conversation.isRunning
         let matches = shownSuggestions
+        let references = referenceSuggestions
         VStack(spacing: 8) {
             if !matches.isEmpty {
-                SlashSuggestions(commands: matches, highlighted: min(highlighted, matches.count - 1)) { accept($0) }
+                SlashSuggestions(commands: matches,
+                                 highlighted: min(highlighted, matches.count - 1),
+                                 highlight: { highlighted = $0 }) { accept($0) }
                     // Grows up out of the message field, and folds back into it.
+                    .transition(motion.animates(.palette)
+                        ? .asymmetric(insertion: .opacity.combined(with: .offset(y: 8)),
+                                      removal: .opacity.combined(with: .offset(y: 4)))
+                        : .identity)
+            }
+            if !references.isEmpty {
+                ReferenceSuggestions(references: references,
+                                     highlighted: min(highlighted, references.count - 1),
+                                     highlight: { highlighted = $0 }) { accept($0) }
                     .transition(motion.animates(.palette)
                         ? .asymmetric(insertion: .opacity.combined(with: .offset(y: 8)),
                                       removal: .opacity.combined(with: .offset(y: 4)))
@@ -1197,7 +1380,9 @@ private struct Composer: View {
                         // Return sends (or takes the highlighted command); Shift-Return adds a line.
                         guard !press.modifiers.contains(.shift) else { return .ignored }
                         let matches = suggestions
-                        if !matches.isEmpty {
+                        if !references.isEmpty {
+                            accept(references[min(highlighted, references.count - 1)])
+                        } else if !matches.isEmpty {
                             accept(matches[min(highlighted, matches.count - 1)])
                         } else {
                             submit()
@@ -1213,8 +1398,12 @@ private struct Composer: View {
                             return .handled
                         }
                         let matches = suggestions
-                        guard !matches.isEmpty else { return .ignored }
-                        accept(matches[min(highlighted, matches.count - 1)])
+                        if !references.isEmpty {
+                            accept(references[min(highlighted, references.count - 1)])
+                        } else {
+                            guard !matches.isEmpty else { return .ignored }
+                            accept(matches[min(highlighted, matches.count - 1)])
+                        }
                         return .handled
                     }
                     .onKeyPress(.leftArrow) {
@@ -1225,26 +1414,32 @@ private struct Composer: View {
                         return .handled
                     }
                     .onKeyPress(.upArrow) {
-                        let count = suggestions.count
+                        let count = referenceSuggestions.isEmpty ? suggestions.count : referenceSuggestions.count
                         guard count > 0 else { return .ignored }
                         highlighted = (min(highlighted, count - 1) - 1 + count) % count
                         return .handled
                     }
                     .onKeyPress(.downArrow) {
-                        let count = suggestions.count
+                        let count = referenceSuggestions.isEmpty ? suggestions.count : referenceSuggestions.count
                         guard count > 0 else { return .ignored }
                         highlighted = (min(highlighted, count - 1) + 1) % count
                         return .handled
                     }
                     .onKeyPress(.escape) {
-                        guard !suggestions.isEmpty else { return .ignored }
-                        dismissedFor = text
-                        refreshSuggestions()
+                        if !suggestions.isEmpty || !referenceSuggestions.isEmpty {
+                            dismissedFor = text
+                            referenceSuggestions = []
+                            refreshSuggestions()
+                            return .handled
+                        }
+                        guard running else { return .ignored }
+                        confirmInterrupt()
                         return .handled
                     }
                     .onChange(of: text) { _, _ in
                         highlighted = 0
                         refreshSuggestions()
+                        refreshReferences()
                     }
                     .onChange(of: session.piEditorRequest?.id) { _, _ in
                         guard let request = session.piEditorRequest else { return }
@@ -1264,7 +1459,8 @@ private struct Composer: View {
                         OctetDropdownOption(id: $0.id, title: $0.title, detail: $0.detail, section: $0.family)
                     },
                     selected: session.model,
-                    select: { session.model = $0 }
+                    select: { session.model = $0 },
+                    searchPlaceholder: "Search models…"
                 ), label: "Model", state: dropdowns)
                 // Effort, in Claude Code's own colors and scale.
                 EffortControl(session: session, dropdowns: dropdowns)
@@ -1316,9 +1512,9 @@ private struct Composer: View {
                 Spacer()
                 let empty = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty
                 if running {
-                    OctetButton(title: "Stop", icon: "pause.circle", kind: .secondary, compact: true) { session.interrupt() }
+                    OctetButton(title: "Stop", icon: "pause.circle", kind: .secondary, compact: true) { confirmInterrupt() }
                         .keyboardShortcut(".", modifiers: .command)
-                        .help("Stop this turn (⌘.)")
+                        .help("Stop this turn (Esc or ⌘.)")
                 }
                 if !running || !empty {
                     // While Claude works, a message queues for the next turn.
@@ -1331,7 +1527,16 @@ private struct Composer: View {
         .padding(12)
         .background(Theme.card)
         .overlay(alignment: .top) { Rectangle().fill(Theme.divider).frame(height: 1) }
-        .onAppear { DispatchQueue.main.async { focused = true } }
+        .onAppear {
+            #if DEBUG
+            if ConversationDebug.openDropdown == "reference" {
+                text = "@"
+                refreshReferences()
+            }
+            #endif
+            DispatchQueue.main.async { focused = true }
+        }
+        .onDisappear { referenceTask?.cancel() }
         .onPasteCommand(of: [.image, .fileURL]) { providers in load(providers) }
         .onDrop(of: [.image, .fileURL], isTargeted: nil) { providers in
             load(providers)
@@ -1379,6 +1584,15 @@ private struct Composer: View {
         attachments = []
         session.send(message, attachments: images)
     }
+
+    private func confirmInterrupt() {
+        ConfirmCenter.shared.ask(
+            title: "Stop the current action?",
+            message: "\(session.engine.displayName)'s current response and active tool work will be interrupted. Queued messages stay queued.",
+            confirmTitle: "Stop",
+            destructive: true
+        ) { _ in session.interrupt() }
+    }
 }
 
 /// Status widgets Pi extensions place around the editor. RPC sends text
@@ -1387,22 +1601,20 @@ private struct PiWidgets: View {
     let widgets: [AgentSession.PiWidget]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            ForEach(widgets) { widget in
-                ForEach(Array(widget.lines.enumerated()), id: \.offset) { _, line in
-                    Text(line)
-                        .font(Theme.monoFont)
-                        .foregroundStyle(Theme.textSecondary)
-                        .textSelection(.enabled)
+        OctetPalettePanel {
+            VStack(alignment: .leading, spacing: 5) {
+                ForEach(widgets) { widget in
+                    ForEach(Array(widget.lines.enumerated()), id: \.offset) { _, line in
+                        Text(line)
+                            .font(Theme.monoFont)
+                            .foregroundStyle(Theme.textSecondary)
+                            .textSelection(.enabled)
+                    }
                 }
             }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.card.opacity(0.7))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.border, lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 }
 
@@ -1410,13 +1622,12 @@ private struct PiWidgets: View {
 private struct SlashSuggestions: View {
     let commands: [SlashCommand]
     let highlighted: Int
+    let highlight: (Int) -> Void
     let choose: (SlashCommand) -> Void
-    @ObservedObject private var motion = MotionPreferences.shared
-    @Namespace private var selection
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 1) {
-            ForEach(Array(commands.enumerated()), id: \.element.id) { index, command in
+        OctetPalettePanel(divider: .bottom) {
+            OctetAnimatedList(items: commands, highlighted: highlighted, highlight: highlight, choose: choose) { command, _ in
                 HStack(spacing: 10) {
                     Text(command.insertion)
                         .font(Theme.monoFont)
@@ -1434,27 +1645,34 @@ private struct SlashSuggestions: View {
                             .foregroundStyle(Theme.textTertiary)
                     }
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .background {
-                    // One highlight that slides between rows as you arrow.
-                    if index == highlighted {
-                        RoundedRectangle(cornerRadius: Theme.rowRadius)
-                            .fill(Theme.cardSelected)
-                            .matchedGeometryEffect(id: "highlight", in: selection)
-                    }
-                }
-                .contentShape(Rectangle())
-                .transition(motion.animates(.palette) ? .opacity.combined(with: .offset(y: 6)) : .identity)
-                .onTapGesture { choose(command) }
-                .accessibilityElement(children: .combine)
-                .accessibilityAddTraits(index == highlighted ? [.isButton, .isSelected] : .isButton)
             }
+            .padding(.bottom, 4)
         }
-        .animation(motion.animation(.palette, .smooth(duration: 0.14)), value: highlighted)
-        .padding(.bottom, 4)
-        .overlay(alignment: .bottom) { Rectangle().fill(Theme.divider).frame(height: 1) }
-        .clipped()
+    }
+}
+
+/// Workspace files matching the unfinished @ mention in the composer.
+private struct ReferenceSuggestions: View {
+    let references: [AgentComposerSyntax.Reference]
+    let highlighted: Int
+    let highlight: (Int) -> Void
+    let choose: (AgentComposerSyntax.Reference) -> Void
+
+    var body: some View {
+        OctetPalettePanel(divider: .bottom) {
+            OctetAnimatedList(items: references, highlighted: highlighted, highlight: highlight, choose: choose) { reference, _ in
+                HStack(spacing: 9) {
+                    OctetIcon("doc", size: 12).foregroundStyle(Theme.textTertiary)
+                    Text("@" + reference.path)
+                        .font(Theme.monoFont)
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 8)
+                }
+            }
+            .padding(.bottom, 4)
+        }
     }
 }
 
@@ -1478,7 +1696,7 @@ private struct StatusLine: View {
                         .foregroundStyle(Theme.textTertiary)
                 }
             }
-            Text("⌘. to stop")
+            Text("Esc to stop")
                 .font(Theme.captionFont)
                 .foregroundStyle(Theme.textTertiary)
         }
@@ -1623,7 +1841,8 @@ private struct CodexControls: View {
                 OctetDropdownOption(id: $0.id, title: $0.displayName, detail: $0.description)
             },
             selected: model?.id ?? "",
-            select: { session.model = $0 }
+            select: { session.model = $0 },
+            searchPlaceholder: "Search models…"
         ), label: "Model", state: dropdowns)
         .disabled(catalog.models.isEmpty)
 
@@ -1732,7 +1951,8 @@ private struct OpenCodeControls: View {
                 // Variants are per model; keep the choice only where it exists.
                 if let effort = session.effort, catalog.model(choice)?.variants.contains(effort) != true { session.effort = nil }
                 session.conversation.contextWindow = catalog.model(choice)?.context
-            }
+            },
+            searchPlaceholder: "Search models…"
         ), label: "Model", state: dropdowns)
         .sheet(isPresented: $browsing, onDismiss: {
             // A provider signed in to meanwhile joins the menu.
@@ -1804,7 +2024,8 @@ private struct PiControls: View {
                                     section: $0.provider)
             },
             selected: selected?.id ?? session.model,
-            select: { session.model = $0 }
+            select: { session.model = $0 },
+            searchPlaceholder: "Search models…"
         ), label: "Model", state: dropdowns)
         .disabled(session.piModels.isEmpty)
         .help(session.piModels.isEmpty

@@ -16,7 +16,7 @@ settings:
     # The generated Info.plist takes its version from these; without them
     # the app ships with no version at all.
     MARKETING_VERSION: "0.1.0"
-    CURRENT_PROJECT_VERSION: "1"
+    CURRENT_PROJECT_VERSION: "3"
   configs:
     Debug:
       CODE_SIGN_IDENTITY: "Apple Development"

@@ -226,6 +226,10 @@ final class AgentSession: ObservableObject, Identifiable {
     /// Messages sent before the thread was open, in order.
     private var queuedTurns: [String] = []
 
+    /// Follow-ups waiting behind the current turn. The composer draws these
+    /// beside questions and approvals instead of burying them in transcript.
+    var queuedMessages: [AgentItem] { conversation.items.filter(\.queued) }
+
     /// The model a conversation starts on until one is picked.
     static let defaultModel = "claude-sonnet-5"
 
@@ -658,6 +662,17 @@ final class AgentSession: ObservableObject, Identifiable {
         conversation.apply(["type": "assistant", "message": ["id": "monitor-debug-reply", "content": [[
             "type": "text", "text": "The preview monitor is active. I’ll let you know as soon as it reports ready.",
         ]]]])
+        conversation.apply(["type": "assistant", "message": ["id": "background-task-debug", "content": [[
+            "type": "tool_use", "id": "background-task-debug-call", "name": "Bash", "input": [
+                "command": "npm run preview",
+                "description": "Preview server",
+                "run_in_background": true,
+            ],
+        ]]]])
+        conversation.apply(["type": "user", "message": ["content": [[
+            "type": "tool_result", "tool_use_id": "background-task-debug-call",
+            "content": "Command running in background with ID preview-server.",
+        ]]]])
         conversation.apply(["type": "result", "subtype": "success"])
         conversation.apply(["type": "assistant", "message": ["id": "agent-debug", "content": [[
             "type": "tool_use", "id": "agent-debug-call", "name": "Agent", "input": [
@@ -914,6 +929,28 @@ final class AgentSession: ObservableObject, Identifiable {
 
     func debugShowError() {
         notice(#"Couldn't answer OpenCode: OpenCode answered 400: Expected a string starting with "que", got "debug-question" at ["requestID"]"#)
+    }
+
+    func debugLoadSuggestedCommands() {
+        title = "Run the denied checks"
+        conversation.items = [
+            AgentItem(id: "debug-user", kind: .user("Run the release checks.")),
+            AgentItem(id: "debug-answer", kind: .text(
+                "The classifier denied execution, but these are the exact commands to run:\n\n! swift test\n! git status --short"
+            )),
+        ]
+        conversation.isRunning = false
+    }
+
+    func debugLoadQueuedMessages() {
+        title = "Finish the settings work"
+        conversation.items = [
+            AgentItem(id: "debug-answer", kind: .text("I’m applying the remaining changes now.")),
+            AgentItem(id: "debug-queue-1", kind: .user("Run the focused tests next."), queued: true),
+            AgentItem(id: "debug-queue-2", kind: .user("Then summarize what changed."), queued: true),
+        ]
+        conversation.isRunning = true
+        turnStartedAt = Date().addingTimeInterval(-12)
     }
     #endif
 

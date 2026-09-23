@@ -321,6 +321,11 @@ final class WindowContext: ObservableObject, Identifiable {
     }
 
     func closeFocusedTab() {
+        if let session = AgentCenter.shared.active(in: focusedWorkspace?.workspaceId) {
+            conversationBackingTabs[session.id] = nil
+            AgentCenter.shared.close(session)
+            return
+        }
         guard let id = displayedFocusedTabId else { return }
         closeTab(id)
     }
@@ -376,8 +381,12 @@ final class WindowContext: ObservableObject, Identifiable {
     @discardableResult
     func openAgentConversation(_ agent: String, inPane paneId: String?) -> Bool {
         guard let engine = AgentSession.Engine(rawValue: agent) else { return false }
-        let cwd = store.snapshot.panes.first { $0.paneId == paneId }?.effectiveCwd
-        newConversation(engine: engine, cwd: cwd)
+        let pane = store.snapshot.panes.first { $0.paneId == paneId }
+        // A command typed into a blank terminal replaces that visual tab. The
+        // terminal remains only as a hidden workspace anchor, and closing the
+        // conversation never closes the workspace beneath it.
+        newConversation(engine: engine, cwd: pane?.effectiveCwd,
+                        replacingStarterTab: pane?.tabId)
         return true
     }
 

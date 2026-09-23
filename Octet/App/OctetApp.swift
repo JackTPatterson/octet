@@ -12,6 +12,10 @@ struct OctetApp: App {
     @MainActor private static var started = false
 
     init() {
+        // IDEs and parent agents commonly export NO_COLOR for their own logs.
+        // Octet is a real PTY, so that host-only preference must not erase the
+        // native colors of Claude, Codex, shells, or any other terminal app.
+        TerminalEnvironment.clearInheritedColorSuppression()
         let session = EngineSession.make()
         let settings = SettingsStore.shared
         settings.sessionConfigPath = session?.configPath

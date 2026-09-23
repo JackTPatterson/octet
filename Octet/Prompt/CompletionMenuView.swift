@@ -6,40 +6,40 @@ struct CompletionMenuView: View {
     @ObservedObject var editor: PromptEditor
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 1) {
-            if editor.isSearchingHistory {
-                Text("history")
-                    .font(Theme.captionFont)
-                    .foregroundStyle(Theme.textTertiary)
-                    .padding(.horizontal, 8)
-                    .padding(.top, 5)
-            }
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(spacing: 1) {
-                        ForEach(Array(editor.completions.enumerated()), id: \.element.id) { index, completion in
-                            CompletionRow(completion: completion, selected: index == editor.completionIndex)
-                                .id(completion.id)
-                                .onTapGesture {
-                                    editor.selectCompletion(index)
-                                    editor.acceptCompletion()
-                                }
+        OctetPalettePanel(style: .floating, divider: .none) {
+            VStack(alignment: .leading, spacing: 1) {
+                if editor.isSearchingHistory {
+                    Text("history")
+                        .font(Theme.captionFont)
+                        .foregroundStyle(Theme.textTertiary)
+                        .padding(.horizontal, 8)
+                        .padding(.top, 5)
+                }
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        OctetAnimatedList(items: editor.completions,
+                                          highlighted: editor.completionIndex,
+                                          horizontalPadding: 7,
+                                          verticalPadding: 3,
+                                          highlight: { editor.selectCompletion($0) },
+                                          choose: { completion in
+                                              guard let index = editor.completions.firstIndex(where: { $0.id == completion.id }) else { return }
+                                              editor.selectCompletion(index)
+                                              editor.acceptCompletion()
+                                          }) { completion, selected in
+                            CompletionRow(completion: completion, selected: selected)
                         }
+                        .padding(4)
                     }
-                    .padding(4)
-                }
-                .frame(maxHeight: 220)
-                .onChange(of: editor.completionIndex) { _, index in
-                    guard editor.completions.indices.contains(index) else { return }
-                    proxy.scrollTo(editor.completions[index].id)
+                    .frame(maxHeight: 220)
+                    .onChange(of: editor.completionIndex) { _, index in
+                        guard editor.completions.indices.contains(index) else { return }
+                        proxy.scrollTo(editor.completions[index].id)
+                    }
                 }
             }
+            .frame(width: 340, alignment: .leading)
         }
-        .frame(width: 340, alignment: .leading)
-        .background(Theme.card)
-        .clipShape(RoundedRectangle(cornerRadius: 7))
-        .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.border, lineWidth: 1))
-        .shadow(color: .black.opacity(0.35), radius: 16, y: 6)
     }
 }
 
@@ -64,10 +64,5 @@ private struct CompletionRow: View {
                     .foregroundStyle(Theme.textTertiary)
             }
         }
-        .padding(.horizontal, 7)
-        .padding(.vertical, 3)
-        .background(selected ? Theme.cardSelected : Color.clear)
-        .clipShape(RoundedRectangle(cornerRadius: 4))
-        .contentShape(Rectangle())
     }
 }

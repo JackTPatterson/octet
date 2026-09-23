@@ -69,6 +69,10 @@ struct PromptEditorView: View {
         case .string: Theme.palette.color(\.syntaxString)
         case .path: Theme.palette.color(\.syntaxPath)
         case .variable: Theme.palette.color(\.syntaxVariable)
+        case .assignment: Theme.palette.color(\.syntaxVariable)
+        case .reserved: Theme.palette.color(\.syntaxBuiltin)
+        case .expansion: Theme.palette.color(\.syntaxVariable)
+        case .glob: Theme.palette.color(\.syntaxPath)
         case .redirect, .separator: Theme.textSecondary
         case .comment: Theme.textTertiary
         case .argument: Theme.textPrimary
