@@ -84,7 +84,9 @@ until [ -s "$mount/.DS_Store" ] || [ "$tries" -ge 10 ]; do
 done
 [ -s "$mount/.DS_Store" ] || { echo "error: Finder never saved the window layout." >&2; exit 1; }
 rm -rf "$mount/.fseventsd"
-sync
+# `hdiutil detach` flushes this image. A global `sync` also waits on every
+# unrelated mounted volume and can stall a release indefinitely when a network
+# or external disk is unhealthy.
 
 tries=0
 until hdiutil detach "$mount" >/dev/null 2>&1; do
