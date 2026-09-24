@@ -32,7 +32,12 @@ enum SettingsSearchIndex {
         return entries.filter { $0.matches(words) }
     }
 
-    static let entries: [SettingsSearchEntry] = general + appearance + terminal + agents + motion + keyboard + advanced
+    static let entries: [SettingsSearchEntry] = general + appearance + terminal + agents + plugins + motion + keyboard + advanced
+
+    private static let plugins: [SettingsSearchEntry] = [
+        .init(.plugins, "Installed plugins", anchor: "Installed", ["plugin", "extension", "enable", "disable", "github", "clone", "repositories"]),
+        .init(.plugins, "Plugin folder", ["plugin", "folder", "install", "reload", "manifest"]),
+    ]
 
     private static let general: [SettingsSearchEntry] = [
         .init(.general, "Show tips", ["tip", "card", "sidebar", "hint"]),
@@ -101,7 +106,8 @@ enum SettingsSearchIndex {
         .init(.agents, "Name tabs after their work", ["tab", "title", "rename", "name", "auto"]),
         .init(.agents, "Restore recent terminal output", ["restore", "history", "output", "scrollback", "secrets"]),
         .init(.agents, "Agent integrations", ["integration", "claude", "codex", "install", "hook"]),
-        .init(.agents, "Subagent tabs", ["subagent", "hook", "background tab", "transcript"]),
+        .init(.agents, "Subagent tabs", ["subagent", "hook", "background tab", "transcript", "auto close", "close tab", "finished"]),
+        .init(.agents, "Subagent finished sound", ["subagent", "sound", "audio", "chime", "finished", "done"]),
     ]
 
     private static let motion: [SettingsSearchEntry] = [
@@ -124,7 +130,7 @@ enum SettingsSearchIndex {
         .init(.advanced, "Allow a nested session", ["nested", "session", "inside"]),
         .init(.advanced, "Session", ["session", "name"]),
         .init(.advanced, "Generated config", ["config", "toml", "reload", "reveal", "file"]),
-        .init(.advanced, "Plugins", ["plugin", "installed"]),
+        .init(.advanced, "Terminal engine plugins", ["plugin", "installed", "engine"]),
         .init(.advanced, "Restore default settings", ["reset", "defaults", "restore", "factory"]),
     ]
 }

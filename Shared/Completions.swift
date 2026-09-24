@@ -12,6 +12,7 @@ struct Completion: Identifiable, Equatable {
         case flag
         case history
         case branch
+        case repository
 
         var symbol: String {
             switch self {
@@ -22,6 +23,7 @@ struct Completion: Identifiable, Equatable {
             case .flag: "minus"
             case .history: "clock"
             case .branch: "arrow.triangle.branch"
+            case .repository: "square.and.arrow.down.on.square"
             }
         }
     }
@@ -29,7 +31,11 @@ struct Completion: Identifiable, Equatable {
     let value: String
     let kind: Kind
     var detail: String = ""
+    /// What the menu shows and matches when the inserted value is unwieldy,
+    /// like a repository's name for its clone URL.
+    var label: String?
     var id: String { "\(kind):\(value)" }
+    var shown: String { label ?? value }
 }
 
 /// The word being completed and where it sits in the line.
@@ -186,8 +192,14 @@ enum Completions {
             candidates += entries.map {
                 Completion(value: $0.isDirectory ? $0.name + "/" : $0.name, kind: $0.isDirectory ? .directory : .file)
             }
-        case .generator:
-            candidates += generatorValues.map { Completion(value: $0, kind: .branch) }
+        case .generator(let generator):
+            candidates += generatorValues.map { line in
+                // `value<TAB>label<TAB>detail`; a plain line is its own value.
+                let fields = line.components(separatedBy: "\t")
+                let label = fields.count > 1 && !fields[1].isEmpty ? fields[1] : nil
+                return Completion(value: fields[0], kind: generator.kind,
+                                  detail: fields.count > 2 ? fields[2] : "", label: label)
+            }
         case .values(let values):
             candidates += values.map { Completion(value: $0, kind: .command) }
         case nil:
@@ -213,15 +225,22 @@ enum Completions {
                 scored.append((candidate, 0))
                 continue
             }
-            let value = candidate.value.lowercased()
-            if value.hasPrefix(needle) {
-                scored.append((candidate, 1_000 - candidate.value.count))
-            } else if let match = FuzzyMatcher.match(needle, in: candidate.value) {
+            let value = candidate.shown.lowercased()
+            if value.hasPrefix(needle) || candidate.value.lowercased().hasPrefix(needle) {
+                scored.append((candidate, 1_000 - candidate.shown.count))
+            } else if let match = FuzzyMatcher.match(needle, in: candidate.shown) {
                 scored.append((candidate, match.score))
             }
         }
+        // Repositories arrive most recently pushed first; among equals that
+        // order is the useful one, where sorting by length would scramble it.
+        let position = Dictionary(scored.enumerated().map { ($0.element.0.id, $0.offset) }) { first, _ in first }
         scored.sort { first, second in
-            first.1 == second.1 ? first.0.value.count < second.0.value.count : first.1 > second.1
+            guard first.1 == second.1 else { return first.1 > second.1 }
+            if first.0.kind == .repository, second.0.kind == .repository {
+                return position[first.0.id, default: 0] < position[second.0.id, default: 0]
+            }
+            return first.0.shown.count < second.0.shown.count
         }
         return scored.prefix(limit).map(\.0)
     }

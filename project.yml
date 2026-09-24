@@ -44,6 +44,10 @@ targets:
     sources:
       - path: Octet
       - path: Shared
+      # Octet's own bundled plugins, copied as folders into Resources/Plugins.
+      - path: Plugins
+        type: folder
+        buildPhase: resources
     dependencies:
       - package: Sparkle
       - framework: Vendor/GhosttyKit.xcframework

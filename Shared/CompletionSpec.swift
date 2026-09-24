@@ -31,9 +31,16 @@ struct CompletionSpec: Equatable {
 
     struct Generator: Equatable {
         let id: String
-        /// Run in the pane's folder; one value per line.
+        /// Run in the pane's folder; one value per line, optionally
+        /// `value<TAB>label<TAB>detail`.
         let command: String
         var cacheSeconds: TimeInterval = 10
+        var kind: Completion.Kind = .branch
+        /// False when the output doesn't depend on the folder, so one
+        /// result serves every pane.
+        var perFolder = true
+        /// How long the command may run before it's abandoned.
+        var timeout: TimeInterval = 2
     }
 
     let name: String
@@ -102,6 +109,11 @@ enum CompletionSpecs {
                 .init(names: ["-u", "--set-upstream"], summary: "Track the remote branch"),
             ]),
             .init(name: "pull", summary: "Fetch and integrate"),
+            .init(name: "clone", summary: "Copy a repository", options: [
+                .init(names: ["--depth"], summary: "Only recent history"),
+                .init(names: ["-b", "--branch"], summary: "Check out this branch"),
+                .init(names: ["--recurse-submodules"], summary: "Clone submodules too"),
+            ]),
             .init(name: "status", summary: "Show the working tree"),
             .init(name: "log", summary: "Show history", options: [
                 .init(names: ["--oneline"], summary: "One line per commit"),
@@ -212,8 +224,9 @@ final class GeneratorCache {
         if let entry = entries[key], Date().timeIntervalSince(entry.at) < generator.cacheSeconds { return }
         guard running.insert(key).inserted else { return }
         let command = generator.command
+        let timeout = generator.timeout
         DispatchQueue.global(qos: .userInitiated).async {
-            let output = Self.run(command, in: cwd)
+            let output = Self.run(command, in: cwd, timeout: timeout)
             let values = output.split(separator: "\n")
                 .map { $0.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "'")) }
                 .filter { !$0.isEmpty }
@@ -226,10 +239,10 @@ final class GeneratorCache {
     }
 
     private func key(_ generator: CompletionSpec.Generator, cwd: String) -> String {
-        generator.id + "\u{0}" + cwd
+        generator.perFolder ? generator.id + "\u{0}" + cwd : generator.id
     }
 
-    private nonisolated static func run(_ command: String, in cwd: String) -> String {
+    private nonisolated static func run(_ command: String, in cwd: String, timeout: TimeInterval) -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
         process.arguments = ["-c", command]
@@ -239,7 +252,7 @@ final class GeneratorCache {
         process.standardError = FileHandle.nullDevice
         do { try process.run() } catch { return "" }
         // A generator that hangs must not pile up behind the menu.
-        DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
             if process.isRunning { process.terminate() }
         }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()

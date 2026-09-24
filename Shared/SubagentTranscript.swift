@@ -37,6 +37,10 @@ struct SubagentTranscriptLocator {
 final class SubagentTranscriptRenderer {
     /// Called when the transcript reports the subagent finished its turn.
     var onFinished: (() -> Void)?
+    /// Called on every pass of the tail loop, for work that waits on time.
+    var onTick: (() -> Void)?
+    /// When the subagent last finished; cleared if it is sent more work.
+    private(set) var finishedAt: Date?
 
     private let esc = "\u{1B}["
 
@@ -68,6 +72,7 @@ final class SubagentTranscriptRenderer {
                     }
                 }
             }
+            onTick?()
             Thread.sleep(forTimeInterval: 0.25)
         }
     }
@@ -75,6 +80,8 @@ final class SubagentTranscriptRenderer {
     func render(line: Data) {
         guard let entry = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
               let message = entry["message"] as? [String: Any] else { return }
+        // Anything after a finish means the subagent is working again.
+        finishedAt = nil
         switch entry["type"] as? String {
         case "assistant":
             let blocks = message["content"] as? [[String: Any]] ?? []
@@ -98,6 +105,7 @@ final class SubagentTranscriptRenderer {
             let hasText = blocks.contains { $0["type"] as? String == "text" }
             if message["stop_reason"] as? String == "end_turn", hasText {
                 print(color(32, bold("✓ Subagent finished")))
+                finishedAt = Date()
                 onFinished?()
             }
         case "user":

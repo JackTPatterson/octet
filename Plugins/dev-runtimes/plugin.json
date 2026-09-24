@@ -1,0 +1,1077 @@
+{
+  "id": "dev-runtimes",
+  "name": "Runtime Icons",
+  "version": "1.0.0",
+  "description": "Marks a tab with what's running in it: dev servers like Next, Vite and Expo, runtimes like Node, Bun and Deno, and languages like Python, Rust, TypeScript and Go.",
+  "author": "Octet",
+  "octet": 1,
+  "contributes": {
+    "runtimes": [
+      {
+        "id": "next",
+        "name": "Next.js",
+        "icon": "icons/nextdotjs.svg",
+        "color": "000000",
+        "match": [
+          "(^| )next (dev|start|build|lint)( |$)",
+          "^next-server",
+          "^next-router-worker"
+        ]
+      },
+      {
+        "id": "nuxt",
+        "name": "Nuxt",
+        "icon": "icons/nuxt.svg",
+        "color": "00DC82",
+        "match": [
+          "(^| )nuxi? (dev|start|build|preview|generate)( |$)"
+        ]
+      },
+      {
+        "id": "remix",
+        "name": "Remix",
+        "icon": "icons/remix.svg",
+        "color": "000000",
+        "match": [
+          "(^| )remix (dev|vite:dev|vite:build)( |$)"
+        ]
+      },
+      {
+        "id": "reactrouter",
+        "name": "React Router",
+        "icon": "icons/reactrouter.svg",
+        "color": "CA4245",
+        "match": [
+          "(^| )react-router (dev|build)( |$)"
+        ]
+      },
+      {
+        "id": "astro",
+        "name": "Astro",
+        "icon": "icons/astro.svg",
+        "color": "BC52EE",
+        "match": [
+          "(^| )astro (dev|preview|build)( |$)"
+        ]
+      },
+      {
+        "id": "gatsby",
+        "name": "Gatsby",
+        "icon": "icons/gatsby.svg",
+        "color": "663399",
+        "match": [
+          "(^| )gatsby (develop|serve|build)( |$)"
+        ]
+      },
+      {
+        "id": "expo",
+        "name": "Expo",
+        "icon": "icons/expo.svg",
+        "color": "1C2024",
+        "match": [
+          "(^| )expo (start|run:ios|run:android|export)( |$)",
+          "(^| )expo-cli( |$)"
+        ]
+      },
+      {
+        "id": "reactnative",
+        "name": "React Native",
+        "icon": "icons/react.svg",
+        "color": "61DAFB",
+        "match": [
+          "(^| )react-native (start|run-ios|run-android)( |$)"
+        ]
+      },
+      {
+        "id": "angular",
+        "name": "Angular",
+        "icon": "icons/angular.svg",
+        "color": "0F0F11",
+        "match": [
+          "(^| )ng (serve|build|test)( |$)",
+          "(^| )@angular/cli( |$)"
+        ]
+      },
+      {
+        "id": "sveltekit",
+        "name": "SvelteKit",
+        "icon": "icons/svelte.svg",
+        "color": "FF3E00",
+        "match": [
+          "(^| )svelte-kit (dev|build|preview)( |$)"
+        ]
+      },
+      {
+        "id": "storybook",
+        "name": "Storybook",
+        "icon": "icons/storybook.svg",
+        "color": "FF4785",
+        "match": [
+          "(^| )storybook (dev|start|build)( |$)",
+          "(^| )start-storybook( |$)"
+        ]
+      },
+      {
+        "id": "docusaurus",
+        "name": "Docusaurus",
+        "icon": "icons/docusaurus.svg",
+        "color": "3ECC5F",
+        "match": [
+          "(^| )docusaurus (start|serve|build)( |$)"
+        ]
+      },
+      {
+        "id": "react",
+        "name": "React",
+        "icon": "icons/react.svg",
+        "color": "61DAFB",
+        "match": [
+          "(^| )react-scripts (start|build|test)( |$)"
+        ]
+      },
+      {
+        "id": "vue",
+        "name": "Vue",
+        "icon": "icons/vuedotjs.svg",
+        "color": "4FC08D",
+        "match": [
+          "(^| )vue-cli-service (serve|build)( |$)"
+        ]
+      },
+      {
+        "id": "solid",
+        "name": "SolidStart",
+        "icon": "icons/solid.svg",
+        "color": "2C4F7C",
+        "match": [
+          "(^| )solid-start (dev|start)( |$)",
+          "(^| )vinxi (dev|start)( |$)"
+        ]
+      },
+      {
+        "id": "qwik",
+        "name": "Qwik",
+        "icon": "icons/qwik.svg",
+        "color": "AC7EF4",
+        "match": [
+          "(^| )qwik (build|serve)( |$)"
+        ]
+      },
+      {
+        "id": "svelte",
+        "name": "Svelte",
+        "icon": "icons/svelte.svg",
+        "color": "FF3E00",
+        "match": [
+          "(?!)"
+        ]
+      },
+      {
+        "id": "vite",
+        "name": "Vite",
+        "icon": "icons/vite.svg",
+        "color": "9135FF",
+        "match": [
+          "(^| )vite( |$)",
+          "(^| )vite (dev|serve|build|preview)( |$)"
+        ],
+        "refineByDependency": [
+          [
+            "@sveltejs/kit",
+            "sveltekit"
+          ],
+          [
+            "svelte",
+            "svelte"
+          ],
+          [
+            "@builder.io/qwik",
+            "qwik"
+          ],
+          [
+            "solid-js",
+            "solid"
+          ],
+          [
+            "@react-router/dev",
+            "reactrouter"
+          ],
+          [
+            "@remix-run/dev",
+            "remix"
+          ],
+          [
+            "nuxt",
+            "nuxt"
+          ],
+          [
+            "vue",
+            "vue"
+          ],
+          [
+            "react",
+            "react"
+          ]
+        ]
+      },
+      {
+        "id": "webpack",
+        "name": "webpack",
+        "icon": "icons/webpack.svg",
+        "color": "8DD6F9",
+        "match": [
+          "(^| )webpack(-dev-server)?( |$)",
+          "(^| )webpack (serve|watch)( |$)"
+        ]
+      },
+      {
+        "id": "turborepo",
+        "name": "Turborepo",
+        "icon": "icons/turborepo.svg",
+        "color": "FF1E56",
+        "match": [
+          "(^| )turbo (run|dev|build|watch)( |$)"
+        ]
+      },
+      {
+        "id": "electron",
+        "name": "Electron",
+        "icon": "icons/electron.svg",
+        "color": "47848F",
+        "match": [
+          "^electron( |$)",
+          "(^| )electron-forge (start|make)( |$)"
+        ]
+      },
+      {
+        "id": "tauri",
+        "name": "Tauri",
+        "icon": "icons/tauri.svg",
+        "color": "24C8D8",
+        "match": [
+          "(^| )tauri (dev|build)( |$)"
+        ]
+      },
+      {
+        "id": "nestjs",
+        "name": "NestJS",
+        "icon": "icons/nestjs.svg",
+        "color": "E0234E",
+        "match": [
+          "(^| )nest (start|build)( |$)"
+        ]
+      },
+      {
+        "id": "vitest",
+        "name": "Vitest",
+        "icon": "icons/vitest.svg",
+        "color": "00FF74",
+        "match": [
+          "(^| )vitest( |$)"
+        ]
+      },
+      {
+        "id": "jest",
+        "name": "Jest",
+        "icon": "icons/jest.svg",
+        "color": "C21325",
+        "match": [
+          "(^| )jest( |$)"
+        ]
+      },
+      {
+        "id": "mocha",
+        "name": "Mocha",
+        "icon": "icons/mocha.svg",
+        "color": "8D6748",
+        "match": [
+          "(^| )mocha( |$)"
+        ]
+      },
+      {
+        "id": "cypress",
+        "name": "Cypress",
+        "icon": "icons/cypress.svg",
+        "color": "69D3A7",
+        "match": [
+          "(^| )cypress (run|open)( |$)"
+        ]
+      },
+      {
+        "id": "nodemon",
+        "name": "nodemon",
+        "icon": "icons/nodemon.svg",
+        "color": "76D04B",
+        "match": [
+          "(^| )nodemon( |$)"
+        ]
+      },
+      {
+        "id": "hugo",
+        "name": "Hugo",
+        "icon": "icons/hugo.svg",
+        "color": "FF4088",
+        "match": [
+          "^hugo( |$)",
+          "(^| )hugo (server|serve)( |$)"
+        ]
+      },
+      {
+        "id": "jekyll",
+        "name": "Jekyll",
+        "icon": "icons/jekyll.svg",
+        "color": "CC0000",
+        "match": [
+          "(^| )jekyll (serve|build)( |$)"
+        ]
+      },
+      {
+        "id": "eleventy",
+        "name": "Eleventy",
+        "icon": "icons/eleventy.svg",
+        "color": "222222",
+        "match": [
+          "(^| )(eleventy|@11ty/eleventy)( |$)"
+        ]
+      },
+      {
+        "id": "django",
+        "name": "Django",
+        "icon": "icons/django.svg",
+        "color": "092E20",
+        "match": [
+          "(^| )manage\\.py (runserver|test|shell|migrate)( |$)",
+          "(^| )django-admin( |$)"
+        ]
+      },
+      {
+        "id": "fastapi",
+        "name": "FastAPI",
+        "icon": "icons/fastapi.svg",
+        "color": "009688",
+        "match": [
+          "(^| )fastapi (dev|run)( |$)",
+          "(^| )uvicorn( |$)"
+        ]
+      },
+      {
+        "id": "flask",
+        "name": "Flask",
+        "icon": "icons/flask.svg",
+        "color": "3BABC3",
+        "match": [
+          "(^| )flask (run|shell)( |$)",
+          "(^| )-m flask( |$)"
+        ]
+      },
+      {
+        "id": "streamlit",
+        "name": "Streamlit",
+        "icon": "icons/streamlit.svg",
+        "color": "FF4B4B",
+        "match": [
+          "(^| )streamlit run( |$)"
+        ]
+      },
+      {
+        "id": "gradio",
+        "name": "Gradio",
+        "icon": "icons/gradio.svg",
+        "color": "F97316",
+        "match": [
+          "(^| )gradio( |$)"
+        ]
+      },
+      {
+        "id": "jupyter",
+        "name": "Jupyter",
+        "icon": "icons/jupyter.svg",
+        "color": "F37626",
+        "match": [
+          "(^| )jupyter(-lab|-notebook|-server)?( |$)",
+          "(^| )jupyter (lab|notebook)( |$)"
+        ]
+      },
+      {
+        "id": "gunicorn",
+        "name": "Gunicorn",
+        "icon": "icons/gunicorn.svg",
+        "color": "499848",
+        "match": [
+          "(^| )gunicorn( |$)"
+        ]
+      },
+      {
+        "id": "rails",
+        "name": "Rails",
+        "icon": "icons/rubyonrails.svg",
+        "color": "D30001",
+        "match": [
+          "(^| )rails (s|server|c|console|test)( |$)",
+          "(^| )puma( |$)"
+        ]
+      },
+      {
+        "id": "laravel",
+        "name": "Laravel",
+        "icon": "icons/laravel.svg",
+        "color": "FF2D20",
+        "match": [
+          "(^| )artisan (serve|tinker|queue:work)( |$)"
+        ]
+      },
+      {
+        "id": "phoenix",
+        "name": "Phoenix",
+        "icon": "icons/phoenixframework.svg",
+        "color": "FD4F00",
+        "match": [
+          "(^| )mix phx\\.server( |$)"
+        ]
+      },
+      {
+        "id": "springboot",
+        "name": "Spring Boot",
+        "icon": "icons/springboot.svg",
+        "color": "6DB33F",
+        "match": [
+          "(^| )(bootRun|spring-boot:run)( |$)"
+        ]
+      },
+      {
+        "id": "flutter",
+        "name": "Flutter",
+        "icon": "icons/flutter.svg",
+        "color": "02569B",
+        "match": [
+          "^flutter( |$)"
+        ]
+      },
+      {
+        "id": "docker",
+        "name": "Docker",
+        "icon": "icons/docker.svg",
+        "color": "2496ED",
+        "match": [
+          "(^| )docker (run|compose|build)( |$)",
+          "^docker-compose( |$)"
+        ]
+      },
+      {
+        "id": "kubernetes",
+        "name": "Kubernetes",
+        "icon": "icons/kubernetes.svg",
+        "color": "326CE5",
+        "match": [
+          "(^| )kubectl (port-forward|logs|exec|apply)( |$)",
+          "^(k9s|minikube|kind)( |$)"
+        ]
+      },
+      {
+        "id": "wrangler",
+        "name": "Cloudflare Workers",
+        "icon": "icons/cloudflare.svg",
+        "color": "F38020",
+        "match": [
+          "(^| )wrangler (dev|deploy|tail)( |$)"
+        ]
+      },
+      {
+        "id": "vercel",
+        "name": "Vercel",
+        "icon": "icons/vercel.svg",
+        "color": "000000",
+        "match": [
+          "(^| )vercel (dev|deploy)( |$)"
+        ]
+      },
+      {
+        "id": "netlify",
+        "name": "Netlify",
+        "icon": "icons/netlify.svg",
+        "color": "00C7B7",
+        "match": [
+          "(^| )netlify (dev|deploy)( |$)"
+        ]
+      },
+      {
+        "id": "firebase",
+        "name": "Firebase",
+        "icon": "icons/firebase.svg",
+        "color": "DD2C00",
+        "match": [
+          "(^| )firebase (emulators:start|serve|deploy)( |$)"
+        ]
+      },
+      {
+        "id": "supabase",
+        "name": "Supabase",
+        "icon": "icons/supabase.svg",
+        "color": "3FCF8E",
+        "match": [
+          "(^| )supabase (start|functions serve|db)( |$)"
+        ]
+      },
+      {
+        "id": "prisma",
+        "name": "Prisma",
+        "icon": "icons/prisma.svg",
+        "color": "2D3748",
+        "match": [
+          "(^| )prisma (studio|migrate|db|generate)( |$)"
+        ]
+      },
+      {
+        "id": "ollama",
+        "name": "Ollama",
+        "icon": "icons/ollama.svg",
+        "color": "000000",
+        "match": [
+          "^ollama( |$)"
+        ]
+      },
+      {
+        "id": "redis",
+        "name": "Redis",
+        "icon": "icons/redis.svg",
+        "color": "FF4438",
+        "match": [
+          "^redis-(server|cli)( |$)"
+        ]
+      },
+      {
+        "id": "postgresql",
+        "name": "PostgreSQL",
+        "icon": "icons/postgresql.svg",
+        "color": "4169E1",
+        "match": [
+          "^(postgres|psql|pg_ctl)( |$)"
+        ]
+      },
+      {
+        "id": "mysql",
+        "name": "MySQL",
+        "icon": "icons/mysql.svg",
+        "color": "4479A1",
+        "match": [
+          "^mysqld?( |$)"
+        ]
+      },
+      {
+        "id": "mongodb",
+        "name": "MongoDB",
+        "icon": "icons/mongodb.svg",
+        "color": "47A248",
+        "match": [
+          "^(mongod|mongos|mongosh)( |$)"
+        ]
+      },
+      {
+        "id": "sqlite",
+        "name": "SQLite",
+        "icon": "icons/sqlite.svg",
+        "color": "003B57",
+        "match": [
+          "^sqlite3?( |$)"
+        ]
+      },
+      {
+        "id": "nginx",
+        "name": "nginx",
+        "icon": "icons/nginx.svg",
+        "color": "009639",
+        "match": [
+          "^nginx( |$)"
+        ]
+      },
+      {
+        "id": "terraform",
+        "name": "Terraform",
+        "icon": "icons/terraform.svg",
+        "color": "844FBA",
+        "match": [
+          "^(terraform|tofu)( |$)"
+        ]
+      },
+      {
+        "id": "ansible",
+        "name": "Ansible",
+        "icon": "icons/ansible.svg",
+        "color": "EE0000",
+        "match": [
+          "^ansible(-playbook)?( |$)"
+        ]
+      },
+      {
+        "id": "bun",
+        "name": "Bun",
+        "icon": "icons/bun.svg",
+        "color": "000000",
+        "match": [
+          "^bunx?( |$)"
+        ]
+      },
+      {
+        "id": "deno",
+        "name": "Deno",
+        "icon": "icons/deno.svg",
+        "color": "000000",
+        "match": [
+          "^deno( |$)"
+        ]
+      },
+      {
+        "id": "typescript",
+        "name": "TypeScript",
+        "icon": "icons/typescript.svg",
+        "color": "3178C6",
+        "match": [
+          "^(tsx|ts-node|ts-node-esm|ts-node-dev|tsc)( |$)",
+          "^node .*\\.(ts|mts|cts)( |$)"
+        ]
+      },
+      {
+        "id": "node",
+        "name": "Node.js",
+        "icon": "icons/nodedotjs.svg",
+        "color": "5FA04E",
+        "match": [
+          "^node(js)?( |$)",
+          "^npx( |$)"
+        ]
+      },
+      {
+        "id": "python",
+        "name": "Python",
+        "icon": "icons/python.svg",
+        "color": "3776AB",
+        "match": [
+          "^python[0-9.]*( |$)",
+          "^(ipython|pytest|uv|uvx|poetry|pipenv|pdm|hatch|rye|pip[0-9.]*)( |$)"
+        ]
+      },
+      {
+        "id": "rust",
+        "name": "Rust",
+        "icon": "icons/rust.svg",
+        "color": "000000",
+        "match": [
+          "^(cargo|rustc|rustup|cargo-watch|bacon)( |$)"
+        ]
+      },
+      {
+        "id": "go",
+        "name": "Go",
+        "icon": "icons/go.svg",
+        "color": "00ADD8",
+        "match": [
+          "^go( |$)",
+          "^(air|gopls-run|goreleaser)( |$)"
+        ]
+      },
+      {
+        "id": "ruby",
+        "name": "Ruby",
+        "icon": "icons/ruby.svg",
+        "color": "CC342D",
+        "match": [
+          "^(ruby|irb|rake|rspec|bundle|bundler|pry)( |$)"
+        ]
+      },
+      {
+        "id": "gradle",
+        "name": "Gradle",
+        "icon": "icons/gradle.svg",
+        "color": "02303A",
+        "match": [
+          "^gradlew?( |$)"
+        ]
+      },
+      {
+        "id": "maven",
+        "name": "Maven",
+        "icon": "icons/apachemaven.svg",
+        "color": "C71A36",
+        "match": [
+          "^mvnw?( |$)"
+        ]
+      },
+      {
+        "id": "kotlin",
+        "name": "Kotlin",
+        "icon": "icons/kotlin.svg",
+        "color": "7F52FF",
+        "match": [
+          "^(kotlin|kotlinc|kotlinc-jvm)( |$)"
+        ]
+      },
+      {
+        "id": "scala",
+        "name": "Scala",
+        "icon": "icons/scala.svg",
+        "color": "DC322F",
+        "match": [
+          "^(scala|scala-cli|sbt|amm|mill)( |$)"
+        ]
+      },
+      {
+        "id": "groovy",
+        "name": "Groovy",
+        "icon": "icons/apachegroovy.svg",
+        "color": "4298B8",
+        "match": [
+          "^groovy( |$)"
+        ]
+      },
+      {
+        "id": "clojure",
+        "name": "Clojure",
+        "icon": "icons/clojure.svg",
+        "color": "5881D8",
+        "match": [
+          "^(clj|clojure|lein|bb)( |$)"
+        ]
+      },
+      {
+        "id": "java",
+        "name": "Java",
+        "icon": "icons/openjdk.svg",
+        "color": "000000",
+        "match": [
+          "^(java|javac|jshell|jbang)( |$)"
+        ]
+      },
+      {
+        "id": "php",
+        "name": "PHP",
+        "icon": "icons/php.svg",
+        "color": "777BB4",
+        "match": [
+          "^(php|composer|phpunit)( |$)"
+        ]
+      },
+      {
+        "id": "dotnet",
+        "name": ".NET",
+        "icon": "icons/dotnet.svg",
+        "color": "512BD4",
+        "match": [
+          "^(dotnet|dotnet-script|csi|fsi)( |$)"
+        ]
+      },
+      {
+        "id": "elixir",
+        "name": "Elixir",
+        "icon": "icons/elixir.svg",
+        "color": "4B275F",
+        "match": [
+          "^(elixir|iex|mix)( |$)"
+        ]
+      },
+      {
+        "id": "erlang",
+        "name": "Erlang",
+        "icon": "icons/erlang.svg",
+        "color": "A90533",
+        "match": [
+          "^(erl|rebar3|escript)( |$)"
+        ]
+      },
+      {
+        "id": "gleam",
+        "name": "Gleam",
+        "icon": "icons/gleam.svg",
+        "color": "FFAFF3",
+        "match": [
+          "^gleam( |$)"
+        ]
+      },
+      {
+        "id": "swift",
+        "name": "Swift",
+        "icon": "icons/swift.svg",
+        "color": "F05138",
+        "match": [
+          "^(swift|swiftc|swift-frontend)( |$)"
+        ]
+      },
+      {
+        "id": "dart",
+        "name": "Dart",
+        "icon": "icons/dart.svg",
+        "color": "0175C2",
+        "match": [
+          "^dart( |$)"
+        ]
+      },
+      {
+        "id": "zig",
+        "name": "Zig",
+        "icon": "icons/zig.svg",
+        "color": "F7A41D",
+        "match": [
+          "^zig( |$)"
+        ]
+      },
+      {
+        "id": "haskell",
+        "name": "Haskell",
+        "icon": "icons/haskell.svg",
+        "color": "5D4F85",
+        "match": [
+          "^(ghc|ghci|runghc|stack|cabal)( |$)"
+        ]
+      },
+      {
+        "id": "ocaml",
+        "name": "OCaml",
+        "icon": "icons/ocaml.svg",
+        "color": "EC6813",
+        "match": [
+          "^(ocaml|ocamlfind|dune|utop|opam)( |$)"
+        ]
+      },
+      {
+        "id": "reason",
+        "name": "Reason",
+        "icon": "icons/reason.svg",
+        "color": "DD4B39",
+        "match": [
+          "^(refmt|rescript)( |$)"
+        ]
+      },
+      {
+        "id": "purescript",
+        "name": "PureScript",
+        "icon": "icons/purescript.svg",
+        "color": "14161A",
+        "match": [
+          "^(purs|spago)( |$)"
+        ]
+      },
+      {
+        "id": "elm",
+        "name": "Elm",
+        "icon": "icons/elm.svg",
+        "color": "1293D8",
+        "match": [
+          "^(elm|elm-live|elm-land)( |$)"
+        ]
+      },
+      {
+        "id": "racket",
+        "name": "Racket",
+        "icon": "icons/racket.svg",
+        "color": "9F1D20",
+        "match": [
+          "^(racket|raco)( |$)"
+        ]
+      },
+      {
+        "id": "commonlisp",
+        "name": "Common Lisp",
+        "icon": "icons/commonlisp.svg",
+        "color": "000000",
+        "match": [
+          "^(sbcl|clisp|ecl|ccl)( |$)"
+        ]
+      },
+      {
+        "id": "lua",
+        "name": "Lua",
+        "icon": "icons/lua.svg",
+        "color": "000080",
+        "match": [
+          "^(lua|luajit|lua5\\.[0-9])( |$)"
+        ]
+      },
+      {
+        "id": "perl",
+        "name": "Perl",
+        "icon": "icons/perl.svg",
+        "color": "0073A1",
+        "match": [
+          "^perl[0-9.]*( |$)"
+        ]
+      },
+      {
+        "id": "r",
+        "name": "R",
+        "icon": "icons/r.svg",
+        "color": "276DC3",
+        "match": [
+          "^(R|Rscript)( |$)"
+        ]
+      },
+      {
+        "id": "julia",
+        "name": "Julia",
+        "icon": "icons/julia.svg",
+        "color": "9558B2",
+        "match": [
+          "^julia( |$)"
+        ]
+      },
+      {
+        "id": "nim",
+        "name": "Nim",
+        "icon": "icons/nim.svg",
+        "color": "FFE953",
+        "match": [
+          "^(nim|nimble)( |$)"
+        ]
+      },
+      {
+        "id": "crystal",
+        "name": "Crystal",
+        "icon": "icons/crystal.svg",
+        "color": "000000",
+        "match": [
+          "^(crystal|shards)( |$)"
+        ]
+      },
+      {
+        "id": "v",
+        "name": "V",
+        "icon": "icons/v.svg",
+        "color": "5D87BF",
+        "match": [
+          "^v( |$)"
+        ]
+      },
+      {
+        "id": "d",
+        "name": "D",
+        "icon": "icons/d.svg",
+        "color": "B03931",
+        "match": [
+          "^(dmd|ldc2|rdmd|dub)( |$)"
+        ]
+      },
+      {
+        "id": "odin",
+        "name": "Odin",
+        "icon": "icons/odin.svg",
+        "color": "3882D2",
+        "match": [
+          "^odin( |$)"
+        ]
+      },
+      {
+        "id": "ada",
+        "name": "Ada",
+        "icon": "icons/ada.svg",
+        "color": "000000",
+        "match": [
+          "^(gnat|gprbuild|alr)( |$)"
+        ]
+      },
+      {
+        "id": "fortran",
+        "name": "Fortran",
+        "icon": "icons/fortran.svg",
+        "color": "734F96",
+        "match": [
+          "^(gfortran|ifort|fpm)( |$)"
+        ]
+      },
+      {
+        "id": "solidity",
+        "name": "Solidity",
+        "icon": "icons/solidity.svg",
+        "color": "363636",
+        "match": [
+          "^(solc|forge|anvil|hardhat)( |$)"
+        ]
+      },
+      {
+        "id": "webassembly",
+        "name": "WebAssembly",
+        "icon": "icons/webassembly.svg",
+        "color": "654FF0",
+        "match": [
+          "^(wasmtime|wasmer|wasm-pack)( |$)"
+        ]
+      },
+      {
+        "id": "cmake",
+        "name": "CMake",
+        "icon": "icons/cmake.svg",
+        "color": "064F8C",
+        "match": [
+          "^(cmake|ctest)( |$)"
+        ]
+      },
+      {
+        "id": "cplusplus",
+        "name": "C++",
+        "icon": "icons/cplusplus.svg",
+        "color": "00599C",
+        "match": [
+          "^(g\\+\\+|clang\\+\\+|c\\+\\+)( |$)"
+        ]
+      },
+      {
+        "id": "c",
+        "name": "C",
+        "icon": "icons/c.svg",
+        "color": "A8B9CC",
+        "match": [
+          "^(gcc|clang|cc)( |$)"
+        ]
+      },
+      {
+        "id": "gnubash",
+        "name": "Shell script",
+        "icon": "icons/gnubash.svg",
+        "color": "4EAA25",
+        "match": [
+          "^(bash|zsh|sh|dash) [^-][^ ]*\\.(sh|bash|zsh)( |$)"
+        ]
+      }
+    ],
+    "runtimeIgnore": [
+      "vim",
+      "nvim",
+      "vi",
+      "view",
+      "emacs",
+      "emacsclient",
+      "nano",
+      "micro",
+      "hx",
+      "helix",
+      "kak",
+      "less",
+      "more",
+      "man",
+      "code",
+      "cursor",
+      "zed",
+      "subl",
+      "ssh",
+      "mosh",
+      "tmux",
+      "screen",
+      "zellij",
+      "claude",
+      "codex",
+      "opencode",
+      "gemini",
+      "aider",
+      "cursor-agent",
+      "amp",
+      "goose",
+      "crush",
+      "droid",
+      "kiro",
+      "qwen",
+      "pi",
+      "copilot",
+      "cline",
+      "kilo",
+      "devin",
+      "grok"
+    ]
+  }
+}

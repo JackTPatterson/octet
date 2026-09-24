@@ -1,0 +1,24 @@
+{
+  "id": "github-repos",
+  "name": "GitHub Repositories",
+  "version": "1.0.0",
+  "description": "Typing git clone lists the repositories your GitHub CLI account can clone, most recently pushed first, and inserts the URL your git protocol setting prefers.",
+  "author": "Octet",
+  "octet": 1,
+  "contributes": {
+    "completions": [
+      {
+        "command": "git",
+        "path": ["clone"],
+        "summary": "Copy a repository",
+        "run": "/bin/sh \"$OCTET_PLUGIN_DIR/list-repos.sh\"",
+        "kind": "repository",
+        "cacheSeconds": 300,
+        "timeoutSeconds": 10,
+        "perFolder": false,
+        "opensMenu": true,
+        "prefetchWhenTyping": "git cl"
+      }
+    ]
+  }
+}

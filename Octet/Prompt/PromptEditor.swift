@@ -237,7 +237,12 @@ final class PromptEditor: ObservableObject {
         line.insert(text)
         refreshSuggestion()
         // A menu that is open follows what is being typed.
-        if completionsOpen { openCompletions() }
+        if completionsOpen || opensByItself { openCompletions() }
+        // Plugins with slow lists start fetching while the command is still
+        // being typed, so the menu opens full.
+        if SettingsStore.shared.values.promptCompletions {
+            OctetPluginHost.shared.prefetch(line: line.text, cwd: cwd ?? NSHomeDirectory())
+        }
         // Never log the typed text itself.
         log("length=\(line.text.count) suggestion=\(suggestion != nil) active=\(isActive) anchor=\(anchor != nil)")
         return true
@@ -313,19 +318,25 @@ final class PromptEditor: ObservableObject {
 
     // MARK: - Completions
 
+    /// The line is at a point where a plugin shows the menu without Tab.
+    private var opensByItself: Bool {
+        SettingsStore.shared.values.promptCompletions
+            && OctetPluginHost.shared.opensMenu(String(line.text.prefix(line.caret)))
+    }
+
     /// Builds the menu for the word under the caret, from what the machine
     /// actually has: PATH, this folder, this repo's branches, your history.
     private func openCompletions() {
         let context = CompletionContext.at(caret: line.caret, in: line.text)
         let folder = cwd ?? NSHomeDirectory()
         // The spec for this command, from Octet's own table or the corpus.
-        let spec = context.command.flatMap { SpecCorpus.merged(for: $0) }
+        let spec = context.command.flatMap { OctetPluginHost.shared.spec(for: $0) }
         var generatorValues: [String] = []
         if let spec, let generator = Completions.generator(for: spec, words: context.wordsBeforeToken) {
             generatorValues = GeneratorCache.shared.values(generator, cwd: folder)
             // Stale values refresh behind the menu and reopen it when ready.
             GeneratorCache.shared.refreshIfStale(generator, cwd: folder) { [weak self] in
-                guard let self, self.completionsOpen else { return }
+                guard let self, self.isActive, self.completionsOpen || self.opensByItself else { return }
                 self.openCompletions()
             }
         }

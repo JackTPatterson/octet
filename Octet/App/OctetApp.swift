@@ -41,6 +41,7 @@ struct OctetApp: App {
         _prompt = StateObject(wrappedValue: prompt)
         OctetKeyHook.prompt = prompt
         OctetKeyHook.store = store
+        OctetPluginHost.shared.attach(store)
         settings.reloadSession = { [weak store] in store?.reloadSessionConfig(quiet: true) }
         OctetTerminalRuntime.configure(overrides: settings.values.rendererConfig + "\n" + Theme.octetShortcutUnbinds)
         OctetTerminalRuntime.setColorScheme(dark: !TerminalTheme.named(settings.values.themeName).isLight)

@@ -52,7 +52,7 @@ private struct CompletionRow: View {
             OctetIcon(completion.kind.symbol, size: 12)
                 .foregroundStyle(selected ? Theme.accent : Theme.textTertiary)
                 .frame(width: 12)
-            Text(completion.value)
+            Text(completion.shown)
                 .font(Theme.monoFont)
                 .foregroundStyle(selected ? Theme.textPrimary : Theme.textSecondary)
                 .lineLimit(1)

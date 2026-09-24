@@ -64,6 +64,15 @@ struct OctetSettings: Codable, Equatable {
     /// What typing `claude`, `codex` or `opencode` on its own at a prompt
     /// opens: the agent's interface in the terminal, or Octet's conversation.
     var agentOpening: AgentOpening = .terminal
+    /// Octet plugins turned on by hand (installed ones start off) and
+    /// bundled ones turned off (they start on), by id.
+    var enabledPlugins: [String] = []
+    var disabledPlugins: [String] = []
+    /// The system sound a subagent's tab plays when it finishes, so it's
+    /// told apart from a main agent; empty for none.
+    var subagentFinishedSound = "Glass"
+    /// Whether a subagent's tab closes itself a while after it finishes.
+    var subagentTabClosing: SubagentTabClosing = .never
     /// A banner over an agent running in the terminal, offering Octet's
     /// conversation view.
     var agentBanner = true
@@ -130,6 +139,27 @@ struct OctetSettings: Codable, Equatable {
         }
     }
     enum UpdateChannel: String, Codable, CaseIterable { case stable, preview }
+
+    enum SubagentTabClosing: String, Codable, CaseIterable {
+        /// Open until closed by hand.
+        case never
+        /// Two minutes after the subagent finishes, unless it's in front.
+        case afterDelay
+
+        var title: String {
+            switch self {
+            case .never: "Keep open"
+            case .afterDelay: "Close after 2 min"
+            }
+        }
+
+        var seconds: Int {
+            switch self {
+            case .never: 0
+            case .afterDelay: 120
+            }
+        }
+    }
 
     enum AgentOpening: String, Codable, CaseIterable {
         /// The agent's own interface, in the terminal.
@@ -209,6 +239,10 @@ struct OctetSettings: Codable, Equatable {
         readClaudeAccountUsage = value("readClaudeAccountUsage", defaults.readClaudeAccountUsage)
         offerRecovery = value("offerRecovery", defaults.offerRecovery)
         agentOpening = value("agentOpening", defaults.agentOpening)
+        subagentTabClosing = value("subagentTabClosing", defaults.subagentTabClosing)
+        subagentFinishedSound = value("subagentFinishedSound", defaults.subagentFinishedSound)
+        enabledPlugins = value("enabledPlugins", defaults.enabledPlugins)
+        disabledPlugins = value("disabledPlugins", defaults.disabledPlugins)
         agentBanner = value("agentBanner", defaults.agentBanner)
         agentQuickAnswers = value("agentQuickAnswers", defaults.agentQuickAnswers)
         checkForAgentUpdates = value("checkForAgentUpdates", defaults.checkForAgentUpdates)
@@ -432,6 +466,7 @@ final class SettingsStore: ObservableObject {
         observeSystem()
         // Rewrites settings read under older key names with the current ones.
         if debugThemeOverride == nil { save() }
+        mirrorForSubagentTabs()
     }
 
     private static func makeThemeKey(_ themeName: String) -> String {
@@ -510,6 +545,15 @@ final class SettingsStore: ObservableObject {
         if let data = try? JSONEncoder().encode(values) {
             UserDefaults.standard.set(data, forKey: Self.key)
         }
+        mirrorForSubagentTabs()
+    }
+
+    /// Subagent tabs run `octet-cli`, which can't decode these settings; it
+    /// reads this one value from the app's preferences by its own key.
+    private func mirrorForSubagentTabs() {
+        UserDefaults.standard.set(values.subagentTabClosing.seconds, forKey: SubagentWatch.closeDelayKey)
+        UserDefaults.standard.set(values.agentSounds ? values.subagentFinishedSound : "",
+                                  forKey: SubagentWatch.finishedSoundKey)
     }
 
     private func apply(from old: OctetSettings) {

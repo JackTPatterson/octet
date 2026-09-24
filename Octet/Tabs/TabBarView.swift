@@ -195,6 +195,14 @@ private struct TabItem: View {
 
     private var title: String { TabAutoName.display(label: tab.label, number: tab.number) }
 
+    /// What a plugin says the tab is running: its focused pane's, else the
+    /// first pane that's running something it knows.
+    private var runtime: RuntimeBadge? {
+        let panes = store.snapshot.panes.filter { $0.tabId == tab.tabId }
+        let ordered = panes.filter(\.focused) + panes.filter { !$0.focused }
+        return ordered.lazy.compactMap { store.paneRuntimes[$0.paneId] }.first
+    }
+
     var body: some View {
         let agent = store.primaryAgent(in: store.snapshot.agents(inTab: tab.tabId))
         let brand = AgentBrand.forAgent(agent?.agent)
@@ -206,6 +214,9 @@ private struct TabItem: View {
             }
             if let brand {
                 AgentLogo(brand: brand, size: 11)
+            } else if let runtime = runtime {
+                RuntimeIcon(badge: runtime, size: 11)
+                    .help(runtime.name)
             }
             if renaming {
                 InlineRenameField(initial: TabAutoName.isUnnamed(tab.label) ? "" : tab.label, placeholder: title) { label in

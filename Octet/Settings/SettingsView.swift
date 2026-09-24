@@ -18,7 +18,7 @@ struct SettingsView: View {
     private enum Focus: Hashable { case search, sidebar }
 
     enum Section: String, CaseIterable, Identifiable {
-        case general, appearance, terminal, agents, motion, keyboard, advanced
+        case general, appearance, terminal, agents, plugins, motion, keyboard, advanced
 
         var id: String { rawValue }
         var title: String {
@@ -27,6 +27,7 @@ struct SettingsView: View {
             case .appearance: return "Appearance"
             case .terminal: return "Terminal"
             case .agents: return "Agents & Recovery"
+            case .plugins: return "Plugins"
             case .motion: return "Motion"
             case .keyboard: return "Keyboard"
             case .advanced: return "Advanced"
@@ -38,6 +39,7 @@ struct SettingsView: View {
             case .appearance: return "paintpalette"
             case .terminal: return "terminal"
             case .agents: return "sparkle.magnifyingglass"
+            case .plugins: return "puzzlepiece.extension"
             case .motion: return "sparkles"
             case .keyboard: return "keyboard"
             case .advanced: return "slider.horizontal.3"
@@ -81,6 +83,7 @@ struct SettingsView: View {
                             case .appearance: AppearanceSettings(settings: settings)
                             case .terminal: TerminalSettings(settings: settings)
                             case .agents: AgentSettings(settings: settings, integrations: integrations)
+                            case .plugins: PluginSettings()
                             case .motion: MotionSettings(motion: motion)
                             case .keyboard: KeyboardSettings()
                             case .advanced: AdvancedSettings(store: store, settings: settings)
@@ -623,6 +626,19 @@ private struct AgentSettings: View {
             SettingsRow(title: "Play sounds", detail: "When agents in other workspaces change state.") {
                 Toggle("Play sounds", isOn: $settings.values.agentSounds).labelsHidden().toggleStyle(.switch)
             }
+            SettingsDivider()
+            SettingsRow(title: "Subagent finished sound", detail: "Played by a subagent's tab when it finishes, so it sounds different from a main agent. Follows Play sounds.") {
+                Picker("Subagent finished sound", selection: $settings.values.subagentFinishedSound) {
+                    Text("None").tag("")
+                    ForEach(SubagentWatch.sounds, id: \.self) { Text($0).tag($0) }
+                }
+                .labelsHidden()
+                .frame(width: 140)
+                .disabled(!settings.values.agentSounds)
+                .onChange(of: settings.values.subagentFinishedSound) { _, name in
+                    if !name.isEmpty { NSSound(named: NSSound.Name(name))?.play() }
+                }
+            }
         }
         SettingsGroup(title: "Recovery") {
             SettingsRow(
@@ -790,6 +806,20 @@ private struct AgentSettings: View {
                     }
                 }
             }
+            SettingsDivider()
+            SettingsRow(
+                title: "When a subagent finishes",
+                detail: "Keep its tab open until you close it, or close it two minutes after the subagent finishes. A tab you're looking at stays open, and a subagent that's sent more work starts the wait again."
+            ) {
+                Picker("When a subagent finishes", selection: $settings.values.subagentTabClosing) {
+                    ForEach(OctetSettings.SubagentTabClosing.allCases, id: \.self) { closing in
+                        Text(closing.title).tag(closing)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .frame(width: 230)
+            }
         }
         .onAppear {
             integrations.refresh()
@@ -942,7 +972,7 @@ private struct AdvancedSettings: View {
                 }
             }
             SettingsDivider()
-            SettingsRow(title: "Plugins", detail: "Manage plugins from the command palette with the ! filter.") {
+            SettingsRow(title: "Terminal engine plugins", detail: "Plugins for the terminal engine, not Octet's own (those are under Plugins). Manage them from the command palette with the ! filter.") {
                 Text("\(store.plugins.count) installed").font(Theme.uiFont).foregroundStyle(Theme.textSecondary)
             }
         }

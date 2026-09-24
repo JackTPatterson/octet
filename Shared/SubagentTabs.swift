@@ -78,7 +78,20 @@ enum SubagentWatch {
         let renderer = SubagentTranscriptRenderer()
         renderer.printHeader(title: title)
         reporter.report(state: "working", message: title)
-        renderer.onFinished = { reporter.report(state: "idle", message: "finished") }
+        renderer.onFinished = {
+            reporter.report(state: "idle", message: "finished")
+            playFinishedSound()
+        }
+        var lastCheck = Date.distantPast
+        renderer.onTick = {
+            // The setting is read again each time, so changing it in Octet
+            // applies to tabs already open.
+            guard let finished = renderer.finishedAt, Date().timeIntervalSince(lastCheck) >= 5 else { return }
+            lastCheck = Date()
+            let delay = closeDelay()
+            guard delay > 0, Date().timeIntervalSince(finished) >= delay else { return }
+            if reporter.closeTab() { exit(0) }
+        }
 
         let locator = SubagentTranscriptLocator(
             directory: directory,
@@ -98,6 +111,52 @@ enum SubagentWatch {
     }
 }
 
+extension SubagentWatch {
+    /// Seconds a finished subagent's tab stays open, 0 for until closed by
+    /// hand. The app writes it into its own preferences; the viewer runs
+    /// from inside the app bundle, so it reads the app's domain.
+    static let closeDelayKey = "subagentTabCloseAfterSeconds"
+    /// The system sound a finished subagent plays; empty or missing for none.
+    static let finishedSoundKey = "subagentFinishedSound"
+    /// macOS's own sounds, offered in Settings.
+    static let sounds = ["Glass", "Pop", "Tink", "Purr", "Hero", "Submarine", "Funk", "Bottle", "Morse", "Ping"]
+
+    static func finishedSound(bundleIdentifier: String? = appBundleIdentifier()) -> String? {
+        let domain = (bundleIdentifier ?? "com.jpxsoftware.octet") as CFString
+        CFPreferencesAppSynchronize(domain)
+        let name = CFPreferencesCopyAppValue(finishedSoundKey as CFString, domain) as? String
+        return name.flatMap { sounds.contains($0) ? $0 : nil }
+    }
+
+    /// Plays without waiting; the viewer keeps tailing meanwhile.
+    static func playFinishedSound() {
+        guard let name = finishedSound() else { return }
+        let player = Process()
+        player.executableURL = URL(fileURLWithPath: "/usr/bin/afplay")
+        player.arguments = ["/System/Library/Sounds/\(name).aiff"]
+        player.standardOutput = FileHandle.nullDevice
+        player.standardError = FileHandle.nullDevice
+        try? player.run()
+    }
+
+    static func closeDelay(bundleIdentifier: String? = appBundleIdentifier()) -> TimeInterval {
+        let domain = (bundleIdentifier ?? "com.jpxsoftware.octet") as CFString
+        CFPreferencesAppSynchronize(domain)
+        let value = CFPreferencesCopyAppValue(closeDelayKey as CFString, domain) as? NSNumber
+        return max(0, value?.doubleValue ?? 0)
+    }
+
+    /// The identifier of the app bundle this executable sits in.
+    static func appBundleIdentifier(executable: String = CommandLine.arguments.first ?? "") -> String? {
+        var url = URL(fileURLWithPath: executable).resolvingSymlinksInPath()
+        while url.path != "/" {
+            if url.pathExtension == "app" { return Bundle(url: url)?.bundleIdentifier }
+            url.deleteLastPathComponent()
+        }
+        return nil
+    }
+}
+
 /// Reports a viewer pane's state to the session server so tabs and the sidebar show the
 /// subagent as a working/idle Claude agent.
 struct PaneAgentReporter {
@@ -107,6 +166,18 @@ struct PaneAgentReporter {
     init(environment: [String: String]) {
         paneId = environment[EngineProtocol.paneIdVariable]
         client = environment[EngineProtocol.socketPathVariable].map(EngineClient.init(socketPath:))
+    }
+
+    /// Closes the tab this viewer runs in, unless someone is looking at it.
+    /// Returns whether it closed.
+    func closeTab() -> Bool {
+        guard let client, let paneId, let snapshot = try? client.snapshot(),
+              let pane = snapshot.panes.first(where: { $0.paneId == paneId }), !pane.focused else { return false }
+        let alone = snapshot.panes.filter { $0.tabId == pane.tabId }.count <= 1
+        let closed = alone
+            ? (try? client.call("tab.close", ["tab_id": pane.tabId])) != nil
+            : (try? client.call("pane.close", ["pane_id": paneId])) != nil
+        return closed
     }
 
     func report(state: String, message: String) {

@@ -78,6 +78,9 @@ final class SessionStore: ObservableObject {
     @Published private(set) var terminalRuntimes: [String: [HandoffRuntime]] = [:]
     /// Session logs already read, so each refresh reads only what was added.
     private let runtimeLogs = RuntimeLogTails()
+    /// What each pane is running, by a plugin's runtime rules, by pane.
+    @Published private(set) var paneRuntimes: [String: RuntimeBadge] = [:]
+    private var loadingPaneRuntimes = false
     private var loadingPaneProcesses = false
     /// True while the focused pane sits at its shell's own prompt.
     var focusedPaneAtPrompt: Bool { ShellPrompt.isAtPrompt(focusedProcess) }
@@ -319,6 +322,59 @@ final class SessionStore: ObservableObject {
                 self.spawnedRuntimeAgents = spawned.values.sorted { $0.pid < $1.pid }
                 if logRuntimes != self.terminalRuntimes { self.terminalRuntimes = logRuntimes }
             }
+        }
+    }
+
+    /// Matches what runs under each pane's shell against plugin runtime
+    /// rules. Panes running an agent are left to the agent's own mark.
+    func refreshPaneRuntimes(matcher: RuntimeMatcher) {
+        guard !matcher.isEmpty else {
+            if !paneRuntimes.isEmpty { paneRuntimes = [:] }
+            return
+        }
+        guard !loadingPaneRuntimes else { return }
+        loadingPaneRuntimes = true
+        let client = self.client
+        let agentPanes = Set(snapshot.agents.map(\.paneId))
+        let panes = snapshot.panes.filter { !agentPanes.contains($0.paneId) }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let tree = Self.processArguments()
+            var found: [String: RuntimeBadge] = [:]
+            for pane in panes {
+                guard let info = (try? client.call("pane.process_info", ["pane_id": pane.paneId])).flatMap(ShellPrompt.parse),
+                      let shell = info.shellPid else { continue }
+                let commands = Self.descendants(of: [shell], in: tree.map { RuntimeProcess(pid: $0.pid, parent: $0.parent, name: $0.arguments) })
+                    .map { RuntimeMatcher.words($0.name) }
+                let folder = pane.effectiveCwd
+                if let badge = matcher.match(commands: commands, dependencies: {
+                    folder.map(RuntimeMatcher.packageDependencies(from:)) ?? []
+                }) {
+                    found[pane.paneId] = badge
+                }
+            }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.loadingPaneRuntimes = false
+                if found != self.paneRuntimes { self.paneRuntimes = found }
+            }
+        }
+    }
+
+    /// Every process with its full arguments, for runtime matching.
+    private nonisolated static func processArguments() -> [(pid: Int, parent: Int, arguments: String)] {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/ps")
+        process.arguments = ["-axo", "pid=,ppid=,args="]
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        do { try process.run() } catch { return [] }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return String(decoding: data, as: UTF8.self).split(separator: "\n").compactMap { line in
+            let fields = line.split(maxSplits: 2, whereSeparator: \.isWhitespace)
+            guard fields.count == 3, let pid = Int(fields[0]), let parent = Int(fields[1]) else { return nil }
+            return (pid, parent, String(fields[2]))
         }
     }
 
