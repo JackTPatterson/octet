@@ -392,6 +392,18 @@ struct WorkspaceOrganizeMenu: View {
 
     var body: some View {
         let id = workspace.workspaceId
+        let agents = store.snapshot.agents(inWorkspace: id).filter { AgentOffer.agentId($0) != nil }
+        if agents.count == 1, let agent = agents.first {
+            Button("Open on Octet UI") { window.openOnOctetUI(agent) }
+            Divider()
+        } else if agents.count > 1 {
+            Menu("Open on Octet UI") {
+                ForEach(agents, id: \.paneId) { agent in
+                    Button(label(for: agent)) { window.openOnOctetUI(agent) }
+                }
+            }
+            Divider()
+        }
         if store.isPinned(id) {
             Button("Unpin") { store.setPinned(id, false) }
         } else {
@@ -407,6 +419,13 @@ struct WorkspaceOrganizeMenu: View {
         }
         Divider()
         Button("Close Workspace") { store.closeWorkspace(id) }
+    }
+
+    /// The agent's name and its tab, to tell several apart.
+    private func label(for agent: EngineAgent) -> String {
+        let name = AgentBrand.forAgent(agent.agent)?.displayName ?? agent.agent ?? "Agent"
+        guard let tab = store.snapshot.tabs.first(where: { $0.tabId == agent.tabId }) else { return name }
+        return "\(name) · \(TabAutoName.display(label: tab.label, number: tab.number))"
     }
 }
 

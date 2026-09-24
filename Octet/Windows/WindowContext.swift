@@ -468,6 +468,18 @@ final class WindowContext: ObservableObject, Identifiable {
         ) { _ in proceed() }
     }
 
+    /// A workspace menu's "Open on Octet UI": brings the agent's workspace
+    /// into view, in whichever window shows it, then switches it over.
+    func openOnOctetUI(_ agent: EngineAgent) {
+        guard let workspaceId = agent.workspaceId else { return continueInOctet(agent) }
+        if let other = registry.window(showing: workspaceId), other !== self {
+            other.bringForward()
+            return other.continueInOctet(agent)
+        }
+        focusWorkspace(workspaceId)
+        continueInOctet(agent)
+    }
+
     private func moveToOctet(_ agent: EngineAgent, engine: AgentSession.Engine) {
         guard let workspaceId = agent.workspaceId ?? focusedWorkspace?.workspaceId else { return }
         let snapshot = store.snapshot
