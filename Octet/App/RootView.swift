@@ -723,6 +723,9 @@ private struct TitleBar: View {
             .buttonStyle(.plain)
             .help("Toggle Sidebar (⌘B)")
             .accessibilityLabel(ui.sidebarVisible ? "Hide sidebar" : "Show sidebar")
+            if let stage = ReleaseStage.current {
+                ReleaseStageChip(stage: stage)
+            }
             Spacer()
             // A connected engine is the normal state and says nothing worth a
             // badge; only the wait for one does.
@@ -856,4 +859,41 @@ private struct StatusBarFocus: Equatable {
     let pane: String?
     let directory: String?
     let ssh: SSHTarget?
+}
+
+/// The release stage from the app's Info.plist, when this build is a
+/// pre-release: "alpha", "beta". A stable build has none.
+struct ReleaseStage {
+    let name: String
+    let version: String
+    let build: String
+
+    static let current: ReleaseStage? = {
+        let info = Bundle.main.infoDictionary ?? [:]
+        guard let name = (info["OctetPrerelease"] as? String)?.trimmingCharacters(in: .whitespaces),
+              !name.isEmpty, !name.hasPrefix("$(") else { return nil }
+        return ReleaseStage(name: name,
+                            version: info["CFBundleShortVersionString"] as? String ?? "",
+                            build: info["CFBundleVersion"] as? String ?? "")
+    }()
+
+    var fullVersion: String { "\(version)-\(name).\(build)" }
+}
+
+/// A small badge beside the sidebar button saying this is a pre-release.
+private struct ReleaseStageChip: View {
+    let stage: ReleaseStage
+
+    var body: some View {
+        Text(stage.name.uppercased())
+            .font(.system(size: 9.5, weight: .bold))
+            .kerning(0.6)
+            .foregroundStyle(Theme.accent)
+            .padding(.horizontal, 6)
+            .frame(height: 18)
+            .background(RoundedRectangle(cornerRadius: 4).fill(Theme.accent.opacity(0.14)))
+            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Theme.accent.opacity(0.4)))
+            .help("Octet \(stage.fullVersion). Pre-release builds can change or break between updates.")
+            .accessibilityLabel("Octet \(stage.name), version \(stage.fullVersion)")
+    }
 }

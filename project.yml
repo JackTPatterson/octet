@@ -17,6 +17,9 @@ settings:
     # the app ships with no version at all.
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "3"
+    # The release stage shown beside the sidebar button; empty for a
+    # stable release, which shows none.
+    OCTET_PRERELEASE: "alpha"
   configs:
     Debug:
       CODE_SIGN_IDENTITY: "Apple Development"
