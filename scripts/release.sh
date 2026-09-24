@@ -46,11 +46,30 @@ fi
 grep -E "^\*\* BUILD|: warning:" "$out/build.log" || true
 [ -d "$app" ] || { echo "error: the build produced no app." >&2; exit 1; }
 
+echo "==> Signing Sparkle's helpers"
+# Xcode signs Sparkle.framework but leaves the helpers inside it with
+# Sparkle's ad-hoc signatures, which notarization rejects. Re-sign them
+# inside out as Sparkle's documentation describes, then the framework,
+# then reseal the app over them, keeping its entitlements.
+identity="$(security find-identity -v -p codesigning | awk '/Developer ID Application/ { print $2; exit }')"
+sparkle="$app/Contents/Frameworks/Sparkle.framework/Versions/B"
+if [ -d "$sparkle" ]; then
+    sign() { codesign --force --sign "$identity" --options runtime --timestamp "$@"; }
+    sign "$sparkle/XPCServices/Installer.xpc"
+    sign --preserve-metadata=entitlements "$sparkle/XPCServices/Downloader.xpc"
+    sign "$sparkle/Autoupdate"
+    sign "$sparkle/Updater.app"
+    sign "$app/Contents/Frameworks/Sparkle.framework"
+    sign --preserve-metadata=entitlements,requirements,flags "$app"
+fi
+
 echo "==> Checking signatures"
 codesign --verify --deep --strict "$app"
 # Notarization rejects any executable without the hardened runtime or a
 # secure timestamp, so check each one here rather than wait for Apple to.
-for binary in "$app/Contents/MacOS/"*; do
+for binary in "$app/Contents/MacOS/"* "$sparkle/Autoupdate" "$sparkle/Updater.app/Contents/MacOS/"* \
+    "$sparkle/XPCServices/"*.xpc/Contents/MacOS/* "$sparkle/Sparkle"; do
+    [ -f "$binary" ] || continue
     details="$(codesign -dvv "$binary" 2>&1)"
     echo "$details" | grep -q "flags=.*runtime" || { echo "error: $binary lacks the hardened runtime." >&2; exit 1; }
     echo "$details" | grep -q "^Timestamp=" || { echo "error: $binary has no secure timestamp." >&2; exit 1; }
