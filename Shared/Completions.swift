@@ -102,6 +102,24 @@ enum Completions {
         "brew": ["cleanup", "doctor", "info", "install", "list", "outdated", "search", "uninstall", "update", "upgrade"],
     ]
 
+    /// Whether the word at the caret is already a whole word that fits
+    /// there: a command, a subcommand, or an option. Tab then finishes it
+    /// with a space, as a shell would, rather than having nothing to offer.
+    static func isCompleteWord(_ context: CompletionContext, spec: CompletionSpec?, commands: [String] = []) -> Bool {
+        let token = context.token
+        guard !token.isEmpty else { return false }
+        if context.isCommandPosition {
+            return ShellSyntax.builtins.contains(token) || commands.contains(token)
+        }
+        if let spec, spec.candidates(after: context.wordsBeforeToken).names.contains(where: { $0.value == token }) {
+            return true
+        }
+        if let command = context.command, context.previousWord == command {
+            return subcommands[command]?.contains(token) == true
+        }
+        return false
+    }
+
     /// Commands whose next word is a git branch.
     static let branchTaking: Set<String> = ["checkout", "switch", "merge", "rebase"]
 
@@ -122,6 +140,15 @@ enum Completions {
     ) -> [Completion] {
         var candidates: [Completion] = []
         let token = context.token
+        // When a spec says where this argument's values come from, those are
+        // the answer; files and history words would only crowd them out.
+        let specArgument = context.isCommandPosition ? nil : spec?.candidates(after: context.wordsBeforeToken).argument
+        let specOwnsArgument: Bool = {
+            switch specArgument {
+            case .generator, .values: return true
+            default: return false
+            }
+        }()
 
         // A spec for this command knows more than any heuristic can.
         if let command = context.command, let spec = spec {
@@ -143,7 +170,10 @@ enum Completions {
                 // A historical `cd foo` is only valid in the directory where
                 // it was run. Current filesystem entries are the source of
                 // truth for cd; never mix stale history paths into its menu.
-                let second = command == "cd" ? [] : secondWord(of: history, command: command)
+                // Words that followed this command before belong right after it,
+                // not in a later argument's place.
+                let second = command == "cd" || specOwnsArgument || context.previousWord != command
+                    ? [] : secondWord(of: history, command: command)
                 // Subcommands belong right after the command, not deeper in.
                 if let subs = subcommands[command], context.previousWord == command {
                     candidates += subs.map { Completion(value: $0, kind: .command, detail: command) }
@@ -157,8 +187,10 @@ enum Completions {
             if token.hasPrefix("-") {
                 candidates += flags(in: history, command: context.command).map { Completion(value: $0, kind: .flag) }
             }
-            let relevantEntries = context.command == "cd"
-                ? entries.filter { $0.isDirectory }
+            // A spec that names the argument's kind has already offered its
+            // paths (only folders where it wants one).
+            let relevantEntries = specArgument != nil ? []
+                : context.command == "cd" ? entries.filter { $0.isDirectory }
                 : entries
             candidates += relevantEntries.map { entry in
                 Completion(value: entry.isDirectory ? entry.name + "/" : entry.name,
@@ -180,7 +212,9 @@ enum Completions {
         generatorValues: [String] = []
     ) -> [Completion] {
         let offered = spec.candidates(after: words)
-        var candidates: [Completion] = offered.names.map { entry in
+        // Flags wait for a dash, so a word's real values lead the menu.
+        let names = token.hasPrefix("-") ? offered.names : offered.names.filter { !$0.value.hasPrefix("-") }
+        var candidates: [Completion] = names.map { entry in
             Completion(
                 value: entry.value,
                 kind: entry.value.hasPrefix("-") ? .flag : .command,
@@ -188,7 +222,9 @@ enum Completions {
             )
         }
         switch offered.argument {
-        case .file, .directory:
+        case .directory:
+            candidates += entries.filter(\.isDirectory).map { Completion(value: $0.name + "/", kind: .directory) }
+        case .file:
             candidates += entries.map {
                 Completion(value: $0.isDirectory ? $0.name + "/" : $0.name, kind: $0.isDirectory ? .directory : .file)
             }
@@ -237,7 +273,10 @@ enum Completions {
         let position = Dictionary(scored.enumerated().map { ($0.element.0.id, $0.offset) }) { first, _ in first }
         scored.sort { first, second in
             guard first.1 == second.1 else { return first.1 > second.1 }
-            if first.0.kind == .repository, second.0.kind == .repository {
+            let firstIsRepository = first.0.kind == .repository
+            let secondIsRepository = second.0.kind == .repository
+            if firstIsRepository != secondIsRepository { return firstIsRepository }
+            if firstIsRepository {
                 return position[first.0.id, default: 0] < position[second.0.id, default: 0]
             }
             return first.0.shown.count < second.0.shown.count

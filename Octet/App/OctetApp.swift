@@ -42,6 +42,8 @@ struct OctetApp: App {
         OctetKeyHook.prompt = prompt
         OctetKeyHook.store = store
         OctetPluginHost.shared.attach(store)
+        // After the window is up, so the question has somewhere to appear.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { session?.offerColorRestartIfNeeded() }
         settings.reloadSession = { [weak store] in store?.reloadSessionConfig(quiet: true) }
         OctetTerminalRuntime.configure(overrides: settings.values.rendererConfig + "\n" + Theme.octetShortcutUnbinds)
         OctetTerminalRuntime.setColorScheme(dark: !TerminalTheme.named(settings.values.themeName).isLight)
@@ -384,6 +386,8 @@ enum OctetKeyHook {
     static weak var prompt: PromptEditor?
 
     static weak var store: SessionStore?
+    /// Set while the prompt editor hands held keys back to the terminal.
+    static var replaying = false
 
     static func paste(from pasteboard: NSPasteboard = .general, plainText: Bool = false) -> Bool {
         guard ConfirmCenter.shared.request == nil else { return true }
@@ -396,6 +400,7 @@ enum OctetKeyHook {
     }
 
     static func handleKeyDown(_ event: NSEvent) -> Bool {
+        if replaying { return false }
         // A dialog over the terminal owns the keyboard. Its buttons' Return
         // and Esc equivalents don't reach it past the terminal, so they're
         // answered here.

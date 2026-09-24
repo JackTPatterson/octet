@@ -171,3 +171,202 @@ final class SubagentTabClosingTests: XCTestCase {
         XCTAssertNil(renderer.finishedAt)
     }
 }
+
+final class ColorlessServerTests: XCTestCase {
+    func testFindsOnlyThisSessionsServerStartedWithNoColor() {
+        let list = """
+          46183 /Applications/Octet.app/Contents/MacOS/octet-engine server TERM=xterm HERDR_SESSION=octet NO_COLOR=1 HOME=/Users/x
+            900 /Applications/Octet.app/Contents/MacOS/octet-engine server HERDR_SESSION=other NO_COLOR=1
+            901 /Applications/Octet.app/Contents/MacOS/octet-engine --session octet HERDR_SESSION=octet NO_COLOR=1
+            902 /usr/bin/node server NO_COLOR=1 HERDR_SESSION=octet
+        """
+        XCTAssertEqual(TerminalEnvironment.colorlessServer(session: "octet", processList: list), 46183)
+        XCTAssertNil(TerminalEnvironment.colorlessServer(session: "octet", processList: """
+          46183 /Applications/Octet.app/Contents/MacOS/octet-engine server HERDR_SESSION=octet FORCE_COLOR=3
+        """))
+    }
+
+    func testTheLiveCheckRuns() {
+        // Nothing to assert about this machine's servers; it must not hang or crash.
+        _ = TerminalEnvironment.colorlessServer(session: "octet-tests-\(UUID().uuidString)")
+    }
+}
+
+final class GitCloneMenuTests: XCTestCase {
+    func testReposAreNotCrowdedOutByFilesOrHistory() {
+        let generator = CompletionSpec.Generator(id: "t.crowd", command: "true", kind: .repository)
+        var spec = CompletionSpecs.git
+        spec.subcommands = spec.subcommands.map { var sub = $0; if sub.name == "clone" { sub.argument = .generator(generator) }; return sub }
+        let files = (0..<30).map { (name: "f\($0)", isDirectory: $0 % 2 == 0) }
+        let repos = (0..<5).map { "https://github.com/acme/r\($0).git\tacme/r\($0)\t" }
+        let results = Completions.suggestions(for: CompletionContext.at(caret: 10, in: "git clone "),
+                                              entries: files, history: ["git status", "git clone x"],
+                                              spec: spec, generatorValues: repos)
+        XCTAssertEqual(results.prefix(5).map(\.kind), Array(repeating: .repository, count: 5))
+        XCTAssertFalse(results.contains { $0.kind == .file || $0.kind == .directory || $0.kind == .history })
+    }
+
+    @MainActor
+    func testEveryoneWaitingOnOneRunHearsWhenItLands() {
+        let generator = CompletionSpec.Generator(id: "t.wait.\(UUID().uuidString)", command: "echo hi", perFolder: false)
+        let prefetch = expectation(description: "prefetch told")
+        let menu = expectation(description: "menu told")
+        GeneratorCache.shared.refreshIfStale(generator, cwd: "/tmp") { prefetch.fulfill() }
+        GeneratorCache.shared.refreshIfStale(generator, cwd: "/tmp") { menu.fulfill() }
+        wait(for: [prefetch, menu], timeout: 5)
+        XCTAssertEqual(GeneratorCache.shared.values(generator, cwd: "/tmp"), ["hi"])
+    }
+}
+
+final class GitCloneEdgeCaseTests: XCTestCase {
+    private func cloneSpec() throws -> CompletionSpec {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Plugins").path
+        let plugin = try XCTUnwrap(OctetPlugins.discover(bundled: root, user: "/nonexistent").plugins.first { $0.id == "github-repos" })
+        return try XCTUnwrap(OctetPlugins.applying(plugin.manifest.contributes.completions.map { ($0, plugin) },
+                                                  to: CompletionSpecs.git, command: "git"))
+    }
+
+    private let repos = ["https://github.com/acme/zeta.git\tacme/zeta\t"]
+    private let files: [(name: String, isDirectory: Bool)] = [("src", true), ("README.md", false)]
+
+    private func kinds(_ line: String, _ spec: CompletionSpec) -> Set<Completion.Kind> {
+        let context = CompletionContext.at(caret: line.count, in: line)
+        let values = Completions.generator(for: spec, words: context.wordsBeforeToken)
+            .map { _ in repos } ?? []
+        return Set(Completions.suggestions(for: context, entries: files, spec: spec, generatorValues: values).map(\.kind))
+    }
+
+    func testRepositoriesFillTheFirstArgument() throws {
+        XCTAssertTrue(kinds("git clone ", try cloneSpec()).contains(.repository))
+    }
+
+    func testAfterTheRepositoryComesADirectory() throws {
+        let spec = try cloneSpec()
+        let after = kinds("git clone https://github.com/acme/zeta.git ", spec)
+        XCTAssertFalse(after.contains(.repository))
+        XCTAssertTrue(after.contains(.directory))
+    }
+
+    func testAnOptionsValueIsNotARepository() throws {
+        let spec = try cloneSpec()
+        XCTAssertFalse(kinds("git clone --depth ", spec).contains(.repository))
+        XCTAssertFalse(kinds("git clone -b ", spec).contains(.repository))
+        // Once the option has its value, the repository is still to come.
+        XCTAssertTrue(kinds("git clone --depth 1 ", spec).contains(.repository))
+        XCTAssertTrue(kinds("git clone -b main ", spec).contains(.repository))
+        XCTAssertTrue(kinds("git clone --recurse-submodules ", spec).contains(.repository))
+    }
+
+    func testOtherGitSubcommandsAreUnaffected() throws {
+        let spec = try cloneSpec()
+        XCTAssertEqual(Completions.generator(for: spec, words: ["checkout"])?.id, CompletionSpecs.branches.id)
+        XCTAssertNil(Completions.generator(for: spec, words: ["status"]))
+    }
+}
+
+final class ShellLineTrackerTests: XCTestCase {
+    func testTextReachingTheShellKeepsOctetOutUntilTheLineRunsOrClears() {
+        var tracker = ShellLineTracker()
+        tracker.keyReachedPane("p", .text)
+        XCTAssertTrue(tracker.holdsLine("p"))
+        XCTAssertFalse(tracker.holdsLine("q"), "per pane")
+        tracker.keyReachedPane("p", .other)
+        XCTAssertTrue(tracker.holdsLine("p"))
+        tracker.keyReachedPane("p", .submit)
+        XCTAssertFalse(tracker.holdsLine("p"))
+        tracker.keyReachedPane("p", .text)
+        tracker.keyReachedPane("p", .clear)
+        XCTAssertFalse(tracker.holdsLine("p"))
+    }
+
+    func testAProgramExitingLeavesAFreshPrompt() {
+        var tracker = ShellLineTracker()
+        tracker.observe("p", programInFront: true)
+        tracker.keyReachedPane("p", .text)      // typed into less, then `q`
+        tracker.observe("p", programInFront: nil) // unknown changes nothing
+        XCTAssertTrue(tracker.holdsLine("p"))
+        tracker.observe("p", programInFront: false)
+        XCTAssertFalse(tracker.holdsLine("p"))
+    }
+
+    func testTextTypedAtAPromptSurvivesPromptObservations() {
+        var tracker = ShellLineTracker()
+        tracker.observe("p", programInFront: false)
+        tracker.keyReachedPane("p", .text)
+        tracker.observe("p", programInFront: false)
+        XCTAssertTrue(tracker.holdsLine("p"))
+    }
+
+    func testOctetHandingItsLineBack() {
+        var tracker = ShellLineTracker()
+        tracker.handedLine("p", submitted: false)
+        XCTAssertTrue(tracker.holdsLine("p"))
+        tracker.handedLine("p", submitted: true)
+        XCTAssertFalse(tracker.holdsLine("p"))
+    }
+}
+
+final class CompletionMenuTidinessTests: XCTestCase {
+    private let files: [(name: String, isDirectory: Bool)] = [("src", true), ("README.md", false)]
+    private let history = ["git push", "git status", "git clone x"]
+
+    private func menu(_ line: String) -> [Completion] {
+        Completions.suggestions(for: CompletionContext.at(caret: line.count, in: line),
+                                entries: files, history: history, spec: CompletionSpecs.git)
+    }
+
+    func testTheCloneDestinationOffersOnlyFolders() {
+        let results = menu("git clone https://github.com/acme/zeta.git ")
+        XCTAssertEqual(results.map(\.value), ["src/"])
+    }
+
+    func testFlagsWaitForADash() {
+        XCTAssertFalse(menu("git clone ").contains { $0.value.hasPrefix("-") })
+        XCTAssertTrue(menu("git clone --").contains { $0.value == "--depth" })
+    }
+
+    func testHistoryWordsOnlyRightAfterTheCommand() {
+        XCTAssertTrue(menu("git ").contains { $0.kind == .history && $0.value == "push" })
+        XCTAssertFalse(menu("git add ").contains { $0.kind == .history })
+    }
+}
+
+final class WholeWordTabTests: XCTestCase {
+    private func whole(_ line: String) -> Bool {
+        Completions.isCompleteWord(CompletionContext.at(caret: line.count, in: line), spec: CompletionSpecs.git,
+                                   commands: ["git", "ls"])
+    }
+
+    func testTabFinishesAWordThatIsAlreadyWhole() {
+        XCTAssertTrue(whole("git clone"))
+        XCTAssertTrue(whole("git"))
+        XCTAssertTrue(whole("git clone --depth"))
+        XCTAssertFalse(whole("git clo"))
+        XCTAssertFalse(whole("git clone "))
+        XCTAssertFalse(whole("git clone src"))
+    }
+}
+
+final class ShellLinePersistenceTests: XCTestCase {
+    func testKeysNameAShellNotJustAPane() {
+        XCTAssertEqual(ShellLineTracker.key(pane: "wE:p1", shellPid: 4321), "wE:p1#4321")
+        XCTAssertEqual(ShellLineTracker.key(pane: "wE:p1", shellPid: nil), "wE:p1")
+        XCTAssertEqual(ShellLineTracker.shellPid(inKey: "wE:p1#4321"), 4321)
+        XCTAssertNil(ShellLineTracker.shellPid(inKey: "wE:p1"))
+    }
+
+    func testRestoredLinesOfExitedShellsAreDropped() {
+        let saved = ShellLineTracker(holding: ["a#100", "b#200", "c"])
+        let restored = saved.pruned { $0 == 100 }
+        XCTAssertTrue(restored.holdsLine("a#100"))
+        XCTAssertFalse(restored.holdsLine("b#200"))
+        XCTAssertFalse(restored.holdsLine("c"), "without a pid it can't be checked, so it isn't trusted")
+    }
+
+    func testANewShellInAReusedPaneStartsClean() {
+        var tracker = ShellLineTracker()
+        tracker.keyReachedPane(ShellLineTracker.key(pane: "p1", shellPid: 100), .text)
+        XCTAssertFalse(tracker.holdsLine(ShellLineTracker.key(pane: "p1", shellPid: 200)))
+    }
+}

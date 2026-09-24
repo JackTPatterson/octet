@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// How Octet launches and addresses its own session on the session server.
@@ -56,6 +57,50 @@ struct EngineSession {
     }
 
     var client: EngineClient { EngineClient(socketPath: socketPath) }
+
+    /// Offers to restart a session server that was started with NO_COLOR.
+    /// Octet's own launches never pass it on, but a server started earlier
+    /// from an agent's or IDE's shell keeps it, and every pane it opens
+    /// inherits it: Claude Code and every other program then print in the
+    /// terminal's plain text colour. Restarting is the only way to clear a
+    /// running server's environment, and it ends what runs in its panes.
+    @MainActor
+    func offerColorRestartIfNeeded() {
+        let session = Self.name
+        let enginePath = self.enginePath
+        DispatchQueue.global(qos: .utility).async {
+            guard let pid = TerminalEnvironment.colorlessServer(session: session) else { return }
+            DispatchQueue.main.async {
+                let declinedKey = "octet.colorlessServerDeclined"
+                guard UserDefaults.standard.integer(forKey: declinedKey) != pid else { return }
+                ConfirmCenter.shared.ask(ConfirmCenter.Request(
+                    title: "Colour is off in this terminal session",
+                    message: "The terminal server was started from a shell with NO_COLOR set, so Claude Code and other programs print everything in plain text colour. Restarting the server fixes it, but ends everything running in its panes. Octet reopens afterwards.",
+                    confirmTitle: "Restart Terminal Server",
+                    cancelTitle: "Not Now",
+                    destructive: true,
+                    onConfirm: { _ in Self.restartServer(enginePath: enginePath) },
+                    // Asked once per server; a new colourless one asks again.
+                    onCancel: { UserDefaults.standard.set(pid, forKey: declinedKey) }
+                ))
+            }
+        }
+    }
+
+    /// Stops the session server, then relaunches Octet, which starts a fresh
+    /// one with Octet's own environment.
+    private static func restartServer(enginePath: String) {
+        let app = Bundle.main.bundlePath
+        let script = "\(shellQuote(enginePath)) --session \(shellQuote(name)) server stop; sleep 1; open -n \(shellQuote(app))"
+        let relaunch = Process()
+        relaunch.executableURL = URL(fileURLWithPath: "/bin/sh")
+        relaunch.arguments = ["-c", "sleep 0.5; " + script]
+        var environment = ProcessInfo.processInfo.environment
+        environment.removeValue(forKey: "NO_COLOR")
+        relaunch.environment = environment
+        try? relaunch.run()
+        NSApp.terminate(nil)
+    }
 
     /// The engine bundled in Octet.app, or a standalone install when the
     /// bundled copy is missing (a development build without it, for example).

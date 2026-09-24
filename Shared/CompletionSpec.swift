@@ -18,6 +18,9 @@ struct CompletionSpec: Equatable {
         var options: [Option] = []
         var argument: Argument?
         var subcommands: [Subcommand] = []
+        /// `argument` fills only the first positional word; later ones are
+        /// paths (`git clone <repo> <directory>`).
+        var firstArgumentOnly = false
     }
 
     /// Where an argument's values come from.
@@ -50,25 +53,55 @@ struct CompletionSpec: Equatable {
     var argument: Argument?
 
     /// Walks the words already typed to find which subcommand is in play.
-    func resolve(words: [String]) -> Subcommand? {
+    func resolve(words: [String]) -> Subcommand? { resolvePath(words).subcommand }
+
+    /// The subcommand in play and how many words named it.
+    private func resolvePath(_ words: [String]) -> (subcommand: Subcommand?, length: Int) {
         var current: Subcommand?
         var pool = subcommands
+        var length = 0
         for word in words {
             guard let match = pool.first(where: { $0.name == word }) else { break }
             current = match
             pool = match.subcommands
+            length += 1
         }
-        return current
+        return (current, length)
     }
 
     /// What can follow, given the words typed before the caret.
     func candidates(after words: [String]) -> (names: [(value: String, summary: String)], argument: Argument?) {
-        let resolved = resolve(words: words)
+        let (resolved, length) = resolvePath(words)
         let subs = resolved?.subcommands ?? (resolved == nil ? subcommands : [])
         let options = (resolved?.options ?? []) + self.options
+        let rest = words.dropFirst(length)
+        // Right after an option that takes a value, only that value fits.
+        if let last = rest.last, let option = options.first(where: { $0.names.contains(last) }),
+           let value = option.argument {
+            return ([], value)
+        }
         var names = subs.map { (value: $0.name, summary: $0.summary) }
         names += options.flatMap { option in option.names.map { (value: $0, summary: option.summary) } }
-        return (names, resolved?.argument ?? argument)
+        var argument = resolved?.argument ?? self.argument
+        if resolved?.firstArgumentOnly == true, Self.positionals(in: rest, options: options) > 0 {
+            argument = .directory
+        }
+        return (names, argument)
+    }
+
+    /// Words that are arguments rather than options or options' values.
+    private static func positionals(in words: ArraySlice<String>, options: [Option]) -> Int {
+        var count = 0
+        var skipNext = false
+        for word in words {
+            if skipNext { skipNext = false; continue }
+            if word.hasPrefix("-") {
+                skipNext = options.first { $0.names.contains(word) }?.argument != nil
+                continue
+            }
+            count += 1
+        }
+        return count
     }
 }
 
@@ -110,10 +143,11 @@ enum CompletionSpecs {
             ]),
             .init(name: "pull", summary: "Fetch and integrate"),
             .init(name: "clone", summary: "Copy a repository", options: [
-                .init(names: ["--depth"], summary: "Only recent history"),
-                .init(names: ["-b", "--branch"], summary: "Check out this branch"),
+                .init(names: ["--depth"], summary: "Only recent history", argument: .values([])),
+                .init(names: ["-b", "--branch"], summary: "Check out this branch", argument: .values([])),
                 .init(names: ["--recurse-submodules"], summary: "Clone submodules too"),
-            ]),
+            // A URL to type (plugins can list repositories), then a folder.
+            ], argument: .values([]), firstArgumentOnly: true),
             .init(name: "status", summary: "Show the working tree"),
             .init(name: "log", summary: "Show history", options: [
                 .init(names: ["--oneline"], summary: "One line per commit"),
@@ -211,6 +245,14 @@ final class GeneratorCache {
 
     private var entries: [String: Entry] = [:]
     private var running: Set<String> = []
+    /// Everyone waiting on a run in flight, told when it lands; a prefetch
+    /// and the menu often ask for the same run moments apart.
+    private var waiters: [String: [() -> Void]] = [:]
+
+    /// A run for this generator is in flight.
+    func isLoading(_ generator: CompletionSpec.Generator, cwd: String) -> Bool {
+        running.contains(key(generator, cwd: cwd))
+    }
 
     /// Values already known for this generator in this folder, if any.
     func values(_ generator: CompletionSpec.Generator, cwd: String) -> [String] {
@@ -222,6 +264,7 @@ final class GeneratorCache {
     func refreshIfStale(_ generator: CompletionSpec.Generator, cwd: String, then: @escaping () -> Void = {}) {
         let key = key(generator, cwd: cwd)
         if let entry = entries[key], Date().timeIntervalSince(entry.at) < generator.cacheSeconds { return }
+        waiters[key, default: []].append(then)
         guard running.insert(key).inserted else { return }
         let command = generator.command
         let timeout = generator.timeout
@@ -233,7 +276,8 @@ final class GeneratorCache {
             DispatchQueue.main.async {
                 self.entries[key] = Entry(values: Array(values.prefix(300)), at: Date())
                 self.running.remove(key)
-                then()
+                let waiting = self.waiters.removeValue(forKey: key) ?? []
+                waiting.forEach { $0() }
             }
         }
     }

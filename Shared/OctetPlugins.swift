@@ -100,6 +100,8 @@ struct OctetPluginManifest: Codable, Equatable {
         /// Start fetching once the line starts with this, so a slow list is
         /// ready by the time the menu opens.
         var prefetchWhenTyping: String?
+        /// The values fill only the first argument; later ones are paths.
+        var firstArgumentOnly: Bool?
 
         init(command: String, path: [String] = [], summary: String? = nil, run: String, kind: String? = nil,
              cacheSeconds: Double? = nil, timeoutSeconds: Double? = nil, perFolder: Bool? = nil,
@@ -128,6 +130,7 @@ struct OctetPluginManifest: Codable, Equatable {
             perFolder = try container.decodeIfPresent(Bool.self, forKey: .perFolder)
             opensMenu = try container.decodeIfPresent(Bool.self, forKey: .opensMenu)
             prefetchWhenTyping = try container.decodeIfPresent(String.self, forKey: .prefetchWhenTyping)
+            firstArgumentOnly = try container.decodeIfPresent(Bool.self, forKey: .firstArgumentOnly)
         }
     }
 
@@ -273,6 +276,7 @@ enum OctetPlugins {
                 spec.argument = argument
             } else {
                 spec.subcommands = inserting(argument, at: contribution.path[...], summary: contribution.summary,
+                                             firstArgumentOnly: contribution.firstArgumentOnly == true,
                                              into: spec.subcommands)
             }
         }
@@ -280,7 +284,8 @@ enum OctetPlugins {
     }
 
     private static func inserting(_ argument: CompletionSpec.Argument, at path: ArraySlice<String>,
-                                  summary: String?, into subcommands: [CompletionSpec.Subcommand]) -> [CompletionSpec.Subcommand] {
+                                  summary: String?, firstArgumentOnly: Bool,
+                                  into subcommands: [CompletionSpec.Subcommand]) -> [CompletionSpec.Subcommand] {
         guard let name = path.first else { return subcommands }
         var subcommands = subcommands
         let index = subcommands.firstIndex { $0.name == name } ?? {
@@ -289,8 +294,10 @@ enum OctetPlugins {
         }()
         if path.count == 1 {
             subcommands[index].argument = argument
+            subcommands[index].firstArgumentOnly = firstArgumentOnly
         } else {
             subcommands[index].subcommands = inserting(argument, at: path.dropFirst(), summary: summary,
+                                                       firstArgumentOnly: firstArgumentOnly,
                                                        into: subcommands[index].subcommands)
         }
         return subcommands
