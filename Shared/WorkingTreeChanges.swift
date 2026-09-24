@@ -3,8 +3,10 @@ import Foundation
 struct WorkingTreeChanges: Equatable {
     var added: Int
     var removed: Int
+    /// Files changed, untracked ones included.
+    var files = 0
 
-    var isEmpty: Bool { added == 0 && removed == 0 }
+    var isEmpty: Bool { added == 0 && removed == 0 && files == 0 }
 
     static func read(in directory: String) -> WorkingTreeChanges? {
         guard let root = run(["-C", directory, "rev-parse", "--show-toplevel"]), root.status == 0 else { return nil }
@@ -20,7 +22,9 @@ struct WorkingTreeChanges: Equatable {
 
         if let untracked = run(["-C", repo, "ls-files", "--others", "--exclude-standard", "-z"]),
            untracked.status == 0 {
-            let files = untracked.output.split(separator: "\0").prefix(250)
+            let untrackedFiles = untracked.output.split(separator: "\0")
+            result.files += untrackedFiles.count
+            let files = untrackedFiles.prefix(250)
             var remainingBytes = 10_000_000
             for relative in files where remainingBytes > 0 {
                 let url = URL(fileURLWithPath: repo).appendingPathComponent(String(relative)).standardizedFileURL
@@ -45,6 +49,7 @@ struct WorkingTreeChanges: Equatable {
             guard fields.count >= 2 else { continue }
             result.added += Int(fields[0]) ?? 0
             result.removed += Int(fields[1]) ?? 0
+            result.files += 1
         }
         return result
     }

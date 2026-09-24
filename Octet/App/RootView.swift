@@ -13,7 +13,9 @@ struct RootView: View {
     @ObservedObject private var confirmations = ConfirmCenter.shared
     @StateObject private var terminalAnchor = TerminalAnchor()
     @StateObject private var splash = NewTabSplashModel()
-    @StateObject private var repoContext = RepoContextModel()
+    @StateObject private var statusBar = StatusBarModel()
+    /// The connection card over the terminal, while it shows.
+    @State private var connecting: SSHTarget?
     @ObservedObject private var tabDrag = TabDrag.shared
     /// The panes of the tab showing, fetched when a tab drag starts.
     @State private var dropLayout: PaneLayout?
@@ -99,6 +101,29 @@ struct RootView: View {
     private var focusedPaneCwd: String? {
         guard let pane = window.focusedPaneId else { return nil }
         return store.snapshot.panes.first { $0.paneId == pane }?.effectiveCwd
+    }
+
+    /// The agent running in the focused pane, if any.
+    private var focusedAgent: EngineAgent? {
+        guard let pane = window.focusedPaneId else { return nil }
+        return store.snapshot.agents.first { $0.paneId == pane }
+    }
+
+    /// The machine the focused pane is logged into over SSH, if any.
+    private var focusedSSH: SSHTarget? {
+        window.focusedPaneId.flatMap { store.paneSSH[$0] }
+    }
+
+    /// A new connection in the focused pane gets the card; one that was
+    /// already open when Octet started, or that focus merely moved to, doesn't.
+    private func sshChanged(from old: [String: SSHTarget], to new: [String: SSHTarget]) {
+        guard store.sshScans > 1, let pane = window.focusedPaneId, let target = new[pane], old[pane] != target,
+              motion.animates(.connections) else { return }
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { connecting = target }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) {
+            guard connecting == target else { return }
+            withAnimation(.easeIn(duration: 0.25)) { connecting = nil }
+        }
     }
 
     /// Where the terminal begins, under the title bar, tab bar and any banner.
@@ -563,11 +588,24 @@ struct RootView: View {
                     onSurface: { window.surface = $0 }
                 )
                 .background(Theme.terminalBackground.opacity(settings.values.effectiveBackgroundOpacity))
-                if settings.values.repoContextBar, let context = repoContext.context {
-                    RepoContextBar(context: context)
+                if settings.values.repoContextBar,
+                   StatusBar.hasContent(model: statusBar, ssh: focusedSSH, agent: focusedAgent) {
+                    StatusBar(model: statusBar, store: store, ssh: focusedSSH, agent: focusedAgent,
+                              openOnOctetUI: { window.openOnOctetUI($0) })
                 }
             }
-            .onChange(of: focusedPaneCwd, initial: true) { _, cwd in repoContext.show(cwd) }
+            .overlay(alignment: .top) {
+                if let connecting {
+                    SSHConnectCard(target: connecting)
+                        .padding(.top, 18)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .allowsHitTesting(false)
+                }
+            }
+            .onChange(of: StatusBarFocus(pane: window.focusedPaneId, directory: focusedPaneCwd, ssh: focusedSSH), initial: true) { _, focus in
+                statusBar.show(pane: focus.pane, directory: focus.directory, ssh: focus.ssh, client: store.client)
+            }
+            .onChange(of: store.paneSSH) { old, new in sshChanged(from: old, to: new) }
 
         } else {
             VStack(spacing: 8) {
@@ -810,4 +848,12 @@ private struct TerminalWatchers: ViewModifier {
             .onChange(of: promptEmpty) { _, _ in observe(anchor.grid) }
             .onChange(of: tabDrag.tabId) { _, dragged in dragChanged(dragged) }
     }
+}
+
+/// What the status bar follows: which pane, where it is, and whether it's
+/// logged in elsewhere.
+private struct StatusBarFocus: Equatable {
+    let pane: String?
+    let directory: String?
+    let ssh: SSHTarget?
 }

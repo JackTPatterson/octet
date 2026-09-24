@@ -39,6 +39,13 @@ struct OctetSettings: Codable, Equatable {
     /// A strip under the terminal with the focused pane's runtime version,
     /// branch and changes while it's inside a git repo.
     var repoContextBar = true
+    /// The status bar's chips in order, once someone has arranged them;
+    /// until then (`statusBarCustomized` false) each chip's default applies.
+    var statusBarChips: [String] = []
+    var statusBarCustomized = false
+    /// Every chip that existed when the bar was last arranged, so one that
+    /// arrives later (a plugin turned on) can still start on.
+    var statusBarSeen: [String] = []
 
     // MARK: Terminal (renderer input + session server panes)
     var scrollbackMegabytes: Double = 10
@@ -218,6 +225,9 @@ struct OctetSettings: Codable, Equatable {
         paneGaps = value("paneGaps", defaults.paneGaps)
         paneScrollbars = value("paneScrollbars", defaults.paneScrollbars)
         repoContextBar = value("repoContextBar", defaults.repoContextBar)
+        statusBarChips = value("statusBarChips", defaults.statusBarChips)
+        statusBarCustomized = value("statusBarCustomized", defaults.statusBarCustomized)
+        statusBarSeen = value("statusBarSeen", defaults.statusBarSeen)
         scrollbackMegabytes = value("scrollbackMegabytes", defaults.scrollbackMegabytes)
         copyOnSelect = value("copyOnSelect", defaults.copyOnSelect)
         clipboardToasts = value("clipboardToasts", defaults.clipboardToasts)

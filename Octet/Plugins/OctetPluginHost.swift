@@ -49,6 +49,52 @@ final class OctetPluginHost: ObservableObject {
         store?.refreshPaneRuntimes(matcher: matcher)
     }
 
+    // MARK: - Status bar
+
+    /// Enabled plugins' status chips, by descriptor id.
+    var statusItems: [String: (item: OctetPluginManifest.StatusItemContribution, plugin: OctetPlugin)] {
+        var items: [String: (OctetPluginManifest.StatusItemContribution, OctetPlugin)] = [:]
+        for plugin in plugins where isEnabled(plugin) {
+            for item in plugin.manifest.contributes.statusItems {
+                items[OctetPlugins.statusItemId(plugin: plugin.id, item: item.id)] = (item, plugin)
+            }
+        }
+        return items
+    }
+
+    /// Every chip the bar can show: Octet's own, then enabled plugins'.
+    var statusDescriptors: [StatusItemDescriptor] {
+        StatusBarItems.builtIns + plugins.filter(isEnabled).flatMap { plugin in
+            plugin.manifest.contributes.statusItems.map { OctetPlugins.descriptor($0, of: plugin) }
+        }
+    }
+
+    /// The chips turned on, in the order they show.
+    var statusBarOrder: [String] {
+        let values = SettingsStore.shared.values
+        return StatusBarItems.resolve(saved: values.statusBarChips, customized: values.statusBarCustomized,
+                                      seen: values.statusBarSeen, available: statusDescriptors)
+    }
+
+    /// Saves an arrangement made in Settings.
+    func setStatusBarOrder(_ order: [String]) {
+        var values = SettingsStore.shared.values
+        values.statusBarChips = order
+        values.statusBarCustomized = true
+        values.statusBarSeen = Array(Set(values.statusBarSeen).union(statusDescriptors.map(\.id))).sorted()
+        SettingsStore.shared.values = values
+        objectWillChange.send()
+    }
+
+    func resetStatusBar() {
+        var values = SettingsStore.shared.values
+        values.statusBarChips = []
+        values.statusBarCustomized = false
+        values.statusBarSeen = []
+        SettingsStore.shared.values = values
+        objectWillChange.send()
+    }
+
     /// The icon an enabled plugin has for a runtime, by its id.
     func runtimeBadge(id: String) -> RuntimeBadge? {
         let matcher = runtimeMatcher ?? RuntimeMatcher(plugins: plugins.filter(isEnabled))

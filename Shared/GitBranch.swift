@@ -29,6 +29,35 @@ enum GitBranch {
         return nil
     }
 
+    /// Where a directory's repository keeps its git data, the working tree
+    /// it belongs to, and whether that tree is a linked worktree.
+    static func location(for directory: String) -> (gitDir: String, root: String, isLinkedWorktree: Bool)? {
+        var url = URL(fileURLWithPath: directory, isDirectory: true).standardizedFileURL
+        let fileManager = FileManager.default
+        while url.path != "/" {
+            let dotGit = url.appendingPathComponent(".git")
+            var isDirectory: ObjCBool = false
+            if fileManager.fileExists(atPath: dotGit.path, isDirectory: &isDirectory) {
+                if isDirectory.boolValue { return (dotGit.path, url.path, false) }
+                guard let contents = try? String(contentsOf: dotGit, encoding: .utf8),
+                      let line = contents.split(separator: "\n").first(where: { $0.hasPrefix("gitdir:") }) else { return nil }
+                let raw = line.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespaces)
+                let gitDir = raw.hasPrefix("/") ? raw : url.appendingPathComponent(raw).standardizedFileURL.path
+                // Submodules keep their data under the parent's modules/;
+                // only worktrees are "linked".
+                return (gitDir, url.path, gitDir.contains("/worktrees/"))
+            }
+            url.deleteLastPathComponent()
+        }
+        return nil
+    }
+
+    /// Whether HEAD names a commit rather than a branch.
+    static func isDetached(gitDir: String) -> Bool {
+        guard let head = try? String(contentsOfFile: gitDir + "/HEAD", encoding: .utf8) else { return false }
+        return !head.hasPrefix("ref:")
+    }
+
     /// The working tree a directory belongs to, or nil outside a repo.
     static func repositoryRoot(for directory: String) -> String? {
         var url = URL(fileURLWithPath: directory, isDirectory: true).standardizedFileURL

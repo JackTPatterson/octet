@@ -203,6 +203,13 @@ private struct TabItem: View {
         return ordered.lazy.compactMap { store.paneRuntimes[$0.paneId] }.first
     }
 
+    /// The machine this tab's focused pane, or any of its panes, is logged into.
+    private var ssh: SSHTarget? {
+        let panes = store.snapshot.panes.filter { $0.tabId == tab.tabId }
+        let ordered = panes.filter(\.focused) + panes.filter { !$0.focused }
+        return ordered.lazy.compactMap { store.paneSSH[$0.paneId] }.first
+    }
+
     var body: some View {
         let agent = store.primaryAgent(in: store.snapshot.agents(inTab: tab.tabId))
         let brand = AgentBrand.forAgent(agent?.agent)
@@ -231,10 +238,18 @@ private struct TabItem: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
+            if let ssh, handoffTitle == nil, !renaming {
+                SSHHostChip(target: ssh, compact: true)
+                    .frame(maxWidth: 84)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .layoutPriority(-1)
+                    .transition(motion.animates(.connections) ? .scale(scale: 0.6).combined(with: .opacity) : .identity)
+            }
             Spacer(minLength: 4)
             TabCloseButton { window.closeTab(tab.tabId) }
                 .opacity(hovered || isActive ? 1 : 0)
         }
+        .animation(motion.animation(.connections, .spring(response: 0.4, dampingFraction: 0.7)), value: ssh)
         .padding(.leading, 12)
         .padding(.trailing, 6)
         // One width for every tab, so after a close the next tab's close

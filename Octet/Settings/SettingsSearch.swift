@@ -32,7 +32,7 @@ enum SettingsSearchIndex {
         return entries.filter { $0.matches(words) }
     }
 
-    static let entries: [SettingsSearchEntry] = general + appearance + terminal + agents + plugins + motion + keyboard + advanced
+    static let entries: [SettingsSearchEntry] = general + appearance + terminal + statusBar + agents + plugins + motion + keyboard + advanced
 
     private static let plugins: [SettingsSearchEntry] = [
         .init(.plugins, "Installed plugins", anchor: "Installed", ["plugin", "extension", "enable", "disable", "github", "clone", "repositories"]),
@@ -47,6 +47,12 @@ enum SettingsSearchIndex {
         .init(.general, "Shell startup mode", ["shell", "login", "non-login", "profile", "zprofile", "rc"]),
         .init(.general, "Move to Idle after", ["idle", "dock", "inactive", "unused", "workspace", "timeout"]),
         .init(.general, "Pinned workspaces", ["pin", "unpin", "workspace"]),
+    ]
+
+    private static let statusBar: [SettingsSearchEntry] = [
+        .init(.statusBar, "Show status bar", ["status", "bar", "chips", "repo", "git", "branch", "node", "version", "changes"]),
+        .init(.statusBar, "Status bar chips", anchor: "Chips", ["chips", "reorder", "prompt", "pull request", "ssh", "worktree", "rebase", "conflicts"]),
+        .init(.statusBar, "Add status bar chips", anchor: "Add chips", ["kubernetes", "aws", "docker", "ports", "plugin", "chips", "venv", "terraform"]),
     ]
 
     private static let appearance: [SettingsSearchEntry] = [
@@ -65,7 +71,6 @@ enum SettingsSearchIndex {
         .init(.appearance, "Split pane borders", anchor: "Borders", ["border", "split", "pane", "outline"]),
         .init(.appearance, "Gaps between panes", ["gap", "split", "pane", "spacing"]),
         .init(.appearance, "Pane scrollbars", ["scrollbar", "scroll bar", "pane"]),
-        .init(.appearance, "Repository bar", ["repo", "git", "branch", "node", "version", "changes", "status bar", "chips"]),
     ]
 
     private static let terminal: [SettingsSearchEntry] = [

@@ -45,12 +45,15 @@ struct OctetPluginManifest: Codable, Equatable {
         /// Executables that mean a pane's children aren't its runtime, like
         /// an editor whose language servers would otherwise match.
         var runtimeIgnore: [String] = []
+        /// Chips for the status bar under the terminal.
+        var statusItems: [StatusItemContribution] = []
 
         init(completions: [CompletionContribution] = [], runtimes: [RuntimeContribution] = [],
-             runtimeIgnore: [String] = []) {
+             runtimeIgnore: [String] = [], statusItems: [StatusItemContribution] = []) {
             self.completions = completions
             self.runtimes = runtimes
             self.runtimeIgnore = runtimeIgnore
+            self.statusItems = statusItems
         }
 
         init(from decoder: Decoder) throws {
@@ -58,7 +61,34 @@ struct OctetPluginManifest: Codable, Equatable {
             completions = try container.decodeIfPresent([CompletionContribution].self, forKey: .completions) ?? []
             runtimes = try container.decodeIfPresent([RuntimeContribution].self, forKey: .runtimes) ?? []
             runtimeIgnore = try container.decodeIfPresent([String].self, forKey: .runtimeIgnore) ?? []
+            statusItems = try container.decodeIfPresent([StatusItemContribution].self, forKey: .statusItems) ?? []
         }
+    }
+
+    /// A chip for the status bar. `run` is a shell command run in the pane's
+    /// folder; its first line of output is the chip's text, and nothing
+    /// hides the chip. Later lines can set `tone: warning`, `help: …` and
+    /// `url: https://…` (opened on click). It sees OCTET_CWD,
+    /// OCTET_REPO_ROOT, OCTET_SHELL_PID, OCTET_SSH_HOST and OCTET_SSH_USER.
+    struct StatusItemContribution: Codable, Equatable {
+        let id: String
+        let name: String
+        var summary: String?
+        /// What the chip reads in Settings' preview.
+        var sample: String?
+        /// An SF Symbol name, or `icon`: an image in the plugin's folder.
+        var symbol: String?
+        var icon: String?
+        var color: String?
+        let run: String
+        var refreshSeconds: Double?
+        var timeoutSeconds: Double?
+        /// Run only when one of these files is in the pane's folder or a
+        /// folder above it, up to the repository's root.
+        var whenFiles: [String]?
+        /// `local` (default), `remote` (only over SSH) or `any`.
+        var scope: StatusItemDescriptor.Scope?
+        var enabledByDefault: Bool?
     }
 
     /// A runtime, framework or language a pane can be running. `match` is
@@ -225,6 +255,14 @@ enum OctetPlugins {
             for pair in runtime.refineByDependency ?? [] where pair.count != 2 || !runtimeIds.contains(pair[1]) {
                 return "runtime \(runtime.id) refines to an unknown runtime"
             }
+        }
+        var statusIds: Set<String> = []
+        for item in manifest.contributes.statusItems {
+            if item.id.range(of: "^[a-z0-9][a-z0-9._-]*$", options: .regularExpression) == nil {
+                return "status item ids must be lowercase letters, digits, dots, dashes or underscores"
+            }
+            if !statusIds.insert(item.id).inserted { return "status item \(item.id) appears twice" }
+            if item.run.trimmingCharacters(in: .whitespaces).isEmpty { return "status item \(item.id) has nothing to run" }
         }
         for completion in manifest.contributes.completions {
             if completion.command.isEmpty || completion.command.contains(where: \.isWhitespace) {
@@ -408,5 +446,25 @@ struct RuntimeMatcher {
             url.deleteLastPathComponent()
         }
         return []
+    }
+}
+
+extension OctetPlugins {
+    static func statusItemId(plugin: String, item: String) -> String { "plugin.\(plugin).\(item)" }
+
+    /// What the status bar and Settings know about a plugin's chip.
+    static func descriptor(_ item: OctetPluginManifest.StatusItemContribution, of plugin: OctetPlugin) -> StatusItemDescriptor {
+        StatusItemDescriptor(
+            id: statusItemId(plugin: plugin.id, item: item.id),
+            name: item.name,
+            summary: item.summary ?? "From \(plugin.manifest.name)",
+            sample: item.sample ?? item.name,
+            symbol: item.icon == nil ? (item.symbol ?? "puzzlepiece.extension") : nil,
+            iconPath: item.icon.map { plugin.directory + "/" + $0 },
+            color: item.color,
+            enabledByDefault: item.enabledByDefault ?? false,
+            scope: item.scope ?? .local,
+            pluginId: plugin.id
+        )
     }
 }

@@ -2365,7 +2365,7 @@ final class AgentDiscoveryTests: XCTestCase {
 final class WorkingTreeChangesTests: XCTestCase {
     func testNumstatAddsTextChangesAndSkipsBinaryMarkers() {
         let changes = WorkingTreeChanges.parseNumstat("12\t3\tSources/App.swift\n-\t-\tAssets/logo.png\n4\t0\tREADME.md\n")
-        XCTAssertEqual(changes, WorkingTreeChanges(added: 16, removed: 3))
+        XCTAssertEqual(changes, WorkingTreeChanges(added: 16, removed: 3, files: 3))
     }
 }
 

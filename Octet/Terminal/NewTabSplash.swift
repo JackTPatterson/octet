@@ -227,7 +227,7 @@ private struct ShortcutRow: View {
 }
 
 /// Chips laid out in rows, wrapping when the next one doesn't fit.
-private struct SplashFlow: Layout {
+struct SplashFlow: Layout {
     var spacing: CGFloat = 8
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {

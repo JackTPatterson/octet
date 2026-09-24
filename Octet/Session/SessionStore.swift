@@ -80,6 +80,11 @@ final class SessionStore: ObservableObject {
     private let runtimeLogs = RuntimeLogTails()
     /// What each pane is running, by a plugin's runtime rules, by pane.
     @Published private(set) var paneRuntimes: [String: RuntimeBadge] = [:]
+    /// Panes whose shell is running an interactive `ssh`, by pane.
+    @Published private(set) var paneSSH: [String: SSHTarget] = [:]
+    /// How many scans have filled `paneSSH`: the first finds sessions that
+    /// were already open, which aren't new connections.
+    private(set) var sshScans = 0
     private var loadingPaneRuntimes = false
     private var loadingPaneProcesses = false
     /// True while the focused pane sits at its shell's own prompt.
@@ -328,10 +333,6 @@ final class SessionStore: ObservableObject {
     /// Matches what runs under each pane's shell against plugin runtime
     /// rules. Panes running an agent are left to the agent's own mark.
     func refreshPaneRuntimes(matcher: RuntimeMatcher) {
-        guard !matcher.isEmpty else {
-            if !paneRuntimes.isEmpty { paneRuntimes = [:] }
-            return
-        }
         guard !loadingPaneRuntimes else { return }
         loadingPaneRuntimes = true
         let client = self.client
@@ -340,9 +341,16 @@ final class SessionStore: ObservableObject {
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let tree = Self.processArguments()
             var found: [String: RuntimeBadge] = [:]
+            var ssh: [String: SSHTarget] = [:]
             for pane in panes {
                 guard let info = (try? client.call("pane.process_info", ["pane_id": pane.paneId])).flatMap(ShellPrompt.parse),
                       let shell = info.shellPid else { continue }
+                // Typed at the prompt, ssh is the shell's own child; one
+                // deeper was started by something else (git, rsync).
+                if let target = tree.lazy.filter({ $0.parent == shell }).compactMap({ SSHTarget.parse(commandLine: $0.arguments) }).first {
+                    ssh[pane.paneId] = target
+                }
+                guard !matcher.isEmpty else { continue }
                 let commands = Self.descendants(of: [shell], in: tree.map { RuntimeProcess(pid: $0.pid, parent: $0.parent, name: $0.arguments) })
                     .map { RuntimeMatcher.words($0.name) }
                 let folder = pane.effectiveCwd
@@ -356,6 +364,8 @@ final class SessionStore: ObservableObject {
                 guard let self else { return }
                 self.loadingPaneRuntimes = false
                 if found != self.paneRuntimes { self.paneRuntimes = found }
+                self.sshScans += 1
+                if ssh != self.paneSSH { self.paneSSH = ssh }
             }
         }
     }

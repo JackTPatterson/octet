@@ -1,0 +1,194 @@
+{
+  "id": "status-chips",
+  "name": "Status Chips",
+  "version": "1.0.0",
+  "description": "More chips for the status bar under the terminal: git upstream and stashes, package managers and Python environments, Kubernetes, cloud and Docker contexts, listening ports, and the machine at the other end of an SSH session. Arrange them in Settings › Status Bar.",
+  "author": "Octet",
+  "octet": 1,
+  "contributes": {
+    "statusItems": [
+      {
+        "id": "ahead-behind",
+        "name": "Ahead / behind",
+        "summary": "Commits ahead of and behind the upstream branch",
+        "sample": "↑2 ↓5",
+        "symbol": "arrow.up.arrow.down",
+        "run": "sh \"$OCTET_PLUGIN_DIR/scripts/ahead-behind.sh\"",
+        "refreshSeconds": 10,
+        "enabledByDefault": true
+      },
+      {
+        "id": "stash",
+        "name": "Stashes",
+        "summary": "How many stashes the repository holds",
+        "sample": "2 stashed",
+        "symbol": "tray.full",
+        "run": "sh \"$OCTET_PLUGIN_DIR/scripts/stash.sh\"",
+        "refreshSeconds": 15
+      },
+      {
+        "id": "last-commit",
+        "name": "Last commit",
+        "summary": "How long ago the last commit was; its subject on hover",
+        "sample": "2h ago",
+        "symbol": "clock",
+        "run": "sh \"$OCTET_PLUGIN_DIR/scripts/last-commit.sh\"",
+        "refreshSeconds": 30
+      },
+      {
+        "id": "package-manager",
+        "name": "Package manager",
+        "summary": "Which package manager the project's lockfile belongs to",
+        "sample": "pnpm",
+        "symbol": "shippingbox",
+        "color": "F9AD00",
+        "run": "sh \"$OCTET_PLUGIN_DIR/scripts/package-manager.sh\"",
+        "refreshSeconds": 60
+      },
+      {
+        "id": "node-version",
+        "name": "Node version check",
+        "summary": "Warns when .nvmrc or .node-version asks for another Node",
+        "sample": "wants v20 · has v25",
+        "symbol": "exclamationmark.triangle",
+        "run": "sh \"$OCTET_PLUGIN_DIR/scripts/node-version.sh\"",
+        "whenFiles": [".nvmrc", ".node-version"],
+        "refreshSeconds": 30,
+        "timeoutSeconds": 8,
+        "enabledByDefault": true
+      },
+      {
+        "id": "python-env",
+        "name": "Python environment",
+        "summary": "The project's virtualenv, conda environment or pyenv version",
+        "sample": ".venv 3.12.4",
+        "icon": "icons/python.svg",
+        "color": "3776AB",
+        "run": "sh \"$OCTET_PLUGIN_DIR/scripts/python-env.sh\"",
+        "whenFiles": [".venv", "venv", "env", "pyproject.toml", "requirements.txt", "environment.yml", ".python-version", "Pipfile", "setup.py"],
+        "refreshSeconds": 30,
+        "enabledByDefault": true
+      },
+      {
+        "id": "kube",
+        "name": "Kubernetes context",
+        "summary": "kubectl's current context and namespace; red for production",
+        "sample": "prod-cluster/web",
+        "icon": "icons/kubernetes.svg",
+        "color": "326CE5",
+        "run": "sh \"$OCTET_PLUGIN_DIR/scripts/kube.sh\"",
+        "refreshSeconds": 15,
+        "timeoutSeconds": 4,
+        "enabledByDefault": true
+      },
+      {
+        "id": "aws",
+        "name": "AWS profile",
+        "summary": "The AWS profile and region commands would use",
+        "sample": "aws default · us-east-1",
+        "symbol": "cloud",
+        "color": "FF9900",
+        "run": "sh \"$OCTET_PLUGIN_DIR/scripts/aws.sh\"",
+        "refreshSeconds": 30
+      },
+      {
+        "id": "gcloud",
+        "name": "Google Cloud project",
+        "summary": "The active gcloud configuration's project",
+        "sample": "gcp my-project",
+        "symbol": "cloud",
+        "color": "4285F4",
+        "run": "sh \"$OCTET_PLUGIN_DIR/scripts/gcloud.sh\"",
+        "refreshSeconds": 30
+      },
+      {
+        "id": "azure",
+        "name": "Azure subscription",
+        "summary": "The subscription the Azure CLI is signed in to",
+        "sample": "az Pay-As-You-Go",
+        "symbol": "cloud",
+        "color": "0078D4",
+        "run": "sh \"$OCTET_PLUGIN_DIR/scripts/azure.sh\"",
+        "refreshSeconds": 120,
+        "timeoutSeconds": 10
+      },
+      {
+        "id": "docker",
+        "name": "Docker",
+        "summary": "Docker's context, and running compose services for this project",
+        "sample": "colima · 3 up",
+        "icon": "icons/docker.svg",
+        "color": "2496ED",
+        "run": "sh \"$OCTET_PLUGIN_DIR/scripts/docker.sh\"",
+        "refreshSeconds": 20,
+        "timeoutSeconds": 5
+      },
+      {
+        "id": "terraform",
+        "name": "Terraform workspace",
+        "summary": "The Terraform workspace selected in this folder",
+        "sample": "tf staging",
+        "icon": "icons/terraform.svg",
+        "color": "844FBA",
+        "run": "sh \"$OCTET_PLUGIN_DIR/scripts/terraform.sh\"",
+        "whenFiles": [".terraform"],
+        "refreshSeconds": 20,
+        "enabledByDefault": true
+      },
+      {
+        "id": "dotenv",
+        "name": ".env files",
+        "summary": "Whether the project has .env files; variable names (never values) on hover",
+        "sample": ".env · 12 vars",
+        "symbol": "key",
+        "color": "ECD53F",
+        "run": "sh \"$OCTET_PLUGIN_DIR/scripts/dotenv.sh\"",
+        "whenFiles": [".env", ".env.local", ".env.development"],
+        "refreshSeconds": 30
+      },
+      {
+        "id": "ports",
+        "name": "Listening ports",
+        "summary": "Ports the pane's programs listen on, like a dev server; click to open",
+        "sample": ":3000 :5173",
+        "symbol": "antenna.radiowaves.left.and.right",
+        "color": "34C759",
+        "run": "sh \"$OCTET_PLUGIN_DIR/scripts/ports.sh\"",
+        "refreshSeconds": 4,
+        "enabledByDefault": true
+      },
+      {
+        "id": "resources",
+        "name": "CPU & memory",
+        "summary": "What the pane's programs use, while they're busy",
+        "sample": "42% · 380 MB",
+        "symbol": "gauge.medium",
+        "run": "sh \"$OCTET_PLUGIN_DIR/scripts/resources.sh\"",
+        "refreshSeconds": 4
+      },
+      {
+        "id": "remote-system",
+        "name": "Remote system",
+        "summary": "The SSH machine's system and uptime (key or agent sign-in only)",
+        "sample": "Linux 6.8.12 · up 12 days",
+        "symbol": "server.rack",
+        "run": "sh \"$OCTET_PLUGIN_DIR/scripts/remote-system.sh\"",
+        "scope": "remote",
+        "refreshSeconds": 300,
+        "timeoutSeconds": 8
+      },
+      {
+        "id": "latency",
+        "name": "Remote latency",
+        "summary": "Round-trip time to the SSH machine; amber when slow",
+        "sample": "14 ms",
+        "symbol": "wifi",
+        "run": "sh \"$OCTET_PLUGIN_DIR/scripts/latency.sh\"",
+        "scope": "remote",
+        "refreshSeconds": 15,
+        "timeoutSeconds": 4,
+        "enabledByDefault": true
+      }
+    ]
+  }
+}

@@ -18,7 +18,7 @@ struct SettingsView: View {
     private enum Focus: Hashable { case search, sidebar }
 
     enum Section: String, CaseIterable, Identifiable {
-        case general, appearance, terminal, agents, plugins, motion, keyboard, advanced
+        case general, appearance, terminal, statusBar, agents, plugins, motion, keyboard, advanced
 
         var id: String { rawValue }
         var title: String {
@@ -26,6 +26,7 @@ struct SettingsView: View {
             case .general: return "General"
             case .appearance: return "Appearance"
             case .terminal: return "Terminal"
+            case .statusBar: return "Status Bar"
             case .agents: return "Agents & Recovery"
             case .plugins: return "Plugins"
             case .motion: return "Motion"
@@ -38,6 +39,7 @@ struct SettingsView: View {
             case .general: return "gearshape"
             case .appearance: return "paintpalette"
             case .terminal: return "terminal"
+            case .statusBar: return "list.bullet.rectangle"
             case .agents: return "sparkle.magnifyingglass"
             case .plugins: return "puzzlepiece.extension"
             case .motion: return "sparkles"
@@ -82,6 +84,7 @@ struct SettingsView: View {
                             case .general: GeneralSettings(store: store, settings: settings)
                             case .appearance: AppearanceSettings(settings: settings)
                             case .terminal: TerminalSettings(settings: settings)
+                            case .statusBar: StatusBarSettings(settings: settings)
                             case .agents: AgentSettings(settings: settings, integrations: integrations)
                             case .plugins: PluginSettings()
                             case .motion: MotionSettings(motion: motion)
@@ -456,10 +459,6 @@ private struct AppearanceSettings: View {
             SettingsDivider()
             SettingsRow(title: "Pane scrollbars") {
                 Toggle("Pane scrollbars", isOn: $settings.values.paneScrollbars).labelsHidden().toggleStyle(.switch)
-            }
-            SettingsDivider()
-            SettingsRow(title: "Repository bar", detail: "Runtime version, branch and changes under the terminal while in a git repo") {
-                Toggle("Repository bar", isOn: $settings.values.repoContextBar).labelsHidden().toggleStyle(.switch)
             }
         }
     }
