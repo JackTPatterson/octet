@@ -353,6 +353,9 @@ struct RuntimeMatcher {
 
     var isEmpty: Bool { rules.isEmpty }
 
+    /// The badge a rule with this id draws, for showing a runtime by name.
+    func badge(id: String) -> RuntimeBadge? { byId[id] }
+
     /// A process's arguments with each path cut to its last component.
     static func words(_ arguments: String) -> String {
         arguments.split(whereSeparator: \.isWhitespace)

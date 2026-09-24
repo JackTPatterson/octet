@@ -65,6 +65,7 @@ enum SettingsSearchIndex {
         .init(.appearance, "Split pane borders", anchor: "Borders", ["border", "split", "pane", "outline"]),
         .init(.appearance, "Gaps between panes", ["gap", "split", "pane", "spacing"]),
         .init(.appearance, "Pane scrollbars", ["scrollbar", "scroll bar", "pane"]),
+        .init(.appearance, "Repository bar", ["repo", "git", "branch", "node", "version", "changes", "status bar", "chips"]),
     ]
 
     private static let terminal: [SettingsSearchEntry] = [

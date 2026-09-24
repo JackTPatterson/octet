@@ -36,6 +36,9 @@ struct OctetSettings: Codable, Equatable {
     var paneBorders: PaneBorders = .auto
     var paneGaps = true
     var paneScrollbars = true
+    /// A strip under the terminal with the focused pane's runtime version,
+    /// branch and changes while it's inside a git repo.
+    var repoContextBar = true
 
     // MARK: Terminal (renderer input + session server panes)
     var scrollbackMegabytes: Double = 10
@@ -214,6 +217,7 @@ struct OctetSettings: Codable, Equatable {
         paneBorders = value("paneBorders", defaults.paneBorders)
         paneGaps = value("paneGaps", defaults.paneGaps)
         paneScrollbars = value("paneScrollbars", defaults.paneScrollbars)
+        repoContextBar = value("repoContextBar", defaults.repoContextBar)
         scrollbackMegabytes = value("scrollbackMegabytes", defaults.scrollbackMegabytes)
         copyOnSelect = value("copyOnSelect", defaults.copyOnSelect)
         clipboardToasts = value("clipboardToasts", defaults.clipboardToasts)

@@ -457,6 +457,10 @@ private struct AppearanceSettings: View {
             SettingsRow(title: "Pane scrollbars") {
                 Toggle("Pane scrollbars", isOn: $settings.values.paneScrollbars).labelsHidden().toggleStyle(.switch)
             }
+            SettingsDivider()
+            SettingsRow(title: "Repository bar", detail: "Runtime version, branch and changes under the terminal while in a git repo") {
+                Toggle("Repository bar", isOn: $settings.values.repoContextBar).labelsHidden().toggleStyle(.switch)
+            }
         }
     }
 }

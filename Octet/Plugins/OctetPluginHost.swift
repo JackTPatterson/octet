@@ -49,6 +49,13 @@ final class OctetPluginHost: ObservableObject {
         store?.refreshPaneRuntimes(matcher: matcher)
     }
 
+    /// The icon an enabled plugin has for a runtime, by its id.
+    func runtimeBadge(id: String) -> RuntimeBadge? {
+        let matcher = runtimeMatcher ?? RuntimeMatcher(plugins: plugins.filter(isEnabled))
+        runtimeMatcher = matcher
+        return matcher.badge(id: id)
+    }
+
     func isEnabled(_ plugin: OctetPlugin) -> Bool {
         let values = SettingsStore.shared.values
         return plugin.isBundled

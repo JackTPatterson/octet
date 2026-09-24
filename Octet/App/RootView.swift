@@ -13,6 +13,7 @@ struct RootView: View {
     @ObservedObject private var confirmations = ConfirmCenter.shared
     @StateObject private var terminalAnchor = TerminalAnchor()
     @StateObject private var splash = NewTabSplashModel()
+    @StateObject private var repoContext = RepoContextModel()
     @ObservedObject private var tabDrag = TabDrag.shared
     /// The panes of the tab showing, fetched when a tab drag starts.
     @State private var dropLayout: PaneLayout?
@@ -92,6 +93,12 @@ struct RootView: View {
               agents.active(in: window.focusedWorkspace?.workspaceId) == nil,
               let tab = window.displayedFocusedTabId else { return nil }
         return AgentOffer.candidate(in: store.snapshot.agents(inTab: tab), dismissed: offers.dismissed)
+    }
+
+    /// The folder the focused pane is working in, for the repository bar.
+    private var focusedPaneCwd: String? {
+        guard let pane = window.focusedPaneId else { return nil }
+        return store.snapshot.panes.first { $0.paneId == pane }?.effectiveCwd
     }
 
     /// Where the terminal begins, under the title bar, tab bar and any banner.
@@ -538,23 +545,29 @@ struct RootView: View {
     @ViewBuilder
     private var terminal: some View {
         if let session {
-            OctetTerminalView(
-                command: session.command,
-                environment: session.environment,
-                workingDirectory: NSHomeDirectory(),
-                hiddenTopRows: EngineSession.hiddenTopRows,
-                anchor: terminalAnchor,
-                onTitleChange: { _ in },
-                onExit: {
-                    // A window closing takes its client with it; that's not
-                    // the engine going away. With other windows open, a
-                    // client that exits closes only its own window.
-                    if window.closing { return }
-                    if WindowRegistry.shared.isMulti { window.nsWindow?.close() } else { NSApp.terminate(nil) }
-                },
-                onSurface: { window.surface = $0 }
-            )
-            .background(Theme.terminalBackground.opacity(settings.values.effectiveBackgroundOpacity))
+            VStack(spacing: 0) {
+                OctetTerminalView(
+                    command: session.command,
+                    environment: session.environment,
+                    workingDirectory: NSHomeDirectory(),
+                    hiddenTopRows: EngineSession.hiddenTopRows,
+                    anchor: terminalAnchor,
+                    onTitleChange: { _ in },
+                    onExit: {
+                        // A window closing takes its client with it; that's not
+                        // the engine going away. With other windows open, a
+                        // client that exits closes only its own window.
+                        if window.closing { return }
+                        if WindowRegistry.shared.isMulti { window.nsWindow?.close() } else { NSApp.terminate(nil) }
+                    },
+                    onSurface: { window.surface = $0 }
+                )
+                .background(Theme.terminalBackground.opacity(settings.values.effectiveBackgroundOpacity))
+                if settings.values.repoContextBar, let context = repoContext.context {
+                    RepoContextBar(context: context)
+                }
+            }
+            .onChange(of: focusedPaneCwd, initial: true) { _, cwd in repoContext.show(cwd) }
 
         } else {
             VStack(spacing: 8) {
