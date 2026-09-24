@@ -86,6 +86,30 @@ final class OctetTerminalRuntime {
         )
     }
 
+    /// The cursor's row from the cursor to the right edge, as text.
+    @MainActor
+    static func textRightOfCursor() -> String? {
+        guard let window = NSApp.keyWindow ?? NSApp.windows.first(where: \.isVisible),
+              let content = window.contentView,
+              let surface = findSurface(in: content),
+              let handle = surface.surface else { return nil }
+        var metrics = ghostty_surface_grid_metrics_s()
+        guard ghostty_surface_grid_metrics(handle, &metrics), metrics.cursor_in_viewport,
+              metrics.columns > metrics.cursor_column else { return nil }
+        let row = UInt32(metrics.cursor_row)
+        let selection = ghostty_selection_s(
+            top_left: ghostty_point_s(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_EXACT,
+                                      x: UInt32(metrics.cursor_column), y: row),
+            bottom_right: ghostty_point_s(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_EXACT,
+                                          x: UInt32(metrics.columns) - 1, y: row),
+            rectangle: false
+        )
+        var text = ghostty_text_s()
+        guard ghostty_surface_read_text(handle, selection, &text) else { return nil }
+        defer { ghostty_surface_free_text(handle, &text) }
+        return String(cString: text.text)
+    }
+
     /// What the terminal is showing right now, as text. Some of what an agent
     /// says never reaches its session file — a question it is waiting on is
     /// drawn on screen and nowhere else — so this is how Octet reads it.

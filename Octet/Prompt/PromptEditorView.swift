@@ -20,6 +20,13 @@ struct PromptEditorView: View {
             // it never change the layout.
             ZStack(alignment: .topLeading) {
                 Theme.terminalBackground
+                // A selection (⌘A, shift-arrows) shows behind its characters.
+                if let selection = editor.line.selection {
+                    Rectangle()
+                        .fill(Theme.accent.opacity(0.35))
+                        .frame(width: CGFloat(selection.count) * anchor.cellWidth, height: anchor.cellHeight)
+                        .offset(x: CGFloat(selection.lowerBound) * anchor.cellWidth)
+                }
                 (highlighted + ghostText)
                     .font(font)
                     .lineLimit(1)

@@ -73,6 +73,14 @@ enum ShellPrompt {
         return mode.c_lflag & tcflag_t(ICANON) == 0
     }
 
+    /// Whether the shell's line goes on past the cursor, from the text on the
+    /// cursor's row from the cursor rightward. Only the first two cells
+    /// count: the cursor sits on a character, or on the space before the
+    /// next word, while a right-side prompt sits far off at the edge.
+    static func lineContinues(afterCursor text: String) -> Bool {
+        text.prefix(2).contains { !$0.isWhitespace }
+    }
+
     /// The shell's own name, for history and quoting decisions.
     static func shellName(_ info: ProcessInfo?) -> String? {
         guard let name = info?.foreground.first?.name else { return nil }

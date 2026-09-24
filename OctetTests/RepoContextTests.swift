@@ -24,3 +24,16 @@ final class RepoContextTests: XCTestCase {
         XCTAssertNil(ProjectRuntime.version(fromOutput: "command not found: node"))
     }
 }
+
+final class ShellLineContinuesTests: XCTestCase {
+    func testTextAtOrJustAfterTheCursorMeansTheShellHoldsTheLine() {
+        XCTAssertTrue(ShellPrompt.lineContinues(afterCursor: "gamma"))
+        // On the space before the next word.
+        XCTAssertTrue(ShellPrompt.lineContinues(afterCursor: " gamma"))
+    }
+
+    func testAnEmptyRowOrAFarRightPromptDoesNot() {
+        XCTAssertFalse(ShellPrompt.lineContinues(afterCursor: ""))
+        XCTAssertFalse(ShellPrompt.lineContinues(afterCursor: "                                  main 10:42"))
+    }
+}

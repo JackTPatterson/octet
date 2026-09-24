@@ -202,6 +202,16 @@ final class PromptEditor: ObservableObject {
                 log("ignored key, shell not in its line editor")
                 return false
             }
+            // Text the shell got some way Octet didn't see (its own Tab
+            // completion, an accepted autosuggestion) with the cursor moved
+            // back into it. Octet's line would start at the cursor, cover
+            // the rest, and insert there on Return.
+            if let pane = store.keyPaneId, let rest = OctetTerminalRuntime.textRightOfCursor(),
+               ShellPrompt.lineContinues(afterCursor: rest) {
+                log("ignored key, the shell's line goes on past the cursor")
+                shellLines.keyReachedPane(lineKey(pane), .text)
+                return false
+            }
         }
         guard let characters = event.charactersIgnoringModifiers, !characters.isEmpty else { return false }
 
