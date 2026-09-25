@@ -323,6 +323,14 @@ struct RootView: View {
             if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "newtab" {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) { window.newTab() }
             }
+            // "review" opens the changes review over the focused pane.
+            // "review:<folder>" opens it on that folder instead.
+            if let open = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], open.hasPrefix("review") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    if open.hasPrefix("review:") { ui.review = DiffReviewModel(directory: String(open.dropFirst(7))) }
+                    else { window.toggleReview() }
+                }
+            }
             if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "agents" {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) { AgentCenter.shared.showingBoard = true }
             }
@@ -403,6 +411,11 @@ struct RootView: View {
         ZStack {
                     if let agent = window.agentUIHandoff {
                         AgentUIHandoffView(agent: agent)
+                    } else if let review = ui.review {
+                        DiffReviewView(model: review, store: store) { window.toggleReview() }
+                            .id(review.directory)
+                            .onAppear { DebugSnapshot.overlay("review", true) }
+                            .onDisappear { DebugSnapshot.overlay("review", false) }
                     } else if window.editor.isPresented, window.editor.presentation == .full {
                         CodeEditorView(workspace: window.editor, rootDirectory: window.editorRootDirectory)
                     } else if boardHere == .claude {
@@ -694,6 +707,8 @@ private struct WindowTransparency: NSViewRepresentable {
 }
 
 final class UIState: ObservableObject {
+    /// The changes review over the terminal, while it's open.
+    @Published var review: DiffReviewModel?
     @Published var sidebarVisible = UserDefaults.standard.object(forKey: "octet.sidebarVisible") as? Bool ?? true {
         didSet { UserDefaults.standard.set(sidebarVisible, forKey: "octet.sidebarVisible") }
     }

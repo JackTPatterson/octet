@@ -232,6 +232,8 @@ struct OctetCommands: Commands {
                 .keyboardShortcut(OctetShortcut.paletteAll.keyboardShortcut)
             Button(OctetShortcut.visualTwin.title) { KeyWindow.act { $0.twin.toggle() } }
                 .keyboardShortcut(OctetShortcut.visualTwin.keyboardShortcut)
+            Button(OctetShortcut.review.title) { KeyWindow.act { $0.toggleReview() } }
+                .keyboardShortcut(OctetShortcut.review.keyboardShortcut)
             Button(OctetShortcut.toggleSidebar.title) { KeyWindow.act { $0.ui.sidebarVisible.toggle() } }
                 .keyboardShortcut(OctetShortcut.toggleSidebar.keyboardShortcut)
             Divider()

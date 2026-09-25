@@ -131,10 +131,15 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   made since), and offers Undo. About 0.25 s on a 16k-file repo. Remaining:
   a restore button on the twin's turns, and the conversation rewinding with
   the files.
-- [ ] **23. Diff review with line comments sent to the agent (high, large).**
+- [x] **23. Diff review with line comments sent to the agent (high, large).**
   Claude Code #33932 (276), #23626 (141, pick the base branch); Conductor's
-  best-liked feature. Live diff against the worktree's base, next/previous
-  change, and cap huge diffs (Claude Squad froze on 1M+ lines).
+  best-liked feature. Done: ⌘⇧R or palette › Review Changes opens the
+  focused project's changes over the terminal: against HEAD or since the
+  branch left main, new files included, refreshed every 4 s. Click a line to
+  leave a note; ⌘↩ sends every note to an agent in the project as one
+  message. Files over 3,000 changed lines (or past 20,000 in all) are
+  counted, not drawn. Remaining: syntax colours, staging and committing
+  from the review, and a split (side-by-side) view.
 - [ ] **24. Multiple accounts per agent (high).** Claude Code #18435 (991),
   #36151 (1023). *Mostly done:* palette Add Claude/Codex Account (its own
   config folder, then a tab to sign in), Use Account for This Project, and

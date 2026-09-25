@@ -385,6 +385,19 @@ final class WindowContext: ObservableObject, Identifiable {
         store.closeTab(id)
     }
 
+    /// ⌘⇧R: the changes in the focused pane's project, or closes the review.
+    func toggleReview() {
+        if ui.review != nil {
+            ui.review = nil
+            OctetTerminalRuntime.focusTerminal()
+            return
+        }
+        let snapshot = store.snapshot
+        guard let directory = focusedPaneId.flatMap({ snapshot.workingDirectory(ofPane: $0) })
+                ?? focusedWorkspace.flatMap({ snapshot.directory(ofWorkspace: $0.workspaceId) }) else { return }
+        ui.review = DiffReviewModel(directory: directory)
+    }
+
     func runInFocusedPane(_ line: String) {
         guard let pane = focusedPaneId else { return }
         store.runInPane(pane, line: line)

@@ -123,6 +123,8 @@ enum PaletteCatalog {
             },
         ]
 
+        items.append(action("review", "Review Changes", "doc.text.magnifyingglass", shortcut: "⌘⇧R",
+                            keywords: ["diff", "git", "changes", "comment", "code review", "agent"]) { window.toggleReview() })
         items += accountItems(window: window)
         if let item = checkpointItem(window: window) { items.append(item) }
 
