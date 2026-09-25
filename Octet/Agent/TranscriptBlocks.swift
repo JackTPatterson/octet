@@ -308,3 +308,21 @@ struct MarkdownTable: View {
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
+
+/// Copy a whole message: as the Markdown the agent wrote, or as the words it
+/// shows.
+struct MessageCopyMenu: View {
+    let text: String
+
+    var body: some View {
+        Button("Copy as Markdown") { copy(text, "Copied the message as Markdown") }
+        Button("Copy as Plain Text") { copy(MarkdownPlain.plain(text), "Copied the message as plain text") }
+    }
+
+    private func copy(_ value: String, _ title: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(value, forType: .string)
+        ClipboardWatcher.shared.acknowledge()
+        ToastCenter.shared.info(title, detail: ClipboardPreview.summary(value))
+    }
+}

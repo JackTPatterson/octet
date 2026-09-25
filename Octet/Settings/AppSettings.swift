@@ -51,6 +51,8 @@ struct OctetSettings: Codable, Equatable {
     var scrollbackMegabytes: Double = 10
     var copyOnSelect = true
     var clipboardToasts = true
+    /// Take an agent interface's layout off text copied from its pane.
+    var tidyAgentCopies = true
     var mouseScrollLines: Double = 3
     var optionAsAlt: OptionAsAlt = .off
     var hideMouseWhileTyping = true
@@ -248,6 +250,7 @@ struct OctetSettings: Codable, Equatable {
         scrollbackMegabytes = value("scrollbackMegabytes", defaults.scrollbackMegabytes)
         copyOnSelect = value("copyOnSelect", defaults.copyOnSelect)
         clipboardToasts = value("clipboardToasts", defaults.clipboardToasts)
+        tidyAgentCopies = value("tidyAgentCopies", defaults.tidyAgentCopies)
         mouseScrollLines = value("mouseScrollLines", defaults.mouseScrollLines)
         optionAsAlt = value("optionAsAlt", defaults.optionAsAlt)
         hideMouseWhileTyping = value("hideMouseWhileTyping", defaults.hideMouseWhileTyping)

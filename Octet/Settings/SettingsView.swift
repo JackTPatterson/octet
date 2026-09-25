@@ -507,6 +507,13 @@ private struct TerminalSettings: View {
                 Toggle("Confirm copies", isOn: $settings.values.clipboardToasts).labelsHidden().toggleStyle(.switch)
             }
             SettingsDivider()
+            SettingsRow(
+                title: "Tidy text copied from agents",
+                detail: "Copying from a pane running an agent leaves its layout behind: the indent under its bullets, the ⏺ and ⎿ marks, box edges and trailing spaces. Code keeps its own indentation."
+            ) {
+                Toggle("Tidy text copied from agents", isOn: $settings.values.tidyAgentCopies).labelsHidden().toggleStyle(.switch)
+            }
+            SettingsDivider()
             SettingsRow(title: "Lines per scroll wheel notch") {
                 Stepper(value: $settings.values.mouseScrollLines, in: 1...20, step: 1) {
                     Text("\(Int(settings.values.mouseScrollLines))").font(Theme.uiFont).foregroundStyle(Theme.textSecondary)

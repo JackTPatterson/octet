@@ -175,10 +175,13 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
 
 ### Worth doing
 
-- [ ] **25. Clean copy from agent output (med).** Claude Code #18170 (296),
-  #5512 (140); Codex #2880 (77). "Copy as Markdown" per twin message and code
-  block; a terminal copy that strips TUI gutters, hard wraps and trailing
-  spaces.
+- [x] **25. Clean copy from agent output (med).** Claude Code #18170 (296),
+  #5512 (140); Codex #2880 (77). Done: Copy as Markdown / Copy as Plain
+  Text on any agent message (right-click, conversation and twin); copying
+  from a pane running an agent drops its layout (`CopyTidy`: bullets, the
+  indent under them, box edges, trailing spaces), with a setting in
+  Terminal. The clipboard step runs only while Octet is in front, so it was
+  checked by unit tests, not in the running app.
 - [ ] **26. View and edit large pastes before sending (med).** Claude Code
   #3412 (309), #23134 (159); Codex #25144 (88).
 - [x] **27. Shift+Enter inserts a newline in every agent, over SSH too

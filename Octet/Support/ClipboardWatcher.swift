@@ -30,14 +30,33 @@ final class ClipboardWatcher {
         lastCount = NSPasteboard.general.changeCount
     }
 
+    /// Whether the pane in front is running an agent, whose interface is
+    /// what the copy came out of.
+    private static func agentInFront() -> Bool {
+        guard let window = WindowRegistry.shared.key, let pane = window.focusedPaneId else { return false }
+        return window.store.snapshot.agents.contains { $0.paneId == pane && $0.agent != nil }
+    }
+
     private func check() {
         let pasteboard = NSPasteboard.general
         let count = pasteboard.changeCount
         guard count != lastCount else { return }
         lastCount = count
         // Only copies made here: another app's clipboard is its own business.
-        guard NSApp.isActive, SettingsStore.shared.values.clipboardToasts else { return }
-        guard let text = pasteboard.string(forType: .string), !text.isEmpty else { return }
-        ToastCenter.shared.info("Copied to clipboard", detail: ClipboardPreview.summary(text))
+        guard NSApp.isActive, var text = pasteboard.string(forType: .string), !text.isEmpty else { return }
+        var tidied = false
+        if SettingsStore.shared.values.tidyAgentCopies, Self.agentInFront() {
+            let tidy = CopyTidy.tidy(text)
+            if tidy != text, !tidy.isEmpty {
+                pasteboard.clearContents()
+                pasteboard.setString(tidy, forType: .string)
+                lastCount = pasteboard.changeCount
+                text = tidy
+                tidied = true
+            }
+        }
+        guard SettingsStore.shared.values.clipboardToasts else { return }
+        ToastCenter.shared.info(tidied ? "Copied, without the agent's layout" : "Copied to clipboard",
+                                detail: ClipboardPreview.summary(text))
     }
 }

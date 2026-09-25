@@ -826,6 +826,7 @@ struct ItemRow: View, Equatable {
                 .clipShape(RoundedRectangle(cornerRadius: 6))
         case .text(let text):
             MarkdownView(text: text)
+                .contextMenu { MessageCopyMenu(text: text) }
         case .thinking(let text):
             Disclosure(title: "Thinking", tint: Theme.textTertiary) {
                 Text(text)

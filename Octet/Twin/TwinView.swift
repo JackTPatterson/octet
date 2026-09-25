@@ -255,6 +255,7 @@ private struct TwinRowView: View {
         case .assistant(let text):
             TwinText(text: text)
                 .foregroundStyle(Theme.textMuted)
+                .contextMenu { MessageCopyMenu(text: text) }
         case .thinking(let text):
             DisclosureGroup(isExpanded: $expanded) {
                 Text(text)

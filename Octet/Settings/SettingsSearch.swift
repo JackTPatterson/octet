@@ -79,6 +79,7 @@ enum SettingsSearchIndex {
         .init(.terminal, "Start new tabs with shortcuts", ["splash", "welcome", "empty", "new tab", "start", "shortcuts", "recent"]),
         .init(.terminal, "Copy on select", ["copy", "clipboard", "selection", "mouse"]),
         .init(.terminal, "Confirm copies", ["copy", "clipboard", "toast"]),
+        .init(.terminal, "Tidy text copied from agents", ["copy", "clean", "indent", "whitespace", "claude", "paste"]),
         .init(.terminal, "Lines per scroll wheel notch", ["scroll", "mouse", "wheel", "speed", "trackpad"]),
         .init(.terminal, "Use Option as Alt", ["option", "alt", "meta", "keyboard", "key"]),
         .init(.terminal, "Hide mouse pointer while typing", ["mouse", "pointer", "cursor", "hide", "typing"]),
