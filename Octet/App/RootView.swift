@@ -289,6 +289,11 @@ struct RootView: View {
 
     /// Once the window is up: the marketplace opener, clipboard watching, and
     /// the DEBUG verification hooks that open things without a click.
+    #if DEBUG
+    /// The key hook runs once, however many times a window appears.
+    private static var debugKeysPressed = false
+    #endif
+
     private func appeared() {
             AgentBoardWindow.opener = { openWindow(id: AgentBoardWindow.id) }
             MarketplaceWindow.opener = { openWindow(id: MarketplaceWindow.id) }
@@ -337,7 +342,8 @@ struct RootView: View {
             }
             // Presses keys in the terminal: OCTET_DEBUG_KEYS="a a shift+return b",
             // after OCTET_DEBUG_KEYS_AFTER seconds (default 10).
-            if let keys = ProcessInfo.processInfo.environment["OCTET_DEBUG_KEYS"] {
+            if let keys = ProcessInfo.processInfo.environment["OCTET_DEBUG_KEYS"], !Self.debugKeysPressed {
+                Self.debugKeysPressed = true
                 let delay = Double(ProcessInfo.processInfo.environment["OCTET_DEBUG_KEYS_AFTER"] ?? "") ?? 10
                 DispatchQueue.main.asyncAfter(deadline: .now() + delay) { OctetTerminalRuntime.debugPress(keys) }
             }
@@ -359,6 +365,12 @@ struct RootView: View {
                     if let agent = store.snapshot.agents.first(where: { $0.paneId == pane }) {
                         PromptQueueCenter.shared.add(String(open.dropFirst(6)), for: agent, name: "the agent", store: store)
                     }
+                }
+            }
+            // "type-all" turns on typing into every pane of the tab, as ⌥⌘I does.
+            if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "type-all" {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                    if !BroadcastMode.shared.isOn { BroadcastMode.shared.toggle(window: window) }
                 }
             }
             // "broadcast" opens the broadcast prompt as ⌘⇧I does.
@@ -493,6 +505,7 @@ struct RootView: View {
                         splitDropLayer(moving: dragged, into: showing)
                     }
                 }
+                .overlay(alignment: .top) { BroadcastBanner(mode: BroadcastMode.shared, tabId: window.displayedFocusedTabId) }
                 .animation(motion.animation(.tabs, .smooth(duration: 0.2)), value: splash.tabId)
                 // Full size even while empty, so the clip is a
                 // fixed window the board slides through rather than

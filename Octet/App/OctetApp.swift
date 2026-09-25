@@ -253,6 +253,8 @@ struct OctetCommands: Commands {
                 }
             }
             .keyboardShortcut(OctetShortcut.broadcast.keyboardShortcut)
+            Button(OctetShortcut.broadcastTyping.title) { KeyWindow.act { BroadcastMode.shared.toggle(window: $0) } }
+                .keyboardShortcut(OctetShortcut.broadcastTyping.keyboardShortcut)
             Button(OctetShortcut.hints.title) { KeyWindow.act { HintsSession.start(window: $0) } }
                 .keyboardShortcut(OctetShortcut.hints.keyboardShortcut)
             Button(OctetShortcut.toggleSidebar.title) { KeyWindow.act { $0.ui.sidebarVisible.toggle() } }
@@ -428,6 +430,9 @@ enum OctetKeyHook {
 
     static func handleKeyDown(_ event: NSEvent) -> Bool {
         if replaying { return false }
+        if BroadcastMode.shared.isOn, !event.modifierFlags.contains(.command), !isComposing(event) {
+            BroadcastMode.shared.mirror(event)
+        }
         // A dialog over the terminal owns the keyboard. Its buttons' Return
         // and Esc equivalents don't reach it past the terminal, so they're
         // answered here.

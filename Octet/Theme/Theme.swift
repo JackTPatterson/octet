@@ -61,6 +61,7 @@ enum Theme {
         "super+shift+r",
         "super+shift+i",
         "super+shift+h",
+        "super+alt+i",
         "super+o",
         "super+shift+o",
         "super+s",

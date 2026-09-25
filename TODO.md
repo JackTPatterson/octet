@@ -109,8 +109,9 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   multi-model mode. Done: palette actions Broadcast to Panes in This Tab /
   Agents in This Workspace / All Agents; the prompt's title names who
   receives it. Agents get `agent.prompt`, falling back to typing; shells get
-  a typed line. Remaining: a shortcut, and a persistent "broadcasting"
-  mode like iTerm2's for typing live into several panes.
+  a typed line. ⌘⇧I opens straight into it. ⌥⌘I types into every pane of
+  the tab live, as iTerm2's broadcast input does, with a banner while it's
+  on (checked with real key events).
 - [ ] **21. Worktree setup: copy env files, run a setup script, give each
   worktree its own port (high).** Conductor HN, Claude Squad #260, the dev.to
   "worktrees don't actually work" post. *Mostly done:* a worktree made from
@@ -230,9 +231,10 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   that agent is idle or done, one per turn, in order; Queued Prompts lists
   them to cancel. Checked end to end: held while working, delivered on
   finishing. Not done: showing the queue on the tab or sidebar.
-- [ ] **33. Session title pinning and stable tab order (low-med).** Claude
-  Code #2112 (182), Ghostty #3709. Manual names already stick; keep order
-  and ⌘1–9 stable when notices arrive (cmux HN).
+- [x] **33. Session title pinning and stable tab order (low-med).** Claude
+  Code #2112 (182), Ghostty #3709. Already so: a tab you name keeps its
+  name, and nothing reorders tabs or ⌘1–9 but you (checked 2026-09-25:
+  every `tab.move` comes from a drag, a menu or the palette).
 
 ### Larger bets
 
