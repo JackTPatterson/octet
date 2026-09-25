@@ -15,10 +15,36 @@ struct StatusBar: View {
 
     static let height: CGFloat = 32
 
-    /// Whether any chip has something to say, so an empty bar takes no room.
+    /// Whether any chip would draw, so an empty bar takes no room.
+    @MainActor
     static func hasContent(model: StatusBarModel, ssh: SSHTarget?, agent: EngineAgent?) -> Bool {
-        ssh != nil || agent != nil || model.repo != nil || !model.pluginOutputs.isEmpty || model.remoteControlOn
-            || OctetPluginHost.shared.statusBarOrder.contains("builtin.directory") && model.directory != nil
+        let host = OctetPluginHost.shared
+        let descriptors = Dictionary(host.statusDescriptors.map { ($0.id, $0) }) { first, _ in first }
+        return host.statusBarOrder.contains { id in
+            descriptors[id].map { draws($0, model: model, ssh: ssh, agent: agent) } ?? false
+        }
+    }
+
+    /// Whether a chip has something to show; `chip(for:)` draws exactly these.
+    static func draws(_ descriptor: StatusItemDescriptor, model: StatusBarModel, ssh: SSHTarget?, agent: EngineAgent?) -> Bool {
+        switch descriptor.scope {
+        case .local: guard ssh == nil else { return false }
+        case .remote: guard ssh != nil else { return false }
+        case .any: break
+        }
+        switch descriptor.id {
+        case "builtin.ssh": return ssh != nil
+        case "builtin.agent": return agent != nil
+        case "builtin.remoteControl": return model.remoteControlOn
+        case "builtin.runtime": return model.runtime != nil
+        case "builtin.directory": return model.directory != nil
+        case "builtin.branch": return model.repo?.branch != nil
+        case "builtin.worktree": return model.repo?.linkedWorktree == true
+        case "builtin.gitState": return model.repo.map { !$0.operation.isEmpty } ?? false
+        case "builtin.changes": return model.repo?.changes.map { !$0.isEmpty } ?? false
+        case "builtin.pullRequest": return model.repo?.pullRequest != nil
+        default: return model.pluginOutputs[descriptor.id] != nil
+        }
     }
 
     var body: some View {
@@ -26,7 +52,7 @@ struct StatusBar: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 ForEach(plugins.statusBarOrder, id: \.self) { id in
-                    if let descriptor = descriptors[id], shows(descriptor) {
+                    if let descriptor = descriptors[id], Self.draws(descriptor, model: model, ssh: ssh, agent: agent) {
                         chip(for: descriptor)
                     }
                 }
@@ -42,14 +68,6 @@ struct StatusBar: View {
         .overlay(alignment: .top) { Rectangle().fill(Theme.divider).frame(height: 1) }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Status bar")
-    }
-
-    private func shows(_ descriptor: StatusItemDescriptor) -> Bool {
-        switch descriptor.scope {
-        case .local: ssh == nil
-        case .remote: ssh != nil
-        case .any: true
-        }
     }
 
     @ViewBuilder
