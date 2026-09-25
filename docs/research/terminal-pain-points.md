@@ -88,3 +88,30 @@ lines, so Octet can draw the conversation itself and never repaint at all. The
 twin renders each agent's own idiom — Claude's `●`/`⎿` and `Update(file)`,
 Codex's `•` and patches — so what it replaces is the repainting, not the
 interface people know.
+
+## A second pass: other terminals' issue trackers (2026-09-25)
+
+A wider sweep of the most-reacted GitHub issues and HN threads for Ghostty,
+WezTerm, kitty, iTerm2, Warp, Wave, Zed, cmux, Conductor, Claude Squad,
+Claude Code and Codex. The ranked list, with reaction counts, is items 18–44
+in `TODO.md`. The strongest signals:
+
+- Agent output yanking the view or flickering is the most-reacted terminal
+  complaint anywhere (Claude Code #3648, #826: 800+ each).
+- Broadcast input is Ghostty's most-wanted open feature after sessions
+  (#3227, 405, locked for +1s).
+- Worktrees don't work without their env files, a setup script and their
+  own ports: raised in every multi-agent tool's HN thread.
+- Rewind that restores code (Codex #9203, 512), diff review with comments
+  (Claude Code #33932, 276) and multiple accounts (Claude Code #18435, 991)
+  are the big asks Octet doesn't meet yet.
+- Octet's persistent workspaces already answer Ghostty's top request, a
+  session manager (#3358, 609), and having no account answers Warp's forced
+  login backlash (#900, 462).
+
+Sources: github.com/ghostty-org/ghostty/discussions (sorted by top),
+github.com/wezterm/wezterm and kovidgoyal/kitty issues by reactions,
+warpdotdev/Warp, anthropics/claude-code, openai/codex and manaflow-ai/cmux
+issues by reactions; HN 42517447 and 47311129 (Ghostty), 42247583 and
+47970622 (Warp), 44594584 (Conductor), 47079718 (cmux), 46368739 (Superset),
+45427697 (Sculptor), 44533004 (vibe-kanban).

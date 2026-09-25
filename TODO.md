@@ -83,3 +83,127 @@ terminal view under `Octet/Terminal/`.
   the caret. Fix: `NSCursor.setHiddenUntilMouseMoves(true)` when the prompt
   line consumes a key (if the setting is on), and map a click's x to a
   column (`(x - origin.x) / cellWidth`) to set the caret.
+
+## From complaints about other terminals (2026-09-25)
+
+Researched from the most-reacted GitHub issues and HN threads for Ghostty,
+WezTerm, kitty, iTerm2, Warp, Wave, Zed, cmux, Conductor, Claude Squad,
+Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
+`docs/research/terminal-pain-points.md` for the sources.
+
+### Highest priority
+
+- [x] **18. Don't yank the view while an agent streams (high).** Claude Code
+  #3648 (836), #826 (822), flicker #769/#1913 (~330 each); Ghostty #10456.
+  Done: the session server already keeps a scrolled-back view on the lines
+  being read; what was missing was knowing more arrived. A "↓ N new lines"
+  pill sits at the foot of a scrolled-back pane and jumps to live
+  (`LiveScrollWatcher`, `LiveScrollTracker`, fed by `pane.scroll_changed`).
+- [x] **19. Keep the Mac awake while an agent is working (high, small).**
+  Claude Code #81832 (its caffeinate gets killed, the Mac sleeps mid-task),
+  #21432. Done: `SleepGuard` holds an idle-sleep assertion only while some
+  agent is `working` (closed tabs still running count). Settings → Agents:
+  Never, When plugged in (default), Always.
+- [x] **20. Broadcast a prompt to several panes or agents (high).** Ghostty
+  #3227 (405, locked for +1s), cmux #2336, Warp #409; Conductor's
+  multi-model mode. Done: palette actions Broadcast to Panes in This Tab /
+  Agents in This Workspace / All Agents; the prompt's title names who
+  receives it. Agents get `agent.prompt`, falling back to typing; shells get
+  a typed line. Remaining: a shortcut, and a persistent "broadcasting"
+  mode like iTerm2's for typing live into several panes.
+- [ ] **21. Worktree setup: copy env files, run a setup script, give each
+  worktree its own port (high).** Conductor HN, Claude Squad #260, the dev.to
+  "worktrees don't actually work" post. *Mostly done:* a worktree made from
+  Octet gets the main checkout's git-ignored `.env*` files (never
+  overwriting), and runs `.octet/setup`, or `conductor.json`'s
+  `scripts.setup`, in its pane with `OCTET_ROOT_PATH`, `OCTET_WORKTREE_PATH`
+  and `OCTET_PORT` (a block of ten from 3100). Octet asks before a repo's
+  script runs the first time. Setting: Advanced → Set up new worktrees.
+  Remaining: listening ports per workspace in the sidebar, and worktrees an
+  agent makes itself (`claude --worktree`) don't get set up.
+- [ ] **22. Checkpoints that rewind code, not just chat (high, large).** Codex
+  #9203 (512), #11626 (225); Claude Code #353 (178), #87575 (/rewind misses
+  Bash edits). Snapshot the worktree per agent turn (a hidden ref), restore
+  from the twin.
+- [ ] **23. Diff review with line comments sent to the agent (high, large).**
+  Claude Code #33932 (276), #23626 (141, pick the base branch); Conductor's
+  best-liked feature. Live diff against the worktree's base, next/previous
+  change, and cap huge diffs (Claude Squad froze on 1M+ lines).
+- [ ] **24. Multiple accounts per agent (high).** Claude Code #18435 (991),
+  #36151 (1023). Pick an account per workspace (`CLAUDE_CONFIG_DIR` /
+  `CODEX_HOME`) and split usage by account.
+- [ ] **45. Name the skill on a Skill tool row (med, small).** The twin and
+  conversation view show a skill call as just "Skill". Claude's `Skill` tool
+  input is `{"skill": "<name>", "args": …}`, and `AgentStream.toolSummary`
+  never reads the `skill` key, so the summary is empty (OpenCode's `skill`
+  maps to the same row in `OpenCodeStream`). Show the skill's name, e.g.
+  "Skill · frontend-design", with its args as the detail.
+- [ ] **46. Closing the last window can leave Octet stuck quitting (med,
+  seen once, unverified).** While testing, a window whose last tab closed
+  disappeared and the app stayed running with no window and its 1.5 s
+  refresh stalled. `applicationShouldTerminateAfterLastWindowClosed` is true
+  and `applicationShouldTerminate` answers `.terminateLater` while
+  `ConfirmCenter` draws "Quit Octet?" inside a window, and there's no window
+  left to draw it in. If that's the cause, ask with an `NSAlert` when no
+  window is left, or don't confirm then.
+
+### Worth doing
+
+- [ ] **25. Clean copy from agent output (med).** Claude Code #18170 (296),
+  #5512 (140); Codex #2880 (77). "Copy as Markdown" per twin message and code
+  block; a terminal copy that strips TUI gutters, hard wraps and trailing
+  spaces.
+- [ ] **26. View and edit large pastes before sending (med).** Claude Code
+  #3412 (309), #23134 (159); Codex #25144 (88).
+- [ ] **27. Shift+Enter inserts a newline in every agent, over SSH too
+  (med).** Warp #6401 (80), Claude Code #16859.
+- [ ] **28. Completion escape hatches (med).** Warp #1811 (372), #1909 (269),
+  #3675 (96): one key to pass Tab to the shell, rebind accept, delete a
+  history suggestion.
+- [ ] **29. Hints mode (med).** Ghostty #2394 (105) and 97 for keyboard URL
+  opening; kitty hints, WezTerm QuickSelect. Label URLs, hashes and
+  `file:line` on screen; open `file:line` in the editor (Ghostty #11907:
+  Claude Code's OSC 8 links don't open).
+- [ ] **30. Prune merged worktrees, show disk use per worktree (med).** cmux
+  #6510; one report of 256 worktrees using 28 GB.
+- [ ] **31. Command marks from OSC 133 (med).** Jump to previous/next prompt
+  (finishes #12), copy last output, exit status and duration per command.
+  What people like about Warp blocks without replacing the grid.
+- [ ] **32. Prompt queue (med).** Claude Code #50246 (245), #33323; Codex
+  #28864. Queue per tab, and "after agent X finishes".
+- [ ] **33. Session title pinning and stable tab order (low-med).** Claude
+  Code #2112 (182), Ghostty #3709. Manual names already stick; keep order
+  and ⌘1–9 stable when notices arrive (cmux HN).
+
+### Larger bets
+
+- [ ] **34. Global hotkey window (med).** WezTerm #1751 (its top issue), cmux
+  #2758, Warp #91. Summon the agents board over any app.
+- [ ] **35. Scripting: URL scheme and CLI (med).** Ghostty #2353 (257), Warp
+  #3364; iTerm2's Python API is what switchers miss. `octet://open?path=`,
+  `octet-cli run <agent> --in <dir>`, send text to a pane.
+- [ ] **36. Floating popup pane (med).** Ghostty #3197 (242), WezTerm #270.
+- [ ] **37. Mobile push with approve/deny (med).** Claude Code #29438 (69),
+  #28765 (44); ntfy/Pushover hooks exist to fill the gap.
+- [ ] **38. Audit timeline (low-med).** Commands and files per agent, with
+  `rm -rf`, force-push and `sudo` flagged (cc-audit-log et al.).
+- [ ] **39. Quick Look for paths agents print (low-med).** Wave's standout;
+  Warp #4739 (99), #7115 (78).
+- [ ] **40. Best-of-N: one task, several agents, compare diffs (low-med).**
+  Builds on 20 and 23.
+
+### libghostty host risks to verify
+
+- [ ] **41. Option-as-Alt left/right actually applies (med).** cmux #2369: it
+  worked in Ghostty but was ignored in cmux, breaking ISO layouts.
+- [ ] **42. CJK IME composition, in the terminal and the prompt line (med).**
+  Ghostty #12278, #10310, #4634, #7225.
+- [ ] **43. Pinned GhosttyKit includes the Jan 2026 scrollback leak fix
+  (med).** Ghostty #10289 (71 GB with several Claude Code windows).
+- [ ] **44. Agent status accuracy (med).** cmux #1027: stuck "Running", false
+  "Needs input", missed prompts. Needs a regression corpus.
+
+Already covered, for the record: a session manager (Ghostty #3358, 609, their
+top request), close protection (closed tabs keep running and reopen with
+⌘⇧T), context usage per agent, sticky manual tab names, image paste, and no
+account or telemetry (Warp #900, 462).
