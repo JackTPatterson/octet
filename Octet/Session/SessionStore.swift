@@ -1053,7 +1053,8 @@ final class SessionStore: ObservableObject {
     /// Types a line into `paneId`'s shell and runs it.
     func runInPane(_ paneId: String, line: String) {
         let client = self.client
-        DispatchQueue.global(qos: .userInitiated).async {
+        // In order with every other write to the pane.
+        EngineClient.inputQueue.async {
             let outcome = Result { try client.call("pane.send_text", ["pane_id": paneId, "text": line + "\r"]) }
             if case .failure(let error) = outcome {
                 DispatchQueue.main.async {

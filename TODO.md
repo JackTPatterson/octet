@@ -38,7 +38,9 @@ terminal view under `Octet/Terminal/`.
 
 - [x] **9. The slash menu's "empty prompt" check is guessed from keystrokes (low-med).** No longer applies: `SlashController` was removed when slash commands started coming from the agents themselves (bc9ecc0).
 
-- [ ] **10. Text sent to panes can arrive out of order (low).** *Partly fixed.* Done: Prompt-line and paste writes share the serial `EngineClient.inputQueue`. Remaining: `TwinSession` and `SessionStore.runInPane` still write from the global queue. Move them onto `inputQueue`.
+- [x] **10. Text sent to panes can arrive out of order (low).** Fixed: the
+  twin's prompts and answers and `SessionStore.runInPane` now write on the
+  serial `EngineClient.inputQueue` with the prompt line and pastes.
 
 - [ ] **11. Scroll speed may be multiplied three times over (low,
   unverified).** Trackpad deltas are doubled, the renderer sends one report

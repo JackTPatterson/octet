@@ -282,7 +282,8 @@ final class TwinSession: ObservableObject {
 
     private func prompt(_ text: String, to paneId: String) {
         let client = store.client
-        DispatchQueue.global(qos: .userInitiated).async {
+        // In order with every other write to the pane.
+        EngineClient.inputQueue.async {
             // `agent.prompt` types and submits in one step for agents the
             // engine knows; falling back keeps the twin working for the rest.
             let outcome = Result { try client.call("agent.prompt", ["target": paneId, "text": text]) }
@@ -301,7 +302,8 @@ final class TwinSession: ObservableObject {
 
     private func send(_ text: String, to paneId: String) {
         let client = store.client
-        DispatchQueue.global(qos: .userInitiated).async {
+        // In order with every other write to the pane.
+        EngineClient.inputQueue.async {
             let outcome = Result { try client.call("pane.send_text", ["pane_id": paneId, "text": text]) }
             if case .failure(let error) = outcome {
                 DispatchQueue.main.async {
