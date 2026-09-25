@@ -475,7 +475,7 @@ final class AgentSession: ObservableObject, Identifiable {
         for item in conversation.items.reversed() {
             switch item.kind {
             case .tool(let call) where call.result == nil:
-                return call.summary.isEmpty ? "Running \(call.name)" : "\(call.name) \(call.summary)"
+                return call.summary.isEmpty ? "Running \(call.displayName)" : "\(call.displayName) \(call.summary)"
             case .tool: return "Working"
             case .thinking: return "Thinking"
             case .text: return "Writing"

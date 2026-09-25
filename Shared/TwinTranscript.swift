@@ -400,6 +400,8 @@ enum TwinTranscript {
             if object == nil { return condense(text) }
         }
         guard let object else { return "" }
+        // `Skill(frontend-design)`, as Claude Code writes it.
+        if SkillCall.isSkill(name), let skill = SkillCall.name(in: object) { return condense(skill) }
         for key in ["command", "file_path", "path", "pattern", "query", "url", "description", "prompt"] {
             if let value = object[key] as? String, !value.isEmpty { return condense(value) }
         }

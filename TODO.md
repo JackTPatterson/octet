@@ -132,12 +132,10 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
 - [ ] **24. Multiple accounts per agent (high).** Claude Code #18435 (991),
   #36151 (1023). Pick an account per workspace (`CLAUDE_CONFIG_DIR` /
   `CODEX_HOME`) and split usage by account.
-- [ ] **45. Name the skill on a Skill tool row (med, small).** The twin and
-  conversation view show a skill call as just "Skill". Claude's `Skill` tool
-  input is `{"skill": "<name>", "args": …}`, and `AgentStream.toolSummary`
-  never reads the `skill` key, so the summary is empty (OpenCode's `skill`
-  maps to the same row in `OpenCodeStream`). Show the skill's name, e.g.
-  "Skill · frontend-design", with its args as the detail.
+- [x] **45. Name the skill on a Skill tool row (med, small).** Done: the
+  conversation view titles a skill call with the skill's name, its args as
+  the line under it, and the twin writes `Skill(frontend-design)` as Claude
+  Code does (`SkillCall`).
 - [ ] **46. Closing the last window can leave Octet stuck quitting (med,
   seen once, unverified).** While testing, a window whose last tab closed
   disappeared and the app stayed running with no window and its 1.5 s

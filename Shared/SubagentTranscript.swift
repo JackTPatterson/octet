@@ -177,6 +177,7 @@ final class SubagentTranscriptRenderer {
 
     static func toolSummary(_ input: [String: Any]?) -> String {
         guard let input else { return "" }
+        if let skill = input["skill"] as? String, !skill.isEmpty { return truncate(skill, 100) }
         for key in ["command", "file_path", "path", "pattern", "query", "url", "description", "prompt"] {
             if let value = input[key] as? String, !value.isEmpty {
                 return truncate(value.replacingOccurrences(of: "\n", with: " "), 100)

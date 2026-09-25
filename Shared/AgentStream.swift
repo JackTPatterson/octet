@@ -471,6 +471,11 @@ struct AgentConversation: Equatable {
 
     /// One line saying what a tool call does.
     static func toolSummary(name: String, input: [String: Any]) -> String {
+        // A skill's name is the row's title; what it was asked is the line.
+        if SkillCall.isSkill(name) {
+            let args = (input["args"] as? String ?? "").split(separator: "\n", maxSplits: 1).first.map(String.init) ?? ""
+            return args.count > 160 ? String(args.prefix(160)) + "…" : args
+        }
         // A search's pattern says more than the folder it searched.
         for key in ["command", "file_path", "pattern", "query", "url", "path", "description", "jql", "prompt"] {
             if let value = input[key] as? String, !value.isEmpty {
@@ -793,8 +798,13 @@ extension AgentConversation {
 }
 
 extension AgentToolCall {
-    /// "Read", or for MCP tools "server: tool" instead of mcp__server__tool.
+    /// "Read", for MCP tools "server: tool" instead of mcp__server__tool,
+    /// and for a skill the skill's own name.
     var displayName: String {
+        if SkillCall.isSkill(name) {
+            let input = inputData.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+            return input.flatMap(SkillCall.name(in:)) ?? name
+        }
         guard name.hasPrefix("mcp__") else { return name }
         let parts = name.dropFirst(5).components(separatedBy: "__")
         guard parts.count >= 2 else { return name }
@@ -816,6 +826,7 @@ extension AgentToolCall {
         case "Bash", "BashOutput", "KillShell", "KillBash": return "tool.run"
         case "Monitor": return "eye"
         case "Task", "Agent": return "tool.agent"
+        case "Skill", "skill": return "sparkles"
         case "TodoWrite", "TaskCreate", "TaskUpdate": return "tool.todo"
         case "NotebookEdit", "NotebookRead": return "tool.notebook"
         default: return "tool.other"
@@ -837,5 +848,22 @@ extension AgentToolCall {
                 : ($0["content"] as? String ?? "")
             return Todo(text: text, state: state)
         }
+    }
+}
+
+/// A call to a skill: Claude's `Skill` tool (`{"skill": "frontend-design",
+/// "args": …}`) and OpenCode's `skill` (`{"name": …}`). Without this a
+/// skill shows only as "Skill".
+enum SkillCall {
+    static func isSkill(_ tool: String) -> Bool { tool.caseInsensitiveCompare("skill") == .orderedSame }
+
+    /// The skill's name, without the `/` a slash command carries.
+    static func name(in input: [String: Any]) -> String? {
+        for key in ["skill", "name", "command"] {
+            if let value = (input[key] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty {
+                return value.hasPrefix("/") ? String(value.dropFirst()) : value
+            }
+        }
+        return nil
     }
 }
