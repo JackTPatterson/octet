@@ -142,6 +142,37 @@ final class OctetTerminalRuntime {
         }
     }
 
+    #if DEBUG
+    /// Verification hook: presses keys in the terminal as real key events,
+    /// so what a key sends can be checked without a person at the keyboard.
+    /// `keys` is space-separated: a letter, `return`, or a modifier+key such
+    /// as `shift+return` or `opt+return`.
+    static func debugPress(_ keys: String) {
+        guard let window = NSApp.windows.first(where: \.isVisible), let content = window.contentView,
+              let surface = findSurface(in: content) else { return }
+        window.makeFirstResponder(surface)
+        let codes: [String: UInt16] = ["a": 0, "b": 11, "c": 8, "return": 36]
+        for token in keys.split(separator: " ") {
+            var parts = token.split(separator: "+").map(String.init)
+            let key = parts.removeLast()
+            guard let code = codes[key] else { continue }
+            var flags: NSEvent.ModifierFlags = []
+            if parts.contains("shift") { flags.insert(.shift) }
+            if parts.contains("opt") { flags.insert(.option) }
+            if parts.contains("ctrl") { flags.insert(.control) }
+            let character = key == "return" ? "\r" : (flags.contains(.shift) ? key.uppercased() : key)
+            for type in [NSEvent.EventType.keyDown, .keyUp] {
+                guard let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: flags,
+                                                   timestamp: ProcessInfo.processInfo.systemUptime,
+                                                   windowNumber: window.windowNumber, context: nil,
+                                                   characters: character, charactersIgnoringModifiers: key == "return" ? "\r" : key,
+                                                   isARepeat: false, keyCode: code) else { continue }
+                if type == .keyDown { surface.keyDown(with: event) } else { surface.keyUp(with: event) }
+            }
+        }
+    }
+    #endif
+
     private static func findSurface(in view: NSView) -> TerminalEngine.SurfaceView? {
         if let surface = view as? TerminalEngine.SurfaceView { return surface }
         for sub in view.subviews {

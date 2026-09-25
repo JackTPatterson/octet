@@ -167,6 +167,12 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   visible, quitting doesn't ask (nothing is lost; the session keeps
   running). Not reproduced without clicking, so unverified.
 
+- [ ] **47. OpenCode drew into a corner after Octet reattached (low, seen
+  once).** OpenCode started while the app was running, then the app was
+  restarted: OpenCode kept drawing in about a 20-column box at the top left
+  of its pane, as if it never heard the size. Check whether a reattach
+  sends a resize (SIGWINCH) to the pane.
+
 ### Worth doing
 
 - [ ] **25. Clean copy from agent output (med).** Claude Code #18170 (296),
@@ -175,8 +181,13 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   spaces.
 - [ ] **26. View and edit large pastes before sending (med).** Claude Code
   #3412 (309), #23134 (159); Codex #25144 (88).
-- [ ] **27. Shift+Enter inserts a newline in every agent, over SSH too
-  (med).** Warp #6401 (80), Claude Code #16859.
+- [x] **27. Shift+Enter inserts a newline in every agent, over SSH too
+  (med).** Warp #6401 (80), Claude Code #16859. Checked on 2026-09-25 with
+  real key events through Octet's renderer and the session server
+  (`OCTET_DEBUG_KEYS`, Debug builds): Shift+Enter already puts a newline in
+  Claude Code and Codex, since the kitty keyboard protocol passes through.
+  Without it (a plain program) Shift+Enter is `\r`, as in any terminal.
+  Not checked: OpenCode (see 47) and SSH, where the remote end decides.
 - [ ] **28. Completion escape hatches (med).** Warp #1811 (372), #1909 (269),
   #3675 (96): one key to pass Tab to the shell, rebind accept, delete a
   history suggestion.

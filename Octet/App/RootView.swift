@@ -334,6 +334,12 @@ struct RootView: View {
             if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "newtab" {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) { window.newTab() }
             }
+            // Presses keys in the terminal: OCTET_DEBUG_KEYS="a a shift+return b",
+            // after OCTET_DEBUG_KEYS_AFTER seconds (default 10).
+            if let keys = ProcessInfo.processInfo.environment["OCTET_DEBUG_KEYS"] {
+                let delay = Double(ProcessInfo.processInfo.environment["OCTET_DEBUG_KEYS_AFTER"] ?? "") ?? 10
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { OctetTerminalRuntime.debugPress(keys) }
+            }
             // "broadcast" opens the broadcast prompt as ⌘⇧I does.
             if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "broadcast" {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
