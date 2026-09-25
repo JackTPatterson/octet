@@ -444,6 +444,10 @@ enum OctetKeyHook {
         if isComposing(event) { return false }
         if event.modifierFlags.intersection([.command, .control, .option, .shift]) == .command,
            event.charactersIgnoringModifiers?.lowercased() == "v", paste() { return true }
+        // ⌘↑ / ⌘↓: previous and next prompt in a shell's scrollback.
+        if event.modifierFlags.intersection([.command, .control, .option, .shift]) == .command,
+           event.keyCode == 126 || event.keyCode == 125, let store,
+           PromptJumper.handle(event.keyCode == 126 ? .up : .down, store: store) { return true }
         // Shell prompts get Octet's own line; agents keep their own `/` menus.
         return prompt?.handleKeyDown(event) ?? false
     }

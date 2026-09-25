@@ -153,7 +153,7 @@ final class OctetTerminalRuntime {
             return (window, surface)
         }).first else { return }
         window.makeFirstResponder(surface)
-        let codes: [String: UInt16] = ["a": 0, "b": 11, "c": 8, "return": 36]
+        let codes: [String: UInt16] = ["a": 0, "b": 11, "c": 8, "return": 36, "up": 126, "down": 125]
         for token in keys.split(separator: " ") {
             // `paste:<file>` pastes the file's text as ⌘V would, from a
             // pasteboard of its own so the real clipboard is left alone.
@@ -176,6 +176,7 @@ final class OctetTerminalRuntime {
             if parts.contains("shift") { flags.insert(.shift) }
             if parts.contains("opt") { flags.insert(.option) }
             if parts.contains("ctrl") { flags.insert(.control) }
+            if parts.contains("cmd") { flags.insert(.command) }
             let character = key == "return" ? "\r" : (flags.contains(.shift) ? key.uppercased() : key)
             for type in [NSEvent.EventType.keyDown, .keyUp] {
                 guard let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: flags,

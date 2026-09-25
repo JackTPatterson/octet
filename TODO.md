@@ -208,9 +208,13 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   not merged and their size on disk, and removes merged, clean ones (one or
   all) after asking, through the session server when a workspace is open
   on them. Branches are kept; `git worktree remove` refuses dirty ones.
-- [ ] **31. Command marks from OSC 133 (med).** Jump to previous/next prompt
-  (finishes #12), copy last output, exit status and duration per command.
-  What people like about Warp blocks without replacing the grid.
+- [ ] **31. Command marks from OSC 133 (med).** *Partly done:* ⌘↑ / ⌘↓ in
+  a shell pane jump to the previous / next prompt (`PromptJump`), found by
+  the shape of the current prompt since the session server keeps no marks;
+  checked with real key events. Agent panes keep their own ⌘↑ / ⌘↓.
+  Remaining, and needing marks from the session server (Herdr has no
+  OSC 133 in its API): copy the last command's output, exit status and
+  duration per command, folding.
 - [ ] **32. Prompt queue (med).** Claude Code #50246 (245), #33323; Codex
   #28864. Queue per tab, and "after agent X finishes".
 - [ ] **33. Session title pinning and stable tab order (low-med).** Claude
