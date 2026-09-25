@@ -406,7 +406,9 @@ extension TerminalEngine {
                 return openURL(action.action.open_url)
 
             case GHOSTTY_ACTION_RING_BELL:
-                DispatchQueue.main.async { TerminalAttention.bell() }
+                // The session server reports bells per pane (pane.bell),
+                // which says where it rang; this copy of it is ignored.
+                break
 
             case GHOSTTY_ACTION_DESKTOP_NOTIFICATION:
                 let n = action.action.desktop_notification

@@ -183,6 +183,7 @@ final class SessionStore: ObservableObject {
     func start() {
         PortsWatcher.shared.start(store: self)
         PasswordWatcher.shared.start(store: self)
+        AttentionWatcher.shared.start(store: self)
         let client = self.client
         let thread = Thread { [weak self] in
             while self != nil {

@@ -1,0 +1,2583 @@
+diff --git a/docs/next/api/herdr-api.schema.json b/docs/next/api/herdr-api.schema.json
+index b4648b03..67e43741 100644
+--- a/docs/next/api/herdr-api.schema.json
++++ b/docs/next/api/herdr-api.schema.json
+@@ -708,6 +708,56 @@
+               ],
+               "type": "object"
+             },
++            {
++              "properties": {
++                "pane_id": {
++                  "type": "string"
++                },
++                "type": {
++                  "const": "pane_bell",
++                  "type": "string"
++                },
++                "workspace_id": {
++                  "type": "string"
++                }
++              },
++              "required": [
++                "type",
++                "pane_id",
++                "workspace_id"
++              ],
++              "type": "object"
++            },
++            {
++              "properties": {
++                "body": {
++                  "type": "string"
++                },
++                "pane_id": {
++                  "type": "string"
++                },
++                "title": {
++                  "type": [
++                    "string",
++                    "null"
++                  ]
++                },
++                "type": {
++                  "const": "pane_notification",
++                  "type": "string"
++                },
++                "workspace_id": {
++                  "type": "string"
++                }
++              },
++              "required": [
++                "type",
++                "pane_id",
++                "workspace_id",
++                "body"
++              ],
++              "type": "object"
++            },
+             {
+               "properties": {
+                 "layout": {
+@@ -753,6 +803,8 @@
+             "pane_exited",
+             "pane_agent_detected",
+             "pane_agent_status_changed",
++            "pane_bell",
++            "pane_notification",
+             "layout_updated"
+           ],
+           "type": "string"
+@@ -2780,6 +2832,26 @@
+           },
+           "type": "object"
+         },
++        "PaneMarksParams": {
++          "properties": {
++            "limit": {
++              "description": "Most recent commands to return (default 100, max 256).",
++              "format": "uint32",
++              "minimum": 0,
++              "type": [
++                "integer",
++                "null"
++              ]
++            },
++            "pane_id": {
++              "type": "string"
++            }
++          },
++          "required": [
++            "pane_id"
++          ],
++          "type": "object"
++        },
+         "PaneMoveDestination": {
+           "oneOf": [
+             {
+@@ -4340,6 +4412,44 @@
+               ],
+               "type": "object"
+             },
++            {
++              "description": "A program rang the terminal bell. Omit `pane_id` to receive every pane.",
++              "properties": {
++                "pane_id": {
++                  "type": [
++                    "string",
++                    "null"
++                  ]
++                },
++                "type": {
++                  "const": "pane.bell",
++                  "type": "string"
++                }
++              },
++              "required": [
++                "type"
++              ],
++              "type": "object"
++            },
++            {
++              "description": "A program requested a desktop notification with OSC 9 or OSC 777.\nOmit `pane_id` to receive every pane.",
++              "properties": {
++                "pane_id": {
++                  "type": [
++                    "string",
++                    "null"
++                  ]
++                },
++                "type": {
++                  "const": "pane.notification",
++                  "type": "string"
++                }
++              },
++              "required": [
++                "type"
++              ],
++              "type": "object"
++            },
+             {
+               "properties": {
+                 "type": {
+@@ -5741,6 +5851,22 @@
+           ],
+           "type": "object"
+         },
++        {
++          "properties": {
++            "method": {
++              "const": "pane.marks",
++              "type": "string"
++            },
++            "params": {
++              "$ref": "#/schemas/request/$defs/PaneMarksParams"
++            }
++          },
++          "required": [
++            "method",
++            "params"
++          ],
++          "type": "object"
++        },
+         {
+           "properties": {
+             "method": {
+@@ -6512,6 +6638,47 @@
+           ],
+           "type": "object"
+         },
++        "PaneBellEvent": {
++          "properties": {
++            "pane_id": {
++              "type": "string"
++            },
++            "workspace_id": {
++              "type": "string"
++            }
++          },
++          "required": [
++            "pane_id",
++            "workspace_id"
++          ],
++          "type": "object"
++        },
++        "PaneNotificationEvent": {
++          "properties": {
++            "body": {
++              "type": "string"
++            },
++            "pane_id": {
++              "type": "string"
++            },
++            "title": {
++              "description": "OSC 777 title; `null` for OSC 9, which carries only a body.",
++              "type": [
++                "string",
++                "null"
++              ]
++            },
++            "workspace_id": {
++              "type": "string"
++            }
++          },
++          "required": [
++            "pane_id",
++            "workspace_id",
++            "body"
++          ],
++          "type": "object"
++        },
+         "PaneOutputMatchedEvent": {
+           "properties": {
+             "matched_line": {
+@@ -6642,6 +6809,12 @@
+             },
+             {
+               "$ref": "#/schemas/subscription_event/$defs/PaneScrollChangedEvent"
++            },
++            {
++              "$ref": "#/schemas/subscription_event/$defs/PaneNotificationEvent"
++            },
++            {
++              "$ref": "#/schemas/subscription_event/$defs/PaneBellEvent"
+             }
+           ]
+         },
+@@ -6649,7 +6822,9 @@
+           "enum": [
+             "pane.output_matched",
+             "pane.agent_status_changed",
+-            "pane.scroll_changed"
++            "pane.scroll_changed",
++            "pane.bell",
++            "pane.notification"
+           ],
+           "type": "string"
+         }
+@@ -7553,6 +7728,56 @@
+               ],
+               "type": "object"
+             },
++            {
++              "properties": {
++                "pane_id": {
++                  "type": "string"
++                },
++                "type": {
++                  "const": "pane_bell",
++                  "type": "string"
++                },
++                "workspace_id": {
++                  "type": "string"
++                }
++              },
++              "required": [
++                "type",
++                "pane_id",
++                "workspace_id"
++              ],
++              "type": "object"
++            },
++            {
++              "properties": {
++                "body": {
++                  "type": "string"
++                },
++                "pane_id": {
++                  "type": "string"
++                },
++                "title": {
++                  "type": [
++                    "string",
++                    "null"
++                  ]
++                },
++                "type": {
++                  "const": "pane_notification",
++                  "type": "string"
++                },
++                "workspace_id": {
++                  "type": "string"
++                }
++              },
++              "required": [
++                "type",
++                "pane_id",
++                "workspace_id",
++                "body"
++              ],
++              "type": "object"
++            },
+             {
+               "properties": {
+                 "layout": {
+@@ -7613,6 +7838,8 @@
+             "pane_exited",
+             "pane_agent_detected",
+             "pane_agent_status_changed",
++            "pane_bell",
++            "pane_notification",
+             "layout_updated"
+           ],
+           "type": "string"
+@@ -8272,6 +8499,72 @@
+           ],
+           "type": "object"
+         },
++        "PaneMark": {
++          "description": "One shell command delimited by OSC 133 semantic prompt marks.\n\nRows are screen coordinates: row 0 is the oldest retained scrollback row.\nScrolling `pane.scroll` to `total_rows - viewport_rows - row` puts `row`\nat the top of the viewport. Each row is the cursor row when the mark was\nprocessed.",
++          "properties": {
++            "command": {
++              "description": "Cells marked as shell input between OSC 133;B and C.",
++              "type": [
++                "string",
++                "null"
++              ]
++            },
++            "end_row": {
++              "description": "Cursor row when the command finished (OSC 133;D). At column 0 this is\nthe first row after the output.",
++              "format": "uint64",
++              "minimum": 0,
++              "type": [
++                "integer",
++                "null"
++              ]
++            },
++            "exit_code": {
++              "description": "Exit status reported by OSC 133;D.",
++              "format": "int32",
++              "type": [
++                "integer",
++                "null"
++              ]
++            },
++            "finished_at_ms": {
++              "description": "Unix milliseconds when Herdr observed OSC 133;D.",
++              "format": "uint64",
++              "minimum": 0,
++              "type": [
++                "integer",
++                "null"
++              ]
++            },
++            "output_row": {
++              "description": "Row where command output started (OSC 133;C).",
++              "format": "uint64",
++              "minimum": 0,
++              "type": [
++                "integer",
++                "null"
++              ]
++            },
++            "prompt_row": {
++              "description": "Row where the prompt started (OSC 133;A or N).",
++              "format": "uint64",
++              "minimum": 0,
++              "type": "integer"
++            },
++            "started_at_ms": {
++              "description": "Unix milliseconds when Herdr observed OSC 133;C.",
++              "format": "uint64",
++              "minimum": 0,
++              "type": [
++                "integer",
++                "null"
++              ]
++            }
++          },
++          "required": [
++            "prompt_row"
++          ],
++          "type": "object"
++        },
+         "PaneMoveReason": {
+           "enum": [
+             "same_tab",
+@@ -9802,6 +10095,48 @@
+               ],
+               "type": "object"
+             },
++            {
++              "properties": {
++                "alternate_screen": {
++                  "description": "True while the alternate screen is active. Marks then still refer\nto the primary screen while `total_rows` describes the alternate one.",
++                  "type": "boolean"
++                },
++                "marks": {
++                  "description": "Oldest first; the last entry is the newest command or live prompt.",
++                  "items": {
++                    "$ref": "#/schemas/success_response/$defs/PaneMark"
++                  },
++                  "type": "array"
++                },
++                "pane_id": {
++                  "type": "string"
++                },
++                "total_rows": {
++                  "description": "Rows in the active screen (scrollback + visible), as `pane.scroll`.",
++                  "format": "uint64",
++                  "minimum": 0,
++                  "type": "integer"
++                },
++                "type": {
++                  "const": "pane_marks",
++                  "type": "string"
++                },
++                "viewport_rows": {
++                  "format": "uint64",
++                  "minimum": 0,
++                  "type": "integer"
++                }
++              },
++              "required": [
++                "type",
++                "pane_id",
++                "marks",
++                "total_rows",
++                "viewport_rows",
++                "alternate_screen"
++              ],
++              "type": "object"
++            },
+             {
+               "properties": {
+                 "layout": {
+diff --git a/docs/next/website/src/content/docs/socket-api.mdx b/docs/next/website/src/content/docs/socket-api.mdx
+index e6ae6a57..78040925 100644
+--- a/docs/next/website/src/content/docs/socket-api.mdx
++++ b/docs/next/website/src/content/docs/socket-api.mdx
+@@ -103,7 +103,7 @@ Raw socket method names use dot notation:
+ | Workspace | `workspace.create`, `workspace.list`, `workspace.get`, `workspace.focus`, `workspace.rename`, `workspace.move`, `workspace.move_block`, `workspace.report_metadata`, `workspace.close` |
+ | Worktree | `worktree.list`, `worktree.create`, `worktree.open`, `worktree.remove` |
+ | Tab | `tab.create`, `tab.list`, `tab.get`, `tab.focus`, `tab.rename`, `tab.move`, `tab.close` |
+-| Pane | `pane.split`, `pane.swap`, `pane.move`, `pane.zoom`, `pane.layout`, `pane.process_info`, `pane.neighbor`, `pane.edges`, `pane.focus_direction`, `pane.resize`, `pane.list`, `pane.current`, `pane.get`, `pane.rename`, `pane.send_text`, `pane.send_keys`, `pane.send_input`, `pane.read`, `pane.graphics.info`, `pane.graphics.set`, `pane.graphics.clear`, `pane.graphics.stream`, `pane.report_agent`, `pane.report_agent_session`, `pane.report_metadata`, `pane.clear_agent_authority`, `pane.release_agent`, `pane.close`, `pane.wait_for_output` |
++| Pane | `pane.split`, `pane.swap`, `pane.move`, `pane.zoom`, `pane.layout`, `pane.process_info`, `pane.marks`, `pane.neighbor`, `pane.edges`, `pane.focus_direction`, `pane.resize`, `pane.list`, `pane.current`, `pane.get`, `pane.rename`, `pane.send_text`, `pane.send_keys`, `pane.send_input`, `pane.read`, `pane.graphics.info`, `pane.graphics.set`, `pane.graphics.clear`, `pane.graphics.stream`, `pane.report_agent`, `pane.report_agent_session`, `pane.report_metadata`, `pane.clear_agent_authority`, `pane.release_agent`, `pane.close`, `pane.wait_for_output` |
+ | Popup | `popup.close` |
+ | Layout | `layout.export`, `layout.apply`, `layout.set_split_ratio` |
+ | Agent | `agent.list`, `agent.get`, `agent.read`, `agent.explain`, `agent.send_keys`, `agent.prompt`, `agent.wait`, `agent.rename`, `agent.focus`, `agent.start`, `agent.view.set`, `agent.view.clear` |
+@@ -243,6 +243,16 @@ can make the next decision without private layout state.
+ when available, and foreground processes with pid, name, argv/cmdline, and cwd
+ when the platform exposes them.
+ 
++`pane.marks` returns up to `limit` (default 100, max 256) recent shell commands
++delimited by OSC 133 semantic prompt marks, oldest first. Each mark has
++`prompt_row` (133;A), `output_row` (133;C), `end_row` (133;D), `exit_code`,
++`started_at_ms` and `finished_at_ms` (when Herdr observed C and D), and
++`command` (the shell input cells between B and C). Rows are the cursor row when
++each mark was processed, counted from the oldest retained scrollback row; set
++`pane.scroll` `offset_from_bottom` to `total_rows - viewport_rows - row` to show
++a row at the top. Commands whose prompt row has left the scrollback are
++dropped. Shells report marks only with shell integration enabled.
++
+ `layout.export` returns a portable tab layout tree. Omit `tab_id` and `pane_id`
+ to export the active tab, pass `tab_id` to export that tab, or pass `pane_id` to
+ export the tab containing that pane.
+@@ -854,7 +864,8 @@ Tab event subscriptions include `tab.created`, `tab.closed`, `tab.focused`,
+ that workspace.
+ Pane event subscriptions include `pane.created`, `pane.updated`, `pane.closed`, `pane.focused`,
+ `pane.moved`, `pane.exited`, `pane.agent_detected`,
+-`pane.output_matched`, `pane.agent_status_changed`, and `pane.scroll_changed`.
++`pane.output_matched`, `pane.agent_status_changed`, `pane.scroll_changed`,
++`pane.bell`, and `pane.notification`.
+ `pane.focused` also reports manual pane selection changes from any client attached
+ to this server. It does not move other clients' views, and its payload does not
+ identify the client. Selecting an already-selected pane does not emit it again.
+@@ -862,6 +873,12 @@ Terminal-title changes can emit `pane.updated`, but spinner-only raw-title chang
+ `pane.scroll_changed` is scoped to one `pane_id` and emits `pane_id`,
+ `workspace_id`, and the current `scroll` metrics whenever Herdr observes a
+ changed scroll snapshot.
++`pane.bell` reports that a program rang the terminal bell and emits `pane_id`
++and `workspace_id`. `pane.notification` reports an OSC 9 or OSC 777 desktop
++notification request and emits `pane_id`, `workspace_id`, `title` (`null` for
++OSC 9), and `body`. Both accept an optional `pane_id`; omit it to receive every
++pane. Bursts of bells from one pane within 250 ms collapse into one event, and
++each pane reports at most 10 notifications per second.
+ Layout event subscriptions include `layout.updated`. The event carries the
+ updated `PaneLayoutSnapshot` for one tab. Clients maintaining a cache with
+ `session.snapshot` should use this event to refresh the affected layout through
+diff --git a/src/api/schema.rs b/src/api/schema.rs
+index d7e1a950..b1fb2d15 100644
+--- a/src/api/schema.rs
++++ b/src/api/schema.rs
+@@ -167,6 +167,8 @@ pub enum Method {
+     PaneResize(PaneResizeParams),
+     #[serde(rename = "pane.scroll")]
+     PaneScroll(PaneScrollParams),
++    #[serde(rename = "pane.marks")]
++    PaneMarks(PaneMarksParams),
+     #[serde(rename = "pane.clear")]
+     PaneClear(PaneTarget),
+     #[serde(rename = "pane.edit_scrollback")]
+diff --git a/src/api/schema/events.rs b/src/api/schema/events.rs
+index 52ac6c96..20c1f0a4 100644
+--- a/src/api/schema/events.rs
++++ b/src/api/schema/events.rs
+@@ -80,6 +80,19 @@ pub enum Subscription {
+     },
+     #[serde(rename = "pane.scroll_changed")]
+     PaneScrollChanged { pane_id: String },
++    /// A program rang the terminal bell. Omit `pane_id` to receive every pane.
++    #[serde(rename = "pane.bell")]
++    PaneBell {
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        pane_id: Option<String>,
++    },
++    /// A program requested a desktop notification with OSC 9 or OSC 777.
++    /// Omit `pane_id` to receive every pane.
++    #[serde(rename = "pane.notification")]
++    PaneNotification {
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        pane_id: Option<String>,
++    },
+     #[serde(rename = "layout.updated")]
+     LayoutUpdated {},
+ }
+@@ -217,6 +230,8 @@ pub enum EventKind {
+     PaneExited,
+     PaneAgentDetected,
+     PaneAgentStatusChanged,
++    PaneBell,
++    PaneNotification,
+     LayoutUpdated,
+ }
+ 
+@@ -248,6 +263,8 @@ impl EventKind {
+             EventKind::PaneExited => "pane.exited",
+             EventKind::PaneAgentDetected => "pane.agent_detected",
+             EventKind::PaneAgentStatusChanged => "pane.agent_status_changed",
++            EventKind::PaneBell => "pane.bell",
++            EventKind::PaneNotification => "pane.notification",
+             EventKind::LayoutUpdated => "layout.updated",
+         }
+     }
+@@ -280,6 +297,8 @@ pub const KNOWN_EVENT_KINDS: &[EventKind] = &[
+     EventKind::PaneExited,
+     EventKind::PaneAgentDetected,
+     EventKind::PaneAgentStatusChanged,
++    EventKind::PaneBell,
++    EventKind::PaneNotification,
+     EventKind::LayoutUpdated,
+ ];
+ 
+@@ -354,6 +373,8 @@ mod known_event_name_tests {
+         assert!(!names.contains(&"layout.updated"));
+         assert!(!names.contains(&"workspace.metadata_updated"));
+         assert!(!names.contains(&"pane.updated"));
++        assert!(!names.contains(&"pane.bell"));
++        assert!(!names.contains(&"pane.notification"));
+         assert!(names.contains(&"pane.moved"));
+     }
+ }
+@@ -372,6 +393,10 @@ pub enum SubscriptionEventKind {
+     PaneAgentStatusChanged,
+     #[serde(rename = "pane.scroll_changed")]
+     ScrollChanged,
++    #[serde(rename = "pane.bell")]
++    PaneBell,
++    #[serde(rename = "pane.notification")]
++    PaneNotification,
+ }
+ 
+ #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+@@ -386,6 +411,9 @@ pub enum SubscriptionEventData {
+     PaneOutputMatched(PaneOutputMatchedEvent),
+     PaneAgentStatusChanged(PaneAgentStatusChangedEvent),
+     ScrollChanged(PaneScrollChangedEvent),
++    // Untagged: the richer notification shape must be tried before the bell.
++    PaneNotification(PaneNotificationEvent),
++    PaneBell(PaneBellEvent),
+ }
+ 
+ #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+@@ -417,6 +445,21 @@ pub struct PaneScrollChangedEvent {
+     pub scroll: PaneScrollInfo,
+ }
+ 
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
++pub struct PaneBellEvent {
++    pub pane_id: String,
++    pub workspace_id: String,
++}
++
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
++pub struct PaneNotificationEvent {
++    pub pane_id: String,
++    pub workspace_id: String,
++    /// OSC 777 title; `null` for OSC 9, which carries only a body.
++    pub title: Option<String>,
++    pub body: String,
++}
++
+ #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+ #[serde(tag = "type", rename_all = "snake_case")]
+ pub enum EventData {
+@@ -550,6 +593,16 @@ pub enum EventData {
+         #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+         state_labels: HashMap<String, String>,
+     },
++    PaneBell {
++        pane_id: String,
++        workspace_id: String,
++    },
++    PaneNotification {
++        pane_id: String,
++        workspace_id: String,
++        title: Option<String>,
++        body: String,
++    },
+     LayoutUpdated {
+         layout: super::panes::PaneLayoutSnapshot,
+     },
+diff --git a/src/api/schema/panes.rs b/src/api/schema/panes.rs
+index 67d5185e..10ccd599 100644
+--- a/src/api/schema/panes.rs
++++ b/src/api/schema/panes.rs
+@@ -248,6 +248,43 @@ pub struct PaneScrollParams {
+     pub offset_from_bottom: u64,
+ }
+ 
++/// Default and maximum number of commands `pane.marks` returns.
++pub const PANE_MARKS_DEFAULT_LIMIT: u32 = 100;
++pub const PANE_MARKS_MAX_LIMIT: u32 = 256;
++
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
++pub struct PaneMarksParams {
++    pub pane_id: String,
++    /// Most recent commands to return (default 100, max 256).
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub limit: Option<u32>,
++}
++
++/// One shell command delimited by OSC 133 semantic prompt marks.
++///
++/// Rows are screen coordinates: row 0 is the oldest retained scrollback row.
++/// Scrolling `pane.scroll` to `total_rows - viewport_rows - row` puts `row`
++/// at the top of the viewport. Each row is the cursor row when the mark was
++/// processed.
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
++pub struct PaneMark {
++    /// Row where the prompt started (OSC 133;A or N).
++    pub prompt_row: u64,
++    /// Row where command output started (OSC 133;C).
++    pub output_row: Option<u64>,
++    /// Cursor row when the command finished (OSC 133;D). At column 0 this is
++    /// the first row after the output.
++    pub end_row: Option<u64>,
++    /// Exit status reported by OSC 133;D.
++    pub exit_code: Option<i32>,
++    /// Unix milliseconds when Herdr observed OSC 133;C.
++    pub started_at_ms: Option<u64>,
++    /// Unix milliseconds when Herdr observed OSC 133;D.
++    pub finished_at_ms: Option<u64>,
++    /// Cells marked as shell input between OSC 133;B and C.
++    pub command: Option<String>,
++}
++
+ #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+ pub struct PaneTextPoint {
+     pub row: u32,
+diff --git a/src/api/schema/response.rs b/src/api/schema/response.rs
+index 5cc66bdc..43c9f5bb 100644
+--- a/src/api/schema/response.rs
++++ b/src/api/schema/response.rs
+@@ -8,8 +8,8 @@ use super::integrations::{
+ };
+ use super::panes::{
+     LayoutDescription, PaneEdgesResult, PaneFocusDirectionResult, PaneInfo, PaneLayoutSnapshot,
+-    PaneMoveResult, PaneNeighborResult, PaneProcessInfo, PaneReadResult, PaneResizeResult,
+-    PaneSwapResult, PaneTextPoint, PaneTextRange, PaneZoomResult,
++    PaneMark, PaneMoveResult, PaneNeighborResult, PaneProcessInfo, PaneReadResult,
++    PaneResizeResult, PaneSwapResult, PaneTextPoint, PaneTextRange, PaneZoomResult,
+ };
+ use super::plugins::{
+     InstalledPluginInfo, PluginActionInfo, PluginCommandLogInfo, PluginInvocationContext,
+@@ -138,6 +138,17 @@ pub enum ResponseResult {
+     PaneProcessInfo {
+         process_info: PaneProcessInfo,
+     },
++    PaneMarks {
++        pane_id: String,
++        /// Oldest first; the last entry is the newest command or live prompt.
++        marks: Vec<PaneMark>,
++        /// Rows in the active screen (scrollback + visible), as `pane.scroll`.
++        total_rows: u64,
++        viewport_rows: u64,
++        /// True while the alternate screen is active. Marks then still refer
++        /// to the primary screen while `total_rows` describes the alternate one.
++        alternate_screen: bool,
++    },
+     LayoutExport {
+         layout: LayoutDescription,
+     },
+diff --git a/src/api/schema/tests.rs b/src/api/schema/tests.rs
+index 3b43133b..ec7f6bde 100644
+--- a/src/api/schema/tests.rs
++++ b/src/api/schema/tests.rs
+@@ -1459,3 +1459,127 @@ fn pane_link_resolve_round_trips() {
+         result
+     );
+ }
++
++#[test]
++fn attention_subscriptions_accept_optional_pane_id() {
++    let json = r#"{"id":"sub_1","method":"events.subscribe","params":{"subscriptions":[
++        {"type":"pane.bell","pane_id":"w1:p1"},
++        {"type":"pane.bell"},
++        {"type":"pane.notification","pane_id":"w1:p1"},
++        {"type":"pane.notification"}
++    ]}}"#;
++    let request: Request = serde_json::from_str(json).unwrap();
++    let Method::EventsSubscribe(params) = request.method else {
++        panic!("wrong method parsed");
++    };
++    assert_eq!(
++        params.subscriptions,
++        vec![
++            Subscription::PaneBell {
++                pane_id: Some("w1:p1".into())
++            },
++            Subscription::PaneBell { pane_id: None },
++            Subscription::PaneNotification {
++                pane_id: Some("w1:p1".into())
++            },
++            Subscription::PaneNotification { pane_id: None },
++        ]
++    );
++}
++
++#[test]
++fn attention_subscription_events_round_trip() {
++    let bell = SubscriptionEventEnvelope {
++        event: SubscriptionEventKind::PaneBell,
++        data: SubscriptionEventData::PaneBell(PaneBellEvent {
++            pane_id: "w1:p1".into(),
++            workspace_id: "w1".into(),
++        }),
++    };
++    let json = serde_json::to_value(&bell).unwrap();
++    assert_eq!(
++        json,
++        serde_json::json!({"event":"pane.bell","data":{"pane_id":"w1:p1","workspace_id":"w1"}})
++    );
++    assert_eq!(
++        serde_json::from_value::<SubscriptionEventEnvelope>(json).unwrap(),
++        bell
++    );
++
++    let notification = SubscriptionEventEnvelope {
++        event: SubscriptionEventKind::PaneNotification,
++        data: SubscriptionEventData::PaneNotification(PaneNotificationEvent {
++            pane_id: "w1:p1".into(),
++            workspace_id: "w1".into(),
++            title: None,
++            body: "done".into(),
++        }),
++    };
++    let json = serde_json::to_value(&notification).unwrap();
++    assert_eq!(
++        json,
++        serde_json::json!({"event":"pane.notification","data":{"pane_id":"w1:p1","workspace_id":"w1","title":null,"body":"done"}})
++    );
++    assert_eq!(
++        serde_json::from_value::<SubscriptionEventEnvelope>(json).unwrap(),
++        notification
++    );
++}
++
++#[test]
++fn pane_marks_request_and_response_shapes() {
++    let request: Request = serde_json::from_str(
++        r#"{"id":"m","method":"pane.marks","params":{"pane_id":"w1:p1","limit":5}}"#,
++    )
++    .unwrap();
++    assert_eq!(
++        request.method,
++        Method::PaneMarks(PaneMarksParams {
++            pane_id: "w1:p1".into(),
++            limit: Some(5),
++        })
++    );
++    let request: Request =
++        serde_json::from_str(r#"{"id":"m","method":"pane.marks","params":{"pane_id":"w1:p1"}}"#)
++            .unwrap();
++    assert!(matches!(
++        request.method,
++        Method::PaneMarks(PaneMarksParams { limit: None, .. })
++    ));
++
++    let result = ResponseResult::PaneMarks {
++        pane_id: "w1:p1".into(),
++        marks: vec![PaneMark {
++            prompt_row: 3,
++            output_row: Some(4),
++            end_row: None,
++            exit_code: None,
++            started_at_ms: Some(10),
++            finished_at_ms: None,
++            command: Some("make".into()),
++        }],
++        total_rows: 40,
++        viewport_rows: 24,
++        alternate_screen: false,
++    };
++    let json = serde_json::to_value(&result).unwrap();
++    assert_eq!(
++        json,
++        serde_json::json!({
++            "type": "pane_marks",
++            "pane_id": "w1:p1",
++            "marks": [{
++                "prompt_row": 3,
++                "output_row": 4,
++                "end_row": null,
++                "exit_code": null,
++                "started_at_ms": 10,
++                "finished_at_ms": null,
++                "command": "make"
++            }],
++            "total_rows": 40,
++            "viewport_rows": 24,
++            "alternate_screen": false
++        })
++    );
++}
+diff --git a/src/api/server.rs b/src/api/server.rs
+index edb778f7..ae72f716 100644
+--- a/src/api/server.rs
++++ b/src/api/server.rs
+@@ -544,6 +544,7 @@ pub(crate) fn api_method_name(method: &Method) -> &'static str {
+         Method::PaneFocusDirection(_) => "pane.focus_direction",
+         Method::PaneResize(_) => "pane.resize",
+         Method::PaneScroll(_) => "pane.scroll",
++        Method::PaneMarks(_) => "pane.marks",
+         Method::PaneClear(_) => "pane.clear",
+         Method::PaneEditScrollback(_) => "pane.edit_scrollback",
+         Method::PaneSelectionRead(_) => "pane.selection.read",
+diff --git a/src/api/subscriptions.rs b/src/api/subscriptions.rs
+index 2258a3ce..575d64ba 100644
+--- a/src/api/subscriptions.rs
++++ b/src/api/subscriptions.rs
+@@ -2,9 +2,9 @@ use regex::Regex;
+ 
+ use crate::api::event_hub::EventHistoryError;
+ use crate::api::schema::{
+-    ErrorBody, ErrorResponse, EventKind, Method, PaneAgentStatusChangedEvent,
+-    PaneOutputMatchedEvent, PaneScrollChangedEvent, PaneScrollInfo, Request, Subscription,
+-    SubscriptionEventData, SubscriptionEventEnvelope, SubscriptionEventKind,
++    ErrorBody, ErrorResponse, EventKind, Method, PaneAgentStatusChangedEvent, PaneBellEvent,
++    PaneNotificationEvent, PaneOutputMatchedEvent, PaneScrollChangedEvent, PaneScrollInfo, Request,
++    Subscription, SubscriptionEventData, SubscriptionEventEnvelope, SubscriptionEventKind,
+ };
+ use crate::api::server::{dispatch_to_app_with_timeout, APP_RESPONSE_TIMEOUT};
+ use crate::api::{ApiRequestSender, EventHub};
+@@ -97,11 +97,20 @@ pub(super) struct ActiveEventSubscription {
+     last_sequence: u64,
+ }
+ 
++/// Discrete terminal attention events (bell, desktop notification) replayed
++/// from event history, optionally narrowed to one pane.
++pub(super) struct ActivePaneAttentionSubscription {
++    event_kind: crate::api::schema::EventKind,
++    pane_id: Option<String>,
++    last_sequence: u64,
++}
++
+ pub(super) enum ActiveSubscription {
+     Event(ActiveEventSubscription),
+     OutputMatched(ActiveOutputMatchedSubscription),
+     AgentStatusChanged(Box<ActiveAgentStatusChangedSubscription>),
+     ScrollChanged(ActiveScrollChangedSubscription),
++    PaneAttention(ActivePaneAttentionSubscription),
+ }
+ 
+ impl ActiveSubscription {
+@@ -235,6 +244,22 @@ impl ActiveSubscription {
+                     },
+                 )))
+             }
++            Subscription::PaneBell { pane_id } => Self::pane_attention(
++                EventKind::PaneBell,
++                pane_id,
++                request_id,
++                index,
++                api_tx,
++                event_start_sequence,
++            ),
++            Subscription::PaneNotification { pane_id } => Self::pane_attention(
++                EventKind::PaneNotification,
++                pane_id,
++                request_id,
++                index,
++                api_tx,
++                event_start_sequence,
++            ),
+             Subscription::PaneScrollChanged { pane_id } => {
+                 let probe = pane_get(format!("{request_id}:sub:{index}:probe"), &pane_id, api_tx)?;
+ 
+@@ -247,6 +272,27 @@ impl ActiveSubscription {
+         }
+     }
+ 
++    fn pane_attention(
++        event_kind: EventKind,
++        pane_id: Option<String>,
++        request_id: &str,
++        index: usize,
++        api_tx: &ApiRequestSender,
++        event_start_sequence: u64,
++    ) -> Result<Self, ErrorResponse> {
++        let pane_id = match pane_id {
++            Some(pane_id) => {
++                Some(pane_get(format!("{request_id}:sub:{index}:probe"), &pane_id, api_tx)?.pane_id)
++            }
++            None => None,
++        };
++        Ok(Self::PaneAttention(ActivePaneAttentionSubscription {
++            event_kind,
++            pane_id,
++            last_sequence: event_start_sequence,
++        }))
++    }
++
+     pub(super) fn poll(
+         &mut self,
+         api_tx: &ApiRequestSender,
+@@ -263,6 +309,9 @@ impl ActiveSubscription {
+             Self::ScrollChanged(subscription) => {
+                 serde_json::to_value(subscription.poll(api_tx)?).ok()
+             }
++            Self::PaneAttention(subscription) => {
++                serde_json::to_value(subscription.poll(event_hub)?).ok()
++            }
+         }
+     }
+ 
+@@ -296,6 +345,17 @@ impl ActiveSubscription {
+                 }
+                 Ok(matching)
+             }
++            Self::PaneAttention(subscription) => {
++                let events = subscription_events_after(event_hub, subscription.last_sequence)?;
++                let mut matching = Vec::new();
++                for (sequence, event) in events {
++                    subscription.last_sequence = sequence;
++                    if let Some(event) = subscription.event_from_history(event) {
++                        matching.push(serde_json::to_value(event).map_err(event_encoding_error)?);
++                    }
++                }
++                Ok(matching)
++            }
+             Self::AgentStatusChanged(subscription) => {
+                 let events = subscription_events_after(event_hub, subscription.last_sequence)?;
+                 let mut matching = Vec::new();
+@@ -358,6 +418,67 @@ impl ActiveEventSubscription {
+     }
+ }
+ 
++impl ActivePaneAttentionSubscription {
++    fn poll(&mut self, event_hub: &EventHub) -> Option<SubscriptionEventEnvelope> {
++        for (sequence, event) in event_hub.events_after(self.last_sequence) {
++            self.last_sequence = sequence;
++            if let Some(event) = self.event_from_history(event) {
++                return Some(event);
++            }
++        }
++        None
++    }
++
++    fn event_from_history(
++        &self,
++        event: crate::api::schema::EventEnvelope,
++    ) -> Option<SubscriptionEventEnvelope> {
++        if event.event != self.event_kind {
++            return None;
++        }
++        let envelope = match event.data {
++            crate::api::schema::EventData::PaneBell {
++                pane_id,
++                workspace_id,
++            } => SubscriptionEventEnvelope {
++                event: SubscriptionEventKind::PaneBell,
++                data: SubscriptionEventData::PaneBell(PaneBellEvent {
++                    pane_id,
++                    workspace_id,
++                }),
++            },
++            crate::api::schema::EventData::PaneNotification {
++                pane_id,
++                workspace_id,
++                title,
++                body,
++            } => SubscriptionEventEnvelope {
++                event: SubscriptionEventKind::PaneNotification,
++                data: SubscriptionEventData::PaneNotification(PaneNotificationEvent {
++                    pane_id,
++                    workspace_id,
++                    title,
++                    body,
++                }),
++            },
++            _ => return None,
++        };
++        let pane_id = match &envelope.data {
++            SubscriptionEventData::PaneBell(data) => &data.pane_id,
++            SubscriptionEventData::PaneNotification(data) => &data.pane_id,
++            _ => return None,
++        };
++        if self
++            .pane_id
++            .as_ref()
++            .is_some_and(|wanted| wanted != pane_id)
++        {
++            return None;
++        }
++        Some(envelope)
++    }
++}
++
+ impl ActiveOutputMatchedSubscription {
+     fn poll(&mut self, api_tx: &ApiRequestSender) -> Option<SubscriptionEventEnvelope> {
+         let read = pane_read(
+@@ -801,6 +922,78 @@ mod tests {
+         assert_eq!(subscription.last_sequence, event_hub.current_sequence());
+     }
+ 
++    fn bell_event(pane_id: &str) -> EventEnvelope {
++        EventEnvelope {
++            event: EventKind::PaneBell,
++            data: EventData::PaneBell {
++                pane_id: pane_id.into(),
++                workspace_id: "w1".into(),
++            },
++        }
++    }
++
++    fn notification_event(pane_id: &str, body: &str) -> EventEnvelope {
++        EventEnvelope {
++            event: EventKind::PaneNotification,
++            data: EventData::PaneNotification {
++                pane_id: pane_id.into(),
++                workspace_id: "w1".into(),
++                title: Some("Title".into()),
++                body: body.into(),
++            },
++        }
++    }
++
++    #[test]
++    fn attention_subscriptions_filter_by_kind_and_optional_pane() {
++        let event_hub = EventHub::default();
++        let start = event_hub.current_sequence();
++        let (api_tx, _api_rx) = tokio::sync::mpsc::unbounded_channel();
++        let mut all_bells = ActiveSubscription::new(
++            Subscription::PaneBell { pane_id: None },
++            "bells",
++            0,
++            &api_tx,
++            &event_hub,
++            start,
++        )
++        .unwrap();
++        let mut one_pane = ActiveSubscription::PaneAttention(ActivePaneAttentionSubscription {
++            event_kind: EventKind::PaneNotification,
++            pane_id: Some("w1:p2".into()),
++            last_sequence: start,
++        });
++
++        event_hub.push(bell_event("w1:p1"));
++        event_hub.push(notification_event("w1:p1", "other pane"));
++        event_hub.push(workspace_focused_event("noise"));
++        event_hub.push(bell_event("w1:p2"));
++        event_hub.push(notification_event("w1:p2", "wanted"));
++
++        let bells = all_bells.poll_batch(&api_tx, &event_hub).unwrap();
++        assert_eq!(bells.len(), 2);
++        assert_eq!(
++            bells[0],
++            serde_json::json!({"event":"pane.bell","data":{"pane_id":"w1:p1","workspace_id":"w1"}})
++        );
++        assert_eq!(bells[1]["data"]["pane_id"], "w1:p2");
++
++        let notifications = one_pane.poll_batch(&api_tx, &event_hub).unwrap();
++        assert_eq!(
++            notifications,
++            vec![serde_json::json!({
++                "event": "pane.notification",
++                "data": {"pane_id":"w1:p2","workspace_id":"w1","title":"Title","body":"wanted"}
++            })]
++        );
++        assert!(one_pane.poll(&api_tx, &event_hub).is_none());
++        event_hub.push(notification_event("w1:p2", "next"));
++        assert_eq!(
++            one_pane.poll(&api_tx, &event_hub).unwrap()["data"]["body"],
++            "next"
++        );
++    }
++
+     #[test]
+     fn agent_status_batch_preserves_transitions_filters_and_initial_state_ordering() {
+         for filtered in [false, true] {
+diff --git a/src/app/actions.rs b/src/app/actions.rs
+index e1bedd26..8c188283 100644
+--- a/src/app/actions.rs
++++ b/src/app/actions.rs
+@@ -1574,6 +1574,7 @@ impl AppState {
+             // Host-local effects are intercepted by HeadlessServer and forwarded to the
+             // foreground client; they never touch AppState. Kept for AppEvent exhaustiveness.
+             AppEvent::TerminalBell { .. } => Vec::new(),
++            AppEvent::TerminalDesktopNotification { .. } => Vec::new(),
+             AppEvent::ClipboardWrite { .. } => Vec::new(),
+             AppEvent::TerminalCwdReported { pane_id, cwd } => {
+                 if !cwd.is_absolute() || !cwd.is_dir() {
+diff --git a/src/app/api.rs b/src/app/api.rs
+index c56a07a1..379e4b05 100644
+--- a/src/app/api.rs
++++ b/src/app/api.rs
+@@ -6,6 +6,7 @@ mod env;
+ mod integrations;
+ mod layouts;
+ mod pane_graphics;
++mod pane_marks;
+ mod panes;
+ pub(crate) mod plugins;
+ pub(super) mod responses;
+@@ -47,7 +48,7 @@ impl App {
+                 self.handle_api_worktree_read_finished(*result);
+                 changes_workspace
+             }
+-            ev @ AppEvent::TerminalBell { .. } => {
++            ev @ (AppEvent::TerminalBell { .. } | AppEvent::TerminalDesktopNotification { .. }) => {
+                 self.handle_internal_event(ev);
+                 false
+             }
+@@ -110,8 +111,11 @@ impl App {
+         };
+         if matches!(
+             &ev,
+-            AppEvent::TerminalBell { .. } | AppEvent::ClipboardWrite { .. }
++            AppEvent::TerminalBell { .. }
++                | AppEvent::TerminalDesktopNotification { .. }
++                | AppEvent::ClipboardWrite { .. }
+         ) {
++            self.emit_terminal_attention(&ev, Instant::now());
+             return Vec::new();
+         }
+ 
+@@ -1114,6 +1118,7 @@ impl App {
+             Method::PaneProcessInfo(params) => {
+                 return self.handle_pane_process_info(request.id, params);
+             }
++            Method::PaneMarks(params) => return self.handle_pane_marks(request.id, params),
+             Method::LayoutExport(params) => return self.handle_layout_export(request.id, params),
+             Method::LayoutApply(params) => return self.handle_layout_apply(request.id, params),
+             Method::LayoutSetSplitRatio(params) => {
+diff --git a/src/app/api/pane_marks.rs b/src/app/api/pane_marks.rs
+new file mode 100644
+index 00000000..c380b664
+--- /dev/null
++++ b/src/app/api/pane_marks.rs
+@@ -0,0 +1,59 @@
++use crate::api::schema::{
++    PaneMark, PaneMarksParams, ResponseResult, PANE_MARKS_DEFAULT_LIMIT, PANE_MARKS_MAX_LIMIT,
++};
++use crate::app::App;
++
++use super::responses::{encode_error, encode_success};
++
++impl App {
++    pub(super) fn handle_pane_marks(&mut self, id: String, params: PaneMarksParams) -> String {
++        let not_found = |id| {
++            encode_error(
++                id,
++                "pane_not_found",
++                format!("pane {} not found", params.pane_id),
++            )
++        };
++        let Some((ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
++            return not_found(id);
++        };
++        let Some(public_pane_id) = self.public_pane_id(ws_idx, pane_id) else {
++            return not_found(id);
++        };
++        let Some(runtime) =
++            self.state
++                .runtime_for_pane_in_workspace(&self.terminal_runtimes, ws_idx, pane_id)
++        else {
++            return not_found(id);
++        };
++        let limit = params
++            .limit
++            .unwrap_or(PANE_MARKS_DEFAULT_LIMIT)
++            .min(PANE_MARKS_MAX_LIMIT);
++        let Some(read) = runtime.prompt_marks(limit as usize) else {
++            return encode_error(id, "terminal_unavailable", "pane terminal is unavailable");
++        };
++        encode_success(
++            id,
++            ResponseResult::PaneMarks {
++                pane_id: public_pane_id,
++                marks: read
++                    .marks
++                    .into_iter()
++                    .map(|mark| PaneMark {
++                        prompt_row: mark.prompt_row,
++                        output_row: mark.output_row,
++                        end_row: mark.end_row,
++                        exit_code: mark.exit_code,
++                        started_at_ms: mark.started_at_ms,
++                        finished_at_ms: mark.finished_at_ms,
++                        command: mark.command,
++                    })
++                    .collect(),
++                total_rows: read.total_rows as u64,
++                viewport_rows: read.viewport_rows as u64,
++                alternate_screen: read.alternate_screen,
++            },
++        )
++    }
++}
+diff --git a/src/app/api/plugins/context.rs b/src/app/api/plugins/context.rs
+index 8aee1c31..79cbdf23 100644
+--- a/src/app/api/plugins/context.rs
++++ b/src/app/api/plugins/context.rs
+@@ -176,6 +176,15 @@ impl App {
+                 pane_id,
+                 workspace_id,
+                 ..
++            }
++            | EventData::PaneBell {
++                pane_id,
++                workspace_id,
++            }
++            | EventData::PaneNotification {
++                pane_id,
++                workspace_id,
++                ..
+             } => self
+                 .plugin_context_for_public_pane_id(pane_id, correlation_id)
+                 .or_else(|| self.plugin_context_for_workspace_id(workspace_id, correlation_id))
+diff --git a/src/app/mod.rs b/src/app/mod.rs
+index 03e89026..ac97ffbd 100644
+--- a/src/app/mod.rs
++++ b/src/app/mod.rs
+@@ -23,6 +23,7 @@ mod runtime;
+ mod session;
+ pub mod state;
+ mod tab_bar_status;
++mod terminal_attention;
+ mod terminal_targets;
+ mod terminal_titles;
+ mod theme_sync;
+@@ -117,6 +118,7 @@ pub struct App {
+     pub(crate) config_diagnostic_deadline: Option<Instant>,
+     pub(crate) toast_deadline: Option<Instant>,
+     pub(crate) last_api_notification_at: Option<Instant>,
++    pub(crate) terminal_attention_limiter: terminal_attention::TerminalAttentionLimiter,
+     pub(crate) last_git_remote_status_refresh: Instant,
+     pub(crate) last_git_repo_discovery_refresh: Instant,
+     pub(crate) git_refresh_in_flight: bool,
+@@ -574,6 +576,7 @@ impl App {
+             config_diagnostic_deadline: None,
+             toast_deadline: None,
+             last_api_notification_at: None,
++            terminal_attention_limiter: Default::default(),
+             state,
+             pane_graphics: pane_graphics::Runtime::default(),
+             pane_graphics_files: Arc::new(crate::pane_graphics_files::FileStore::default()),
+diff --git a/src/app/terminal_attention.rs b/src/app/terminal_attention.rs
+new file mode 100644
+index 00000000..11e22fe1
+--- /dev/null
++++ b/src/app/terminal_attention.rs
+@@ -0,0 +1,232 @@
++//! Publishes terminal attention requests (BEL, OSC 9 / OSC 777 desktop
++//! notifications) as API events. Herdr's own bell forwarding and agent
++//! notification policy are unchanged; this only feeds the event history that
++//! `events.subscribe` replays.
++
++use std::collections::HashMap;
++use std::time::{Duration, Instant};
++
++use crate::events::AppEvent;
++use crate::layout::PaneId;
++
++use super::App;
++
++/// Bells are an attention signal, so bursts within this window collapse into
++/// one event. This keeps a program spamming BEL from evicting other events
++/// from the bounded API history.
++const BELL_WINDOW: Duration = Duration::from_millis(250);
++/// Desktop notifications carry distinct text, so allow a small burst per
++/// window instead of collapsing them.
++const NOTIFICATION_WINDOW: Duration = Duration::from_secs(1);
++const NOTIFICATIONS_PER_WINDOW: u32 = 10;
++const MAX_TRACKED_PANES: usize = 256;
++
++#[derive(Debug, Default)]
++pub(crate) struct TerminalAttentionLimiter {
++    panes: HashMap<PaneId, PaneAttentionWindow>,
++}
++
++#[derive(Debug, Clone, Copy)]
++struct PaneAttentionWindow {
++    last_bell: Option<Instant>,
++    notification_window_start: Option<Instant>,
++    notifications_in_window: u32,
++}
++
++impl TerminalAttentionLimiter {
++    pub(crate) fn allow_bell(&mut self, pane_id: PaneId, now: Instant) -> bool {
++        let window = self.window(pane_id, now);
++        if window
++            .last_bell
++            .is_some_and(|last| now.saturating_duration_since(last) < BELL_WINDOW)
++        {
++            return false;
++        }
++        window.last_bell = Some(now);
++        true
++    }
++
++    pub(crate) fn allow_notification(&mut self, pane_id: PaneId, now: Instant) -> bool {
++        let window = self.window(pane_id, now);
++        let expired = window
++            .notification_window_start
++            .is_none_or(|start| now.saturating_duration_since(start) >= NOTIFICATION_WINDOW);
++        if expired {
++            window.notification_window_start = Some(now);
++            window.notifications_in_window = 0;
++        }
++        if window.notifications_in_window >= NOTIFICATIONS_PER_WINDOW {
++            return false;
++        }
++        window.notifications_in_window += 1;
++        true
++    }
++
++    fn window(&mut self, pane_id: PaneId, now: Instant) -> &mut PaneAttentionWindow {
++        if self.panes.len() >= MAX_TRACKED_PANES && !self.panes.contains_key(&pane_id) {
++            let horizon = BELL_WINDOW.max(NOTIFICATION_WINDOW);
++            self.panes.retain(|_, window| {
++                window
++                    .last_bell
++                    .into_iter()
++                    .chain(window.notification_window_start)
++                    .any(|at| now.saturating_duration_since(at) < horizon)
++            });
++        }
++        self.panes.entry(pane_id).or_insert(PaneAttentionWindow {
++            last_bell: None,
++            notification_window_start: None,
++            notifications_in_window: 0,
++        })
++    }
++}
++
++impl App {
++    pub(crate) fn emit_terminal_attention(&mut self, event: &AppEvent, now: Instant) {
++        use crate::api::schema::{EventData, EventEnvelope, EventKind};
++
++        let (pane_id, envelope) = match event {
++            AppEvent::TerminalBell { pane_id, count } if *count > 0 => {
++                (*pane_id, EventKind::PaneBell)
++            }
++            AppEvent::TerminalDesktopNotification { pane_id, .. } => {
++                (*pane_id, EventKind::PaneNotification)
++            }
++            _ => return,
++        };
++        let Some((ws_idx, _)) = self.find_pane(pane_id) else {
++            return;
++        };
++        let Some(public_pane_id) = self.public_pane_id(ws_idx, pane_id) else {
++            return;
++        };
++        let workspace_id = self.public_workspace_id(ws_idx);
++        let allowed = match envelope {
++            EventKind::PaneBell => self.terminal_attention_limiter.allow_bell(pane_id, now),
++            _ => self
++                .terminal_attention_limiter
++                .allow_notification(pane_id, now),
++        };
++        if !allowed {
++            return;
++        }
++        let data = match event {
++            AppEvent::TerminalDesktopNotification { title, body, .. } => {
++                EventData::PaneNotification {
++                    pane_id: public_pane_id,
++                    workspace_id,
++                    title: title.clone(),
++                    body: body.clone(),
++                }
++            }
++            _ => EventData::PaneBell {
++                pane_id: public_pane_id,
++                workspace_id,
++            },
++        };
++        // Attention events are not plugin hook events; push without hooks.
++        self.event_hub.push(EventEnvelope {
++            event: envelope,
++            data,
++        });
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::api::schema::{EventData, EventKind};
++    use crate::config::Config;
++    use crate::workspace::Workspace;
++
++    #[test]
++    fn bell_bursts_collapse_per_pane() {
++        let mut limiter = TerminalAttentionLimiter::default();
++        let start = Instant::now();
++        let pane = PaneId::from_raw(1);
++        let other = PaneId::from_raw(2);
++
++        assert!(limiter.allow_bell(pane, start));
++        assert!(!limiter.allow_bell(pane, start + Duration::from_millis(10)));
++        assert!(limiter.allow_bell(other, start + Duration::from_millis(10)));
++        assert!(limiter.allow_bell(pane, start + BELL_WINDOW));
++    }
++
++    #[test]
++    fn notifications_allow_a_bounded_burst() {
++        let mut limiter = TerminalAttentionLimiter::default();
++        let start = Instant::now();
++        let pane = PaneId::from_raw(1);
++
++        for _ in 0..NOTIFICATIONS_PER_WINDOW {
++            assert!(limiter.allow_notification(pane, start));
++        }
++        assert!(!limiter.allow_notification(pane, start + Duration::from_millis(500)));
++        assert!(limiter.allow_notification(pane, start + NOTIFICATION_WINDOW));
++    }
++
++    #[test]
++    fn terminal_attention_events_reach_api_history_with_public_ids() {
++        let event_hub = crate::api::EventHub::default();
++        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
++        let mut app = App::new(
++            &Config::default(),
++            crate::app::AppPolicy::TEST,
++            None,
++            api_rx,
++            event_hub.clone(),
++        );
++        app.state.workspaces = vec![Workspace::test_new("one")];
++        let pane_id = app.state.workspaces[0].focused_pane_id().unwrap();
++        let public_pane_id = app.public_pane_id(0, pane_id).unwrap();
++        let workspace_id = app.public_workspace_id(0);
++        let now = Instant::now();
++
++        app.emit_terminal_attention(&AppEvent::TerminalBell { pane_id, count: 3 }, now);
++        // Collapsed into the first bell.
++        app.emit_terminal_attention(
++            &AppEvent::TerminalBell { pane_id, count: 1 },
++            now + Duration::from_millis(1),
++        );
++        app.emit_terminal_attention(
++            &AppEvent::TerminalDesktopNotification {
++                pane_id,
++                title: None,
++                body: "done".into(),
++            },
++            now,
++        );
++        // Unknown panes are ignored.
++        app.emit_terminal_attention(
++            &AppEvent::TerminalBell {
++                pane_id: crate::layout::PaneId::from_raw(9999),
++                count: 1,
++            },
++            now + Duration::from_secs(5),
++        );
++
++        let events: Vec<_> = event_hub
++            .events_after(0)
++            .into_iter()
++            .map(|(_, event)| event)
++            .collect();
++        assert_eq!(events.len(), 2);
++        assert_eq!(events[0].event, EventKind::PaneBell);
++        assert_eq!(
++            events[0].data,
++            EventData::PaneBell {
++                pane_id: public_pane_id.clone(),
++                workspace_id: workspace_id.clone(),
++            }
++        );
++        assert_eq!(
++            events[1].data,
++            EventData::PaneNotification {
++                pane_id: public_pane_id,
++                workspace_id,
++                title: None,
++                body: "done".into(),
++            }
++        );
++    }
++}
+diff --git a/src/events.rs b/src/events.rs
+index a614ee0c..e699dc39 100644
+--- a/src/events.rs
++++ b/src/events.rs
+@@ -161,6 +161,14 @@ pub enum AppEvent {
+     /// A pane child emitted one or more executable BEL characters.
+     /// The host-facing process forwards them to its outer terminal.
+     TerminalBell { pane_id: PaneId, count: u16 },
++    /// A pane child requested a desktop notification (OSC 9 or OSC 777).
++    /// Published to API subscribers only; Herdr's own notification policy is
++    /// driven by agent state, not by these requests.
++    TerminalDesktopNotification {
++        pane_id: PaneId,
++        title: Option<String>,
++        body: String,
++    },
+     /// A pane child emitted a valid OSC 52 clipboard write. The main loop
+     /// re-emits it through herdr's own clipboard writer.
+     ClipboardWrite { content: Vec<u8> },
+diff --git a/src/ghostty/mod.rs b/src/ghostty/mod.rs
+index 82714118..db954ad5 100644
+--- a/src/ghostty/mod.rs
++++ b/src/ghostty/mod.rs
+@@ -9,6 +9,9 @@
+     rustdoc::all
+ )]
+ pub mod bindings;
++mod tracked;
++
++pub(crate) use tracked::TrackedGridRef;
+ 
+ use std::cell::Cell;
+ use std::collections::hash_map::DefaultHasher;
+@@ -490,6 +493,7 @@ struct TerminalCallbackState {
+     bell_count: u16,
+     pwd_changes: Vec<Vec<u8>>,
+     clipboard_writes: Vec<Vec<u8>>,
++    desktop_notifications: Vec<DesktopNotification>,
+     size_report: ffi::GhosttySizeReportSize,
+     color_scheme: Option<ColorScheme>,
+ }
+@@ -503,6 +507,57 @@ unsafe extern "C" fn bell_trampoline(_terminal: ffi::GhosttyTerminal, userdata:
+     state.bell_count = state.bell_count.saturating_add(1);
+ }
+ 
++/// A desktop notification a program requested with OSC 9 or OSC 777.
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub(crate) struct DesktopNotification {
++    /// `None` when the protocol carries no title (OSC 9) or it was empty.
++    pub title: Option<String>,
++    pub body: String,
++}
++
++/// Bounds retained notifications between drains so a flood cannot grow memory.
++const MAX_PENDING_DESKTOP_NOTIFICATIONS: usize = 32;
++const MAX_DESKTOP_NOTIFICATION_BYTES: usize = 4096;
++
++unsafe extern "C" fn desktop_notification_trampoline(
++    _terminal: ffi::GhosttyTerminal,
++    userdata: *mut c_void,
++    notification: *const ffi::GhosttyTerminalDesktopNotification,
++) {
++    if userdata.is_null() || notification.is_null() {
++        return;
++    }
++    // SAFETY: size is the leading field of the live request.
++    if unsafe { (*notification).size } < mem::size_of::<ffi::GhosttyTerminalDesktopNotification>() {
++        return;
++    }
++    // SAFETY: the size check covers every field accessed below, and the strings
++    // are borrowed from libghostty-vt for the duration of this callback.
++    let request = unsafe { &*notification };
++    let (Some(title), Some(body)) = (unsafe { borrowed_bytes(request.title) }, unsafe {
++        borrowed_bytes(request.body)
++    }) else {
++        return;
++    };
++    // SAFETY: userdata is the TerminalCallbackState installed with this terminal.
++    let state = unsafe { &mut *userdata.cast::<TerminalCallbackState>() };
++    if state.desktop_notifications.len() >= MAX_PENDING_DESKTOP_NOTIFICATIONS {
++        return;
++    }
++    let text = |bytes: &[u8]| {
++        let bytes = &bytes[..bytes.len().min(MAX_DESKTOP_NOTIFICATION_BYTES)];
++        String::from_utf8_lossy(bytes)
++            .chars()
++            .filter(|ch| !ch.is_control())
++            .collect::<String>()
++    };
++    let title = text(title);
++    state.desktop_notifications.push(DesktopNotification {
++        title: (!title.is_empty()).then_some(title),
++        body: text(body),
++    });
++}
++
+ unsafe extern "C" fn color_scheme_trampoline(
+     _terminal: ffi::GhosttyTerminal,
+     userdata: *mut c_void,
+@@ -901,6 +956,12 @@ impl Terminal {
+                 (pwd_changed_trampoline as *const ()).cast(),
+             )
+             .into_result()?;
++            ffi::ghostty_terminal_set(
++                terminal.raw,
++                ffi::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_DESKTOP_NOTIFICATION,
++                (desktop_notification_trampoline as *const ()).cast(),
++            )
++            .into_result()?;
+             ffi::ghostty_terminal_set(
+                 terminal.raw,
+                 ffi::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE,
+@@ -1107,6 +1168,10 @@ impl Terminal {
+         mem::take(&mut self.callback_state.clipboard_writes)
+     }
+ 
++    pub(crate) fn take_desktop_notifications(&mut self) -> Vec<DesktopNotification> {
++        mem::take(&mut self.callback_state.desktop_notifications)
++    }
++
+     pub fn mode_get(&self, mode: u16) -> Result<bool, Error> {
+         let mut config = ffi::GhosttyTerminalModeConfig { mode, value: false };
+         unsafe {
+diff --git a/src/ghostty/tracked.rs b/src/ghostty/tracked.rs
+new file mode 100644
+index 00000000..30fa4cbf
+--- /dev/null
++++ b/src/ghostty/tracked.rs
+@@ -0,0 +1,137 @@
++//! Tracked grid references and semantic-content reads used for shell prompt
++//! marks. A tracked reference follows its cell through scrolling, scrollback
++//! pruning, and resize reflow, so positions recorded when a mark arrived stay
++//! exact without re-scanning the screen.
++
++use std::ptr;
++
++use super::{ffi, ghostty_screen_point, grid_ref_graphemes, grid_ref_wrap_state, Terminal};
++
++pub(crate) struct TrackedGridRef {
++    raw: ffi::GhosttyTrackedGridRef,
++}
++
++// SAFETY: the handle is only used behind the pane core mutex, like Terminal.
++unsafe impl Send for TrackedGridRef {}
++
++impl TrackedGridRef {
++    /// Current position in screen coordinates (row 0 is the oldest retained
++    /// scrollback row), or `None` once the referenced row has been pruned,
++    /// erased, or the owning terminal was freed.
++    pub(crate) fn screen_point(&self) -> Option<(u16, u32)> {
++        let mut point = ffi::GhosttyPointCoordinate::default();
++        // SAFETY: raw is a live tracked reference owned by self.
++        let result = unsafe {
++            ffi::ghostty_tracked_grid_ref_point(
++                self.raw,
++                ffi::GhosttyPointTag_GHOSTTY_POINT_TAG_SCREEN,
++                &mut point,
++            )
++        };
++        (result == ffi::GhosttyResult_GHOSTTY_SUCCESS).then_some((point.x, point.y))
++    }
++}
++
++impl Drop for TrackedGridRef {
++    fn drop(&mut self) {
++        // SAFETY: freeing is valid even after the owning terminal was freed.
++        unsafe { ffi::ghostty_tracked_grid_ref_free(self.raw) }
++    }
++}
++
++impl std::fmt::Debug for TrackedGridRef {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        f.debug_tuple("TrackedGridRef")
++            .field(&self.screen_point())
++            .finish()
++    }
++}
++
++impl Terminal {
++    /// Tracks the cell under the cursor on the active screen.
++    pub(crate) fn track_cursor(&self) -> Option<TrackedGridRef> {
++        let x = self
++            .get_u16(ffi::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_CURSOR_X)
++            .ok()?;
++        let y = self.cursor_y().ok()?;
++        let point = ffi::GhosttyPoint {
++            tag: ffi::GhosttyPointTag_GHOSTTY_POINT_TAG_ACTIVE,
++            value: ffi::GhosttyPointValue {
++                coordinate: ffi::GhosttyPointCoordinate { x, y: u32::from(y) },
++            },
++        };
++        let mut raw = ptr::null_mut();
++        // SAFETY: self.raw is live and raw is a valid out pointer.
++        let result = unsafe { ffi::ghostty_terminal_grid_ref_track(self.raw, point, &mut raw) };
++        (result == ffi::GhosttyResult_GHOSTTY_SUCCESS && !raw.is_null())
++            .then_some(TrackedGridRef { raw })
++    }
++
++    /// Text of the cells marked as shell input (OSC 133 B..C) between `start`
++    /// (inclusive) and `end` (exclusive), in screen coordinates. Prompt cells
++    /// on the same rows, such as a right prompt, are skipped. Hard line breaks
++    /// become `\n`; soft wraps are joined.
++    pub(crate) fn semantic_input_text(
++        &self,
++        start: (u16, u32),
++        end: (u16, u32),
++        max_rows: u32,
++    ) -> Option<String> {
++        if (end.1, end.0) <= (start.1, start.0) {
++            return None;
++        }
++        let cols = self.cols().ok()?;
++        let last_row = end.1.min(start.1.saturating_add(max_rows));
++        let mut text = String::new();
++        for y in start.1..=last_row {
++            let first_x = if y == start.1 { start.0 } else { 0 };
++            let end_x = if y == end.1 { end.0 } else { cols };
++            if first_x >= end_x {
++                continue;
++            }
++            let mut grid_ref = self.grid_ref(ghostty_screen_point(0, y)).ok()?;
++            let (soft_wrapped, _) = grid_ref_wrap_state(&grid_ref).ok()?;
++            let mut line = String::new();
++            for x in first_x..end_x {
++                grid_ref.x = x;
++                if !grid_ref_is_input(&grid_ref) {
++                    continue;
++                }
++                let graphemes = grid_ref_graphemes(&grid_ref).ok()?;
++                if graphemes.is_empty() {
++                    line.push(' ');
++                }
++                line.extend(graphemes.into_iter().filter_map(char::from_u32));
++            }
++            if soft_wrapped && y != end.1 {
++                text.push_str(&line);
++            } else {
++                text.push_str(line.trim_end());
++                text.push('\n');
++            }
++        }
++        let text = text.trim().to_string();
++        (!text.is_empty()).then_some(text)
++    }
++}
++
++fn grid_ref_is_input(grid_ref: &ffi::GhosttyGridRef) -> bool {
++    let mut cell = ffi::GhosttyCell::default();
++    let mut content = ffi::GhosttyCellSemanticContent_GHOSTTY_CELL_SEMANTIC_OUTPUT;
++    // SAFETY: grid_ref is a fresh untracked reference and the out pointers match
++    // the requested data types.
++    unsafe {
++        if ffi::ghostty_grid_ref_cell(grid_ref, &mut cell) != ffi::GhosttyResult_GHOSTTY_SUCCESS {
++            return false;
++        }
++        if ffi::ghostty_cell_get(
++            cell,
++            ffi::GhosttyCellData_GHOSTTY_CELL_DATA_SEMANTIC_CONTENT,
++            (&mut content as *mut ffi::GhosttyCellSemanticContent).cast(),
++        ) != ffi::GhosttyResult_GHOSTTY_SUCCESS
++        {
++            return false;
++        }
++    }
++    content == ffi::GhosttyCellSemanticContent_GHOSTTY_CELL_SEMANTIC_INPUT
++}
+diff --git a/src/pane.rs b/src/pane.rs
+index 118dd3a4..eeb77f01 100644
+--- a/src/pane.rs
++++ b/src/pane.rs
+@@ -29,6 +29,7 @@ mod cursor;
+ mod input;
+ mod kitty_keyboard;
+ mod osc;
++mod prompt_marks;
+ mod state;
+ mod terminal;
+ mod xtgettcap;
+@@ -44,8 +45,9 @@ use self::agent_detection::{
+ pub use self::terminal::InputState;
+ use self::terminal::{GhosttyPaneTerminal, PaneTerminal};
+ pub(crate) use self::terminal::{
+-    TerminalCompressionStep, TerminalDirtyPatch, TerminalDirtyPatchOutcome, TerminalReadSnapshot,
+-    TerminalSearchDirection, TerminalSearchWindow, TerminalTextPoint, TerminalWordMotion,
++    PromptMarksRead, TerminalCompressionStep, TerminalDirtyPatch, TerminalDirtyPatchOutcome,
++    TerminalReadSnapshot, TerminalSearchDirection, TerminalSearchWindow, TerminalTextPoint,
++    TerminalWordMotion,
+ };
+ pub use self::{
+     state::PaneState,
+@@ -1984,6 +1986,26 @@ fn publish_terminal_bells(pane_id: PaneId, count: u16, events: &mpsc::Sender<App
+     }
+ }
+ 
++fn publish_desktop_notifications(
++    pane_id: PaneId,
++    notifications: Vec<crate::ghostty::DesktopNotification>,
++    events: &mpsc::Sender<AppEvent>,
++) {
++    for notification in notifications {
++        if let Err(err) = events.try_send(AppEvent::TerminalDesktopNotification {
++            pane_id,
++            title: notification.title,
++            body: notification.body,
++        }) {
++            warn!(
++                pane = pane_id.raw(),
++                err = %err,
++                "failed to queue terminal desktop notification"
++            );
++        }
++    }
++}
++
+ fn publish_reported_cwd(
+     pane_id: PaneId,
+     cwd: std::path::PathBuf,
+@@ -2369,6 +2391,7 @@ impl PaneRuntime {
+                 drop(_content_write_guard);
+                 compression_wake.wake();
+                 publish_terminal_bells(pane_id, result.terminal_bells, &read_events);
++                publish_desktop_notifications(pane_id, result.desktop_notifications, &read_events);
+                 observe_detection_content_change(bytes, &detection_content_seq);
+                 let title_requested =
+                     result.terminal_title_changed && render_dirty.request_terminal_title(pane_id);
+@@ -2567,6 +2590,7 @@ impl PaneRuntime {
+                 drop(_content_write_guard);
+                 compression_wake.wake();
+                 publish_terminal_bells(pane_id, result.terminal_bells, &events);
++                publish_desktop_notifications(pane_id, result.desktop_notifications, &events);
+                 if agent_detection == AgentDetection::Enabled {
+                     observe_detection_content_change(bytes, &detection_content_seq);
+                 }
+@@ -3150,6 +3174,10 @@ impl PaneRuntime {
+         self.terminal.scroll_metrics()
+     }
+ 
++    pub(crate) fn prompt_marks(&self, limit: usize) -> Option<PromptMarksRead> {
++        self.terminal.prompt_marks(limit)
++    }
++
+     pub(crate) fn search_text_window(
+         &self,
+         query: &str,
+diff --git a/src/pane/osc.rs b/src/pane/osc.rs
+index 472fa7aa..1bd45513 100644
+--- a/src/pane/osc.rs
++++ b/src/pane/osc.rs
+@@ -325,7 +325,7 @@ pub(super) fn parse_reported_cwd(value: &[u8]) -> Option<PathBuf> {
+ /// Collects complete OSC bodies from a raw byte stream. Consumers receive only
+ /// bodies, keeping the framing state machine independent from OSC commands.
+ #[derive(Debug, Default)]
+-struct OscStreamCollector {
++pub(super) struct OscStreamCollector {
+     state: OscStreamState,
+     body: Vec<u8>,
+ }
+@@ -347,7 +347,17 @@ impl OscStreamCollector {
+     const MAX_BODY_BYTES: usize = 4096;
+ 
+     fn observe(&mut self, bytes: &[u8], mut receive: impl FnMut(&[u8])) {
+-        for &byte in bytes {
++        self.observe_with_offsets(bytes, |body, _| receive(body));
++    }
++
++    /// Like `observe`, also reporting the offset just past each body's
++    /// terminator within `bytes`.
++    pub(super) fn observe_with_offsets(
++        &mut self,
++        bytes: &[u8],
++        mut receive: impl FnMut(&[u8], usize),
++    ) {
++        for (index, &byte) in bytes.iter().enumerate() {
+             match self.state {
+                 OscStreamState::Ground => {
+                     if byte == 0x1b {
+@@ -366,16 +376,16 @@ impl OscStreamCollector {
+                     _ => self.state = OscStreamState::Ground,
+                 },
+                 OscStreamState::Body => match byte {
+-                    0x07 => self.finish(&mut receive),
++                    0x07 => self.finish(&mut receive, index + 1),
+                     0x1b => self.state = OscStreamState::BodyEscape,
+                     _ => self.push(byte),
+                 },
+                 OscStreamState::BodyEscape => match byte {
+-                    b'\\' => self.finish(&mut receive),
++                    b'\\' => self.finish(&mut receive, index + 1),
+                     0x07 => {
+                         self.push(0x1b);
+                         if matches!(self.state, OscStreamState::Body) {
+-                            self.finish(&mut receive);
++                            self.finish(&mut receive, index + 1);
+                         } else {
+                             self.state = OscStreamState::Ground;
+                         }
+@@ -435,8 +445,8 @@ impl OscStreamCollector {
+         }
+     }
+ 
+-    fn finish(&mut self, receive: &mut impl FnMut(&[u8])) {
+-        receive(&self.body);
++    fn finish(&mut self, receive: &mut impl FnMut(&[u8], usize), end_offset: usize) {
++        receive(&self.body, end_offset);
+         self.body.clear();
+         self.state = OscStreamState::Ground;
+     }
+diff --git a/src/pane/prompt_marks.rs b/src/pane/prompt_marks.rs
+new file mode 100644
+index 00000000..19e05932
+--- /dev/null
++++ b/src/pane/prompt_marks.rs
+@@ -0,0 +1,457 @@
++//! Shell command history from OSC 133 semantic prompt marks.
++//!
++//! libghostty-vt applies OSC 133 to cell semantic content but does not expose
++//! the marks themselves, exit codes, or timing. This tracker observes the
++//! sequences in the PTY stream, and after libghostty-vt has processed each one
++//! pins the cursor cell with a tracked grid reference. Tracked references
++//! follow their rows through scrolling, scrollback pruning, and reflow, so the
++//! reported rows are exact screen coordinates at read time.
++
++use std::collections::VecDeque;
++
++use crate::ghostty::{Terminal, TrackedGridRef};
++
++use super::osc::OscStreamCollector;
++
++/// Bounds retained commands per pane; each holds up to four tracked refs.
++const MAX_COMMANDS: usize = 256;
++/// Bounds the rows scanned when reading a command line's input text.
++const MAX_COMMAND_ROWS: u32 = 64;
++const MAX_COMMAND_CHARS: usize = 4096;
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub(super) enum PromptMarkKind {
++    /// OSC 133;A or 133;N.
++    PromptStart,
++    /// OSC 133;B.
++    InputStart,
++    /// OSC 133;C.
++    OutputStart,
++    /// OSC 133;D[;exit_code].
++    CommandFinished { exit_code: Option<i32> },
++}
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub(super) struct PromptMarkEvent {
++    /// Offset just past the sequence terminator in the observed chunk.
++    pub(super) end_offset: usize,
++    pub(super) kind: PromptMarkKind,
++}
++
++pub(super) fn parse_prompt_mark(body: &[u8]) -> Option<PromptMarkKind> {
++    let rest = body.strip_prefix(b"133;")?;
++    let mut params = rest.split(|&byte| byte == b';');
++    let action = params.next()?;
++    match action {
++        b"A" | b"N" => {
++            // Continuation prompts (k=c / k=s) belong to the current command.
++            let continuation = params.any(|param| matches!(param, b"k=c" | b"k=s"));
++            (!continuation).then_some(PromptMarkKind::PromptStart)
++        }
++        b"B" => Some(PromptMarkKind::InputStart),
++        b"C" => Some(PromptMarkKind::OutputStart),
++        b"D" => {
++            let exit_code = params
++                .next()
++                .and_then(|param| std::str::from_utf8(param).ok())
++                .and_then(|param| param.trim().parse::<i32>().ok());
++            Some(PromptMarkKind::CommandFinished { exit_code })
++        }
++        _ => None,
++    }
++}
++
++#[derive(Debug)]
++struct CommandRecord {
++    prompt: TrackedGridRef,
++    input: Option<TrackedGridRef>,
++    output: Option<TrackedGridRef>,
++    end: Option<TrackedGridRef>,
++    exit_code: Option<i32>,
++    started_at_ms: Option<u64>,
++    finished_at_ms: Option<u64>,
++}
++
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub(crate) struct PromptMarkSnapshot {
++    pub prompt_row: u64,
++    pub output_row: Option<u64>,
++    pub end_row: Option<u64>,
++    pub exit_code: Option<i32>,
++    pub started_at_ms: Option<u64>,
++    pub finished_at_ms: Option<u64>,
++    pub command: Option<String>,
++}
++
++#[derive(Debug, Default)]
++pub(crate) struct PromptMarkTracker {
++    collector: OscStreamCollector,
++    pending: Vec<PromptMarkEvent>,
++    commands: VecDeque<CommandRecord>,
++}
++
++impl PromptMarkTracker {
++    pub(super) fn observe(&mut self, bytes: &[u8]) {
++        let pending = &mut self.pending;
++        self.collector
++            .observe_with_offsets(bytes, |body, end_offset| {
++                if let Some(kind) = parse_prompt_mark(body) {
++                    pending.push(PromptMarkEvent { end_offset, kind });
++                }
++            });
++    }
++
++    pub(super) fn drain_pending(&mut self) -> Vec<PromptMarkEvent> {
++        std::mem::take(&mut self.pending)
++    }
++
++    /// Records a mark at the terminal cursor. Call after libghostty-vt has
++    /// processed every byte up to and including the mark's sequence.
++    pub(super) fn apply(&mut self, terminal: &Terminal, kind: PromptMarkKind, now_ms: u64) {
++        if matches!(
++            terminal.active_screen(),
++            Ok(crate::ghostty::ActiveScreen::Alternate)
++        ) {
++            return;
++        }
++        let Some(here) = terminal.track_cursor() else {
++            return;
++        };
++        match kind {
++            PromptMarkKind::PromptStart => {
++                // Shells redraw the prompt in place (resize, reset-prompt);
++                // a fresh A on the same row replaces an untouched prompt.
++                let redraw = self.commands.back().is_some_and(|last| {
++                    last.input.is_none()
++                        && last.output.is_none()
++                        && last.end.is_none()
++                        && row(&last.prompt).is_some()
++                        && row(&last.prompt) == row(&here)
++                });
++                if redraw {
++                    self.commands.pop_back();
++                }
++                self.commands.push_back(CommandRecord {
++                    prompt: here,
++                    input: None,
++                    output: None,
++                    end: None,
++                    exit_code: None,
++                    started_at_ms: None,
++                    finished_at_ms: None,
++                });
++                while self.commands.len() > MAX_COMMANDS {
++                    self.commands.pop_front();
++                }
++            }
++            PromptMarkKind::InputStart => {
++                if let Some(last) = self
++                    .commands
++                    .back_mut()
++                    .filter(|last| last.output.is_none() && last.end.is_none())
++                {
++                    last.input = Some(here);
++                }
++            }
++            PromptMarkKind::OutputStart => {
++                if let Some(last) = self
++                    .commands
++                    .back_mut()
++                    .filter(|last| last.output.is_none() && last.end.is_none())
++                {
++                    last.output = Some(here);
++                    last.started_at_ms = Some(now_ms);
++                }
++            }
++            PromptMarkKind::CommandFinished { exit_code } => {
++                if let Some(last) = self.commands.back_mut().filter(|last| last.end.is_none()) {
++                    last.end = Some(here);
++                    last.exit_code = exit_code;
++                    last.finished_at_ms = Some(now_ms);
++                }
++            }
++        }
++    }
++
++    /// Returns up to `limit` most recent commands, oldest first. Commands
++    /// whose prompt row left the retained scrollback are forgotten.
++    pub(crate) fn snapshot(
++        &mut self,
++        terminal: &Terminal,
++        limit: usize,
++    ) -> Vec<PromptMarkSnapshot> {
++        self.commands
++            .retain(|command| command.prompt.screen_point().is_some());
++        let skip = self.commands.len().saturating_sub(limit);
++        self.commands
++            .iter()
++            .skip(skip)
++            .filter_map(|command| {
++                let (_, prompt_row) = command.prompt.screen_point()?;
++                let output = command
++                    .output
++                    .as_ref()
++                    .and_then(TrackedGridRef::screen_point);
++                let input = command
++                    .input
++                    .as_ref()
++                    .and_then(TrackedGridRef::screen_point);
++                let text = match (input, output) {
++                    (Some(input), Some(output)) => terminal
++                        .semantic_input_text(input, output, MAX_COMMAND_ROWS)
++                        .map(|text| text.chars().take(MAX_COMMAND_CHARS).collect()),
++                    _ => None,
++                };
++                Some(PromptMarkSnapshot {
++                    prompt_row: u64::from(prompt_row),
++                    output_row: output.map(|(_, y)| u64::from(y)),
++                    end_row: command.end.as_ref().and_then(row).map(u64::from),
++                    exit_code: command.exit_code,
++                    started_at_ms: command.started_at_ms,
++                    finished_at_ms: command.finished_at_ms,
++                    command: text,
++                })
++            })
++            .collect()
++    }
++}
++
++fn row(tracked: &TrackedGridRef) -> Option<u32> {
++    tracked.screen_point().map(|(_, y)| y)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn parses_semantic_prompt_actions() {
++        assert_eq!(
++            parse_prompt_mark(b"133;A"),
++            Some(PromptMarkKind::PromptStart)
++        );
++        assert_eq!(
++            parse_prompt_mark(b"133;A;aid=1;cl=m"),
++            Some(PromptMarkKind::PromptStart)
++        );
++        assert_eq!(
++            parse_prompt_mark(b"133;N"),
++            Some(PromptMarkKind::PromptStart)
++        );
++        assert_eq!(parse_prompt_mark(b"133;A;k=s"), None);
++        assert_eq!(
++            parse_prompt_mark(b"133;B"),
++            Some(PromptMarkKind::InputStart)
++        );
++        assert_eq!(
++            parse_prompt_mark(b"133;C;cmdline_url=ls"),
++            Some(PromptMarkKind::OutputStart)
++        );
++        assert_eq!(
++            parse_prompt_mark(b"133;D;2"),
++            Some(PromptMarkKind::CommandFinished { exit_code: Some(2) })
++        );
++        assert_eq!(
++            parse_prompt_mark(b"133;D"),
++            Some(PromptMarkKind::CommandFinished { exit_code: None })
++        );
++        assert_eq!(
++            parse_prompt_mark(b"133;D;;aid=1"),
++            Some(PromptMarkKind::CommandFinished { exit_code: None })
++        );
++        assert_eq!(parse_prompt_mark(b"133;P;k=i"), None);
++        assert_eq!(parse_prompt_mark(b"1337;A"), None);
++        assert_eq!(parse_prompt_mark(b"9;hello"), None);
++    }
++
++    struct Pane {
++        pane: super::super::terminal::GhosttyPaneTerminal,
++        tx: tokio::sync::mpsc::Sender<bytes::Bytes>,
++    }
++
++    impl Pane {
++        fn new(cols: u16, rows: u16, max_scrollback_bytes: usize) -> Self {
++            let (tx, _rx) = tokio::sync::mpsc::channel(4);
++            let terminal = crate::ghostty::Terminal::new(cols, rows, max_scrollback_bytes).unwrap();
++            let pane =
++                super::super::terminal::GhosttyPaneTerminal::new(terminal, tx.clone()).unwrap();
++            Self { pane, tx }
++        }
++
++        fn feed(&self, bytes: &[u8]) -> super::super::terminal::ProcessBytesResult {
++            self.pane
++                .process_pty_bytes(crate::layout::PaneId::from_raw(1), 0, bytes, &self.tx)
++        }
++
++        fn marks(&self) -> super::super::terminal::PromptMarksRead {
++            self.pane.prompt_marks(MAX_COMMANDS).unwrap()
++        }
++    }
++
++    fn command(prompt: &str, input: &str, output: &str, exit: i32) -> String {
++        format!(
++            "\x1b]133;A\x07{prompt}\x1b]133;B\x07{input}\r\n\x1b]133;C\x07{output}\x1b]133;D;{exit}\x07"
++        )
++    }
++
++    #[test]
++    fn records_rows_exit_codes_and_command_text_in_one_chunk() {
++        let pane = Pane::new(40, 10, 1_000_000);
++        let bytes = command("$ ", "echo hi", "hi\r\n", 0)
++            + &command("$ ", "false", "", 1)
++            + "\x1b]133;A\x07$ \x1b]133;B\x07";
++        pane.feed(bytes.as_bytes());
++
++        let read = pane.marks();
++        assert_eq!(read.total_rows, 10);
++        assert_eq!(read.viewport_rows, 10);
++        assert!(!read.alternate_screen);
++        let rows: Vec<_> = read
++            .marks
++            .iter()
++            .map(|mark| {
++                (
++                    mark.prompt_row,
++                    mark.output_row,
++                    mark.end_row,
++                    mark.exit_code,
++                )
++            })
++            .collect();
++        assert_eq!(
++            rows,
++            vec![
++                (0, Some(1), Some(2), Some(0)),
++                (2, Some(3), Some(3), Some(1)),
++                (3, None, None, None),
++            ]
++        );
++        assert_eq!(read.marks[0].command.as_deref(), Some("echo hi"));
++        assert_eq!(read.marks[1].command.as_deref(), Some("false"));
++        assert_eq!(read.marks[2].command, None);
++        assert!(read.marks[0].started_at_ms.is_some());
++        assert!(read.marks[0].finished_at_ms >= read.marks[0].started_at_ms);
++    }
++
++    #[test]
++    fn prompt_start_after_partial_line_uses_the_fresh_line() {
++        let pane = Pane::new(40, 10, 1_000_000);
++        pane.feed(b"no newline");
++        pane.feed(b"\x1b]133;A\x07$ ");
++        assert_eq!(pane.marks().marks[0].prompt_row, 1);
++    }
++
++    #[test]
++    fn rows_follow_scrollback_and_match_scroll_offsets() {
++        let pane = Pane::new(40, 5, 1_000_000);
++        let mut output = String::new();
++        for line in 0..20 {
++            output.push_str(&format!("line {line}\r\n"));
++        }
++        pane.feed(command("$ ", "seq", &output, 0).as_bytes());
++        pane.feed(b"\x1b]133;A\x07$ ");
++
++        let read = pane.marks();
++        assert_eq!(read.viewport_rows, 5);
++        assert_eq!(read.total_rows, 22);
++        assert_eq!(read.marks[0].prompt_row, 0);
++        assert_eq!(read.marks[0].output_row, Some(1));
++        assert_eq!(read.marks[0].end_row, Some(21));
++        assert_eq!(read.marks[1].prompt_row, 21);
++
++        // offset_from_bottom = total - viewport - row puts the row at the top.
++        let offset =
++            read.total_rows - read.viewport_rows - read.marks[0].output_row.unwrap() as usize;
++        pane.pane.set_scroll_offset_from_bottom(offset);
++        let metrics = pane.pane.scroll_metrics().unwrap();
++        assert_eq!(metrics.offset_from_bottom, offset);
++    }
++
++    #[test]
++    fn marks_split_across_chunks_and_prompt_redraws_are_deduplicated() {
++        let pane = Pane::new(40, 10, 1_000_000);
++        pane.feed(b"\x1b]133;A\x07$ ");
++        // Redraw on the same row replaces the untouched prompt.
++        pane.feed(b"\r\x1b]133;A\x07$ \x1b]13");
++        pane.feed(b"3;B\x07ls\r\n\x1b]133;C\x07a b\r\n\x1b]133;D;");
++        pane.feed(b"127\x1b\\");
++        let marks = pane.marks().marks;
++        assert_eq!(marks.len(), 1);
++        assert_eq!(marks[0].prompt_row, 0);
++        assert_eq!(marks[0].exit_code, Some(127));
++        assert_eq!(marks[0].command.as_deref(), Some("ls"));
++    }
++
++    #[test]
++    fn right_prompt_cells_are_not_part_of_the_command() {
++        let pane = Pane::new(40, 10, 1_000_000);
++        pane.feed(
++            b"\x1b]133;A\x07$ \x1b[30Grprompt\x1b[3G\x1b]133;B\x07make\r\n\x1b]133;C\x07\x1b]133;D;0\x07",
++        );
++        assert_eq!(pane.marks().marks[0].command.as_deref(), Some("make"));
++    }
++
++    #[test]
++    fn commands_whose_prompt_was_pruned_are_forgotten() {
++        let pane = Pane::new(20, 4, 1);
++        pane.feed(command("$ ", "one", "", 0).as_bytes());
++        for line in 0..20_000 {
++            pane.feed(format!("filler {line}\r\n").as_bytes());
++        }
++        pane.feed(b"\x1b]133;A\x07$ ");
++        let read = pane.marks();
++        assert_eq!(read.marks.len(), 1);
++        assert!((read.marks[0].prompt_row as usize) < read.total_rows);
++    }
++
++    #[test]
++    fn alternate_screen_marks_are_ignored() {
++        let pane = Pane::new(40, 10, 1_000_000);
++        pane.feed(b"\x1b[?1049h\x1b]133;A\x07x\x1b[?1049l");
++        assert!(pane.marks().marks.is_empty());
++    }
++
++    #[test]
++    fn desktop_notifications_surface_osc9_and_osc777_but_not_conemu_extensions() {
++        let pane = Pane::new(40, 10, 1_000_000);
++        let result = pane.feed(
++            b"\x1b]9;build done\x07\x1b]777;notify;Title;Body text\x1b\\\x1b]9;4;1;50\x07\x1b]9;9;/tmp\x07\x07",
++        );
++        assert_eq!(
++            result.desktop_notifications,
++            vec![
++                crate::ghostty::DesktopNotification {
++                    title: None,
++                    body: "build done".into(),
++                },
++                crate::ghostty::DesktopNotification {
++                    title: Some("Title".into()),
++                    body: "Body text".into(),
++                },
++            ]
++        );
++        assert_eq!(result.terminal_bells, 1);
++        assert!(pane.feed(b"plain").desktop_notifications.is_empty());
++    }
++
++    #[test]
++    fn observe_reports_offsets_across_split_chunks() {
++        let mut tracker = PromptMarkTracker::default();
++        tracker.observe(b"x\x1b]133;A\x07$ \x1b]13");
++        assert_eq!(
++            tracker.drain_pending(),
++            vec![PromptMarkEvent {
++                end_offset: 9,
++                kind: PromptMarkKind::PromptStart
++            }]
++        );
++        tracker.observe(b"3;D;7\x1b\\");
++        assert_eq!(
++            tracker.drain_pending(),
++            vec![PromptMarkEvent {
++                end_offset: 7,
++                kind: PromptMarkKind::CommandFinished { exit_code: Some(7) }
++            }]
++        );
++    }
++}
+diff --git a/src/pane/terminal.rs b/src/pane/terminal.rs
+index c9d0b90a..0df286e9 100644
+--- a/src/pane/terminal.rs
++++ b/src/pane/terminal.rs
+@@ -168,10 +168,19 @@ pub(crate) struct ProcessBytesResult {
+     pub terminal_title_changed: bool,
+     pub terminal_bells: u16,
+     pub clipboard_writes: Vec<Vec<u8>>,
++    pub desktop_notifications: Vec<crate::ghostty::DesktopNotification>,
+     pub reported_cwd: Option<std::path::PathBuf>,
+     pub terminal_responses: Vec<Bytes>,
+ }
+ 
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub(crate) struct PromptMarksRead {
++    pub marks: Vec<super::prompt_marks::PromptMarkSnapshot>,
++    pub total_rows: usize,
++    pub viewport_rows: usize,
++    pub alternate_screen: bool,
++}
++
+ #[derive(Debug, Clone, PartialEq, Eq, Default)]
+ pub(crate) struct TerminalReadSnapshot {
+     pub text: String,
+@@ -210,6 +219,7 @@ pub(crate) struct GhosttyPaneCore {
+     pub child_default_background_changed: bool,
+     pub osc_debug_tracker: OscDebugTracker,
+     pub agent_osc_state: AgentOscStateTracker,
++    prompt_marks: super::prompt_marks::PromptMarkTracker,
+     decscusr_tracker: DecscusrTracker,
+     cursor_settle_state: CursorPositionSettleState,
+     windows_powershell_prompt_cwd_reporting: bool,
+@@ -270,6 +280,10 @@ impl PaneTerminal {
+         self.ghostty.scroll_metrics()
+     }
+ 
++    pub(crate) fn prompt_marks(&self, limit: usize) -> Option<PromptMarksRead> {
++        self.ghostty.prompt_marks(limit)
++    }
++
+     pub(crate) fn search_text_window(
+         &self,
+         query: &str,
+@@ -1182,6 +1196,7 @@ impl GhosttyPaneTerminal {
+                 child_default_background_changed: false,
+                 osc_debug_tracker: OscDebugTracker::default(),
+                 agent_osc_state: AgentOscStateTracker::default(),
++                prompt_marks: super::prompt_marks::PromptMarkTracker::default(),
+                 decscusr_tracker: DecscusrTracker::default(),
+                 cursor_settle_state: CursorPositionSettleState::default(),
+                 windows_powershell_prompt_cwd_reporting: false,
+@@ -1347,6 +1362,7 @@ impl GhosttyPaneTerminal {
+                 terminal_title_changed: false,
+                 terminal_bells: 0,
+                 clipboard_writes: Vec::new(),
++                desktop_notifications: Vec::new(),
+                 reported_cwd: None,
+                 terminal_responses: Vec::new(),
+             };
+@@ -1357,6 +1373,7 @@ impl GhosttyPaneTerminal {
+         // Those effects must not be delivered as live pane output.
+         let _ = core.terminal.take_bell_count();
+         let _ = core.terminal.take_clipboard_writes();
++        let _ = core.terminal.take_desktop_notifications();
+         let default_color_observation = core.default_color_tracker.observe(bytes);
+         if shell_pid > 0 && default_color_observation {
+             if let Some(owner_pgid) = current_transient_default_color_owner(shell_pid) {
+@@ -1385,6 +1402,8 @@ impl GhosttyPaneTerminal {
+         core.c1_xtgettcap_tracker.observe(bytes);
+         let c1_xtgettcap_responses = core.c1_xtgettcap_tracker.drain_pending();
+         core.decscusr_tracker.observe(bytes);
++        core.prompt_marks.observe(bytes);
++        let prompt_mark_events = core.prompt_marks.drain_pending();
+         let in_progress_default_color_event = core.default_color_event_tracker.in_progress_event();
+         let default_color_events = core.default_color_event_tracker.drain_pending();
+         let write_started = crate::render_prof::timer();
+@@ -1394,10 +1413,12 @@ impl GhosttyPaneTerminal {
+             default_color_events,
+             in_progress_default_color_event,
+             c1_xtgettcap_responses,
++            prompt_mark_events,
+             &mut terminal_responses,
+         );
+         let terminal_bells = core.terminal.take_bell_count();
+         let clipboard_writes = core.terminal.take_clipboard_writes();
++        let desktop_notifications = core.terminal.take_desktop_notifications();
+         let reported_cwd = core
+             .terminal
+             .take_pwd_changes()
+@@ -1457,6 +1478,7 @@ impl GhosttyPaneTerminal {
+             terminal_title_changed,
+             terminal_bells,
+             clipboard_writes,
++            desktop_notifications,
+             reported_cwd,
+             terminal_responses,
+         }
+@@ -1469,6 +1491,7 @@ impl GhosttyPaneTerminal {
+         default_color_events: Vec<DefaultColorTrackedEvent>,
+         in_progress_default_color_event: Option<DefaultColorEvent>,
+         c1_xtgettcap_responses: Vec<C1XtgettcapResponse>,
++        prompt_mark_events: Vec<super::prompt_marks::PromptMarkEvent>,
+         terminal_responses: &mut Vec<Bytes>,
+     ) {
+         // Only legacy C1 replies need merging; ordinary XTGETTCAP remains native.
+@@ -1480,7 +1503,13 @@ impl GhosttyPaneTerminal {
+                     .into_iter()
+                     .map(OrderedColorOrC1Event::C1),
+             )
++            .chain(
++                prompt_mark_events
++                    .into_iter()
++                    .map(OrderedColorOrC1Event::PromptMark),
++            )
+             .collect();
++        let now_ms = (!events.is_empty()).then(unix_time_ms).unwrap_or_default();
+         events.sort_by_key(OrderedColorOrC1Event::end_offset);
+         let mut written = 0;
+         for event in events {
+@@ -1523,6 +1552,10 @@ impl GhosttyPaneTerminal {
+                         terminal_responses.push(response.bytes);
+                     }
+                 }
++                OrderedColorOrC1Event::PromptMark(mark) => {
++                    terminal_responses.extend(libghostty_responses);
++                    core.prompt_marks.apply(&core.terminal, mark.kind, now_ms);
++                }
+             }
+         }
+ 
+@@ -1776,6 +1809,26 @@ impl GhosttyPaneTerminal {
+         }
+     }
+ 
++    /// Recent OSC 133 commands with rows in screen coordinates, plus the
++    /// active screen's total and viewport row counts in the same space.
++    pub(crate) fn prompt_marks(&self, limit: usize) -> Option<PromptMarksRead> {
++        let Ok(mut core) = self.core.lock() else {
++            return None;
++        };
++        let core = &mut *core;
++        let scrollbar = core.terminal.scrollbar().ok()?;
++        let alternate_screen = matches!(
++            core.terminal.active_screen(),
++            Ok(crate::ghostty::ActiveScreen::Alternate)
++        );
++        Some(PromptMarksRead {
++            marks: core.prompt_marks.snapshot(&core.terminal, limit),
++            total_rows: scrollbar.total,
++            viewport_rows: scrollbar.len,
++            alternate_screen,
++        })
++    }
++
+     pub fn scroll_metrics(&self) -> Option<ScrollMetrics> {
+         let Ok(core) = self.core.lock() else {
+             return None;
+@@ -3260,6 +3313,14 @@ fn ghostty_cell_style(
+ enum OrderedColorOrC1Event {
+     Color(DefaultColorTrackedEvent),
+     C1(C1XtgettcapResponse),
++    PromptMark(super::prompt_marks::PromptMarkEvent),
++}
++
++fn unix_time_ms() -> u64 {
++    std::time::SystemTime::now()
++        .duration_since(std::time::UNIX_EPOCH)
++        .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
++        .unwrap_or_default()
+ }
+ 
+ impl OrderedColorOrC1Event {
+@@ -3267,6 +3328,7 @@ impl OrderedColorOrC1Event {
+         match self {
+             Self::Color(event) => event.end_offset,
+             Self::C1(response) => response.end_offset,
++            Self::PromptMark(mark) => mark.end_offset,
+         }
+     }
+ }
+diff --git a/src/server/headless/notifications.rs b/src/server/headless/notifications.rs
+index e6d217e2..83d4e044 100644
+--- a/src/server/headless/notifications.rs
++++ b/src/server/headless/notifications.rs
+@@ -323,6 +323,8 @@ impl HeadlessServer {
+         });
+         match &ev {
+             AppEvent::TerminalBell { pane_id, count } => {
++                self.app
++                    .emit_terminal_attention(&ev, std::time::Instant::now());
+                 if !self.send_to_foreground_client(ServerMessage::TerminalBell { count: *count }) {
+                     debug!(
+                         pane = pane_id.raw(),
+diff --git a/src/terminal/runtime.rs b/src/terminal/runtime.rs
+index 7d5542a6..66795573 100644
+--- a/src/terminal/runtime.rs
++++ b/src/terminal/runtime.rs
+@@ -282,6 +282,10 @@ impl TerminalRuntime {
+         self.0.scroll_metrics()
+     }
+ 
++    pub(crate) fn prompt_marks(&self, limit: usize) -> Option<crate::pane::PromptMarksRead> {
++        self.0.prompt_marks(limit)
++    }
++
+     pub(crate) fn search_text_window(
+         &self,
+         query: &str,

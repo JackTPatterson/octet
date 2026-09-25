@@ -77,11 +77,15 @@ terminal view under `Octet/Terminal/`.
   checked on a real pane's `read -s`; the switch itself needs Octet in
   front, so it wasn't exercised by the background test app.
 
-- [ ] **15. No bell, desktop notifications, progress or color-change
-  handling (low).** These engine actions are unhandled. Fix: at least
-  `NSApp.requestUserAttention(.informationalRequest)` or `NSSound.beep()` on
-  the bell while inactive. Unverified whether the session forwards BEL and
-  OSC 9 to the host.
+- [x] **15. No bell, desktop notifications, progress or color-change
+  handling (low).** Done with an engine patch
+  (`scripts/engine-attention-marks.patch`): the session server now emits
+  `pane.bell` and `pane.notification` (OSC 9, OSC 777) for every pane, and
+  Octet shows a notification as its banner (named after the tab), bounces
+  the Dock icon when behind, and rings the bell as a beep in the pane you're
+  in or a notice for another. Checked: the events arrive in Octet from a
+  real `printf` in a pane. Progress and colour-change reports remain
+  unhandled (nothing asks for them yet).
 
 - [x] **16. No URL hover preview (low).** Done: the link under the pointer
   shows at the terminal's bottom left with "⌘-click to open"
