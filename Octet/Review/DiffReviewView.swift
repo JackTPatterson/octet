@@ -15,6 +15,8 @@ final class DiffReviewModel: ObservableObject {
     /// The line a note is being written on.
     @Published var drafting: (path: String, line: ReviewDiff.Line)?
     @Published var draft = ""
+    @Published var commitMessage = ""
+    @Published private(set) var committing = false
     private var timer: Timer?
     private var generation = 0
 
@@ -78,6 +80,28 @@ final class DiffReviewModel: ObservableObject {
         if !text.isEmpty { comments.append(ReviewComment(path: path, line: line, text: text)) }
         drafting = nil
         draft = ""
+    }
+
+    /// Commits every change shown, when the review is done.
+    func commitAll() {
+        let message = commitMessage, directory = self.directory
+        committing = true
+        DispatchQueue.global(qos: .userInitiated).async {
+            let outcome = Result { try ReviewDiff.commitAll(message: message, in: directory) }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    self.committing = false
+                    switch outcome {
+                    case .success(let hash):
+                        self.commitMessage = ""
+                        ToastCenter.shared.succeed(nil, "Committed \(hash)", detail: message)
+                        self.refresh()
+                    case .failure(let error):
+                        ToastCenter.shared.fail(nil, "Couldn't commit", detail: String(describing: error))
+                    }
+                }
+            }
+        }
     }
 
     func notes(on line: ReviewDiff.Line, in path: String) -> ReviewComment? {
@@ -226,6 +250,7 @@ struct DiffReviewView: View {
             } else if file.tooLarge {
                 message("Too large to show", "\(file.path): +\(file.added) −\(file.removed). Open it in an editor to review.")
             } else {
+                let colored = Self.colors(file)
                 GeometryReader { proxy in
                 ScrollView([.vertical, .horizontal]) {
                     LazyVStack(alignment: .leading, spacing: 0) {
@@ -236,7 +261,7 @@ struct DiffReviewView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .background(Theme.card)
                             ForEach(hunk.lines) { line in
-                                DiffReviewLine(line: line, path: file.path, model: model)
+                                DiffReviewLine(line: line, path: file.path, text: colored[line.index], model: model)
                             }
                         }
                     }
@@ -250,6 +275,17 @@ struct DiffReviewView: View {
                 }
             }
         }
+    }
+
+    /// Syntax colours for a file's lines, by index; each hunk starts fresh,
+    /// since it may begin inside anything.
+    static func colors(_ file: ReviewDiff.File) -> [Int: AttributedString] {
+        var result: [Int: AttributedString] = [:]
+        for hunk in file.hunks {
+            var state = CodeHighlighter.State()
+            for line in hunk.lines { result[line.index] = CodeColors.attributed(line.text, state: &state) }
+        }
+        return result
     }
 
     private func message(_ title: String, _ detail: String) -> some View {
@@ -289,6 +325,16 @@ struct DiffReviewView: View {
                 OctetButton(title: "Clear", kind: .ghost, compact: true) { model.comments = [] }
             }
             Spacer()
+            // Done reviewing: commit what's here.
+            if count == 0, model.diff.map({ !$0.files.isEmpty }) == true {
+                OctetTextField(placeholder: "Commit message", text: $model.commitMessage) { model.commitAll() }
+                    .frame(width: 280)
+                OctetButton(title: model.committing ? "Committing…" : "Commit All", kind: .secondary, compact: true) {
+                    model.commitAll()
+                }
+                .disabled(model.committing || model.commitMessage.trimmingCharacters(in: .whitespaces).isEmpty)
+                .help("Stage every change shown and commit it")
+            }
             if candidates.count > 1 {
                 Picker("Send to", selection: Binding(get: { target?.paneId }, set: { targetPane = $0 })) {
                     ForEach(candidates) { agent in Text(name(agent)).tag(Optional(agent.paneId)) }
@@ -305,7 +351,7 @@ struct DiffReviewView: View {
             .help("Send the notes as one message (⌘↩)")
         }
         .padding(.horizontal, 14)
-        .frame(height: 44)
+        .padding(.vertical, 8)
     }
 
     private func send(to agent: EngineAgent) {
@@ -320,6 +366,7 @@ struct DiffReviewView: View {
 private struct DiffReviewLine: View {
     let line: ReviewDiff.Line
     let path: String
+    var text: AttributedString?
     @ObservedObject var model: DiffReviewModel
     @State private var hovered = false
 
@@ -332,9 +379,11 @@ private struct DiffReviewLine: View {
                     number(line.oldNumber)
                     number(line.newNumber)
                     Text(marker).frame(width: 16).foregroundStyle(tint)
-                    Text(line.text.isEmpty ? " " : line.text)
-                        .foregroundStyle(line.kind == .context ? Theme.textSecondary : Theme.textPrimary)
-                        .fixedSize(horizontal: true, vertical: false)
+                    Group {
+                        if let text { Text(text) } else { Text(line.text.isEmpty ? " " : line.text) }
+                    }
+                    .opacity(line.kind == .context ? 0.8 : 1)
+                    .fixedSize(horizontal: true, vertical: false)
                     Spacer(minLength: 0)
                 }
                 .font(Theme.monoFont)

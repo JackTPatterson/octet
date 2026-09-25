@@ -142,6 +142,21 @@ struct ReviewDiff: Equatable {
         return (start(after: "-"), start(after: "+"))
     }
 
+    // MARK: - Committing
+
+    /// Stages everything in the working tree and commits it with your own
+    /// identity and hooks, as `git commit` would. Returns the new commit's
+    /// short hash.
+    @discardableResult
+    static func commitAll(message: String, in directory: String, git: Git = Git()) throws -> String {
+        let message = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty else { throw Checkpoints.GitError(description: "A commit needs a message") }
+        guard let top = git.topLevel(directory) else { throw Checkpoints.GitError(description: "Not a git repository") }
+        try git.run(["add", "-A", "--", "."], in: top)
+        try git.run(["commit", "-q", "-m", message], in: top)
+        return try git.run(["rev-parse", "--short", "HEAD"], in: top)
+    }
+
     // MARK: - Reading a working tree
 
     /// The diff for the tree `directory` is in, or nil outside a repository.

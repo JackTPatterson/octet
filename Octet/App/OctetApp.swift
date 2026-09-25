@@ -113,6 +113,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
+    @MainActor
+    static var hasVisibleTerminalWindow: Bool {
+        WindowRegistry.shared.windows.contains { $0.nsWindow?.isVisible == true }
+            || MainWindow.window?.isVisible == true
+    }
+
     /// Finder's “Open With Octet” and `open -a Octet file` are full-editor
     /// intents. In-app ⌘O is terminal context and starts as a split instead.
     @MainActor
@@ -137,6 +143,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard SettingsStore.shared.values.confirmQuit else { return .terminateNow }
+        // Octet's dialog is drawn inside a terminal window. With none left
+        // (the last one just closed) nothing could show it, and the quit
+        // would wait forever; quitting loses nothing, the session keeps
+        // running.
+        guard Self.hasVisibleTerminalWindow else { return .terminateNow }
         // Octet's own dialog, so the answer arrives asynchronously.
         ConfirmCenter.shared.ask(ConfirmCenter.Request(
             title: "Quit Octet?",

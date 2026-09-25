@@ -138,8 +138,9 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   branch left main, new files included, refreshed every 4 s. Click a line to
   leave a note; ⌘↩ sends every note to an agent in the project as one
   message. Files over 3,000 changed lines (or past 20,000 in all) are
-  counted, not drawn. Remaining: syntax colours, staging and committing
-  from the review, and a split (side-by-side) view.
+  counted, not drawn. Syntax colours, and Commit All with a message once
+  there are no notes left. Remaining: a split (side-by-side) view, and
+  staging single files or hunks.
 - [ ] **24. Multiple accounts per agent (high).** Claude Code #18435 (991),
   #36151 (1023). *Mostly done:* palette Add Claude/Codex Account (its own
   config folder, then a tab to sign in), Use Account for This Project, and
@@ -153,14 +154,15 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   conversation view titles a skill call with the skill's name, its args as
   the line under it, and the twin writes `Skill(frontend-design)` as Claude
   Code does (`SkillCall`).
-- [ ] **46. Closing the last window can leave Octet stuck quitting (med,
+- [x] **46. Closing the last window can leave Octet stuck quitting (med,
   seen once, unverified).** While testing, a window whose last tab closed
   disappeared and the app stayed running with no window and its 1.5 s
   refresh stalled. `applicationShouldTerminateAfterLastWindowClosed` is true
   and `applicationShouldTerminate` answers `.terminateLater` while
   `ConfirmCenter` draws "Quit Octet?" inside a window, and there's no window
-  left to draw it in. If that's the cause, ask with an `NSAlert` when no
-  window is left, or don't confirm then.
+  left to draw it in. Fixed on that reading: with no terminal window
+  visible, quitting doesn't ask (nothing is lost; the session keeps
+  running). Not reproduced without clicking, so unverified.
 
 ### Worth doing
 

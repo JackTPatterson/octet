@@ -125,4 +125,27 @@ final class DiffReviewTests: XCTestCase {
         XCTAssertEqual(try git.run(["diff", "--cached", "--name-only"], in: repo), "")
         XCTAssertNil(ReviewDiff.read(in: NSTemporaryDirectory() + "not-a-repo-\(UUID().uuidString)", base: .uncommitted, git: git))
     }
+
+    func testCommitAllTakesNewFilesToo() throws {
+        let git = Git()
+        let repo = FileManager.default.temporaryDirectory.appendingPathComponent("octet-commit-\(UUID().uuidString)").path
+        defer { try? FileManager.default.removeItem(atPath: repo) }
+        try FileManager.default.createDirectory(atPath: repo, withIntermediateDirectories: true)
+        try git.run(["init", "-q"], in: repo)
+        try git.run(["config", "user.email", "t@t"], in: repo)
+        try git.run(["config", "user.name", "t"], in: repo)
+        try "a\n".write(toFile: repo + "/a.txt", atomically: true, encoding: .utf8)
+        try git.run(["add", "."], in: repo)
+        try git.run(["commit", "-qm", "base"], in: repo)
+        try "b\n".write(toFile: repo + "/a.txt", atomically: true, encoding: .utf8)
+        try "new\n".write(toFile: repo + "/new.txt", atomically: true, encoding: .utf8)
+
+        XCTAssertThrowsError(try ReviewDiff.commitAll(message: "  ", in: repo, git: git))
+        let hash = try ReviewDiff.commitAll(message: "Make greetings excited", in: repo, git: git)
+
+        XCTAssertFalse(hash.isEmpty)
+        XCTAssertEqual(try git.run(["log", "-1", "--format=%s"], in: repo), "Make greetings excited")
+        XCTAssertEqual(try git.run(["status", "--porcelain"], in: repo), "")
+        XCTAssertEqual(ReviewDiff.read(in: repo, base: .uncommitted, git: git)?.files, [])
+    }
 }
