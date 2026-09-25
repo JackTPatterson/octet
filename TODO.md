@@ -256,11 +256,19 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
 ### libghostty host risks to verify
 
 - [ ] **41. Option-as-Alt left/right actually applies (med).** cmux #2369: it
-  worked in Ghostty but was ignored in cmux, breaking ISO layouts.
+  worked in Ghostty but was ignored in cmux, breaking ISO layouts. *Partly
+  checked 2026-09-25:* Settings writes `macos-option-as-alt = right` (or
+  left/true/false) into the renderer config, and keys are translated by
+  Ghostty's own handling, not by Octet. Not checked: a real right-Option
+  keypress (a synthetic event can't easily carry which Option key), and
+  Octet's command line, which reads ⌥ itself at a bare prompt.
 - [ ] **42. CJK IME composition, in the terminal and the prompt line (med).**
   Ghostty #12278, #10310, #4634, #7225.
-- [ ] **43. Pinned GhosttyKit includes the Jan 2026 scrollback leak fix
+- [x] **43. Pinned GhosttyKit includes the Jan 2026 scrollback leak fix
   (med).** Ghostty #10289 (71 GB with several Claude Code windows).
+  Checked 2026-09-25: the pinned manaflow-ai/ghostty commit (4a0e9e1,
+  2026-09-17) contains upstream's fixes 9ee78d8 and 17da138 (compare:
+  0 behind).
 - [ ] **44. Agent status accuracy (med).** cmux #1027: stuck "Running", false
   "Needs input", missed prompts. Needs a regression corpus.
 
