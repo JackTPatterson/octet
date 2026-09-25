@@ -54,18 +54,26 @@ struct PaneLayout: Equatable {
 }
 
 /// A drop's meaning, and the part of the view to light up for it: the half
-/// of the target pane the moved tab will take.
+/// of the target pane the moved tab will take, or the whole view when it
+/// arrives as a tab of its own.
 struct SplitTarget: Equatable {
     let paneId: String
-    let edge: SplitEdge
+    /// Nil: not a split, the tab joins the window as a tab.
+    let edge: SplitEdge?
     let highlight: CGRect
+
+    var title: String { edge?.title ?? "Move Here as Tab" }
 }
 
 enum SplitDrop {
     /// Which pane `point` is over in a view of `size` showing `layout`, and
     /// which of its edges is nearest. The layout's cells are scaled to the
     /// view, which is close enough to pick a pane and a side.
-    static func target(at point: CGPoint, in size: CGSize, layout: PaneLayout) -> SplitTarget? {
+    ///
+    /// Only the band along a pane's edges splits; its middle is a tab
+    /// when `acceptsTab` (the tab comes from another window), else nothing,
+    /// so a split is only ever made on purpose.
+    static func target(at point: CGPoint, in size: CGSize, layout: PaneLayout, acceptsTab: Bool = false) -> SplitTarget? {
         guard size.width > 0, size.height > 0 else { return nil }
         let scaleX = size.width / layout.area.width
         let scaleY = size.height / layout.area.height
@@ -81,7 +89,10 @@ enum SplitDrop {
         let u = (point.x - frame.minX) / max(frame.width, 1)
         let v = (point.y - frame.minY) / max(frame.height, 1)
         let edges: [(SplitEdge, CGFloat)] = [(.left, u), (.right, 1 - u), (.top, v), (.bottom, 1 - v)]
-        let edge = edges.min { $0.1 < $1.1 }!.0
+        let (edge, depth) = edges.min { $0.1 < $1.1 }!
+        guard depth < edgeBand else {
+            return acceptsTab ? SplitTarget(paneId: pane.id, edge: nil, highlight: CGRect(origin: .zero, size: size)) : nil
+        }
 
         let highlight: CGRect
         switch edge {
@@ -92,6 +103,9 @@ enum SplitDrop {
         }
         return SplitTarget(paneId: pane.id, edge: edge, highlight: highlight)
     }
+
+    /// How far into a pane, as a fraction of its size, a drop still splits.
+    static let edgeBand: CGFloat = 0.25
 
     private static func distance(_ point: CGPoint, _ rect: CGRect) -> CGFloat {
         let dx = max(rect.minX - point.x, 0, point.x - rect.maxX)

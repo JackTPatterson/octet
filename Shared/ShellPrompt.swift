@@ -33,9 +33,18 @@ enum ShellPrompt {
         guard let info = result["process_info"] as? [String: Any] else { return nil }
         let processes = (info["foreground_processes"] as? [[String: Any]] ?? []).compactMap { raw -> (String, Int)? in
             guard let name = raw["name"] as? String, let pid = raw["pid"] as? Int else { return nil }
-            return (name, pid)
+            return (processName(name, argv0: raw["argv0"] as? String), pid)
         }
         return ProcessInfo(shellPid: info["shell_pid"] as? Int, foreground: processes)
+    }
+
+    /// What a process is, by name. Claude Code retitles its process to its
+    /// version ("2.1.282"), which names nothing; the command it was started
+    /// as still says what it is.
+    static func processName(_ name: String, argv0: String?) -> String {
+        guard let argv0, !argv0.isEmpty,
+              !name.isEmpty, name.allSatisfy({ $0.isNumber || $0 == "." }) else { return name }
+        return (argv0 as NSString).lastPathComponent
     }
 
     /// True when the only thing in the foreground is the pane's own shell.

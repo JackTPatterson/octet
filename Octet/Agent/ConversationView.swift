@@ -145,6 +145,11 @@ private struct ConversationHeader: View {
                     .foregroundStyle(Theme.textTertiary)
                     .help("Cost so far at API prices")
             }
+            // Once it's on, the chip under the composer shows it instead.
+            if session.engine == .claude, session.remoteControlAvailable,
+               session.remoteControl == .off || session.remoteControl.isFailed {
+                RemoteControlButton(session: session)
+            }
             OctetButton(title: "Open in Terminal", icon: "terminal", kind: .ghost, compact: true) {
                 session.openInTerminal(window: window)
             }
@@ -162,6 +167,94 @@ private struct ConversationHeader: View {
 
     private var branch: String? {
         workspace?.worktree?.branch ?? window.store.branches[session.workspaceId]
+    }
+}
+
+/// Turns on Remote Control: continue this conversation from claude.ai or
+/// the Claude app, with what's sent there arriving here.
+private struct RemoteControlButton: View {
+    @ObservedObject var session: AgentSession
+
+    var body: some View {
+        OctetButton(title: "Remote Control", icon: "remote", kind: .ghost, compact: true) {
+            session.setRemoteControl(true)
+        }
+        .help("Continue this conversation from claude.ai or the Claude app. Messages sent there show up here.")
+    }
+}
+
+/// The composer's Remote Control chip, while it's on: a light passes over
+/// it, the way the conversation is live somewhere else too. Its menu opens
+/// the session on claude.ai, copies the link, or turns it off.
+private struct RemoteControlChip: View {
+    @ObservedObject var session: AgentSession
+    @Environment(\.openURL) private var openURL
+    @State private var hovered = false
+
+    var body: some View {
+        let url: URL? = if case .on(let url) = session.remoteControl { url } else { nil }
+        let connecting = session.remoteControl == .connecting
+        Menu {
+            if let url {
+                Button("Open in claude.ai") { openURL(url) }
+                Button("Copy Link") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(url.absoluteString, forType: .string)
+                    ClipboardWatcher.shared.acknowledge()
+                    ToastCenter.shared.info("Copied the Remote Control link", detail: url.absoluteString)
+                }
+                Divider()
+            }
+            Button(connecting ? "Cancel" : "Turn Off Remote Control") { session.setRemoteControl(false) }
+        } label: {
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(connecting ? Theme.textTertiary : RemoteGlimmer.tint)
+                    .frame(width: 6, height: 6)
+                Text(connecting ? "Connecting…" : "Remote")
+                    .font(Theme.captionFont.weight(.medium))
+                    .foregroundStyle(connecting ? Theme.textSecondary : Theme.textPrimary)
+            }
+            .padding(.horizontal, 9)
+            .frame(height: 24)
+            .background(connecting ? (hovered ? Theme.hover : Theme.card) : RemoteGlimmer.tint.opacity(hovered ? 0.2 : 0.14))
+            .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius + 1)
+                .strokeBorder(connecting ? Theme.border : RemoteGlimmer.tint.opacity(0.45), lineWidth: 1))
+            .overlay { if !connecting { RemoteGlimmer(cornerRadius: Theme.rowRadius + 1) } }
+            .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius + 1))
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .onHover { hovered = $0 }
+        .help(connecting ? "Starting Remote Control" : "Remote Control is on: this conversation is open in claude.ai and the Claude app")
+        .accessibilityLabel(connecting ? "Remote Control connecting" : "Remote Control on")
+    }
+}
+
+/// The light that crosses a Remote Control chip once as it appears (a tab
+/// shown, Remote Control turned on): the SSH chip's sweep, in green. Laid
+/// over the chip; motion settings can turn it off.
+struct RemoteGlimmer: View {
+    static let tint = Color(hex: AgentStateColor.done)
+    var cornerRadius: CGFloat = 6
+    @ObservedObject private var motion = MotionPreferences.shared
+    @State private var sweep: CGFloat = -0.4
+
+    var body: some View {
+        GeometryReader { proxy in
+            LinearGradient(colors: [.clear, Self.tint.opacity(0.45), .clear], startPoint: .leading, endPoint: .trailing)
+                .frame(width: proxy.size.width * 0.4)
+                .offset(x: sweep * proxy.size.width)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+        .allowsHitTesting(false)
+        .onAppear {
+            guard motion.animates(.connections) else { return }
+            withAnimation(.easeInOut(duration: 0.9).delay(0.15)) { sweep = 1.1 }
+        }
     }
 }
 
@@ -703,6 +796,14 @@ struct ItemRow: View, Equatable {
                     }
                     .font(Theme.captionFont)
                     .foregroundStyle(Theme.accent)
+                }
+                if item.remote {
+                    HStack(spacing: 5) {
+                        OctetIcon("remote", size: 11)
+                        Text("Sent over Remote Control")
+                    }
+                    .font(Theme.captionFont)
+                    .foregroundStyle(Theme.textTertiary)
                 }
                 if !item.images.isEmpty { ImageGallery(images: item.images) }
                 if !text.isEmpty {
@@ -1295,6 +1396,7 @@ private struct Composer: View {
         case "effort": dropdowns.openId = "effort"
         case "permissions": dropdowns.openId = "mode"
         case "new", "clear": window.newConversation(engine: session.engine)
+        case "remote-control" where session.engine == .claude: session.setRemoteControl(!session.remoteControlEngaged)
         case "quit": AgentCenter.shared.close(session)
         case "rename" where arguments.isEmpty: text = "/rename "
         case "compact" where session.engine == .pi,
@@ -1492,6 +1594,9 @@ private struct Composer: View {
                 .accessibilityLabel("Permission mode")
                 .accessibilityValue(session.permissionMode.title)
                 .help("How Claude asks before using tools. Changes apply from the next message.")
+                if session.remoteControlEngaged {
+                    RemoteControlChip(session: session)
+                }
                 } else if session.engine == .codex {
                     CodexControls(session: session, dropdowns: dropdowns)
                 } else if session.engine == .opencode {

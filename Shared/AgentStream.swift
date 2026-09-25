@@ -73,6 +73,14 @@ struct AgentConversation: Equatable {
     /// Plan allowance, when the account is a subscription.
     var usageWindows: [UsageWindow] = []
 
+    /// The uuid of every user message Octet wrote to Claude Code, lowercased.
+    /// Claude Code echoes each message it starts on (`--replay-user-messages`);
+    /// these are Octet's own, already drawn, and any other is from elsewhere.
+    var sentUserIds: Set<String> = []
+    /// A plan the agent sent as an event rather than a tool call (Codex's
+    /// `turn/plan/updated`), for the todo panel.
+    var plan: [AgentTodo]?
+
     /// Messages that arrived as deltas; their final `assistant` copies only
     /// add tool calls, so text isn't drawn twice.
     private var streamedMessages: Set<String> = []
@@ -110,7 +118,11 @@ struct AgentConversation: Equatable {
             applyAssistant(message, parent: parent)
         case "user":
             guard let message = event["message"] as? [String: Any] else { return }
-            applyToolResults(message)
+            if event["isReplay"] as? Bool == true {
+                applyReplayedUser(event, message: message)
+            } else {
+                applyToolResults(message)
+            }
         case "result":
             applyResult(event)
         case "rate_limit_event":
@@ -382,6 +394,22 @@ struct AgentConversation: Equatable {
         }
     }
 
+    /// A user message Claude Code is starting on. Octet's own come back
+    /// under the uuid it sent them with; one Octet didn't send was typed
+    /// somewhere else, in claude.ai or the Claude app over Remote Control,
+    /// and is drawn here as it would have been had it been typed here.
+    private mutating func applyReplayedUser(_ event: [String: Any], message: [String: Any]) {
+        let uuid = (event["uuid"] as? String)?.lowercased()
+        if let uuid, sentUserIds.contains(uuid) || items.contains(where: { $0.id.lowercased() == uuid }) { return }
+        guard event["isSynthetic"] as? Bool != true, let text = Self.userText(message["content"]) else { return }
+        let images = Self.images(in: message["content"])
+        items.append(AgentItem(id: uuid ?? UUID().uuidString,
+                               kind: .user(images.isEmpty ? text : Self.strippingImageMarkers(text)),
+                               images: images, remote: true))
+        isRunning = true
+        lastError = nil
+    }
+
     private mutating func applyToolResults(_ message: [String: Any]) {
         guard let blocks = message["content"] as? [[String: Any]] else { return }
         for block in blocks where block["type"] as? String == "tool_result" {
@@ -588,6 +616,8 @@ struct AgentItem: Identifiable, Equatable {
     var images: [Data] = []
     /// A follow-up entered while the current turn is still running.
     var queued = false
+    /// A message sent from claude.ai or the Claude app over Remote Control.
+    var remote = false
     /// When the item began. Runtime uses this with a Monitor call's timeout
     /// to distinguish a live watch from historical tool output.
     var createdAt = Date()

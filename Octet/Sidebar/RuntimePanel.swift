@@ -12,7 +12,9 @@ struct RuntimePanel: View {
     @ObservedObject private var codexAgents = CodexAgentsStore.shared
     @ObservedObject private var motion = MotionPreferences.shared
     @State private var flashingEntryIDs: Set<String> = []
-    private let refresh = Timer.publish(every: 4, on: .main, in: .common).autoconnect()
+    /// Held in state: a new timer on every redraw would restart the count,
+    /// and a panel redrawn more often than every 4s would never refresh.
+    @State private var refresh = Timer.publish(every: 4, on: .main, in: .common).autoconnect()
 
     private var workspaceId: String? { window.focusedWorkspace?.workspaceId }
     private var activeSession: AgentSession? { center.active(in: workspaceId) }

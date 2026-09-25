@@ -75,13 +75,16 @@ final class TabDrag: ObservableObject {
     }
 }
 
-/// Drop zones over the terminal while a tab is dragged: hovering shows the
-/// half of a pane the tab would take, and dropping splits it in there. The
+/// Drop zones over the terminal while a tab is dragged: hovering near a
+/// pane's edge shows the half the tab would take, and dropping splits it in
+/// there. A tab from another window dropped mid-pane joins as a tab. The
 /// way editors take a dragged tab into a new group, and how iTerm and Warp
 /// build splits by drag.
 struct SplitDropLayer: View {
     /// The panes of the tab showing; nil until fetched.
     let layout: PaneLayout?
+    /// The dragged tab is from another window, so the middle takes it as a tab.
+    let acceptsTab: Bool
     let animation: Animation?
     let drop: (SplitTarget) -> Void
     @State private var target: SplitTarget?
@@ -98,7 +101,7 @@ struct SplitDropLayer: View {
                 }
             }
             .animation(animation, value: target)
-            .onDrop(of: [.text], delegate: SplitDropDelegate(size: proxy.size, layout: layout, target: $target, drop: drop))
+            .onDrop(of: [.text], delegate: SplitDropDelegate(size: proxy.size, layout: layout, acceptsTab: acceptsTab, target: $target, drop: drop))
         }
     }
 
@@ -108,7 +111,7 @@ struct SplitDropLayer: View {
             .fill(Theme.accent.opacity(0.14))
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.accent.opacity(0.7), lineWidth: 1.5))
             .overlay {
-                Text(target.edge.title)
+                Text(target.title)
                     .font(Theme.uiFontMedium)
                     .foregroundStyle(Theme.textPrimary)
                     .padding(.horizontal, 10)
@@ -120,21 +123,23 @@ struct SplitDropLayer: View {
             .frame(width: max(0, target.highlight.width - inset * 2), height: max(0, target.highlight.height - inset * 2))
             .offset(x: target.highlight.minX + inset, y: target.highlight.minY + inset)
             .allowsHitTesting(false)
-            .accessibilityLabel(target.edge.title)
+            .accessibilityLabel(target.title)
     }
 }
 
 private struct SplitDropDelegate: DropDelegate {
     let size: CGSize
     let layout: PaneLayout?
+    let acceptsTab: Bool
     @Binding var target: SplitTarget?
     let drop: (SplitTarget) -> Void
 
     func validateDrop(info: DropInfo) -> Bool { layout != nil && info.hasItemsConforming(to: [.text]) }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
-        target = layout.flatMap { SplitDrop.target(at: info.location, in: size, layout: $0) }
-        return DropProposal(operation: .move)
+        target = layout.flatMap { SplitDrop.target(at: info.location, in: size, layout: $0, acceptsTab: acceptsTab) }
+        // Mid-pane in the tab's own window: nothing to do, and the cursor says so.
+        return DropProposal(operation: target == nil ? .forbidden : .move)
     }
 
     func dropExited(info: DropInfo) { target = nil }

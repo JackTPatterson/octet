@@ -7,11 +7,20 @@ final class ToastCenter: ObservableObject {
 
     enum Style: Equatable { case progress, success, failure, info }
 
+    /// A button on a toast, such as Reopen on a closed tab's.
+    struct Action: Equatable {
+        let title: String
+        let perform: @MainActor () -> Void
+
+        static func == (lhs: Action, rhs: Action) -> Bool { lhs.title == rhs.title }
+    }
+
     struct Toast: Identifiable, Equatable {
         let id = UUID()
         var style: Style
         var title: String
         var detail: String?
+        var action: Action?
         /// Progress toasts stay hidden until the work runs past this moment,
         /// so instant socket calls only show their confirmation.
         var visibleAfter: Date = .distantPast
@@ -46,8 +55,8 @@ final class ToastCenter: ObservableObject {
         finish(handle, style: .failure, title: title, detail: detail, after: 8)
     }
 
-    func info(_ title: String, detail: String? = nil, after seconds: TimeInterval = 3.5) {
-        finish(nil, style: .info, title: title, detail: detail, after: seconds)
+    func info(_ title: String, detail: String? = nil, after seconds: TimeInterval = 3.5, action: Action? = nil) {
+        finish(nil, style: .info, title: title, detail: detail, after: seconds, action: action)
     }
 
     /// Updates a running toast's text without finishing it.
@@ -70,7 +79,8 @@ final class ToastCenter: ObservableObject {
         return Array(toasts.filter { $0.visibleAfter <= now }.suffix(Self.maxVisible))
     }
 
-    private func finish(_ handle: Handle?, style: Style, title: String, detail: String?, after seconds: TimeInterval) {
+    private func finish(_ handle: Handle?, style: Style, title: String, detail: String?, after seconds: TimeInterval,
+                        action: Action? = nil) {
         let id: UUID
         if let handle, let index = toasts.firstIndex(where: { $0.id == handle.id }) {
             toasts[index].style = style
@@ -79,7 +89,7 @@ final class ToastCenter: ObservableObject {
             toasts[index].visibleAfter = .distantPast
             id = handle.id
         } else {
-            let toast = Toast(style: style, title: title, detail: detail)
+            let toast = Toast(style: style, title: title, detail: detail, action: action)
             toasts.append(toast)
             id = toast.id
         }
@@ -107,7 +117,10 @@ struct ToastStack: View {
         VStack(alignment: .trailing, spacing: 8) {
             // Toasts follow you: they show in whichever Octet window is in front.
             ForEach(host.isFront ? center.visibleToasts : []) { toast in
-                ToastCard(toast: toast) { center.dismiss(toast.id) }
+                ToastCard(toast: toast, perform: { action in
+                    center.dismiss(toast.id)
+                    action.perform()
+                }) { center.dismiss(toast.id) }
                     .frame(width: ToastCard.width, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
                     .transition(motion.animates(.toasts) ? .move(edge: .trailing).combined(with: .opacity) : .identity)
@@ -124,6 +137,7 @@ private struct ToastCard: View {
     static let width: CGFloat = 360
 
     let toast: ToastCenter.Toast
+    let perform: (ToastCenter.Action) -> Void
     let dismiss: () -> Void
 
     var body: some View {
@@ -143,6 +157,16 @@ private struct ToastCard: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .fixedSize(horizontal: false, vertical: true)
+            if let action = toast.action {
+                Button(action.title) { perform(action) }
+                    .font(Theme.uiFontMedium)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Theme.accent)
+                    .padding(.horizontal, 8)
+                    .frame(height: 22)
+                    .background(Theme.accent.opacity(0.14))
+                    .clipShape(RoundedRectangle(cornerRadius: 5))
+            }
             if toast.style != .progress {
                 Button(action: dismiss) {
                     OctetIcon("xmark", size: 16)

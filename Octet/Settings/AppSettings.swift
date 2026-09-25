@@ -71,6 +71,12 @@ struct OctetSettings: Codable, Equatable {
     /// chip reads Claude Code's cache and any conversation Octet runs.
     var readClaudeAccountUsage = false
     var offerRecovery = true
+    /// How long a tab closed with something running in it keeps running,
+    /// out of sight, so it can be reopened. Zero closes at once.
+    var keepClosedTabsMinutes: Double = 30
+    /// Turn on Remote Control for every Claude conversation in Octet, so it
+    /// can be continued from claude.ai or the Claude app.
+    var claudeRemoteControl = false
     /// What typing `claude`, `codex` or `opencode` on its own at a prompt
     /// opens: the agent's interface in the terminal, or Octet's conversation.
     var agentOpening: AgentOpening = .terminal
@@ -252,6 +258,8 @@ struct OctetSettings: Codable, Equatable {
         paneHistory = value("paneHistory", defaults.paneHistory)
         readClaudeAccountUsage = value("readClaudeAccountUsage", defaults.readClaudeAccountUsage)
         offerRecovery = value("offerRecovery", defaults.offerRecovery)
+        keepClosedTabsMinutes = value("keepClosedTabsMinutes", defaults.keepClosedTabsMinutes)
+        claudeRemoteControl = value("claudeRemoteControl", defaults.claudeRemoteControl)
         agentOpening = value("agentOpening", defaults.agentOpening)
         subagentTabClosing = value("subagentTabClosing", defaults.subagentTabClosing)
         subagentFinishedSound = value("subagentFinishedSound", defaults.subagentFinishedSound)

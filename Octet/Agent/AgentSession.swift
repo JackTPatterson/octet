@@ -367,6 +367,37 @@ final class AgentSession: ObservableObject, Identifiable {
     /// its `initialize` answer), as it describes them.
     @Published var agentCommands: [SlashCommand] = []
     static let commandsRequest = "octet-commands"
+    static let remoteControlRequest = "octet-remote-control"
+    static let remoteControlCommand = SlashCommand(
+        name: "remote-control",
+        summary: "Continue this conversation from claude.ai or the Claude app (turns it on or off)",
+        aliases: ["rc"], handling: .octet)
+
+    /// Whether Remote Control is on or on its way.
+    var remoteControlEngaged: Bool { remoteControl != .off && !remoteControl.isFailed }
+
+    /// Remote Control: this conversation, open in claude.ai or the Claude
+    /// app, which can send it messages. What they send shows up here too.
+    enum RemoteControl: Equatable {
+        case off
+        case connecting
+        /// Connected; the session's page on claude.ai.
+        case on(URL?)
+        case failed(String)
+
+        var isFailed: Bool { if case .failed = self { true } else { false } }
+    }
+
+    @Published private(set) var remoteControl: RemoteControl = .off
+    /// Whether this Claude Code can do Remote Control at all (the account
+    /// and its organization allow it), from its `initialize` answer.
+    @Published private(set) var remoteControlAvailable = false
+    /// Asked for, by the person or their settings: a new process (a model
+    /// change restarts it) turns it back on.
+    private var wantsRemoteControl = false
+    /// The remote session, so a new process rejoins it instead of the
+    /// phone's page going dead and a new one appearing.
+    private var bridgeSessionId: String?
 
     /// What `/` offers, from the agent wherever it publishes a list, plus the
     /// actions Octet carries out itself. Nothing here is a guess at what an
@@ -377,7 +408,9 @@ final class AgentSession: ObservableObject, Identifiable {
         case .opencode:
             commands = openCodeSlashCommands
         case .claude:
-            commands = agentCommands
+            // Headless Claude Code doesn't list its interactive-only
+            // /remote-control; Octet carries it out with the same switch.
+            commands = agentCommands + (remoteControlAvailable ? [Self.remoteControlCommand] : [])
         case .codex:
             // Codex publishes no command list; its menu's own entries are its
             // prompt files, which its app server doesn't expand, so Octet does.
@@ -457,6 +490,12 @@ final class AgentSession: ObservableObject, Identifiable {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !attachments.isEmpty else { return }
         let wasRunning = conversation.isRunning
+        // Typed in full rather than picked from the menu, /remote-control
+        // (and Claude Code's /rc) still switches it here.
+        if engine == .claude, ["/remote-control", "/rc"].contains(trimmed), attachments.isEmpty {
+            setRemoteControl(!remoteControlEngaged)
+            return
+        }
         // `/rename` renames the session in Claude Code and the tab here.
         if trimmed.hasPrefix("/rename ") {
             let name = trimmed.dropFirst("/rename ".count).trimmingCharacters(in: .whitespaces)
@@ -518,6 +557,14 @@ final class AgentSession: ObservableObject, Identifiable {
     /// conversation, and Codex's handshake goes through here too.
     @discardableResult
     private func write(_ message: [String: Any]) -> Bool {
+        var message = message
+        // Every message Octet sends carries a uuid, so its echo is known as
+        // Octet's own and not drawn a second time.
+        if engine == .claude, message["type"] as? String == "user" {
+            let id = (message["uuid"] as? String ?? UUID().uuidString).lowercased()
+            message["uuid"] = id
+            conversation.sentUserIds.insert(id)
+        }
         guard let stdin, var data = try? JSONSerialization.data(withJSONObject: message) else { return false }
         data.append(0x0A)
         do {
@@ -1001,6 +1048,56 @@ final class AgentSession: ObservableObject, Identifiable {
         permissionReply = nil
     }
 
+    // MARK: - Remote Control
+
+    /// Turns Remote Control on or off for this conversation. On, it's
+    /// listed in claude.ai and the Claude app, and what's sent from there
+    /// arrives here as if typed here.
+    func setRemoteControl(_ enabled: Bool) {
+        guard engine == .claude else { return }
+        wantsRemoteControl = enabled
+        if enabled, needsRestart || process?.isRunning != true {
+            // Starting the process asks for it once it's up.
+            restart()
+            return
+        }
+        requestRemoteControl(enabled)
+    }
+
+    private func requestRemoteControl(_ enabled: Bool) {
+        var request: [String: Any] = ["subtype": "remote_control", "enabled": enabled]
+        if enabled {
+            request["name"] = title
+            if let bridgeSessionId { request["reattach_session_id"] = bridgeSessionId }
+        }
+        remoteControl = enabled ? .connecting : .off
+        if !enabled { bridgeSessionId = nil }
+        write(["type": "control_request", "request_id": Self.remoteControlRequest, "request": request])
+    }
+
+    /// Claude Code says whether Remote Control is possible, and whether the
+    /// person turned it on for every session in its own settings.
+    private func remoteControlInitialized(_ initialize: [String: Any]) {
+        remoteControlAvailable = initialize["remote_control_available"] as? Bool ?? false
+        guard remoteControlAvailable, !wantsRemoteControl else { return }
+        let everySession = initialize["remote_control_auto_enable"] as? Bool == true
+        if everySession || SettingsStore.shared.values.claudeRemoteControl { setRemoteControl(true) }
+    }
+
+    private func remoteControlAnswered(_ response: [String: Any]) {
+        guard response["subtype"] as? String == "success" else {
+            wantsRemoteControl = false
+            let error = response["error"] as? String ?? "Remote Control couldn't start"
+            remoteControl = .failed(error)
+            ToastCenter.shared.fail(nil, "Remote Control didn't start", detail: error)
+            return
+        }
+        guard wantsRemoteControl else { remoteControl = .off; return }
+        let answer = response["response"] as? [String: Any] ?? [:]
+        bridgeSessionId = answer["bridge_session_id"] as? String ?? bridgeSessionId
+        remoteControl = .on((answer["session_url"] as? String).flatMap(URL.init(string:)))
+    }
+
     // MARK: - Process
 
     private func restart() {
@@ -1033,6 +1130,9 @@ final class AgentSession: ObservableObject, Identifiable {
             "--model", model, "--permission-mode", permissionMode.rawValue,
             "--mcp-config", PermissionMCP.mcpConfig(cliPath: cli, socketPath: permissionServer!.path),
             "--permission-prompt-tool", PermissionMCP.qualifiedToolName,
+            // Echo each message as it's taken up, so ones sent over Remote
+            // Control reach the conversation here.
+            "--replay-user-messages",
         ]
         if let effort, Self.supportsEffort(model: model) { args += ["--effort", effort] }
         args += hasTurns ? ["--resume", sessionId] : ["--session-id", sessionId]
@@ -1076,6 +1176,7 @@ final class AgentSession: ObservableObject, Identifiable {
             // Claude Code's own list of what this session can run: built-ins,
             // plugins, skills and the person's commands, described.
             write(["type": "control_request", "request_id": Self.commandsRequest, "request": ["subtype": "initialize"]])
+            if wantsRemoteControl { requestRemoteControl(true) }
         } catch {
             startupError = "Couldn't start Claude Code: \(error.localizedDescription)"
         }
@@ -1248,6 +1349,8 @@ final class AgentSession: ObservableObject, Identifiable {
         guard ended === process else { return }
         self.process = nil
         stdin = nil
+        // The remote session ends with the process; the next one rejoins it.
+        if remoteControl != .off { remoteControl = wantsRemoteControl ? .connecting : .off }
         if conversation.isRunning || status != 0 {
             let detail = stderrTail.trimmingCharacters(in: .whitespacesAndNewlines)
             let message = status == 127 || detail.contains("command not found")
@@ -1268,10 +1371,19 @@ final class AgentSession: ObservableObject, Identifiable {
             case .claude:
                 if event["type"] as? String == "control_response",
                    let response = event["response"] as? [String: Any], response["request_id"] as? String == Self.commandsRequest {
-                    agentCommands = SlashCommands.claudePublished((response["response"] as? [String: Any])?["commands"] as? [[String: Any]] ?? [])
+                    let initialize = response["response"] as? [String: Any] ?? [:]
+                    agentCommands = SlashCommands.claudePublished(initialize["commands"] as? [[String: Any]] ?? [])
+                    remoteControlInitialized(initialize)
+                    continue
+                }
+                if event["type"] as? String == "control_response",
+                   let response = event["response"] as? [String: Any], response["request_id"] as? String == Self.remoteControlRequest {
+                    remoteControlAnswered(response)
                     continue
                 }
                 conversation.apply(event)
+                // A turn started from elsewhere (Remote Control) runs the clock too.
+                if conversation.isRunning, turnStartedAt == nil { turnStartedAt = Date() }
                 if event["type"] as? String == "rate_limit_event", !conversation.usageWindows.isEmpty {
                     AccountStore.shared.updateClaudeWindows(conversation.usageWindows)
                 }

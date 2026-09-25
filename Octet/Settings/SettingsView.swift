@@ -653,9 +653,31 @@ private struct AgentSettings: View {
             SettingsDivider()
             SettingsRow(
                 title: "Offer to recover lost sessions",
-                detail: "Octet records every agent's session. After a restart it lists any that didn't come back so you can resume them."
+                detail: "Octet records every agent's session, and every terminal that's running something with its recent output. If the terminal server stops and they end with it, Octet lists them so you can bring them back. A command is put back on the prompt, never rerun."
             ) {
                 Toggle("Offer to recover lost sessions", isOn: $settings.values.offerRecovery).labelsHidden().toggleStyle(.switch)
+            }
+            SettingsDivider()
+            SettingsRow(
+                title: "Keep closed tabs running",
+                detail: "Close a tab or pane while something runs in it and it keeps running out of sight for this long. ⌘⇧T, or Reopen on the notice, brings it back as it was."
+            ) {
+                Picker("Keep closed tabs running", selection: $settings.values.keepClosedTabsMinutes) {
+                    Text("Off").tag(0.0)
+                    Text("5 minutes").tag(5.0)
+                    Text("15 minutes").tag(15.0)
+                    Text("30 minutes").tag(30.0)
+                    Text("1 hour").tag(60.0)
+                    Text("4 hours").tag(240.0)
+                }
+                .labelsHidden().frame(width: 190)
+            }
+            SettingsDivider()
+            SettingsRow(
+                title: "Remote Control for Claude conversations",
+                detail: "Every Claude conversation in Octet is listed in claude.ai and the Claude app, to continue from your phone or another computer. What you send there shows up here. Each conversation's header also turns it on and off. Claude Code's own \"enable for all sessions\" setting turns it on too."
+            ) {
+                Toggle("Remote Control for Claude conversations", isOn: $settings.values.claudeRemoteControl).labelsHidden().toggleStyle(.switch)
             }
             SettingsDivider()
             SettingsRow(

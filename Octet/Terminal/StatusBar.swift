@@ -17,7 +17,7 @@ struct StatusBar: View {
 
     /// Whether any chip has something to say, so an empty bar takes no room.
     static func hasContent(model: StatusBarModel, ssh: SSHTarget?, agent: EngineAgent?) -> Bool {
-        ssh != nil || agent != nil || model.repo != nil || !model.pluginOutputs.isEmpty
+        ssh != nil || agent != nil || model.repo != nil || !model.pluginOutputs.isEmpty || model.remoteControlOn
             || OctetPluginHost.shared.statusBarOrder.contains("builtin.directory") && model.directory != nil
     }
 
@@ -35,6 +35,7 @@ struct StatusBar: View {
             .frame(height: Self.height)
         }
         .animation(motion.animation(.connections, .spring(response: 0.4, dampingFraction: 0.7)), value: ssh)
+        .animation(motion.animation(.connections, .spring(response: 0.4, dampingFraction: 0.7)), value: model.remoteControlOn)
         .frame(height: Self.height)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.terminalBackground)
@@ -64,6 +65,15 @@ struct StatusBar: View {
             }
         case "builtin.agent":
             if let agent { agentChip(agent) }
+        case "builtin.remoteControl":
+            if model.remoteControlOn {
+                // Keyed like the SSH chip, so it sweeps again each time it's shown.
+                remoteControlChip(model.remoteControlURL)
+                    .id(model.remoteControlURL?.absoluteString ?? "remote")
+                    .transition(motion.animates(.connections)
+                        ? .asymmetric(insertion: .scale(scale: 0.6, anchor: .leading).combined(with: .opacity), removal: .opacity)
+                        : .identity)
+            }
         case "builtin.runtime":
             if let runtime = model.runtime {
                 StatusChip(help: "\(runtime.name)\(model.version.map { " \($0)" } ?? "")") {
@@ -139,6 +149,24 @@ struct StatusBar: View {
         }
     }
 
+    /// Remote Control is on for the agent in this pane: a light passes over
+    /// the chip; clicked, it opens the session on claude.ai.
+    private func remoteControlChip(_ url: URL?) -> some View {
+        Button { if let url { openURL(url) } } label: {
+            StatusChip(help: url.map { "Remote Control is on · \($0.absoluteString)" } ?? "Remote Control is on", glimmer: true) {
+                Circle().fill(RemoteGlimmer.tint).frame(width: 6, height: 6)
+                Text("Remote")
+            }
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            if let url {
+                Button("Open in claude.ai") { openURL(url) }
+                Button("Copy Link") { copy(url.absoluteString) }
+            }
+        }
+    }
+
     private func agentChip(_ agent: EngineAgent) -> some View {
         let brand = AgentBrand.forAgent(agent.agent)
         let name = brand?.displayName ?? agent.agent ?? "Agent"
@@ -189,6 +217,8 @@ struct StatusChip<Content: View>: View {
     var color: String?
     var tone: StatusItemOutput.Tone = .normal
     var help: String?
+    /// A band of light passing over it, for something live elsewhere.
+    var glimmer = false
     @ViewBuilder let content: Content
 
     var body: some View {
@@ -197,8 +227,9 @@ struct StatusChip<Content: View>: View {
             .foregroundStyle(foreground)
             .padding(.horizontal, 7)
             .frame(height: 22)
-            .background(RoundedRectangle(cornerRadius: 6).fill(background))
-            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(border))
+            .background(RoundedRectangle(cornerRadius: 6).fill(glimmer ? RemoteGlimmer.tint.opacity(0.14) : background))
+            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(glimmer ? RemoteGlimmer.tint.opacity(0.45) : border))
+            .overlay { if glimmer { RemoteGlimmer() } }
             .fixedSize()
             .help(help ?? "")
     }
@@ -214,6 +245,7 @@ struct StatusChip<Content: View>: View {
     }
 
     private var foreground: Color {
+        if glimmer { return RemoteGlimmer.tint }
         if let toneColor { return toneColor }
         let palette = Theme.palette
         return color.map {

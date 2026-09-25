@@ -1,26 +1,33 @@
 import SwiftUI
 
-/// Lists agent sessions killed by a shutdown or session server restart (or, from the
-/// palette, recent sessions that aren't running) and resumes the chosen ones.
+/// Lists agent sessions and busy terminals killed by a shutdown or session
+/// server restart (or, from the palette, recent agent sessions that aren't
+/// running) and brings back the chosen ones.
 struct RecoveryPanel: View {
     @ObservedObject var recovery: AgentRecoveryController
+    @ObservedObject var shells: ShellRecoveryController
     @State private var excluded: Set<String> = []
 
     var body: some View {
         let sessions = recovery.offered
+        let terminals = shells.offered
         let selected = sessions.filter { !excluded.contains($0.id) }
+        let selectedTerminals = terminals.filter { !excluded.contains($0.id) }
+        let total = sessions.count + terminals.count
+        let chosen = selected.count + selectedTerminals.count
 
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 OctetIcon("arrow.counterclockwise.circle.fill", size: 19)
                     .foregroundStyle(Theme.accent)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(recovery.showingHistory ? "Recent Agent Sessions" : "Recover Agent Sessions")
+                    Text(recovery.showingHistory ? "Recent Agent Sessions"
+                         : terminals.isEmpty ? "Recover Agent Sessions" : sessions.isEmpty ? "Recover Terminals" : "Recover Sessions")
                         .font(Theme.uiFontMedium)
                         .foregroundStyle(Theme.textPrimary)
                     Text(recovery.showingHistory
                          ? "Not running now. Resume any of them in its workspace."
-                         : "\(sessions.count) session\(sessions.count == 1 ? " was" : "s were") running when the terminal stopped.")
+                         : "\(total) \(terminals.isEmpty ? "session" : "terminal")\(total == 1 ? " was" : "s were") running when the terminal server stopped.")
                         .font(Theme.captionFont)
                         .foregroundStyle(Theme.textSecondary)
                 }
@@ -44,22 +51,35 @@ struct RecoveryPanel: View {
                             copy: { recovery.copyCommand(record) }
                         )
                     }
+                    ForEach(terminals) { record in
+                        TerminalRecoveryRow(
+                            record: record,
+                            included: !excluded.contains(record.id),
+                            toggle: {
+                                if excluded.contains(record.id) { excluded.remove(record.id) } else { excluded.insert(record.id) }
+                            }
+                        )
+                    }
                 }
                 .padding(6)
             }
-            .frame(height: min(260, CGFloat(sessions.count) * 42 + 12))
+            .frame(height: min(260, CGFloat(total) * 42 + 12))
 
             Rectangle().fill(Theme.divider).frame(height: 1)
 
             HStack {
                 // No Return/Esc shortcuts: the panel isn't modal, so those
                 // keys belong to the terminal you keep typing in.
-                Button(recovery.showingHistory ? "Close" : "Dismiss") { recovery.dismiss() }
-                Spacer()
-                Button(selected.count == sessions.count && sessions.count > 1 ? "Resume All" : "Resume \(selected.count)") {
-                    recovery.resume(selected)
+                Button(recovery.showingHistory ? "Close" : "Dismiss") {
+                    recovery.dismiss()
+                    shells.dismiss()
                 }
-                .disabled(selected.isEmpty)
+                Spacer()
+                Button(chosen == total && total > 1 ? "Restore All" : "Restore \(chosen)") {
+                    recovery.resume(selected)
+                    shells.restore(selectedTerminals)
+                }
+                .disabled(chosen == 0)
             }
             .padding(10)
         }
@@ -68,7 +88,7 @@ struct RecoveryPanel: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.border, lineWidth: 1))
         .shadow(color: .black.opacity(0.35), radius: 18, y: 8)
-        .onChange(of: recovery.offered.map(\.id)) { _, ids in
+        .onChange(of: recovery.offered.map(\.id) + shells.offered.map(\.id)) { _, ids in
             excluded.formIntersection(ids)
         }
     }
@@ -128,5 +148,50 @@ private struct RecoveryRow: View {
     private var subtitle: String {
         let folder = record.cwd.replacingOccurrences(of: NSHomeDirectory(), with: "~")
         return record.workspaceLabel.isEmpty ? folder : "\(record.workspaceLabel) · \(folder)"
+    }
+}
+
+/// A terminal that was running something when the server stopped.
+private struct TerminalRecoveryRow: View {
+    let record: ShellSessionRecord
+    let included: Bool
+    let toggle: () -> Void
+    @State private var hovered = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            OctetIcon(included ? "checkmark.square.fill" : "square", size: 16)
+                .foregroundStyle(included ? Theme.accent : Theme.textTertiary)
+            OctetIcon("terminal", size: 13).foregroundStyle(Theme.textSecondary)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(ShellRecovery.short(record.command))
+                    .font(Theme.monoFont)
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                Text(subtitle)
+                    .font(Theme.captionFont)
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer(minLength: 4)
+            Text(WorkspaceActivity.ageLabel(since: record.lastSeen))
+                .font(Theme.captionFont)
+                .foregroundStyle(Theme.textTertiary)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(hovered ? Theme.hover : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
+        .contentShape(Rectangle())
+        .onHover { hovered = $0 }
+        .onTapGesture(perform: toggle)
+        .help(record.command)
+    }
+
+    private var subtitle: String {
+        let folder = record.cwd.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+        let place = record.workspaceLabel.isEmpty ? folder : "\(record.workspaceLabel) · \(folder)"
+        return record.tabLabel.isEmpty || record.tabLabel == TabAutoName.unnamedLabel ? place : "\(record.tabLabel) · \(place)"
     }
 }

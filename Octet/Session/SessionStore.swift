@@ -110,6 +110,10 @@ final class SessionStore: ObservableObject {
 
     let client: EngineClient
     let recovery: AgentRecoveryController
+    /// Tabs closed with something running, kept running to reopen.
+    let closedTabs: ClosedTabsController
+    /// Terminals journaled for when the session server dies.
+    let shellRecovery: ShellRecoveryController
     /// How full each agent's context is, refreshed from its session file.
     private(set) lazy var usageTracker = AgentUsageTracker(store: self)
     private let resolver = ProjectGrouping.CachedResolver()
@@ -120,6 +124,8 @@ final class SessionStore: ObservableObject {
     init(client: EngineClient) {
         self.client = client
         recovery = AgentRecoveryController(client: client)
+        closedTabs = ClosedTabsController(client: client)
+        shellRecovery = ShellRecoveryController(client: client)
         let defaults = UserDefaults.standard
         if let raw = defaults.dictionary(forKey: Self.stampsKey) as? [String: Double] {
             activity = WorkspaceActivity(stamps: raw.mapValues { Date(timeIntervalSince1970: $0) })
@@ -187,7 +193,10 @@ final class SessionStore: ObservableObject {
                 } catch {
                     Task { @MainActor [weak self] in
                         guard let self else { return }
-                        if self.isConnected { self.recovery.connectionLost() }
+                        if self.isConnected {
+                            self.recovery.connectionLost()
+                            self.shellRecovery.connectionLost()
+                        }
                         self.isConnected = false
                     }
                 }
@@ -452,8 +461,12 @@ final class SessionStore: ObservableObject {
                 case .success(let snapshot):
                     if process != self.focusedProcess { self.focusedProcess = process }
                     if focusedPaneId != self.focusedProcessPaneId { self.focusedProcessPaneId = focusedPaneId }
-                    self.recovery.observe(snapshot, inferred: inferred ?? [:])
-                    self.apply(snapshot, branches: branches ?? [:])
+                    // Closed tabs wait in a workspace nothing else sees.
+                    self.closedTabs.observe(snapshot)
+                    let visible = ClosedTabs.visible(snapshot)
+                    self.recovery.observe(visible, inferred: inferred ?? [:])
+                    self.shellRecovery.observe(visible)
+                    self.apply(visible, branches: branches ?? [:])
                 case .failure(let error):
                     self.lastError = String(describing: error)
                 }
@@ -848,7 +861,12 @@ final class SessionStore: ObservableObject {
             pendingFocusDeadline = Date().addingTimeInterval(1.5)
         }
         pendingClosedTabIds.insert(id)
-        perform("tab.close", ["tab_id": id], failure: "Couldn't close \(label)")
+        let tab = snapshot.tabs.first { $0.tabId == id }
+        closedTabs.close(panes: snapshot.panes.filter { $0.tabId == id },
+                         title: tab.map { TabAutoName.display(label: $0.label, number: $0.number) } ?? label,
+                         workspace: snapshot.workspaces.first { $0.workspaceId == tab?.workspaceId }) { [weak self] in
+            self?.perform("tab.close", ["tab_id": id], failure: "Couldn't close \(label)")
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             self?.pendingClosedTabIds.remove(id)
         }
@@ -1071,7 +1089,17 @@ final class SessionStore: ObservableObject {
 
     func closeFocusedPane() {
         guard let pane = focusedPaneId else { return }
-        perform("pane.close", ["pane_id": pane], failure: "Couldn't close pane")
+        closePane(pane) { [weak self] in
+            self?.perform("pane.close", ["pane_id": pane], failure: "Couldn't close pane")
+        }
+    }
+
+    /// Closes a pane; one running something waits among the closed tabs.
+    func closePane(_ paneId: String, close: @escaping @MainActor () -> Void) {
+        guard let pane = snapshot.panes.first(where: { $0.paneId == paneId }) else { return close() }
+        let tab = snapshot.tabs.first { $0.tabId == pane.tabId }
+        closedTabs.close(panes: [pane], title: tab.map { TabAutoName.display(label: $0.label, number: $0.number) } ?? "Pane",
+                         workspace: snapshot.workspaces.first { $0.workspaceId == pane.workspaceId }, closeRest: close)
     }
 
     func focusPane(_ direction: PaneDirection) {

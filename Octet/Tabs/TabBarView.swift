@@ -76,6 +76,8 @@ struct TabBarView: View {
             // The agents boards sit at the far right, for the tab in front.
             if showsAgentsButton { AgentsButton().padding(.trailing, 8) }
             if showsCodexButton { CodexAgentsButton().padding(.trailing, 8) }
+            TodoPanelButton(model: window.todos, isShowing: $ui.todoPanelVisible)
+                .padding(.trailing, 2)
             RuntimePanelButton(isShowing: $ui.runtimePanelVisible)
                 .padding(.trailing, 8)
         }

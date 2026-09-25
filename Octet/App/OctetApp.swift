@@ -190,6 +190,9 @@ struct OctetCommands: Commands {
                 if MainWindow.isKey { KeyWindow.act { $0.closeFocusedTab() } } else { NSApp.keyWindow?.performClose(nil) }
             }
             .keyboardShortcut(OctetShortcut.closeTab.keyboardShortcut)
+            Button(OctetShortcut.reopenClosedTab.title) { KeyWindow.act { $0.reopenClosedTab() } }
+                .keyboardShortcut(OctetShortcut.reopenClosedTab.keyboardShortcut)
+            RecentlyClosedMenu(closed: store.closedTabs)
         }
         CommandGroup(replacing: .saveItem) {
             Button(OctetShortcut.saveFile.title) { KeyWindow.act { $0.editor.save() } }
@@ -469,5 +472,25 @@ enum AgentBoardWindow {
     static func open() {
         NSApp.activate(ignoringOtherApps: true)
         opener?()
+    }
+}
+
+/// File › Recently Closed: every closed tab still running, newest first.
+private struct RecentlyClosedMenu: View {
+    @ObservedObject var closed: ClosedTabsController
+
+    var body: some View {
+        Menu("Recently Closed") {
+            ForEach(closed.records.reversed()) { record in
+                Button(record.command.map { "\(record.title) — \(ShellRecovery.short($0, limit: 40))" } ?? record.title) {
+                    KeyWindow.act { $0.reopenClosedTab(record) }
+                }
+            }
+            if !closed.records.isEmpty {
+                Divider()
+                Button("End All Closed Tabs") { closed.closeAll() }
+            }
+        }
+        .disabled(closed.records.isEmpty)
     }
 }

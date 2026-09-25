@@ -196,6 +196,14 @@ enum PaletteCatalog {
                 }
             }
         })
+        for record in store.closedTabs.records.reversed() {
+            items.append(action("reopen.\(record.terminalId)", "Reopen \(record.title)", "arrow.uturn.backward",
+                                shortcut: record.terminalId == store.closedTabs.records.last?.terminalId
+                                    ? OctetShortcut.reopenClosedTab.display : nil,
+                                keywords: ["closed", "undo", "restore", "recent"] + (record.command.map { [$0] } ?? [])) {
+                window.reopenClosedTab(record)
+            })
+        }
         items.append(action("recoverSessions", "Recover Agent Sessions…", "arrow.counterclockwise.circle",
                             keywords: ["resume", "restore", "claude", "codex", "crash", "restart", "history"]) {
             store.recovery.showHistory()

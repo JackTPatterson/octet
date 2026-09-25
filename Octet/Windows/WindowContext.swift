@@ -28,6 +28,8 @@ final class WindowContext: ObservableObject, Identifiable {
     let id: UUID
     let store: SessionStore
     let ui = UIState()
+    /// The plan of the agent in front, for the todo panel and its button.
+    let todos = TodoModel()
     let editor = EditorWorkspace()
     private(set) lazy var twin = TwinSession(window: self)
     weak var nsWindow: NSWindow?
@@ -324,7 +326,32 @@ final class WindowContext: ObservableObject, Identifiable {
     func closeFocusedPane() {
         guard steers else { return store.closeFocusedPane() }
         guard let pane = focusedPaneId else { return }
-        store.call("pane.close", ["pane_id": pane], failure: "Couldn't close pane") { _ in }
+        store.closePane(pane) { [store] in
+            store.call("pane.close", ["pane_id": pane], failure: "Couldn't close pane") { _ in }
+        }
+    }
+
+    /// Brings a closed tab back into this window, running as it was left:
+    /// `record`, else the one closed last.
+    func reopenClosedTab(_ record: ClosedTabRecord? = nil) {
+        let closed = store.closedTabs
+        guard let record = record ?? closed.records.last else {
+            ToastCenter.shared.info("No closed tabs to reopen",
+                                    detail: "A tab closed while something runs in it can be reopened for a while.")
+            return
+        }
+        guard let pane = closed.pane(for: record), let target = focusedWorkspace?.workspaceId else {
+            closed.forget(record)
+            ToastCenter.shared.info("\(record.title) has already ended")
+            return
+        }
+        closed.forget(record)
+        store.call("pane.move", ["pane_id": pane.paneId, "destination": ["type": "new_tab", "workspace_id": target], "focus": false],
+                   failure: "Couldn't reopen \(record.title)") { [weak self] created in
+            guard let self, let tab = created.tabId else { return }
+            self.focusTab(tab)
+            self.bringForward()
+        }
     }
 
     func closeFocusedTab() {

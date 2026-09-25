@@ -23,6 +23,23 @@ final class StatusBarModel: ObservableObject {
     @Published private(set) var version: String?
     /// What each plugin chip printed, by descriptor id; missing means hidden.
     @Published private(set) var pluginOutputs: [String: StatusItemOutput] = [:]
+    /// Remote Control, for a Claude Code session running in the pane: on,
+    /// and its claude.ai link.
+    @Published private(set) var remoteControlOn = false
+    @Published private(set) var remoteControlURL: URL?
+
+    /// The Claude session whose log is read for Remote Control, and how far.
+    private struct RemoteWatch {
+        let sessionId: String
+        let cwd: String
+        let pid: Int?
+        var path: String?
+        var offset: UInt64 = 0
+        var since: Date?
+        var log = RemoteControlLog()
+    }
+    private var remoteWatch: RemoteWatch?
+    private var readingRemote = false
 
     private var pane: String?
     private var ssh: SSHTarget?
@@ -85,9 +102,64 @@ final class StatusBarModel: ObservableObject {
     }
 
     private func tick() {
+        refreshRemoteControl()
         guard directory != nil else { return }
         refreshGit()
         refreshPlugins()
+    }
+
+    // MARK: - Remote Control
+
+    /// Follows the Claude Code session in the focused pane, if one is.
+    func watchRemoteControl(sessionId: String?, cwd: String?, claudePid: Int?) {
+        guard let sessionId, let cwd else {
+            remoteWatch = nil
+            remoteControlOn = false
+            remoteControlURL = nil
+            return
+        }
+        guard remoteWatch?.sessionId != sessionId || remoteWatch?.pid != claudePid else { return }
+        remoteWatch = RemoteWatch(sessionId: sessionId, cwd: cwd, pid: claudePid,
+                                  since: claudePid.flatMap(AgentRuntimeHandoff.processStart(pid:)))
+        remoteControlOn = false
+        remoteControlURL = nil
+        refreshRemoteControl()
+    }
+
+    /// Reads what the session log gained since last time.
+    private func refreshRemoteControl() {
+        guard var watch = remoteWatch, !readingRemote else { return }
+        readingRemote = true
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            if watch.path == nil {
+                watch.path = AgentConversation.findLog(sessionIds: [watch.sessionId], cwd: watch.cwd)
+            }
+            if let path = watch.path, let handle = FileHandle(forReadingAtPath: path) {
+                defer { try? handle.close() }
+                let end = (try? handle.seekToEnd()) ?? 0
+                if end < watch.offset { watch.offset = 0; watch.log = RemoteControlLog() }
+                try? handle.seek(toOffset: watch.offset)
+                let data = (try? handle.readToEnd()) ?? Data()
+                // Whole lines only; a line still being written waits.
+                if let last = data.lastIndex(of: 0x0A) {
+                    let complete = data[data.startIndex...last]
+                    for line in complete.split(separator: 0x0A) {
+                        watch.log.consume(String(decoding: line, as: UTF8.self), since: watch.since)
+                    }
+                    watch.offset += UInt64(complete.count)
+                }
+            }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.readingRemote = false
+                // The pane moved on meanwhile: this read is for another session.
+                guard self.remoteWatch?.sessionId == watch.sessionId, self.remoteWatch?.pid == watch.pid else { return }
+                self.remoteWatch = watch
+                if self.remoteControlOn != watch.log.active { self.remoteControlOn = watch.log.active }
+                let url = watch.log.active ? watch.log.url : nil
+                if self.remoteControlURL != url { self.remoteControlURL = url }
+            }
+        }
     }
 
     // MARK: - Repository

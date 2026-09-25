@@ -31,6 +31,7 @@ struct RootView: View {
     private var sidebarInset: CGFloat { ui.sidebarVisible ? ui.sidebarWidth + 1 : 0 }
     private var windowHeight: CGFloat { NSApp.keyWindow?.contentView?.bounds.height ?? 800 }
     private var runtimePanelWidth: CGFloat { ui.runtimeInspectorEntryID == nil ? 293 : 441 }
+    static let todoPanelWidth: CGFloat = 293
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -109,6 +110,16 @@ struct RootView: View {
         return store.snapshot.agents.first { $0.paneId == pane }
     }
 
+    /// The Claude Code session in the focused pane, for its Remote Control
+    /// chip: the session, where it runs, and its process.
+    private var focusedClaude: FocusedClaude? {
+        guard let agent = focusedAgent, AgentBrand.forAgent(agent.agent)?.id == "claude",
+              let sessionId = agent.sessionReference ?? agent.terminalId.flatMap({ store.recovery.sessionId(forTerminal: $0) }),
+              let cwd = agent.cwd ?? focusedPaneCwd else { return nil }
+        let pid = window.focusedProcess?.foreground.first { AgentBrand.forAgent(($0.name as NSString).lastPathComponent)?.id == "claude" }?.pid
+        return FocusedClaude(sessionId: sessionId, cwd: cwd, pid: pid)
+    }
+
     /// The machine the focused pane is logged into over SSH, if any.
     private var focusedSSH: SSHTarget? {
         window.focusedPaneId.flatMap { store.paneSSH[$0] }
@@ -165,6 +176,18 @@ struct RootView: View {
                     }
                     contentArea
                 }
+                ZStack(alignment: .leading) {
+                    Rectangle().fill(Theme.divider).frame(width: 1)
+                        .frame(maxHeight: .infinity, alignment: .leading)
+                    TodoPanel(model: window.todos, ui: ui)
+                        .frame(width: Self.todoPanelWidth - 1)
+                        .padding(.leading, 1)
+                        .offset(x: ui.todoPanelVisible ? 0 : Self.todoPanelWidth)
+                }
+                .frame(width: ui.todoPanelVisible ? Self.todoPanelWidth : 0, alignment: .leading)
+                .clipped()
+                .allowsHitTesting(ui.todoPanelVisible)
+                .accessibilityHidden(!ui.todoPanelVisible)
                 ZStack(alignment: .leading) {
                     Rectangle().fill(Theme.divider).frame(width: 1)
                         .frame(maxHeight: .infinity, alignment: .leading)
@@ -229,7 +252,7 @@ struct RootView: View {
                     twin: twin,
                     workspaceId: window.focusedWorkspace?.workspaceId
                 )
-                RecoveryOverlay(recovery: store.recovery)
+                RecoveryOverlay(recovery: store.recovery, shells: store.shellRecovery)
             }
             .id(settings.themeKey)
         }
@@ -238,6 +261,8 @@ struct RootView: View {
         .animation(motion.animation(.palette, .smooth(duration: 0.16)), value: ui.paletteVisible)
         .animation(motion.animation(.sidebar), value: ui.sidebarVisible)
         .animation(motion.animation(.sidebar), value: ui.runtimePanelVisible)
+        .animation(motion.animation(.sidebar), value: ui.todoPanelVisible)
+        .onAppear { window.todos.attach(window) }
         .animation(motion.animation(.sidebar), value: boardHere)
     }
 
@@ -498,8 +523,13 @@ struct RootView: View {
     }
 
     private func splitDropLayer(moving dragged: String, into showing: String) -> some View {
-        SplitDropLayer(layout: dropLayout, animation: motion.animation(.tabs, .smooth(duration: 0.15))) { target in
-            store.splitTab(dragged, into: showing, beside: target.paneId, edge: target.edge)
+        let fromElsewhere = store.snapshot.tabs.first { $0.tabId == dragged }?.workspaceId != window.focusedWorkspace?.workspaceId
+        return SplitDropLayer(layout: dropLayout, acceptsTab: fromElsewhere,
+                              animation: motion.animation(.tabs, .smooth(duration: 0.15))) { target in
+            guard let edge = target.edge else {
+                return WindowActions.moveTab(dragged, into: window, at: window.displayedTabs.count)
+            }
+            store.splitTab(dragged, into: showing, beside: target.paneId, edge: edge)
         }
     }
 
@@ -602,6 +632,9 @@ struct RootView: View {
                         .allowsHitTesting(false)
                 }
             }
+            .onChange(of: focusedClaude, initial: true) { _, claude in
+                statusBar.watchRemoteControl(sessionId: claude?.sessionId, cwd: claude?.cwd, claudePid: claude?.pid)
+            }
             .onChange(of: StatusBarFocus(pane: window.focusedPaneId, directory: focusedPaneCwd, ssh: focusedSSH), initial: true) { _, focus in
                 statusBar.show(pane: focus.pane, directory: focus.directory, ssh: focus.ssh, client: store.client)
             }
@@ -645,7 +678,13 @@ final class UIState: ObservableObject {
     @Published var sidebarVisible = UserDefaults.standard.object(forKey: "octet.sidebarVisible") as? Bool ?? true {
         didSet { UserDefaults.standard.set(sidebarVisible, forKey: "octet.sidebarVisible") }
     }
-    @Published var runtimePanelVisible = false
+    /// The right-hand panel shows one thing at a time: runtimes or todos.
+    @Published var runtimePanelVisible = false {
+        didSet { if runtimePanelVisible { todoPanelVisible = false } }
+    }
+    @Published var todoPanelVisible = false {
+        didSet { if todoPanelVisible { runtimePanelVisible = false } }
+    }
     /// Runtime identities already announced in this window. Views are rebuilt
     /// during tab switches, but old processes must not look newly created.
     var seenRuntimeEntryIDs: Set<String> = []
@@ -808,20 +847,23 @@ private struct TitleBar: View {
 /// Shows the recovery panel under the title bar while sessions are offered.
 private struct RecoveryOverlay: View {
     @ObservedObject var recovery: AgentRecoveryController
+    @ObservedObject var shells: ShellRecoveryController
     @ObservedObject private var motion = MotionPreferences.shared
+
+    private var isEmpty: Bool { recovery.offered.isEmpty && shells.offered.isEmpty }
 
     var body: some View {
         ZStack {
-            if !recovery.offered.isEmpty {
-                RecoveryPanel(recovery: recovery)
+            if !isEmpty {
+                RecoveryPanel(recovery: recovery, shells: shells)
                     .padding([.trailing, .bottom], 12)
                     .transition(motion.animates(.palette)
                         ? .opacity.combined(with: .move(edge: .bottom))
                         : .identity)
             }
         }
-        .animation(motion.animation(.palette, .smooth(duration: 0.18)), value: recovery.offered.isEmpty)
-        .onChange(of: recovery.offered.isEmpty) { _, empty in
+        .animation(motion.animation(.palette, .smooth(duration: 0.18)), value: isEmpty)
+        .onChange(of: isEmpty) { _, empty in
             DebugSnapshot.overlay("recovery", !empty)
         }
     }
@@ -896,4 +938,11 @@ private struct ReleaseStageChip: View {
             .help("Octet \(stage.fullVersion). Pre-release builds can change or break between updates.")
             .accessibilityLabel("Octet \(stage.name), version \(stage.fullVersion)")
     }
+}
+
+/// The Claude Code session in the focused pane, as the status bar follows it.
+private struct FocusedClaude: Equatable {
+    let sessionId: String
+    let cwd: String
+    let pid: Int?
 }

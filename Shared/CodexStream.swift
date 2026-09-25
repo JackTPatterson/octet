@@ -22,6 +22,9 @@ extension AgentConversation {
         case "turn/started":
             isRunning = true
             lastError = nil
+        case "turn/plan/updated":
+            // Codex's plan, for the todo panel.
+            if let plan = AgentTodos.fromPlan(params) { self.plan = plan }
         case "item/started", "item/completed":
             guard let item = params["item"] as? [String: Any] else { return }
             applyCodexItem(item)

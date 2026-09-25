@@ -1146,6 +1146,23 @@ final class ShellPromptTests: XCTestCase {
         XCTAssertTrue(ShellPrompt.isAtPrompt(info))
         XCTAssertNil(ShellPrompt.parse(["type": "ok"]))
     }
+
+    func testAProcessRetitledToItsVersionIsNamedByItsCommand() throws {
+        // Claude Code sets its process title to its version.
+        let payload: [String: Any] = [
+            "process_info": [
+                "shell_pid": 90935,
+                "foreground_processes": [
+                    ["pid": 5667, "name": "2.1.282", "argv0": "claude"],
+                    ["pid": 5788, "name": "uv", "argv0": "/Users/me/.local/bin/uv"],
+                ],
+            ],
+        ]
+        let info = try XCTUnwrap(ShellPrompt.parse(payload))
+        XCTAssertEqual(info.foreground.map(\.name), ["claude", "uv"])
+        XCTAssertEqual(ShellPrompt.processName("python3.12", argv0: "python"), "python3.12")
+        XCTAssertEqual(ShellPrompt.processName("2.1.282", argv0: nil), "2.1.282")
+    }
 }
 
 final class PromptLineTests: XCTestCase {
@@ -2546,6 +2563,22 @@ final class SplitDropTests: XCTestCase {
         XCTAssertNotNil(SplitDrop.target(at: CGPoint(x: 505, y: 250), in: wide, layout: split))
     }
 
+    func testThePaneMiddleSplitsNothing() {
+        XCTAssertNil(SplitDrop.target(at: CGPoint(x: 500, y: 250), in: view, layout: single))
+        // Just inside the edge band still splits.
+        XCTAssertEqual(SplitDrop.target(at: CGPoint(x: 800, y: 250), in: view, layout: single)?.edge, .right)
+    }
+
+    func testATabFromAnotherWindowJoinsAsATabInTheMiddle() {
+        let target = SplitDrop.target(at: CGPoint(x: 500, y: 250), in: view, layout: single, acceptsTab: true)
+        XCTAssertNotNil(target)
+        XCTAssertNil(target?.edge)
+        XCTAssertEqual(target?.title, "Move Here as Tab")
+        XCTAssertEqual(target?.highlight, CGRect(origin: .zero, size: view))
+        // Its edges still split.
+        XCTAssertEqual(SplitDrop.target(at: CGPoint(x: 500, y: 20), in: view, layout: single, acceptsTab: true)?.edge, .top)
+    }
+
     func testLeftAndTopAreSplitsThenSwaps() {
         XCTAssertEqual(SplitEdge.left.split, "right")
         XCTAssertTrue(SplitEdge.left.swaps)
@@ -3030,5 +3063,305 @@ final class TerminalLiveSearchTests: XCTestCase {
             throw EngineSocketError.server(code: "stale_content", message: "changed")
         })
         XCTAssertEqual(searches, 3)
+    }
+}
+
+final class ClosedTabsTests: XCTestCase {
+    private func workspace(_ id: String, _ label: String) -> EngineWorkspace {
+        EngineWorkspace(workspaceId: id, number: 1, label: label, focused: false, paneCount: 1, tabCount: 1,
+                        activeTabId: "\(id):t1", agentStatus: .idle, worktree: nil)
+    }
+
+    private func pane(_ workspace: String, terminal: String) -> EnginePane {
+        var pane = EnginePane(paneId: "\(workspace):p1", tabId: "\(workspace):t1", workspaceId: workspace, focused: false,
+                              cwd: "/repo", foregroundCwd: nil, agentStatus: .idle, terminalTitle: nil)
+        pane.terminalId = terminal
+        return pane
+    }
+
+    private var snapshot: EngineSnapshot {
+        EngineSnapshot(
+            workspaces: [workspace("w1", "repo"), workspace("w9", ClosedTabs.workspaceLabel)],
+            tabs: [EngineTab(tabId: "w1:t1", workspaceId: "w1", number: 1, label: "1", focused: true, paneCount: 1, agentStatus: .idle),
+                   EngineTab(tabId: "w9:t1", workspaceId: "w9", number: 1, label: "dev", focused: false, paneCount: 1, agentStatus: .idle)],
+            panes: [pane("w1", terminal: "term_a"), pane("w9", terminal: "term_b")],
+            agents: [], focusedWorkspaceId: "w9", focusedTabId: "w9:t1", focusedPaneId: "w9:p1"
+        )
+    }
+
+    private func record(_ terminal: String, closedAt: Date) -> ClosedTabRecord {
+        ClosedTabRecord(terminalId: terminal, title: "dev", workspaceId: "w1", workspaceLabel: "repo",
+                        cwd: "/repo", command: "npm run dev", closedAt: closedAt)
+    }
+
+    func testTheHoldingWorkspaceIsNeverShown() {
+        let visible = ClosedTabs.visible(snapshot)
+        XCTAssertEqual(visible.workspaces.map(\.workspaceId), ["w1"])
+        XCTAssertEqual(visible.tabs.map(\.tabId), ["w1:t1"])
+        XCTAssertEqual(visible.panes.map(\.paneId), ["w1:p1"])
+        XCTAssertNil(visible.focusedWorkspaceId)
+        XCTAssertNil(visible.focusedTabId)
+        XCTAssertNil(visible.focusedPaneId)
+    }
+
+    func testRecordsFollowWhatWaitsInTheHoldingWorkspace() {
+        let now = Date()
+        // term_a was reopened (it's back in w1), term_b still waits.
+        let kept = ClosedTabs.reconcile([record("term_a", closedAt: now), record("term_b", closedAt: now)], with: snapshot, now: now)
+        XCTAssertEqual(kept.map(\.terminalId), ["term_b"])
+        XCTAssertEqual(ClosedTabs.panes(for: kept, in: snapshot)["term_b"]?.paneId, "w9:p1")
+    }
+
+    func testAPaneWaitingWithoutARecordIsAdoptedSoItStillExpires() {
+        let now = Date()
+        let kept = ClosedTabs.reconcile([], with: snapshot, now: now)
+        XCTAssertEqual(kept.map(\.terminalId), ["term_b"])
+        XCTAssertEqual(kept.first?.closedAt, now)
+    }
+
+    func testClosedTabsExpireAfterTheGracePeriod() {
+        let now = Date()
+        let records = [record("old", closedAt: now.addingTimeInterval(-31 * 60)), record("new", closedAt: now.addingTimeInterval(-60))]
+        XCTAssertEqual(ClosedTabs.expired(records, keep: 30 * 60, now: now).map(\.terminalId), ["old"])
+    }
+}
+
+final class ShellRecoveryTests: XCTestCase {
+    private func info(_ processes: [[String: Any]], shell: Int = 100, group: Int? = nil) -> [String: Any] {
+        var info: [String: Any] = ["shell_pid": shell, "foreground_processes": processes]
+        if let group { info["foreground_process_group_id"] = group }
+        return ["process_info": info]
+    }
+
+    func testAShellAtItsPromptHasNoJob() {
+        XCTAssertNil(ShellRecovery.job(in: info([["pid": 100, "name": "zsh", "argv0": "-zsh"]])))
+        XCTAssertNil(ShellRecovery.job(in: ["type": "ok"]))
+    }
+
+    func testTheJobIsTheForegroundGroupsLeader() {
+        let job = ShellRecovery.job(in: info([
+            ["pid": 201, "name": "node", "argv0": "node", "cmdline": "node server.js"],
+            ["pid": 200, "name": "npm", "argv0": "npm", "cmdline": "npm run dev"],
+        ], group: 200))
+        XCTAssertEqual(job, ShellJob(command: "npm run dev", name: "npm"))
+    }
+
+    func testAVersionTitledProcessIsNamedByItsCommand() {
+        let job = ShellRecovery.job(in: info([["pid": 5667, "name": "2.1.282", "argv0": "claude", "cmdline": "claude"]]))
+        XCTAssertEqual(job?.name, "claude")
+    }
+
+    func testOnlyTerminalsThatWereRunningAtTheLastLookAreLost() {
+        let last = Date()
+        func record(_ terminal: String, seen: Date) -> ShellSessionRecord {
+            ShellSessionRecord(terminalId: terminal, workspaceLabel: "repo", tabLabel: "dev", cwd: "/repo",
+                               command: "npm run dev", firstSeen: seen, lastSeen: seen)
+        }
+        let records = [record("gone", seen: last), record("alive", seen: last), record("stale", seen: last.addingTimeInterval(-3600))]
+        let lost = ShellRecovery.lost(records, lastObserved: last, liveTerminals: ["alive"])
+        XCTAssertEqual(lost.map(\.terminalId), ["gone"])
+    }
+
+    func testARecordKeepsItsFirstSighting() {
+        let pane = { () -> EnginePane in
+            var pane = EnginePane(paneId: "w1:p1", tabId: "w1:t1", workspaceId: "w1", focused: false,
+                                  cwd: "/repo", foregroundCwd: nil, agentStatus: .idle, terminalTitle: nil)
+            pane.terminalId = "term_a"
+            return pane
+        }()
+        let first = Date(timeIntervalSince1970: 1000)
+        let earlier = ShellSessionRecord(terminalId: "term_a", workspaceLabel: "", tabLabel: "", cwd: "/repo",
+                                         command: "npm run dev", firstSeen: first, lastSeen: first)
+        let now = Date(timeIntervalSince1970: 2000)
+        let records = ShellRecovery.record([(pane, ShellJob(command: "npm run dev", name: "npm"))], in: .empty, into: [earlier], now: now)
+        XCTAssertEqual(records.first?.firstSeen, first)
+        XCTAssertEqual(records.first?.lastSeen, now)
+        // A terminal no longer busy drops out.
+        XCTAssertTrue(ShellRecovery.record([], in: .empty, into: records, now: now).isEmpty)
+    }
+
+    func testTheReopenedPanePrintsTheDumpAndLeavesAShell() throws {
+        let record = ShellSessionRecord(terminalId: "term_a", workspaceLabel: "repo", tabLabel: "dev", cwd: "/repo",
+                                        command: "echo 'hi'", firstSeen: Date(), lastSeen: Date())
+        let params = ShellRecovery.reopenRequest(record, dump: URL(fileURLWithPath: "/tmp/dumps/term_a.ansi"),
+                                                 shell: "/bin/zsh", workspaceId: "w1", tabId: nil)
+        let root = try XCTUnwrap(params["root"] as? [String: Any])
+        let command = try XCTUnwrap(root["command"] as? [String])
+        XCTAssertEqual(command.prefix(2), ["/bin/zsh", "-lc"])
+        XCTAssertTrue(command[2].hasPrefix("cat '/tmp/dumps/term_a.ansi'"))
+        XCTAssertTrue(command[2].hasSuffix("exec '/bin/zsh' -l"))
+        // The command is quoted, never run.
+        XCTAssertTrue(command[2].contains("'echo '\"'\"'hi'\"'\"''"))
+        XCTAssertEqual(root["cwd"] as? String, "/repo")
+        XCTAssertEqual(params["tab_label"] as? String, "dev")
+        XCTAssertEqual(params["workspace_id"] as? String, "w1")
+    }
+
+    func testShortCommandsDropThePathAndLength() {
+        XCTAssertEqual(ShellRecovery.short("/usr/local/bin/python -m app"), "python -m app")
+        XCTAssertEqual(ShellRecovery.short(String(repeating: "a", count: 60), limit: 10), "aaaaaaaaa…")
+    }
+}
+
+final class RemoteControlStreamTests: XCTestCase {
+    private func replay(_ text: String, uuid: String, synthetic: Bool = false) -> [String: Any] {
+        var event: [String: Any] = ["type": "user", "uuid": uuid, "isReplay": true, "parent_tool_use_id": NSNull(),
+                                    "message": ["role": "user", "content": text]]
+        if synthetic { event["isSynthetic"] = true }
+        return event
+    }
+
+    func testOctetsOwnEchoIsNotDrawnTwice() {
+        var conversation = AgentConversation()
+        conversation.appendUser("hello")
+        conversation.sentUserIds.insert("abc-123")
+        conversation.apply(replay("hello", uuid: "ABC-123"))
+        XCTAssertEqual(conversation.items.count, 1)
+        XCTAssertFalse(conversation.items[0].remote)
+    }
+
+    func testAMessageFromRemoteControlIsDrawnAndStartsATurn() {
+        var conversation = AgentConversation()
+        conversation.apply(replay("run the tests", uuid: "remote-1"))
+        XCTAssertEqual(conversation.items.count, 1)
+        XCTAssertEqual(conversation.items[0].kind, .user("run the tests"))
+        XCTAssertTrue(conversation.items[0].remote)
+        XCTAssertTrue(conversation.isRunning)
+        // Echoed again (a reconnect), it isn't drawn twice.
+        conversation.apply(replay("run the tests", uuid: "remote-1"))
+        XCTAssertEqual(conversation.items.count, 1)
+    }
+
+    func testSyntheticAndCommandEchoesAreSkipped() {
+        var conversation = AgentConversation()
+        conversation.apply(replay("continue", uuid: "s-1", synthetic: true))
+        conversation.apply(replay("<command-name>/model</command-name>", uuid: "c-1"))
+        XCTAssertTrue(conversation.items.isEmpty)
+    }
+
+    func testToolResultsStillAttachWhenNotAReplay() {
+        var conversation = AgentConversation()
+        conversation.items.append(AgentItem(id: "tool-1", kind: .tool(AgentToolCall(name: "Bash", summary: "ls", input: ""))))
+        conversation.apply(["type": "user", "message": ["role": "user", "content": [
+            ["type": "tool_result", "tool_use_id": "tool-1", "content": "file.txt"],
+        ]]])
+        guard case .tool(let call) = conversation.items[0].kind else { return XCTFail() }
+        XCTAssertEqual(call.result, "file.txt")
+    }
+}
+
+final class RemoteControlLogTests: XCTestCase {
+    private func command(_ at: String) -> String {
+        #"{"type":"system","subtype":"local_command","content":"<local-command-stdout></local-command-stdout>","commandRun":{"command":"remote-control","args":""},"timestamp":"\#(at)"}"#
+    }
+
+    private func bridge(_ at: String) -> String {
+        #"{"type":"system","subtype":"bridge_status","content":"/remote-control is active","url":"https://claude.ai/code/session_1","timestamp":"\#(at)"}"#
+    }
+
+    func testOnWhenConnectedAndOffWhenToggledAgain() {
+        var log = RemoteControlLog()
+        log.consume(command("2026-09-25T01:09:06.350Z"), since: nil)
+        XCTAssertFalse(log.active)
+        log.consume(bridge("2026-09-25T01:09:06.955Z"), since: nil)
+        XCTAssertTrue(log.active)
+        XCTAssertEqual(log.url?.absoluteString, "https://claude.ai/code/session_1")
+        log.consume(command("2026-09-25T02:00:00.000Z"), since: nil)
+        XCTAssertFalse(log.active)
+        // Turned on once more.
+        log.consume(command("2026-09-25T03:00:00.000Z"), since: nil)
+        log.consume(bridge("2026-09-25T03:00:01.000Z"), since: nil)
+        XCTAssertTrue(log.active)
+    }
+
+    func testAnEarlierRunOfAResumedSessionDoesntCount() {
+        var log = RemoteControlLog()
+        let started = ISO8601DateFormatter().date(from: "2026-09-25T05:00:00Z")
+        log.consume(bridge("2026-09-25T01:09:06.955Z"), since: started)
+        XCTAssertFalse(log.active)
+        log.consume(#"{"type":"user","message":{"content":"hi"}}"#, since: started)
+        XCTAssertFalse(log.active)
+    }
+}
+
+final class AgentTodosTests: XCTestCase {
+    func testStatusSpellingsFromEveryAgent() {
+        XCTAssertEqual(AgentTodo.Status("in_progress"), .inProgress)
+        XCTAssertEqual(AgentTodo.Status("inProgress"), .inProgress)
+        XCTAssertEqual(AgentTodo.Status("completed"), .completed)
+        XCTAssertEqual(AgentTodo.Status("pending"), .pending)
+        XCTAssertNil(AgentTodo.Status("deleted"))
+    }
+
+    func testTodoWriteAndPlanInputs() {
+        let todos = AgentTodos.fromTodoWrite(["todos": [
+            ["content": "Write tests", "status": "completed", "activeForm": "Writing tests"],
+            ["content": "Ship it", "status": "in_progress", "activeForm": "Shipping it"],
+        ]])
+        XCTAssertEqual(todos?.map(\.status), [.completed, .inProgress])
+        XCTAssertEqual(todos?.current?.shownText, "Shipping it")
+        let plan = AgentTodos.fromPlan(["plan": [["step": "Read the code", "status": "completed"], ["step": "Fix it", "status": "pending"]]])
+        XCTAssertEqual(plan?.map(\.text), ["Read the code", "Fix it"])
+        XCTAssertEqual(plan?.completedCount, 1)
+    }
+
+    private func tool(_ name: String, _ input: [String: Any], result: String? = nil) -> AgentItem {
+        let data = try! JSONSerialization.data(withJSONObject: input)
+        var call = AgentToolCall(name: name, summary: "", input: "", inputData: data)
+        call.result = result
+        return AgentItem(id: UUID().uuidString, kind: .tool(call))
+    }
+
+    func testClaudeTasksFoldFromTheirCalls() {
+        let items = [
+            tool("TaskCreate", ["subject": "Settings IA", "activeForm": "Building settings"], result: "Task #1 created successfully"),
+            tool("TaskCreate", ["subject": "Billing"], result: "Task #2 created successfully"),
+            tool("TaskUpdate", ["taskId": "1", "status": "completed"]),
+            tool("TaskUpdate", ["taskId": "2", "status": "in_progress"]),
+        ]
+        let todos = AgentTodos.latest(in: items)
+        XCTAssertEqual(todos?.map(\.id), ["1", "2"])
+        XCTAssertEqual(todos?.map(\.status), [.completed, .inProgress])
+        // A later whole list replaces it.
+        let replaced = AgentTodos.latest(in: items + [tool("TodoWrite", ["todos": [["content": "Only", "status": "pending"]]])])
+        XCTAssertEqual(replaced?.map(\.text), ["Only"])
+    }
+
+    func testClaudeTaskFilesInOrder() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        for (id, status) in [("10", "pending"), ("9", "in_progress"), ("8", "completed")] {
+            let task: [String: Any] = ["id": id, "subject": "Task \(id)", "activeForm": "Doing \(id)", "status": status]
+            try JSONSerialization.data(withJSONObject: task).write(to: directory.appendingPathComponent("\(id).json"))
+        }
+        let todos = try XCTUnwrap(AgentTodos.claudeTasks(in: directory))
+        XCTAssertEqual(todos.map(\.id), ["8", "9", "10"])
+        XCTAssertEqual(todos.current?.shownText, "Doing 9")
+        XCTAssertEqual(AgentTodos.claudeTasksDirectory(sessionId: "19C26C7A-9f8d", home: "/h").path, "/h/.claude/tasks/session-19c26c7a")
+    }
+
+    func testCodexRolloutPlan() {
+        let arguments = #"{\"plan\":[{\"step\":\"Inspect\",\"status\":\"completed\"},{\"step\":\"Patch\",\"status\":\"in_progress\"}]}"#
+        let line = #"{"type":"response_item","payload":{"type":"function_call","name":"update_plan","arguments":"\#(arguments)"}}"#
+        let plan = AgentTodos.codexPlan(fromRolloutLine: line)
+        XCTAssertEqual(plan?.map(\.text), ["Inspect", "Patch"])
+        XCTAssertEqual(plan?.current?.text, "Patch")
+    }
+
+    func testOpenCodeDatabase() throws {
+        let path = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".db").path
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let setup = Process()
+        setup.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+        setup.arguments = [path, """
+            CREATE TABLE todo (session_id text, content text, status text, priority text, position integer, time_created integer, time_updated integer);
+            INSERT INTO todo VALUES ('ses_1','Second','pending','high',1,0,0), ('ses_1','First','completed','high',0,0,0), ('ses_2','Other','pending','low',0,0,0);
+            """]
+        try setup.run()
+        setup.waitUntilExit()
+        let todos = AgentTodos.openCodeTodos(sessionId: "ses_1", database: path)
+        XCTAssertEqual(todos?.map(\.text), ["First", "Second"])
+        XCTAssertNil(AgentTodos.openCodeTodos(sessionId: "ses_none", database: path))
     }
 }
