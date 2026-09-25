@@ -224,8 +224,12 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   Remaining, and needing marks from the session server (Herdr has no
   OSC 133 in its API): copy the last command's output, exit status and
   duration per command, folding.
-- [ ] **32. Prompt queue (med).** Claude Code #50246 (245), #33323; Codex
-  #28864. Queue per tab, and "after agent X finishes".
+- [x] **32. Prompt queue (med).** Claude Code #50246 (245), #33323; Codex
+  #28864. Done: palette › Queue a Prompt for <agent> for each agent in the
+  workspace, including another tab's ("after agent X finishes"); sent when
+  that agent is idle or done, one per turn, in order; Queued Prompts lists
+  them to cancel. Checked end to end: held while working, delivered on
+  finishing. Not done: showing the queue on the tab or sidebar.
 - [ ] **33. Session title pinning and stable tab order (low-med).** Claude
   Code #2112 (182), Ghostty #3709. Manual names already stick; keep order
   and ⌘1–9 stable when notices arrive (cmux HN).

@@ -504,6 +504,7 @@ final class SessionStore: ObservableObject {
                     self.recovery.observe(visible, inferred: inferred ?? [:])
                     self.shellRecovery.observe(visible)
                     self.apply(visible, branches: branches ?? [:], locations: locations ?? [:])
+                    PromptQueueCenter.shared.observe(visible)
                 case .failure(let error):
                     self.lastError = String(describing: error)
                 }

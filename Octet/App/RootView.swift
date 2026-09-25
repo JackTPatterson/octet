@@ -352,6 +352,15 @@ struct RootView: View {
                     }
                 }
             }
+            // "queue:<text>" queues a prompt for the agent in the focused pane.
+            if let open = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], open.hasPrefix("queue:") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                    let pane = store.keyPaneId
+                    if let agent = store.snapshot.agents.first(where: { $0.paneId == pane }) {
+                        PromptQueueCenter.shared.add(String(open.dropFirst(6)), for: agent, name: "the agent", store: store)
+                    }
+                }
+            }
             // "broadcast" opens the broadcast prompt as ⌘⇧I does.
             if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "broadcast" {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 4) {

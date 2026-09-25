@@ -131,6 +131,8 @@ enum PaletteCatalog {
         if let item = checkpointItem(window: window) { items.append(item) }
         if let item = WorktreeCleanupActions.item(window: window) { items.append(item) }
 
+        items += queueItems(window: window)
+
         // Broadcast: the prompt's title names who receives it, so what's
         // about to be sent where is never a guess.
         for (scope, title, symbol) in [
@@ -441,6 +443,45 @@ enum PaletteCatalog {
             icon: .symbol("list.bullet.rectangle"),
             effect: logsEffect(store: store, pluginId: nil, title: "Plugin Logs")
         ))
+        return items
+    }
+
+    /// Queue a prompt for an agent in this workspace, sent when it finishes;
+    /// and the queue itself, to cancel from.
+    static func queueItems(window: WindowContext) -> [PaletteItem] {
+        let store = window.store
+        let snapshot = store.snapshot
+        let agents = snapshot.agents.filter {
+            $0.agent != nil && !$0.isSubagentViewer && $0.workspaceId == window.focusedWorkspace?.workspaceId
+        }
+        var items: [PaletteItem] = agents.map { agent in
+            let target = Broadcast.targets(.everywhere, in: snapshot, workspaceId: nil, tabId: nil)
+                .first { $0.paneId == agent.paneId }?.name ?? "the agent"
+            return PaletteItem(
+                id: "action.queue.\(agent.paneId)", kind: .action, title: "Queue a Prompt for \(target)…",
+                subtitle: agent.agentStatus == .working ? "Sent when this turn finishes" : "Sent now: it isn't working",
+                keywords: ["queue", "later", "after", "when done", "next", "prompt", "follow up"],
+                icon: .symbol("clock.arrow.circlepath"),
+                effect: .prompt(title: "When \(target) finishes", placeholder: "Prompt", initial: "") { text in
+                    PromptQueueCenter.shared.add(text, for: agent, name: target, store: store)
+                }
+            )
+        }
+        let queued = PromptQueueCenter.shared.queue.items
+        if !queued.isEmpty {
+            items.append(PaletteItem(
+                id: "action.queued", kind: .action, title: "Queued Prompts (\(queued.count))",
+                keywords: ["queue", "cancel", "waiting"], icon: .symbol("clock.arrow.circlepath"),
+                effect: .list(title: "Queued prompts") { deliver in
+                    deliver(queued.map { item in
+                        PaletteItem(id: "queued.\(item.id)", kind: .action, title: item.text,
+                                    subtitle: "Waiting since \(item.queuedAt.formatted(date: .omitted, time: .shortened)) · choose to cancel",
+                                    icon: .symbol("xmark"),
+                                    effect: .run { PromptQueueCenter.shared.cancel(item.id) })
+                    })
+                }
+            ))
+        }
         return items
     }
 
