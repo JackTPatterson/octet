@@ -497,6 +497,7 @@ final class SessionStore: ObservableObject {
                     // Closed tabs wait in a workspace nothing else sees.
                     self.closedTabs.observe(snapshot)
                     SleepGuard.shared.observe(snapshot)
+                    AccountProfiles.noteDirectories(snapshot)
                     let visible = ClosedTabs.visible(snapshot)
                     self.recovery.observe(visible, inferred: inferred ?? [:])
                     self.shellRecovery.observe(visible)

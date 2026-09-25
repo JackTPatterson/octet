@@ -78,12 +78,16 @@ extension AgentConversation {
             let expected = claudeLogPath(sessionId: id, cwd: cwd, home: home)
             if manager.fileExists(atPath: expected) { return expected }
         }
-        let projects = home + "/.claude/projects"
-        let folders = (try? manager.contentsOfDirectory(atPath: projects)) ?? []
-        for id in sessionIds {
-            for folder in folders {
-                let path = projects + "/" + folder + "/" + id + ".jsonl"
-                if manager.fileExists(atPath: path) { return path }
+        // Every account's projects, the one this folder uses first.
+        let homes = [AccountProfiles.claudeHome(forCwd: cwd, home: home)] + AccountProfiles.allClaudeHomes(home: home)
+        var seen = Set<String>()
+        for projects in homes.map({ $0 + "/projects" }) where seen.insert(projects).inserted {
+            let folders = (try? manager.contentsOfDirectory(atPath: projects)) ?? []
+            for id in sessionIds {
+                for folder in folders {
+                    let path = projects + "/" + folder + "/" + id + ".jsonl"
+                    if manager.fileExists(atPath: path) { return path }
+                }
             }
         }
         return nil

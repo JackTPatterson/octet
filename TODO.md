@@ -130,8 +130,14 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   best-liked feature. Live diff against the worktree's base, next/previous
   change, and cap huge diffs (Claude Squad froze on 1M+ lines).
 - [ ] **24. Multiple accounts per agent (high).** Claude Code #18435 (991),
-  #36151 (1023). Pick an account per workspace (`CLAUDE_CONFIG_DIR` /
-  `CODEX_HOME`) and split usage by account.
+  #36151 (1023). *Mostly done:* palette Add Claude/Codex Account (its own
+  config folder, then a tab to sign in), Use Account for This Project, and
+  Settings → Agents → Accounts. Every shell Octet opens in the project (its
+  worktrees too) and Octet's own conversations get `CLAUDE_CONFIG_DIR` /
+  `CODEX_HOME`; the twin, recovery and activity read transcripts from the
+  account's folder; an Account chip shows which is in use. Remaining: usage
+  and limits per account (the chip reads the default one), Codex's
+  app-server conversations, and shells the session server opens by itself.
 - [x] **45. Name the skill on a Skill tool row (med, small).** Done: the
   conversation view titles a skill call with the skill's name, its args as
   the line under it, and the twin writes `Skill(frontend-design)` as Claude

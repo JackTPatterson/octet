@@ -789,6 +789,26 @@ private struct AgentSettings: View {
                     }
             }
         }
+        SettingsGroup(title: "Accounts") {
+            SettingsRow(
+                title: "Agent accounts",
+                detail: "Sign in to Claude or Codex more than once, say for work and personal, and choose which account each project uses. Each account keeps its own sign-in, settings and history in its own folder. Add one, sign in, or switch a project from the command palette: Add Claude Account, Use Account for This Project."
+            ) {
+                EmptyView()
+            }
+            ForEach(settings.values.accountProfiles) { profile in
+                SettingsDivider()
+                let folders = settings.values.accountAssignments.filter { $0.profileId == profile.id }.map(\.folder)
+                SettingsRow(
+                    title: "\(AgentBrand.forAgent(profile.agent)?.displayName ?? profile.agent) · \(profile.name)",
+                    detail: profile.home + " · " + (folders.isEmpty ? "No projects yet"
+                        : "Used by " + folders.map { ($0 as NSString).abbreviatingWithTildeInPath }.joined(separator: ", "))
+                ) {
+                    Button("Remove") { AccountActions.remove(profile) }
+                        .help("Stop using this account. Its folder and sign-in stay on disk.")
+                }
+            }
+        }
         SettingsGroup(title: "Installed agents") {
             SettingsRow(
                 title: "Prompt for agent updates",

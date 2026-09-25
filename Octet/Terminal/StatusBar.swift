@@ -11,6 +11,8 @@ struct StatusBar: View {
     var openOnOctetUI: (EngineAgent) -> Void = { _ in }
     @ObservedObject private var plugins = OctetPluginHost.shared
     @ObservedObject private var motion = MotionPreferences.shared
+    /// Redraws the account chip when accounts change.
+    @ObservedObject private var settings = SettingsStore.shared
     @Environment(\.openURL) private var openURL
 
     static let height: CGFloat = 32
@@ -25,6 +27,14 @@ struct StatusBar: View {
         }
     }
 
+    /// "Claude · Work", for each agent whose account here isn't the default.
+    static func accountLabel(for directory: String?) -> String {
+        guard let directory else { return "" }
+        return AccountProfiles.inForce(for: directory)
+            .map { "\(AgentBrand.forAgent($0.agent)?.displayName ?? $0.agent) · \($0.name)" }
+            .joined(separator: ", ")
+    }
+
     /// Whether a chip has something to show; `chip(for:)` draws exactly these.
     static func draws(_ descriptor: StatusItemDescriptor, model: StatusBarModel, ssh: SSHTarget?, agent: EngineAgent?) -> Bool {
         switch descriptor.scope {
@@ -35,6 +45,7 @@ struct StatusBar: View {
         switch descriptor.id {
         case "builtin.ssh": return ssh != nil
         case "builtin.agent": return agent != nil
+        case "builtin.account": return !Self.accountLabel(for: model.directory).isEmpty
         case "builtin.remoteControl": return model.remoteControlOn
         case "builtin.runtime": return model.runtime != nil
         case "builtin.directory": return model.directory != nil
@@ -83,6 +94,14 @@ struct StatusBar: View {
             }
         case "builtin.agent":
             if let agent { agentChip(agent) }
+        case "builtin.account":
+            let label = Self.accountLabel(for: model.directory)
+            if !label.isEmpty {
+                StatusChip(help: "Agents started here sign in with this account. Palette › Use Account for This Project changes it.") {
+                    Image(systemName: "person.crop.circle").font(.system(size: 10, weight: .medium))
+                    Text(label).lineLimit(1)
+                }
+            }
         case "builtin.remoteControl":
             if model.remoteControlOn {
                 // Keyed like the SSH chip, so it sweeps again each time it's shown.

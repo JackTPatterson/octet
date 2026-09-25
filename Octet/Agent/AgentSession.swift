@@ -1147,6 +1147,7 @@ final class AgentSession: ObservableObject, Identifiable {
         process.executableURL = URL(fileURLWithPath: shell)
         process.arguments = ["-l", "-c", "exec \(shellQuote(claude)) \"$@\"", "claude"] + args
         process.currentDirectoryURL = URL(fileURLWithPath: cwd)
+        process.environment = Self.accountEnvironment(cwd: cwd)
         let input = Pipe(), output = Pipe(), errors = Pipe()
         process.standardInput = input
         process.standardOutput = output
@@ -1291,6 +1292,7 @@ final class AgentSession: ObservableObject, Identifiable {
         process.executableURL = URL(fileURLWithPath: shell)
         process.arguments = ["-l", "-c", command] + arguments
         process.currentDirectoryURL = URL(fileURLWithPath: cwd)
+        process.environment = Self.accountEnvironment(cwd: cwd)
         let input = Pipe(), output = Pipe(), errors = Pipe()
         process.standardInput = input
         process.standardOutput = output
@@ -1331,6 +1333,12 @@ final class AgentSession: ObservableObject, Identifiable {
         let command = AgentHosts.executables[agent] ?? agent
         return AgentDiscovery.locate(command: command,
                                      in: AgentDiscovery.searchDirectories(shellPath: nil)) ?? command
+    }
+
+    /// Octet's own environment, plus the account the folder uses, so a
+    /// conversation here signs in as the project's account.
+    nonisolated static func accountEnvironment(cwd: String) -> [String: String] {
+        ProcessInfo.processInfo.environment.merging(AccountProfiles.environment(for: cwd)) { _, account in account }
     }
 
     private func stopProcess() {

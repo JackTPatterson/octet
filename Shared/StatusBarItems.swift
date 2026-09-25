@@ -68,6 +68,8 @@ enum StatusBarItems {
               sample: "jack@pve", symbol: "network", enabledByDefault: true, scope: .any),
         .init(id: "builtin.agent", name: "Agent", summary: "The agent in this pane and whether it needs you",
               sample: "Claude Code working", enabledByDefault: true, scope: .any),
+        .init(id: "builtin.account", name: "Account", summary: "The agent account this folder uses, when it isn't the default",
+              sample: "Claude · Work", symbol: "person.crop.circle", enabledByDefault: true, scope: .local),
         .init(id: "builtin.remoteControl", name: "Remote Control",
               summary: "While the agent in this pane is open in claude.ai or the Claude app",
               sample: "Remote", enabledByDefault: true, scope: .any),

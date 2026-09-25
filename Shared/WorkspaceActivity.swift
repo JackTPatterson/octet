@@ -118,10 +118,11 @@ struct WorkspaceActivity: Equatable {
 
 /// Recovers a last-activity time from Claude Code's own transcripts.
 enum ClaudeTranscriptActivity {
-    /// `~/.claude/projects/<cwd with / and . as ->/`.
+    /// `~/.claude/projects/<cwd with / and . as ->/`, or the same under the
+    /// config folder of the Claude account `cwd` uses.
     static func projectDirectory(forCwd cwd: String, home: String = NSHomeDirectory()) -> String {
         let encoded = cwd.map { $0 == "/" || $0 == "." ? "-" : String($0) }.joined()
-        return home + "/.claude/projects/" + encoded
+        return AccountProfiles.claudeHome(forCwd: cwd, home: home) + "/projects/" + encoded
     }
 
     /// Timestamp of the newest message in the most recently modified

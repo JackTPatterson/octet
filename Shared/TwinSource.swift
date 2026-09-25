@@ -125,8 +125,10 @@ enum TwinSources {
     /// Folders agents keep sessions in, in the order they are worth trying.
     static func directories(for agent: String, home: String = NSHomeDirectory()) -> [String] {
         var paths: [String] = []
+        // Accounts' own config folders come after the default ones.
+        let accounts = AccountProfiles.configured.profiles.filter { $0.agent == agent }.map { $0.expandedHome(userHome: home) }
         for root in ["\(home)/.\(agent)", "\(home)/.config/\(agent)", "\(home)/Library/Application Support/\(agent)",
-                     "\(home)/.local/share/\(agent)"] {
+                     "\(home)/.local/share/\(agent)"] + accounts {
             paths += ["\(root)/sessions", "\(root)/projects", "\(root)/history", "\(root)/conversations", root]
         }
         return paths

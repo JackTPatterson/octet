@@ -203,7 +203,8 @@ enum AgentSessionFiles {
             guard let day = calendar.date(byAdding: .day, value: -dayOffset, to: now) else { continue }
             // Local-date folders, like Codex writes them.
             let parts = calendar.dateComponents([.year, .month, .day], from: day)
-            let directory = String(format: "%@/.codex/sessions/%04d/%02d/%02d", home, parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
+            let directory = String(format: "%@/sessions/%04d/%02d/%02d", AccountProfiles.codexHome(forCwd: cwd, home: home),
+                                   parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
             guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory) else { continue }
             for name in names where name.hasPrefix("rollout-") && name.hasSuffix(".jsonl") {
                 let path = directory + "/" + name
@@ -258,15 +259,18 @@ enum AgentSessionFiles {
     /// day folders it writes into.
     static func codexPath(forSession sessionId: String, now: Date = Date(), home: String = NSHomeDirectory()) -> String? {
         let calendar = Calendar(identifier: .gregorian)
-        for dayOffset in 0..<14 {
-            guard let day = calendar.date(byAdding: .day, value: -dayOffset, to: now) else { continue }
-            let parts = calendar.dateComponents([.year, .month, .day], from: day)
-            let directory = String(format: "%@/.codex/sessions/%04d/%02d/%02d", home,
-                                   parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
-            guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory) else { continue }
-            // The id is in the filename, so no file has to be opened.
-            if let match = names.first(where: { $0.contains(sessionId) && $0.hasSuffix(".jsonl") }) {
-                return directory + "/" + match
+        // Any account's sessions: the id alone doesn't say whose it is.
+        for codexHome in AccountProfiles.allCodexHomes(home: home) {
+            for dayOffset in 0..<14 {
+                guard let day = calendar.date(byAdding: .day, value: -dayOffset, to: now) else { continue }
+                let parts = calendar.dateComponents([.year, .month, .day], from: day)
+                let directory = String(format: "%@/sessions/%04d/%02d/%02d", codexHome,
+                                       parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
+                guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory) else { continue }
+                // The id is in the filename, so no file has to be opened.
+                if let match = names.first(where: { $0.contains(sessionId) && $0.hasSuffix(".jsonl") }) {
+                    return directory + "/" + match
+                }
             }
         }
         return nil

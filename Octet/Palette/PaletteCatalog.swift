@@ -123,6 +123,8 @@ enum PaletteCatalog {
             },
         ]
 
+        items += accountItems(window: window)
+
         // Broadcast: the prompt's title names who receives it, so what's
         // about to be sent where is never a guess.
         for (scope, title, symbol) in [
@@ -432,6 +434,65 @@ enum PaletteCatalog {
             keywords: ["output", "debug"],
             icon: .symbol("list.bullet.rectangle"),
             effect: logsEffect(store: store, pluginId: nil, title: "Plugin Logs")
+        ))
+        return items
+    }
+
+    /// Accounts: add one, sign in to one, choose the project's.
+    static func accountItems(window: WindowContext) -> [PaletteItem] {
+        var items: [PaletteItem] = []
+        let profiles = SettingsStore.shared.values.accountProfiles
+        for agent in AccountProfile.agents {
+            let brand = AgentBrand.forAgent(agent)?.displayName ?? agent
+            items.append(PaletteItem(
+                id: "action.addAccount.\(agent)", kind: .action, title: "Add \(brand) Account…",
+                subtitle: "Another sign-in, with its own settings and limits",
+                keywords: ["account", "login", "sign in", "profile", "work", "personal", "switch"],
+                icon: .symbol("tool.agent"),
+                effect: .prompt(title: "Add \(brand) Account", placeholder: "Name, e.g. Work", initial: "") { name in
+                    AccountActions.add(agent: agent, name: name, window: window)
+                }
+            ))
+        }
+        for profile in profiles {
+            let brand = AgentBrand.forAgent(profile.agent)?.displayName ?? profile.agent
+            items.append(PaletteItem(
+                id: "action.signIn.\(profile.id)", kind: .action, title: "Sign In to \(brand) · \(profile.name)",
+                subtitle: profile.home, keywords: ["account", "login", "auth"], icon: .symbol("tool.agent"),
+                effect: .run { AccountActions.signIn(profile, window: window) }
+            ))
+        }
+        guard !profiles.isEmpty, let folder = AccountActions.projectFolder(window: window) else { return items }
+        let inUse = AccountProfiles.inForce(for: folder)
+        let project = URL(fileURLWithPath: folder).lastPathComponent
+        items.append(PaletteItem(
+            id: "action.useAccount", kind: .action, title: "Use Account for This Project…",
+            subtitle: inUse.isEmpty ? "\(project) uses the default accounts"
+                : "\(project) uses " + inUse.map(\.name).joined(separator: ", "),
+            keywords: ["account", "switch", "profile", "login", "work", "personal"],
+            icon: .symbol("tool.agent"),
+            effect: .list(title: "Account for \(project)") { deliver in
+                var choices: [PaletteItem] = []
+                for agent in AccountProfile.agents {
+                    let own = profiles.filter { $0.agent == agent }
+                    guard !own.isEmpty else { continue }
+                    let brand = AgentBrand.forAgent(agent)?.displayName ?? agent
+                    let current = inUse.first { $0.agent == agent }
+                    choices.append(PaletteItem(
+                        id: "account.default.\(agent)", kind: .action, title: "\(brand) · Default",
+                        subtitle: current == nil ? "In use" : "Your usual sign-in", icon: .symbol("tool.agent"),
+                        effect: .run { AccountActions.use(nil, agent: agent, for: folder) }
+                    ))
+                    for profile in own {
+                        choices.append(PaletteItem(
+                            id: "account.\(profile.id)", kind: .action, title: "\(brand) · \(profile.name)",
+                            subtitle: current?.id == profile.id ? "In use" : profile.home, icon: .symbol("tool.agent"),
+                            effect: .run { AccountActions.use(profile, agent: agent, for: folder) }
+                        ))
+                    }
+                }
+                deliver(choices)
+            }
         ))
         return items
     }

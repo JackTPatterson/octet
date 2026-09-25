@@ -105,8 +105,13 @@ struct EngineClient {
         return base + "/sessions/\(session)/" + socket
     }
 
+    /// Rewrites a request before it's sent; the app uses it to give every
+    /// new shell the environment of the account its folder uses.
+    nonisolated(unsafe) static var prepareRequest: ((String, [String: Any]) -> [String: Any])?
+
     @discardableResult
     func call(_ method: String, _ params: [String: Any] = [:]) throws -> [String: Any] {
+        let params = Self.prepareRequest?(method, params) ?? params
         let connection = try EngineSocketConnection(path: socketPath)
         let id = "octet-\(UUID().uuidString.prefix(8))"
         try connection.send(["id": id, "method": method, "params": params])

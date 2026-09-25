@@ -793,7 +793,7 @@ extension AgentConversation {
     /// the working directory with every non-alphanumeric character as "-".
     static func claudeLogPath(sessionId: String, cwd: String, home: String = NSHomeDirectory()) -> String {
         let folder = String(cwd.map { $0.isLetter || $0.isNumber ? $0 : "-" })
-        return home + "/.claude/projects/" + folder + "/" + sessionId + ".jsonl"
+        return AccountProfiles.claudeHome(forCwd: cwd, home: home) + "/projects/" + folder + "/" + sessionId + ".jsonl"
     }
 }
 

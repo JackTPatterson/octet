@@ -76,6 +76,9 @@ struct OctetSettings: Codable, Equatable {
     var keepClosedTabsMinutes: Double = 30
     /// Keep the Mac from idle-sleeping while an agent is working.
     var keepAwake: KeepAwake.Mode = .pluggedIn
+    /// Extra agent sign-ins, and the project folders that use them.
+    var accountProfiles: [AccountProfile] = []
+    var accountAssignments: [AccountAssignment] = []
     /// Turn on Remote Control for every Claude conversation in Octet, so it
     /// can be continued from claude.ai or the Claude app.
     var claudeRemoteControl = false
@@ -266,6 +269,8 @@ struct OctetSettings: Codable, Equatable {
         offerRecovery = value("offerRecovery", defaults.offerRecovery)
         keepClosedTabsMinutes = value("keepClosedTabsMinutes", defaults.keepClosedTabsMinutes)
         keepAwake = value("keepAwake", defaults.keepAwake)
+        accountProfiles = value("accountProfiles", defaults.accountProfiles)
+        accountAssignments = value("accountAssignments", defaults.accountAssignments)
         claudeRemoteControl = value("claudeRemoteControl", defaults.claudeRemoteControl)
         agentOpening = value("agentOpening", defaults.agentOpening)
         subagentTabClosing = value("subagentTabClosing", defaults.subagentTabClosing)
@@ -490,6 +495,8 @@ final class SettingsStore: ObservableObject {
         } else {
             values = OctetSettings()
         }
+        AccountProfiles.configure(profiles: values.accountProfiles, assignments: values.accountAssignments)
+        EngineClient.prepareRequest = AccountProfiles.prepare
         #if DEBUG
         // Visual QA can exercise both palettes without rewriting the user's
         // saved appearance. This is intentionally unavailable in release
@@ -606,6 +613,9 @@ final class SettingsStore: ObservableObject {
 
     private func apply(from old: OctetSettings) {
         if values.keepAwake != old.keepAwake { SleepGuard.shared.update() }
+        if values.accountProfiles != old.accountProfiles || values.accountAssignments != old.accountAssignments {
+            AccountProfiles.configure(profiles: values.accountProfiles, assignments: values.accountAssignments)
+        }
         if values.importedTheme != old.importedTheme {
             TerminalTheme.imported = values.importedTheme
         }
