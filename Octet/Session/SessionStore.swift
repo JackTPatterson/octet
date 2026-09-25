@@ -181,6 +181,7 @@ final class SessionStore: ObservableObject {
     // MARK: - Lifecycle
 
     func start() {
+        PortsWatcher.shared.start(store: self)
         let client = self.client
         let thread = Thread { [weak self] in
             while self != nil {

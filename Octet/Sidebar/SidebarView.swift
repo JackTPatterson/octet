@@ -212,6 +212,8 @@ private struct WorkspaceCard: View {
     @State private var renaming = false
     @StateObject private var peek = HoverIntent()
     @ObservedObject private var conversations = AgentCenter.shared
+    @ObservedObject private var portsWatcher = PortsWatcher.shared
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         let snapshot = store.snapshot
@@ -293,6 +295,26 @@ private struct WorkspaceCard: View {
                     Text("\(workspace.tabCount) tabs")
                         .font(Theme.uiFont)
                         .foregroundStyle(Theme.textTertiary)
+                }
+            }
+            // Servers running here, e.g. each worktree's dev server.
+            let ports = portsWatcher.ports(inWorkspace: workspace.workspaceId, snapshot: store.snapshot)
+            if !ports.isEmpty {
+                HStack(spacing: 4) {
+                    Image(systemName: "network").font(.system(size: 9.5, weight: .medium))
+                        .foregroundStyle(Theme.textTertiary)
+                    ForEach(ports.prefix(4), id: \.self) { port in
+                        Button(":" + String(port)) {
+                            if let url = URL(string: "http://localhost:" + String(port)) { openURL(url) }
+                        }
+                        .buttonStyle(.plain)
+                        .font(Theme.monoFont)
+                        .foregroundStyle(Theme.textSecondary)
+                        .help("Open http://localhost:" + String(port))
+                    }
+                    if ports.count > 4 {
+                        Text("+\(ports.count - 4)").font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
+                    }
                 }
             }
             // Subagents that left for a worktree, repo or folder of their own.

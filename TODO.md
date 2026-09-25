@@ -119,8 +119,9 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   `scripts.setup`, in its pane with `OCTET_ROOT_PATH`, `OCTET_WORKTREE_PATH`
   and `OCTET_PORT` (a block of ten from 3100). Octet asks before a repo's
   script runs the first time. Setting: Advanced → Set up new worktrees.
-  Remaining: listening ports per workspace in the sidebar, and worktrees an
-  agent makes itself (`claude --worktree`) don't get set up.
+  Each workspace's listening ports show on its sidebar card, click to open
+  (`PortsWatcher`, every 5 s in front, 30 s behind). Remaining: worktrees
+  an agent makes itself (`claude --worktree`) don't get set up.
 - [x] **22. Checkpoints that rewind code, not just chat (high, large).** Codex
   #9203 (512), #11626 (225); Claude Code #353 (178), #87575 (/rewind misses
   Bash edits). Done: as an agent starts working, Octet snapshots its
