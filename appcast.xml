@@ -4,6 +4,16 @@
         <title>Octet</title>
         <item>
             <title>0.1.0</title>
+            <pubDate>Fri, 25 Sep 2026 12:36:35 -0400</pubDate>
+            <link>https://github.com/JackTPatterson/octet</link>
+            <sparkle:version>5</sparkle:version>
+            <sparkle:shortVersionString>0.1.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/JackTPatterson/octet/releases/download/v0.1.0-alpha.5/Octet-0.1.0-alpha.5-arm64.zip" length="22508820" type="application/octet-stream" sparkle:edSignature="weoS3X9tXK5NnWGxgA6BVtIzwEHQuTBmD19xG8TmzXqpJxikD+lJmXNiOKFKpxqjCLPHUFF/Kudu6+kZekIZCw=="/>
+        </item>
+        <item>
+            <title>0.1.0</title>
             <pubDate>Thu, 24 Sep 2026 13:40:37 -0400</pubDate>
             <link>https://github.com/JackTPatterson/octet</link>
             <sparkle:version>4</sparkle:version>
