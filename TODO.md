@@ -56,13 +56,13 @@ terminal view under `Octet/Terminal/`.
   ⌘PgUp and ⌘PgDn scroll to the top, the bottom, a page up and down.
   Checked with the Debug `find:` hook and real key events.
 
-- [ ] **13. The terminal context menu is effectively unreachable and thin
-  (med).** The session captures the mouse, so right-click is sent as a mouse
-  report; the menu only appears on Shift-right-click, offers only Copy and
-  Paste, and Copy doesn't see the session's own selection. Fix: open it on a
-  gesture that bypasses capture (⌃-click, or right-click before handing the
-  event on) with Paste, Split Right/Down, Zoom, Close Pane, Find, Clear, and
-  Copy of the session selection.
+- [x] **13. The terminal context menu is effectively unreachable and thin
+  (med).** Fixed: right-click and ⌃-click open Octet's menu (⇧ right-click
+  still goes to the program in the pane): Copy (with a selection), Paste,
+  Split Right/Down, Toggle Zoom, Close Pane, Find, Open Link or File on
+  Screen, Review Changes, Clear Screen. Built in the running app via the
+  Debug `menu` step; not opened by a real click. Copying the session
+  server's own copy-mode selection still goes through its copy mode.
 
 - [ ] **14. No automatic Secure Keyboard Entry at password prompts
   (low-med).** Password prompts inside panes (`sudo`, `ssh`) never trigger it.

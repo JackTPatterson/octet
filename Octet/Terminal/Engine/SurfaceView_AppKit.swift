@@ -574,6 +574,12 @@ extension TerminalEngine {
         }
 
         override func rightMouseDown(with event: NSEvent) {
+            // Octet: right-click opens Octet's menu; ⇧ right-click goes to
+            // the program in the pane, for the few that use it.
+            if !event.modifierFlags.contains(.shift) {
+                if let menu = OctetTerminalMenu.menu(for: self) { NSMenu.popUpContextMenu(menu, with: event, for: self) }
+                return
+            }
             guard let surface = self.surface else { return super.rightMouseDown(with: event) }
 
             let mods = TerminalEngine.engineMods(event.modifierFlags)
@@ -592,6 +598,7 @@ extension TerminalEngine {
         }
 
         override func rightMouseUp(with event: NSEvent) {
+            if !event.modifierFlags.contains(.shift) { return }
             guard let surface = self.surface else { return super.rightMouseUp(with: event) }
 
             let mods = TerminalEngine.engineMods(event.modifierFlags)
@@ -1176,35 +1183,16 @@ extension TerminalEngine {
                     return nil
                 }
 
-                // In this case, AppKit calls menu BEFORE calling any mouse events.
-                // If mouse capturing is enabled then we never show the context menu
-                // so that we can handle ctrl+left-click in the terminal app.
-                guard let surfaceModel else { return nil }
-                if surfaceModel.mouseCaptured {
-                    return nil
-                }
-
-                // If we return a non-nil menu then mouse events will never be
-                // processed by the core, so we need to manually send a right
-                // mouse down event.
-                surfaceModel.sendMouseButton(.init(
-                    action: .press,
-                    button: .right,
-                    mods: .init(nsFlags: event.modifierFlags)))
+                // Octet: ⌃-click is the Mac's right-click, and the session
+                // server always captures the mouse, so it opens Octet's menu
+                // rather than reaching the pane.
+                return OctetTerminalMenu.menu(for: self)
 
             default:
                 return nil
             }
 
-            let menu = NSMenu()
-
-            // If we have a selection, add copy
-            if let text = self.accessibilitySelectedText(), text.count > 0 {
-                menu.addItem(withTitle: "Copy", action: #selector(copy(_:)), keyEquivalent: "")
-            }
-            menu.addItem(withTitle: "Paste", action: #selector(paste(_:)), keyEquivalent: "")
-
-            return menu
+            return OctetTerminalMenu.menu(for: self)
         }
 
         // MARK: Menu Handlers

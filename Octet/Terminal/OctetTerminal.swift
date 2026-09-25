@@ -179,6 +179,14 @@ final class OctetTerminalRuntime {
                 }
                 continue
             }
+            // `menu` writes the right-click menu's items to the snapshot folder.
+            if token == "menu" {
+                let titles = OctetTerminalMenu.menu(for: surface)?.items.map { $0.isSeparatorItem ? "—" : $0.title } ?? []
+                if let dir = ProcessInfo.processInfo.environment["OCTET_SNAPSHOT_DIR"] {
+                    try? titles.joined(separator: "\n").write(toFile: dir + "/menu.txt", atomically: true, encoding: .utf8)
+                }
+                continue
+            }
             // `confirm-paste` presses Paste on a paste preview.
             if token == "confirm-paste" {
                 if let store = OctetKeyHook.store { PastePreviewCenter.shared.send(store: store) }
