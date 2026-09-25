@@ -124,6 +124,7 @@ enum PaletteCatalog {
         ]
 
         items += accountItems(window: window)
+        if let item = checkpointItem(window: window) { items.append(item) }
 
         // Broadcast: the prompt's title names who receives it, so what's
         // about to be sent where is never a guess.
@@ -436,6 +437,39 @@ enum PaletteCatalog {
             effect: logsEffect(store: store, pluginId: nil, title: "Plugin Logs")
         ))
         return items
+    }
+
+    /// Restore a Checkpoint: the focused pane's working tree as it was
+    /// before one of the agent turns in it.
+    static func checkpointItem(window: WindowContext) -> PaletteItem? {
+        let snapshot = window.store.snapshot
+        guard let directory = window.focusedPaneId.flatMap({ snapshot.workingDirectory(ofPane: $0) })
+                ?? window.focusedWorkspace.flatMap({ snapshot.directory(ofWorkspace: $0.workspaceId) }) else { return nil }
+        let project = URL(fileURLWithPath: directory).lastPathComponent
+        return PaletteItem(
+            id: "action.restoreCheckpoint", kind: .action, title: "Restore a Checkpoint…",
+            subtitle: "Undo agent turns in \(project)",
+            keywords: ["undo", "rewind", "revert", "snapshot", "checkpoint", "rollback", "turn"],
+            icon: .symbol("arrow.uturn.backward"),
+            effect: .list(title: "Checkpoints in \(project)") { deliver in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let checkpoints = Checkpoints.list(in: directory)
+                    let changes = Checkpoints.changes(since: checkpoints, in: directory)
+                    let items = checkpoints.map { checkpoint in
+                        let changed = changes[checkpoint.ref] ?? []
+                        return PaletteItem(
+                            id: "checkpoint.\(checkpoint.ref)", kind: .action,
+                            title: "\(checkpoint.date.formatted(date: .abbreviated, time: .shortened)) · \(checkpoint.label)",
+                            subtitle: changed.isEmpty ? "Same as now"
+                                : "\(changed.count) \(changed.count == 1 ? "file differs" : "files differ") from now",
+                            icon: .symbol("arrow.uturn.backward"),
+                            effect: .run { CheckpointActions.confirmRestore(checkpoint, changed: changed, in: directory) }
+                        )
+                    }
+                    DispatchQueue.main.async { deliver(items) }
+                }
+            }
+        )
     }
 
     /// Accounts: add one, sign in to one, choose the project's.

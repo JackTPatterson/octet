@@ -121,10 +121,16 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   script runs the first time. Setting: Advanced → Set up new worktrees.
   Remaining: listening ports per workspace in the sidebar, and worktrees an
   agent makes itself (`claude --worktree`) don't get set up.
-- [ ] **22. Checkpoints that rewind code, not just chat (high, large).** Codex
+- [x] **22. Checkpoints that rewind code, not just chat (high, large).** Codex
   #9203 (512), #11626 (225); Claude Code #353 (178), #87575 (/rewind misses
-  Bash edits). Snapshot the worktree per agent turn (a hidden ref), restore
-  from the twin.
+  Bash edits). Done: as an agent starts working, Octet snapshots its
+  worktree (tracked and untracked, not ignored) through a throwaway index
+  into `refs/octet/checkpoints/<worktree>/…`, the last 50 kept; HEAD, the
+  index and the stash are untouched. Palette › Restore a Checkpoint lists
+  them with how many files differ, restores after asking (removing files
+  made since), and offers Undo. About 0.25 s on a 16k-file repo. Remaining:
+  a restore button on the twin's turns, and the conversation rewinding with
+  the files.
 - [ ] **23. Diff review with line comments sent to the agent (high, large).**
   Claude Code #33932 (276), #23626 (141, pick the base branch); Conductor's
   best-liked feature. Live diff against the worktree's base, next/previous

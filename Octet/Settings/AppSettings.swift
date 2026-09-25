@@ -76,6 +76,8 @@ struct OctetSettings: Codable, Equatable {
     var keepClosedTabsMinutes: Double = 30
     /// Keep the Mac from idle-sleeping while an agent is working.
     var keepAwake: KeepAwake.Mode = .pluggedIn
+    /// Snapshot an agent's working tree as it starts each turn, to undo it.
+    var checkpointTurns = true
     /// Extra agent sign-ins, and the project folders that use them.
     var accountProfiles: [AccountProfile] = []
     var accountAssignments: [AccountAssignment] = []
@@ -269,6 +271,7 @@ struct OctetSettings: Codable, Equatable {
         offerRecovery = value("offerRecovery", defaults.offerRecovery)
         keepClosedTabsMinutes = value("keepClosedTabsMinutes", defaults.keepClosedTabsMinutes)
         keepAwake = value("keepAwake", defaults.keepAwake)
+        checkpointTurns = value("checkpointTurns", defaults.checkpointTurns)
         accountProfiles = value("accountProfiles", defaults.accountProfiles)
         accountAssignments = value("accountAssignments", defaults.accountAssignments)
         claudeRemoteControl = value("claudeRemoteControl", defaults.claudeRemoteControl)

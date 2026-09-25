@@ -673,6 +673,13 @@ private struct AgentSettings: View {
             }
             SettingsDivider()
             SettingsRow(
+                title: "Checkpoint before each agent turn",
+                detail: "As an agent starts working, Octet snapshots the project's files (tracked and untracked, not ignored) so the turn can be undone with Restore a Checkpoint in the command palette, including edits made through the shell. Snapshots are kept in the repository under refs/octet/checkpoints, the last 50 per worktree. Your branch, index and stash aren't touched."
+            ) {
+                Toggle("Checkpoint before each agent turn", isOn: $settings.values.checkpointTurns).labelsHidden().toggleStyle(.switch)
+            }
+            SettingsDivider()
+            SettingsRow(
                 title: "Keep closed tabs running",
                 detail: "Close a tab or pane while something runs in it and it keeps running out of sight for this long. ⌘⇧T, or Reopen on the notice, brings it back as it was."
             ) {

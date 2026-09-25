@@ -105,6 +105,7 @@ enum SettingsSearchIndex {
         .init(.agents, "Remote Control for Claude conversations", ["remote", "control", "phone", "mobile", "claude.ai", "app"]),
         .init(.agents, "Agent accounts", ["account", "login", "profile", "work", "personal", "switch", "sign in", "claude_config_dir", "codex_home"]),
         .init(.agents, "Keep the Mac awake while agents work", ["sleep", "caffeinate", "awake", "battery", "power", "amphetamine"]),
+        .init(.agents, "Checkpoint before each agent turn", ["undo", "rewind", "restore", "snapshot", "checkpoint", "revert", "git"]),
         .init(.agents, "Keep closed tabs running", ["reopen", "closed", "undo", "accident", "tab", "recover"]),
         .init(.agents, "When you run an agent in a terminal",
               ["claude", "codex", "opencode", "open", "native", "conversation", "chat", "terminal", "interface", "launch"]),
