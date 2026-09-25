@@ -73,10 +73,10 @@ terminal view under `Octet/Terminal/`.
   the bell while inactive. Unverified whether the session forwards BEL and
   OSC 9 to the host.
 
-- [ ] **16. No URL hover preview (low).** The surface publishes `hoverUrl`
-  but nothing shows it. Fix: a bottom-left overlay in `RootView` bound to it.
-  ⌘-click on links already works.
-
+- [x] **16. No URL hover preview (low).** Done: the link under the pointer
+  shows at the terminal's bottom left with "⌘-click to open"
+  (`HoverLinkPreview`, fed by the renderer's mouse-over-link action). Not
+  exercised with a real pointer.
 - [ ] **17. The prompt line has no mouse integration (low).** Keys Octet
   consumes never reach the renderer, so hide-mouse-while-typing never fires
   on the prompt line, and the overlay ignores clicks, so a click can't move

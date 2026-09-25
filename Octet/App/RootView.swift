@@ -506,6 +506,7 @@ struct RootView: View {
                     }
                 }
                 .overlay(alignment: .top) { BroadcastBanner(mode: BroadcastMode.shared, tabId: window.displayedFocusedTabId) }
+                .overlay(alignment: .bottomLeading) { HoverLinkPreview() }
                 .animation(motion.animation(.tabs, .smooth(duration: 0.2)), value: splash.tabId)
                 // Full size even while empty, so the clip is a
                 // fixed window the board slides through rather than

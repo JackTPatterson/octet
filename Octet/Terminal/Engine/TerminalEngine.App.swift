@@ -352,10 +352,13 @@ extension TerminalEngine {
                 let v = action.action.mouse_over_link
                 guard v.len > 0, let url = v.url else {
                     surfaceView.hoverUrl = nil
+                    DispatchQueue.main.async { HoverLink.shared.url = nil }
                     return true
                 }
                 let buffer = Data(bytes: url, count: v.len)
                 surfaceView.hoverUrl = String(data: buffer, encoding: .utf8)
+                let link = surfaceView.hoverUrl
+                DispatchQueue.main.async { HoverLink.shared.url = link }
 
             case GHOSTTY_ACTION_CELL_SIZE:
                 guard let surfaceView = surfaceView(from: target) else { return false }
@@ -375,6 +378,15 @@ extension TerminalEngine {
 
             case GHOSTTY_ACTION_OPEN_URL:
                 return openURL(action.action.open_url)
+
+            case GHOSTTY_ACTION_RING_BELL:
+                DispatchQueue.main.async { TerminalAttention.bell() }
+
+            case GHOSTTY_ACTION_DESKTOP_NOTIFICATION:
+                let n = action.action.desktop_notification
+                let title = n.title.flatMap { String(cString: $0, encoding: .utf8) } ?? ""
+                let body = n.body.flatMap { String(cString: $0, encoding: .utf8) } ?? ""
+                DispatchQueue.main.async { TerminalAttention.notify(title: title, body: body) }
 
             case GHOSTTY_ACTION_SHOW_CHILD_EXITED:
                 // The child (the session server) exited. Instead of the stock
