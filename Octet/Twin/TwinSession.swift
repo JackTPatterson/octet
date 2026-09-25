@@ -193,11 +193,9 @@ final class TwinSession: ObservableObject {
         timer = nil
     }
 
-    /// The twin also watches the focused terminal while hidden when quick
-    /// answers are enabled, so a prompt can slide out of the window corner.
-    private var shouldWatch: Bool {
-        isVisible || (SettingsStore.shared.values.agentQuickAnswers && focusedAgent?.agentStatus == .blocked)
-    }
+    /// Only while shown: the terminal it follows is the tab in front, which
+    /// draws its own questions, so there is nothing to raise while hidden.
+    private var shouldWatch: Bool { isVisible }
 
     private func tick() {
         guard shouldWatch else {

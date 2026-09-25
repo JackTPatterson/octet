@@ -17,7 +17,7 @@ struct TwinView: View {
         VStack(spacing: 0) {
             header
             transcript
-            if !settings.values.agentQuickAnswers, let approval = twin.approval {
+            if let approval = twin.approval {
                 TwinApprovalBar(approval: approval) { twin.answer($0) }
                     .padding(.horizontal, 16)
                     .padding(.bottom, 4)

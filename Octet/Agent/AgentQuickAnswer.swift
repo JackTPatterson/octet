@@ -2,10 +2,13 @@ import SwiftUI
 
 /// The small bottom-corner surface used when an agent pauses for the person.
 /// It uses the conversation's real pending request, so answering here clears
-/// the full card and resumes the same process.
+/// the full card and resumes the same process. Only for conversations out of
+/// sight: the one in front, or a terminal agent's tab, already shows its own.
 struct AgentQuickAnswerHost: View {
     @ObservedObject var center: AgentCenter
-    @ObservedObject var twin: TwinSession
+    /// Terminal agents asking in other tabs.
+    @ObservedObject var terminal: TerminalQuestionWatcher
+    let frontTabId: String?
     let workspaceId: String?
     @ObservedObject private var settings = SettingsStore.shared
     @ObservedObject private var motion = MotionPreferences.shared
@@ -21,22 +24,24 @@ struct AgentQuickAnswerHost: View {
 
     private var requestId: String? {
         guard settings.values.agentQuickAnswers else { return nil }
-        if let session = localSession ?? backgroundSession {
-            return session.pendingPermission?.id ?? session.pendingQuestion?.id
-        }
-        return twin.approval.map { approval in
-            "twin|\(approval.question)|\(approval.options.map(\.id).joined(separator: ","))"
-        }
+        let session = localSession ?? backgroundSession
+        return session?.pendingPermission?.id ?? session?.pendingQuestion?.id ?? terminalQuestion?.id
+    }
+
+    /// Checked against the tab in front here too, so switching to the tab
+    /// clears the corner at once rather than on the watcher's next pass.
+    private var terminalQuestion: TerminalQuestionWatcher.Pending? {
+        terminal.pending.flatMap { $0.tabId == frontTabId ? nil : $0 }
     }
 
     var body: some View {
         Group {
             if settings.values.agentQuickAnswers, let session = localSession {
                 AgentSessionQuickAnswer(session: session, isBackground: false)
-            } else if settings.values.agentQuickAnswers, let approval = twin.approval {
-                TwinQuickAnswer(twin: twin, approval: approval)
             } else if settings.values.agentQuickAnswers, let session = backgroundSession {
                 AgentSessionQuickAnswer(session: session, isBackground: true)
+            } else if settings.values.agentQuickAnswers, let question = terminalQuestion {
+                TerminalQuickAnswer(question: question) { terminal.answer($0, to: question) }
             }
         }
         .id(requestId)
@@ -54,6 +59,34 @@ struct AgentQuickAnswerHost: View {
     }
 }
 
+/// A terminal agent's on-screen question, answered by typing the choice
+/// into its pane.
+private struct TerminalQuickAnswer: View {
+    let question: TerminalQuestionWatcher.Pending
+    let choose: (TwinApproval.Option) -> Void
+
+    var body: some View {
+        QuickAnswerShell(
+            agent: question.agent ?? "agent",
+            title: AgentBrand.forAgent(question.agent)?.displayName ?? "Agent",
+            context: question.place
+        ) {
+            VStack(alignment: .leading, spacing: 10) {
+                QuickQuestionText(question.approval.question, detail: question.approval.detail)
+                QuickChoiceFlow {
+                    ForEach(question.approval.options) { option in
+                        OctetButton(
+                            title: option.label,
+                            kind: option.isAffirmative ? .primary : .secondary,
+                            compact: true
+                        ) { choose(option) }
+                    }
+                }
+            }
+        }
+    }
+}
+
 private struct AgentSessionQuickAnswer: View {
     @ObservedObject var session: AgentSession
     let isBackground: Bool
@@ -68,31 +101,6 @@ private struct AgentSessionQuickAnswer: View {
                 QuickPermission(session: session, request: permission)
             } else if let question = session.pendingQuestion {
                 QuickQuestion(session: session, question: question)
-            }
-        }
-    }
-}
-
-private struct TwinQuickAnswer: View {
-    @ObservedObject var twin: TwinSession
-    let approval: TwinApproval
-
-    var body: some View {
-        QuickAnswerShell(
-            agent: twin.focusedAgent?.agent ?? "agent",
-            title: AgentBrand.forAgent(twin.focusedAgent?.agent)?.displayName ?? "Agent"
-        ) {
-            VStack(alignment: .leading, spacing: 10) {
-                QuickQuestionText(approval.question, detail: approval.detail)
-                QuickChoiceFlow {
-                    ForEach(approval.options) { option in
-                        OctetButton(
-                            title: option.label,
-                            kind: option.isAffirmative ? .primary : .secondary,
-                            compact: true
-                        ) { twin.answer(option) }
-                    }
-                }
             }
         }
     }

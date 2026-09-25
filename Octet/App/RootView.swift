@@ -249,7 +249,8 @@ struct RootView: View {
                 ToastStack(center: ToastCenter.shared)
                 AgentQuickAnswerHost(
                     center: agents,
-                    twin: twin,
+                    terminal: window.terminalQuestions,
+                    frontTabId: window.displayedFocusedTabId,
                     workspaceId: window.focusedWorkspace?.workspaceId
                 )
                 RecoveryOverlay(recovery: store.recovery, shells: store.shellRecovery)
@@ -262,7 +263,10 @@ struct RootView: View {
         .animation(motion.animation(.sidebar), value: ui.sidebarVisible)
         .animation(motion.animation(.sidebar), value: ui.runtimePanelVisible)
         .animation(motion.animation(.sidebar), value: ui.todoPanelVisible)
-        .onAppear { window.todos.attach(window) }
+        .onAppear {
+            window.todos.attach(window)
+            window.terminalQuestions.attach(window)
+        }
         .animation(motion.animation(.sidebar), value: boardHere)
     }
 

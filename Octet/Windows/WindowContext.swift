@@ -30,6 +30,7 @@ final class WindowContext: ObservableObject, Identifiable {
     let ui = UIState()
     /// The plan of the agent in front, for the todo panel and its button.
     let todos = TodoModel()
+    let terminalQuestions = TerminalQuestionWatcher()
     let editor = EditorWorkspace()
     private(set) lazy var twin = TwinSession(window: self)
     weak var nsWindow: NSWindow?
