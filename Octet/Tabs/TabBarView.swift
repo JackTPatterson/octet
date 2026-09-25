@@ -76,10 +76,15 @@ struct TabBarView: View {
             // The agents boards sit at the far right, for the tab in front.
             if showsAgentsButton { AgentsButton().padding(.trailing, 8) }
             if showsCodexButton { CodexAgentsButton().padding(.trailing, 8) }
-            TodoPanelButton(model: window.todos, isShowing: $ui.todoPanelVisible)
-                .padding(.trailing, 2)
-            RuntimePanelButton(isShowing: $ui.runtimePanelVisible)
-                .padding(.trailing, 8)
+            // Each panel's button shows only when it has something to show,
+            // or while its panel is open so it can still be closed.
+            HStack(spacing: 2) {
+                TodoPanelButton(model: window.todos, isShowing: $ui.todoPanelVisible)
+                if ui.runtimeHasEntries || ui.runtimePanelVisible {
+                    RuntimePanelButton(isShowing: $ui.runtimePanelVisible)
+                }
+            }
+            .padding(.trailing, 8)
         }
         .frame(height: Theme.tabBarHeight)
         // The rest of the strip takes a tab too, onto the end, as a
@@ -221,7 +226,13 @@ private struct TabItem: View {
                 AgentStateGlyph(status: agent.agentStatus, size: 9)
                     .frame(width: 10)
             }
-            if let brand {
+            if let brand, agent?.isSubagentViewer == true {
+                // A subagent's tab: the agent icon in its vendor's colour,
+                // so it reads as a helper rather than another session.
+                OctetIcon("tool.agent", size: 11)
+                    .foregroundStyle(brand.hueHex.map { Color(hex: $0) } ?? Theme.textPrimary)
+                    .help("\(brand.displayName) subagent")
+            } else if let brand {
                 AgentLogo(brand: brand, size: 11)
             } else if let runtime = runtime {
                 RuntimeIcon(badge: runtime, size: 11)
@@ -307,7 +318,7 @@ private struct TabItem: View {
         }
         .help(index < 9 ? "\(handoffTitle ?? title)  ⌘\(index + 1)" : handoffTitle ?? title)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(agent.map { "\(title), \(brand?.displayName ?? "agent") \(stateLabel($0.agentStatus))" } ?? title)
+        .accessibilityLabel(agent.map { "\(title), \(brand?.displayName ?? "agent")\($0.isSubagentViewer ? " subagent" : "") \(stateLabel($0.agentStatus))" } ?? title)
         .accessibilityAddTraits(isActive ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { window.focusTab(tab.tabId) }
         .accessibilityAction(named: "Rename") { renaming = true }

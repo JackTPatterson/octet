@@ -113,6 +113,14 @@ struct EngineAgent: Codable, Equatable, Identifiable {
 
     var sessionReference: String? { agentSession?.value }
 
+    /// Presentation tokens reported for the pane. Octet's subagent viewer
+    /// tags its own pane here, since the engine keeps no other trace of who
+    /// reported an agent.
+    var tokens: [String: String?]? = nil
+
+    /// A tab watching a Claude subagent, not a Claude session of its own.
+    var isSubagentViewer: Bool { tokens?[PaneAgentReporter.roleToken] == PaneAgentReporter.subagentRole }
+
     /// The folder the agent is working in now, which may not be the one it
     /// started in.
     var effectiveCwd: String? { foregroundCwd ?? cwd }
@@ -126,7 +134,7 @@ struct EngineAgent: Codable, Equatable, Identifiable {
         case paneId = "pane_id", tabId = "tab_id", workspaceId = "workspace_id"
         case agent, name, displayAgent = "display_agent", agentStatus = "agent_status"
         case stateChangeSeq = "state_change_seq", cwd, foregroundCwd = "foreground_cwd"
-        case terminalId = "terminal_id", agentSession = "agent_session"
+        case terminalId = "terminal_id", agentSession = "agent_session", tokens
     }
 }
 

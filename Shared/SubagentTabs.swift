@@ -82,6 +82,7 @@ enum SubagentWatch {
         let reporter = PaneAgentReporter(environment: environment)
         let renderer = SubagentTranscriptRenderer()
         renderer.printHeader(title: title)
+        reporter.markSubagent()
         reporter.report(state: "working", message: title)
         renderer.onFinished = {
             reporter.report(state: "idle", message: "finished")
@@ -93,6 +94,9 @@ enum SubagentWatch {
             // applies to tabs already open.
             guard let finished = renderer.finishedAt, Date().timeIntervalSince(lastCheck) >= 5 else { return }
             lastCheck = Date()
+            // Said again while finished, so a stray report from elsewhere
+            // cannot leave the tab spinning.
+            reporter.report(state: "idle", message: "finished")
             let delay = closeDelay()
             guard delay > 0, Date().timeIntervalSince(finished) >= delay else { return }
             if reporter.closeTab() { exit(0) }
@@ -183,6 +187,20 @@ struct PaneAgentReporter {
             ? (try? client.call("tab.close", ["tab_id": pane.tabId])) != nil
             : (try? client.call("pane.close", ["pane_id": paneId])) != nil
         return closed
+    }
+
+    static let roleToken = "octet_role"
+    static let subagentRole = "subagent"
+
+    /// Tags the pane as a subagent viewer, so Octet can tell its tab apart
+    /// from a Claude session.
+    func markSubagent() {
+        guard let client, let paneId else { return }
+        _ = try? client.call("pane.report_metadata", [
+            "pane_id": paneId,
+            "source": "octet:subagent",
+            "tokens": [Self.roleToken: Self.subagentRole],
+        ])
     }
 
     func report(state: String, message: String) {

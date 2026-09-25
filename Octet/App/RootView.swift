@@ -688,6 +688,9 @@ final class UIState: ObservableObject {
     /// Runtime identities already announced in this window. Views are rebuilt
     /// during tab switches, but old processes must not look newly created.
     var seenRuntimeEntryIDs: Set<String> = []
+    /// Whether the agent in front has any runtimes, set by the Runtime panel
+    /// (which works them out); the tab bar hides its button when it has none.
+    @Published var runtimeHasEntries = false
     /// Selecting a runtime collapses the list to an icon rail and opens its
     /// inspector immediately to the rail's left.
     @Published var runtimeInspectorEntryID: String?

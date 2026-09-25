@@ -174,6 +174,14 @@ final class SubagentTabTests: XCTestCase {
         XCTAssertTrue(command.contains("Write the last profiles"))
     }
 
+    func testSubagentViewerIsRecognisedByItsPaneToken() throws {
+        let json = #"{"pane_id":"w1:p6","agent":"claude","agent_status":"working","tokens":{"octet_role":"subagent","logo":null}}"#
+        let viewer = try JSONDecoder().decode(EngineAgent.self, from: Data(json.utf8))
+        XCTAssertTrue(viewer.isSubagentViewer)
+        let plain = try JSONDecoder().decode(EngineAgent.self, from: Data(#"{"pane_id":"w1:p1","agent":"claude","agent_status":"idle"}"#.utf8))
+        XCTAssertFalse(plain.isSubagentViewer)
+    }
+
     func testIgnoresOtherToolsAndNonEnginePanes() {
         var bash = payload
         bash["tool_name"] = "Bash"

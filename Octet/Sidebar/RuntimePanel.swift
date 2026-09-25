@@ -57,6 +57,9 @@ struct RuntimePanel: View {
                 window.ui.runtimeInspectorEntryID = nil
             }
         }
+        .onChange(of: entries.isEmpty, initial: true) { _, empty in
+            window.ui.runtimeHasEntries = !empty
+        }
         .onReceive(refresh) { _ in reload() }
     }
 

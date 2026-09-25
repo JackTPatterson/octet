@@ -280,6 +280,12 @@ struct TodoPanelButton: View {
 
     var body: some View {
         let todos = model.todos
+        if !todos.isEmpty || isShowing {
+            button(todos)
+        }
+    }
+
+    private func button(_ todos: [AgentTodo]) -> some View {
         Button { isShowing.toggle() } label: {
             HStack(spacing: 5) {
                 Text("Todos").font(Theme.uiFontMedium)
