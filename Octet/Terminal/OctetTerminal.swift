@@ -148,11 +148,27 @@ final class OctetTerminalRuntime {
     /// `keys` is space-separated: a letter, `return`, or a modifier+key such
     /// as `shift+return` or `opt+return`.
     static func debugPress(_ keys: String) {
-        guard let window = NSApp.windows.first(where: \.isVisible), let content = window.contentView,
-              let surface = findSurface(in: content) else { return }
+        guard let (window, surface) = NSApp.windows.lazy.compactMap({ window -> (NSWindow, TerminalEngine.SurfaceView)? in
+            guard window.isVisible, let content = window.contentView, let surface = findSurface(in: content) else { return nil }
+            return (window, surface)
+        }).first else { return }
         window.makeFirstResponder(surface)
         let codes: [String: UInt16] = ["a": 0, "b": 11, "c": 8, "return": 36]
         for token in keys.split(separator: " ") {
+            // `paste:<file>` pastes the file's text as ⌘V would, from a
+            // pasteboard of its own so the real clipboard is left alone.
+            if token.hasPrefix("paste:"), let text = try? String(contentsOfFile: String(token.dropFirst(6)), encoding: .utf8) {
+                let board = NSPasteboard(name: NSPasteboard.Name("com.jpxsoftware.octet.debug-paste"))
+                board.clearContents()
+                board.setString(text, forType: .string)
+                _ = OctetKeyHook.paste(from: board)
+                continue
+            }
+            // `confirm-paste` presses Paste on a paste preview.
+            if token == "confirm-paste" {
+                if let store = OctetKeyHook.store { PastePreviewCenter.shared.send(store: store) }
+                continue
+            }
             var parts = token.split(separator: "+").map(String.init)
             let key = parts.removeLast()
             guard let code = codes[key] else { continue }
@@ -546,3 +562,4 @@ final class TopRowClippingView: NSView {
         needsLayout = true
     }
 }
+

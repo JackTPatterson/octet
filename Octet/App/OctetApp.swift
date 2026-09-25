@@ -420,6 +420,7 @@ enum OctetKeyHook {
         guard let text = pasteboard.getOpinionatedStringContents() else {
             return prompt?.isActive == true
         }
+        if let store, PastePreviewCenter.shared.intercept(text, store: store) { return true }
         return prompt?.insertPastedText(text) ?? false
     }
 

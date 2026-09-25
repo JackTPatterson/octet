@@ -182,8 +182,12 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   indent under them, box edges, trailing spaces), with a setting in
   Terminal. The clipboard step runs only while Octet is in front, so it was
   checked by unit tests, not in the running app.
-- [ ] **26. View and edit large pastes before sending (med).** Claude Code
-  #3412 (309), #23134 (159); Codex #25144 (88).
+- [x] **26. View and edit large pastes before sending (med).** Claude Code
+  #3412 (309), #23134 (159); Codex #25144 (88). Done: a paste of 25+ lines
+  (or 3,000+ characters) into a pane running an agent opens an editable
+  preview; Paste (⌘↩) sends it bracketed, so the agent still takes it as a
+  paste. Checked end to end in Claude Code with the Debug hook
+  (`paste:<file>`, `confirm-paste`). Setting in Terminal.
 - [x] **27. Shift+Enter inserts a newline in every agent, over SSH too
   (med).** Warp #6401 (80), Claude Code #16859. Checked on 2026-09-25 with
   real key events through Octet's renderer and the session server

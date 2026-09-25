@@ -275,6 +275,7 @@ struct RootView: View {
         }
         // Above the palette, so a confirm raised while it's open isn't buried.
         .overlay { ConfirmDialog(center: confirmations) }
+        .overlay { PastePreviewDialog(center: PastePreviewCenter.shared, store: store) }
         .animation(motion.animation(.palette, .smooth(duration: 0.16)), value: ui.paletteVisible)
         .animation(motion.animation(.sidebar), value: ui.sidebarVisible)
         .animation(motion.animation(.sidebar), value: ui.runtimePanelVisible)

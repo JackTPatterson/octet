@@ -514,6 +514,13 @@ private struct TerminalSettings: View {
                 Toggle("Tidy text copied from agents", isOn: $settings.values.tidyAgentCopies).labelsHidden().toggleStyle(.switch)
             }
             SettingsDivider()
+            SettingsRow(
+                title: "Preview long pastes into agents",
+                detail: "A paste of 25 lines or more into a pane running an agent opens first, so you can read and edit it; agents fold long pastes into a line you can't open."
+            ) {
+                Toggle("Preview long pastes into agents", isOn: $settings.values.previewLongPastes).labelsHidden().toggleStyle(.switch)
+            }
+            SettingsDivider()
             SettingsRow(title: "Lines per scroll wheel notch") {
                 Stepper(value: $settings.values.mouseScrollLines, in: 1...20, step: 1) {
                     Text("\(Int(settings.values.mouseScrollLines))").font(Theme.uiFont).foregroundStyle(Theme.textSecondary)

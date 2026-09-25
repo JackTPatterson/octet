@@ -53,6 +53,8 @@ struct OctetSettings: Codable, Equatable {
     var clipboardToasts = true
     /// Take an agent interface's layout off text copied from its pane.
     var tidyAgentCopies = true
+    /// Show a long paste into an agent, editable, before it's sent.
+    var previewLongPastes = true
     var mouseScrollLines: Double = 3
     var optionAsAlt: OptionAsAlt = .off
     var hideMouseWhileTyping = true
@@ -251,6 +253,7 @@ struct OctetSettings: Codable, Equatable {
         copyOnSelect = value("copyOnSelect", defaults.copyOnSelect)
         clipboardToasts = value("clipboardToasts", defaults.clipboardToasts)
         tidyAgentCopies = value("tidyAgentCopies", defaults.tidyAgentCopies)
+        previewLongPastes = value("previewLongPastes", defaults.previewLongPastes)
         mouseScrollLines = value("mouseScrollLines", defaults.mouseScrollLines)
         optionAsAlt = value("optionAsAlt", defaults.optionAsAlt)
         hideMouseWhileTyping = value("hideMouseWhileTyping", defaults.hideMouseWhileTyping)
