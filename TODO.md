@@ -9,7 +9,11 @@ terminal view under `Octet/Terminal/`.
 
 - [x] **1. ⌘V and ⌘A never reach Octet's key hook (high).** Fixed: the surface view's `paste(_:)`, `pasteAsPlainText(_:)`, `pasteSelection(_:)` and `selectAll(_:)` go through `OctetKeyHook` first (SurfaceView_AppKit.swift).
 
-- [ ] **2. Paste protection never asks, and "clipboard read: Ask" means Deny (med).** *Partly fixed.* Done: Multi-line prompt-line text is bracketed, and pasted control bytes are filtered (`PromptLine`). Remaining: `confirmReadClipboard` (TerminalEngine.App.swift) still auto-confirms unsafe pastes and answers OSC 52 reads with nothing. Ask through `ConfirmCenter`.
+- [x] **2. Paste protection never asks, and "clipboard read: Ask" means Deny (med).** Fixed: an unsafe
+  paste (several lines or control characters) asks with its first lines
+  shown, and a program's OSC 52 clipboard read asks Allow / Deny, both in
+  Octet's dialog; a refusal completes the request empty so it isn't
+  asked again. Build-checked only: testing needs the real clipboard.
 
 - [x] **3. Font size changes leave the hidden top row wrong (med).** Fixed: `TopRowClippingView` relayouts on `cellSize` changes (OctetTerminal.swift).
 

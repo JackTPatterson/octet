@@ -225,12 +225,38 @@ extension TerminalEngine {
         ) {
             let surfaceView = self.surfaceUserdata(from: userdata)
             guard let surface = surfaceView.surface else { return }
-            switch request {
-            case GHOSTTY_CLIPBOARD_REQUEST_PASTE:
-                guard let string, let valueStr = String(cString: string, encoding: .utf8) else { return }
-                completeClipboardRequest(surface, data: valueStr, state: state, confirmed: true)
-            default:
-                completeClipboardRequest(surface, data: "", state: state, confirmed: true)
+            let value = string.flatMap { String(cString: $0, encoding: .utf8) } ?? ""
+            // Answered once: nothing (a refusal) completes it too, so it
+            // isn't asked again.
+            let answer: @MainActor (Bool) -> Void = { allowed in
+                completeClipboardRequest(surface, data: allowed ? value : "", state: state, confirmed: true)
+            }
+            DispatchQueue.main.async {
+                switch request {
+                case GHOSTTY_CLIPBOARD_REQUEST_PASTE:
+                    // An unsafe paste: several lines, or control characters,
+                    // any of which could run a command as it lands.
+                    let lines = value.split(separator: "\n", omittingEmptySubsequences: false)
+                    ConfirmCenter.shared.ask(ConfirmCenter.Request(
+                        title: lines.count > 1 ? "Paste \(lines.count) lines into the terminal?" : "Paste text with control characters?",
+                        message: "Each line may run as a command as it's pasted.",
+                        items: lines.prefix(6).map { String($0.prefix(120)) } + (lines.count > 6 ? ["…"] : []),
+                        confirmTitle: "Paste",
+                        onConfirm: { _ in answer(true) },
+                        onCancel: { answer(false) }
+                    ))
+                case GHOSTTY_CLIPBOARD_REQUEST_OSC_52_READ:
+                    ConfirmCenter.shared.ask(ConfirmCenter.Request(
+                        title: "Let the program in this pane read your clipboard?",
+                        message: "It asked for what you last copied. Settings › Terminal › Clipboard access changes whether it asks.",
+                        confirmTitle: "Allow",
+                        cancelTitle: "Deny",
+                        onConfirm: { _ in answer(true) },
+                        onCancel: { answer(false) }
+                    ))
+                default:
+                    answer(true)
+                }
             }
         }
 
