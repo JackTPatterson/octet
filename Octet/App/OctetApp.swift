@@ -245,6 +245,14 @@ struct OctetCommands: Commands {
                 .keyboardShortcut(OctetShortcut.visualTwin.keyboardShortcut)
             Button(OctetShortcut.review.title) { KeyWindow.act { $0.toggleReview() } }
                 .keyboardShortcut(OctetShortcut.review.keyboardShortcut)
+            // The workspace's agents, else every agent, else the tab's panes.
+            Button(OctetShortcut.broadcast.title) {
+                KeyWindow.act { window in
+                    window.ui.paletteStart = ["action.broadcast.workspace", "action.broadcast.everywhere", "action.broadcast.tab"]
+                    window.ui.paletteVisible = true
+                }
+            }
+            .keyboardShortcut(OctetShortcut.broadcast.keyboardShortcut)
             Button(OctetShortcut.toggleSidebar.title) { KeyWindow.act { $0.ui.sidebarVisible.toggle() } }
                 .keyboardShortcut(OctetShortcut.toggleSidebar.keyboardShortcut)
             Divider()

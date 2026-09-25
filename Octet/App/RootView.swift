@@ -43,7 +43,18 @@ struct RootView: View {
                 store.refreshPlugins()
                 store.refreshRemoteMachines()
                 palette.reset()
-                palette.reload(items: PaletteCatalog.items(window: window))
+                let items = PaletteCatalog.items(window: window)
+                palette.reload(items: items)
+                // Opened for one action (a menu shortcut): go straight to it.
+                if let start = ui.paletteStart {
+                    ui.paletteStart = nil
+                    if let item = start.lazy.compactMap({ id in items.first { $0.id == id } }).first {
+                        _ = palette.activate(item)
+                    } else {
+                        ui.paletteVisible = false
+                        ToastCenter.shared.info("Nothing to broadcast to", detail: "Start an agent, or split the tab into panes.")
+                    }
+                }
             } else {
                 OctetTerminalRuntime.focusTerminal()
             }
@@ -322,6 +333,13 @@ struct RootView: View {
             // Verification hook: "newtab" opens a tab, to see its splash.
             if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "newtab" {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) { window.newTab() }
+            }
+            // "broadcast" opens the broadcast prompt as ⌘⇧I does.
+            if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "broadcast" {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                    ui.paletteStart = ["action.broadcast.workspace", "action.broadcast.everywhere", "action.broadcast.tab"]
+                    ui.paletteVisible = true
+                }
             }
             // "review" opens the changes review over the focused pane.
             // "review:<folder>" opens it on that folder instead.
@@ -707,6 +725,8 @@ private struct WindowTransparency: NSViewRepresentable {
 }
 
 final class UIState: ObservableObject {
+    /// Palette items to open straight into, the first that exists.
+    var paletteStart: [String]?
     /// The changes review over the terminal, while it's open.
     @Published var review: DiffReviewModel?
     @Published var sidebarVisible = UserDefaults.standard.object(forKey: "octet.sidebarVisible") as? Bool ?? true {
