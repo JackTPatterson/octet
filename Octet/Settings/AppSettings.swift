@@ -352,6 +352,10 @@ struct OctetSettings: Codable, Equatable {
         case .roomy: (18, 12)
         }
         var lines = [
+            // One wheel notch is one report to the session server, which
+            // scrolls "Mouse scroll lines" per report; the renderer's own
+            // default of 3 made that 3 x 3 = 9 lines a notch.
+            "mouse-scroll-multiplier = discrete:1",
             "background = \(theme.background)",
             "foreground = \(terminalForeground)",
             "font-size = \(Int(fontSize))",

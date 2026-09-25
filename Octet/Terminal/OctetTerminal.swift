@@ -164,6 +164,21 @@ final class OctetTerminalRuntime {
                 _ = OctetKeyHook.paste(from: board)
                 continue
             }
+            // `wheel-up` turns the scroll wheel one notch up.
+            if token == "wheel-up" {
+                // Over the middle of the terminal, where the wheel lands.
+                let middle = surface.convert(NSPoint(x: surface.bounds.midX, y: surface.bounds.midY), to: nil)
+                if let move = NSEvent.mouseEvent(with: .mouseMoved, location: middle, modifierFlags: [], timestamp: 0,
+                                                 windowNumber: window.windowNumber, context: nil, eventNumber: 0,
+                                                 clickCount: 0, pressure: 0) {
+                    surface.mouseMoved(with: move)
+                }
+                if let cg = CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 1, wheel1: 1, wheel2: 0, wheel3: 0) {
+                    cg.location = window.convertPoint(toScreen: middle)
+                    if let event = NSEvent(cgEvent: cg) { surface.scrollWheel(with: event) }
+                }
+                continue
+            }
             // `confirm-paste` presses Paste on a paste preview.
             if token == "confirm-paste" {
                 if let store = OctetKeyHook.store { PastePreviewCenter.shared.send(store: store) }

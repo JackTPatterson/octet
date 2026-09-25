@@ -42,13 +42,10 @@ terminal view under `Octet/Terminal/`.
   twin's prompts and answers and `SessionStore.runInPane` now write on the
   serial `EngineClient.inputQueue` with the prompt line and pastes.
 
-- [ ] **11. Scroll speed may be multiplied three times over (low,
-  unverified).** Trackpad deltas are doubled, the renderer sends one report
-  per row with a wheel multiplier of 3, and the session's
-  `mouse_scroll_lines = 3` probably applies per report, about 9 lines per
-  notch. The "Mouse scroll lines" setting is then misleading. Fix: set the
-  renderer's scroll multiplier to 1 and keep the user's value only in the
-  session config.
+- [x] **11. Scroll speed may be multiplied three times over (low).** It was:
+  measured with a synthetic wheel notch, 9 lines per notch at "3 lines".
+  The renderer now uses `mouse-scroll-multiplier = discrete:1`, and one
+  notch scrolls exactly the setting (3). Trackpad scrolling is unchanged.
 
 ## Missing features
 
