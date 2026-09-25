@@ -15,6 +15,10 @@ struct RootView: View {
     @StateObject private var splash = NewTabSplashModel()
     @StateObject private var statusBar = StatusBarModel()
     @StateObject private var liveScroll = LiveScrollWatcher()
+    /// The terminal client went away (a crash, the session server stopping):
+    /// offer it back rather than quitting.
+    @State private var terminalDisconnected = false
+    @State private var terminalGeneration = 0
     /// The connection card over the terminal, while it shows.
     @State private var connecting: SSHTarget?
     @ObservedObject private var tabDrag = TabDrag.shared
@@ -458,6 +462,15 @@ struct RootView: View {
             }
         } else {
             terminal.overlay { terminalOverlay }
+                .overlay {
+                    if terminalDisconnected {
+                        TerminalDisconnectedCard {
+                            terminalDisconnected = false
+                            terminalGeneration += 1
+                            store.scheduleRefresh()
+                        }
+                    }
+                }
         }
     }
 
@@ -709,10 +722,11 @@ struct RootView: View {
                         // the engine going away. With other windows open, a
                         // client that exits closes only its own window.
                         if window.closing { return }
-                        if WindowRegistry.shared.isMulti { window.nsWindow?.close() } else { NSApp.terminate(nil) }
+                        if WindowRegistry.shared.isMulti { window.nsWindow?.close() } else { terminalDisconnected = true }
                     },
                     onSurface: { window.surface = $0 }
                 )
+                .id(terminalGeneration)
                 .background(Theme.terminalBackground.opacity(settings.values.effectiveBackgroundOpacity))
                 if settings.values.repoContextBar,
                    StatusBar.hasContent(model: statusBar, ssh: focusedSSH, agent: focusedAgent) {

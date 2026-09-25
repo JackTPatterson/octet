@@ -29,13 +29,12 @@ terminal view under `Octet/Terminal/`.
 
 - [x] **7. Clicks and scrolling above bottom-anchored content go nowhere (med).** Fixed: `TopRowClippingView.hitTest` returns the surface view for any point in bounds.
 
-- [ ] **8. When the terminal client exits, Octet quits (med).** `onExit`
-  calls `NSApp.terminate` (RootView.swift), which shows "Quit Octet?" when
-  confirm-quit is on; Cancel leaves a dead terminal with no way back.
-  Triggers include the session's detach key, a crash, or an upgrade. Fix: a
-  "Terminal disconnected. Reconnect" overlay that bumps an `.id` generation
-  on `OctetTerminalView`; also disable the detach key in the generated
-  session config.
+- [x] **8. When the terminal client exits, Octet quits (med).** Fixed: with
+  one window, a client that exits (crash, detach, upgrade) leaves the app
+  up with a "The terminal disconnected" card: Reconnect starts a fresh
+  client (a new view generation), Quit quits. With several windows only
+  that window closes, as before. Checked by killing the client process;
+  Reconnect wasn't pressed in the test.
 
 - [x] **9. The slash menu's "empty prompt" check is guessed from keystrokes (low-med).** No longer applies: `SlashController` was removed when slash commands started coming from the agents themselves (bc9ecc0).
 
