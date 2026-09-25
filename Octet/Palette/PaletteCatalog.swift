@@ -127,6 +127,7 @@ enum PaletteCatalog {
                             keywords: ["diff", "git", "changes", "comment", "code review", "agent"]) { window.toggleReview() })
         items += accountItems(window: window)
         if let item = checkpointItem(window: window) { items.append(item) }
+        if let item = WorktreeCleanupActions.item(window: window) { items.append(item) }
 
         // Broadcast: the prompt's title names who receives it, so what's
         // about to be sent where is never a guess.

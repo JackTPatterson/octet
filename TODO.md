@@ -202,8 +202,12 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   opening; kitty hints, WezTerm QuickSelect. Label URLs, hashes and
   `file:line` on screen; open `file:line` in the editor (Ghostty #11907:
   Claude Code's OSC 8 links don't open).
-- [ ] **30. Prune merged worktrees, show disk use per worktree (med).** cmux
-  #6510; one report of 256 worktrees using 28 GB.
+- [x] **30. Prune merged worktrees, show disk use per worktree (med).** cmux
+  #6510; one report of 256 worktrees using 28 GB. Done: palette › Clean Up
+  Worktrees lists the repository's worktrees with merged / uncommitted /
+  not merged and their size on disk, and removes merged, clean ones (one or
+  all) after asking, through the session server when a workspace is open
+  on them. Branches are kept; `git worktree remove` refuses dirty ones.
 - [ ] **31. Command marks from OSC 133 (med).** Jump to previous/next prompt
   (finishes #12), copy last output, exit status and duration per command.
   What people like about Warp blocks without replacing the grid.
