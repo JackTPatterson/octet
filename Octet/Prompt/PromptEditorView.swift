@@ -15,57 +15,92 @@ struct PromptEditorView: View {
             let font = family.isEmpty
                 ? Font.system(size: settings.values.fontSize, design: .monospaced)
                 : Font.custom(family, fixedSize: settings.values.fontSize)
-            // The line is one run of text; the caret is drawn over it at its
-            // column rather than placed between views, so blinking and moving
-            // it never change the layout.
+            // Every character in its own cell (two for a wide one), so the
+            // line sits on the terminal's grid whatever the font's glyph
+            // widths, and the caret lands between the right characters.
+            let cells = self.cells
+            let caretColumn = CellWidth.columns(editor.line.text, upTo: editor.line.caret)
+            let width = max(1, anchor.columnsRemaining)
+            // Longer than the pane: scroll so the caret stays in view.
+            let shift = max(0, caretColumn - width + 1)
             ZStack(alignment: .topLeading) {
                 Theme.terminalBackground
                 // A selection (⌘A, shift-arrows) shows behind its characters.
                 if let selection = editor.line.selection {
+                    let from = CellWidth.columns(editor.line.text, upTo: selection.lowerBound)
+                    let to = CellWidth.columns(editor.line.text, upTo: selection.upperBound)
                     Rectangle()
                         .fill(Theme.accent.opacity(0.35))
-                        .frame(width: CGFloat(selection.count) * anchor.cellWidth, height: anchor.cellHeight)
-                        .offset(x: CGFloat(selection.lowerBound) * anchor.cellWidth)
+                        .frame(width: CGFloat(to - from) * anchor.cellWidth, height: anchor.cellHeight)
+                        .offset(x: CGFloat(from - shift) * anchor.cellWidth)
                 }
-                (highlighted + ghostText)
-                    .font(font)
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
+                ForEach(cells.indices, id: \.self) { index in
+                    let cell = cells[index]
+                    Text(String(cell.character))
+                        .font(font)
+                        .foregroundStyle(cell.color)
+                        .lineLimit(1)
+                        .fixedSize()
+                        .frame(width: CGFloat(cell.width) * anchor.cellWidth, height: anchor.cellHeight)
+                        .offset(x: CGFloat(cell.column - shift) * anchor.cellWidth)
+                }
                 Rectangle()
                     .fill(Theme.accent)
                     .frame(width: max(1.5, anchor.cellWidth * 0.12), height: anchor.cellHeight)
                     .opacity(caretVisible ? 1 : 0)
-                    .offset(x: CGFloat(editor.line.caret) * anchor.cellWidth)
+                    .offset(x: CGFloat(caretColumn - shift) * anchor.cellWidth)
             }
             .frame(height: anchor.cellHeight, alignment: .topLeading)
             .clipped()
+            .contentShape(Rectangle())
+            // A click puts the caret under the pointer.
+            .onTapGesture(coordinateSpace: .local) { point in
+                let column = Int(point.x / max(anchor.cellWidth, 1)) + shift
+                var index = 0, at = 0
+                for character in editor.line.text {
+                    let next = at + CellWidth.of(character)
+                    if column < next { break }
+                    at = next
+                    index += 1
+                }
+                editor.moveCaret(to: index)
+            }
             .onAppear { blink() }
         }
     }
 
-    /// The typed text, coloured the way a shell reads it. The gaps between
-    /// tokens are kept, so spacing matches what will be sent.
-    private var highlighted: Text {
-        let text = editor.line.text
-        var rendered = Text("")
-        var cursor = text.startIndex
-        for span in ShellSyntax.spans(in: text) {
-            if cursor < span.range.lowerBound {
-                rendered = rendered + Text(String(text[cursor..<span.range.lowerBound]))
-            }
-            rendered = rendered + Text(String(text[span.range])).foregroundStyle(color(for: span.role))
-            cursor = span.range.upperBound
-        }
-        if cursor < text.endIndex {
-            rendered = rendered + Text(String(text[cursor...]))
-        }
-        return rendered
+    private struct Cell {
+        let character: Character
+        let color: Color
+        let column: Int
+        let width: Int
     }
 
-    /// The completion after the caret, greyed out; empty when there is none.
-    private var ghostText: Text {
-        guard let suggestion = editor.suggestion, suggestion.hasPrefix(editor.line.text) else { return Text("") }
-        return Text(String(suggestion.dropFirst(editor.line.text.count))).foregroundStyle(Theme.textTertiary)
+    /// The typed text coloured the way a shell reads it, then the history
+    /// suggestion greyed out, laid out in cells.
+    private var cells: [Cell] {
+        let text = editor.line.text
+        var colors = Array(repeating: Theme.textPrimary, count: text.count)
+        for span in ShellSyntax.spans(in: text) {
+            let from = text.distance(from: text.startIndex, to: span.range.lowerBound)
+            let to = text.distance(from: text.startIndex, to: span.range.upperBound)
+            for index in from..<min(to, colors.count) { colors[index] = color(for: span.role) }
+        }
+        var result: [Cell] = []
+        var column = 0
+        for (index, character) in text.enumerated() {
+            let width = CellWidth.of(character)
+            result.append(Cell(character: character, color: colors[index], column: column, width: width))
+            column += width
+        }
+        if let suggestion = editor.suggestion, suggestion.hasPrefix(text) {
+            for character in suggestion.dropFirst(text.count) {
+                let width = CellWidth.of(character)
+                result.append(Cell(character: character, color: Theme.textTertiary, column: column, width: width))
+                column += width
+            }
+        }
+        return result
     }
 
     private func color(for role: ShellSyntax.Role) -> Color {

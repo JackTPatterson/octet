@@ -65,7 +65,7 @@ final class OctetTerminalRuntime {
     }
 
     @MainActor
-    static func cursorAnchor() -> CursorAnchor? {
+    static func cursorAnchor(rightEdge: Int? = nil) -> CursorAnchor? {
         guard let window = NSApp.keyWindow ?? NSApp.windows.first(where: \.isVisible),
               let content = window.contentView,
               let surface = findSurface(in: content),
@@ -82,7 +82,7 @@ final class OctetTerminalRuntime {
             origin: CGPoint(x: x, y: y),
             cellWidth: metrics.cell_width,
             cellHeight: metrics.cell_height,
-            columnsRemaining: max(0, Int(metrics.columns) - Int(metrics.cursor_column))
+            columnsRemaining: max(0, min(Int(metrics.columns), rightEdge ?? Int.max) - Int(metrics.cursor_column))
         )
     }
 

@@ -361,7 +361,8 @@ struct OctetSettings: Codable, Equatable {
             "mouse-scroll-multiplier = discrete:1",
             "background = \(theme.background)",
             "foreground = \(terminalForeground)",
-            "font-size = \(Int(fontSize))",
+            // Fractional sizes (13.5) are sizes too.
+            "font-size = \(fontSize.truncatingRemainder(dividingBy: 1) == 0 ? String(Int(fontSize)) : String(fontSize))",
             "font-thicken = \(fontThicken)",
             "adjust-cell-height = \(Int(lineHeightPercent) - 100)%",
             "cursor-style = \(cursorStyle.rawValue)",

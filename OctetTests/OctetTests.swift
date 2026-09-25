@@ -3419,3 +3419,14 @@ final class SecretPromptTests: XCTestCase {
         XCTAssertTrue(ShellPrompt.isSecretMode(check.c_lflag))
     }
 }
+
+final class CellWidthTests: XCTestCase {
+    func testWideCharactersTakeTwoCells() {
+        XCTAssertEqual(CellWidth.of("a"), 1)
+        XCTAssertEqual(CellWidth.of("é"), 1)
+        XCTAssertEqual(CellWidth.of("中"), 2)
+        XCTAssertEqual(CellWidth.of("한"), 2)
+        XCTAssertEqual(CellWidth.of("🙂"), 2)
+        XCTAssertEqual(CellWidth.columns("echo 中文 ok", upTo: 7), 9)
+    }
+}

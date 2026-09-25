@@ -19,15 +19,13 @@ terminal view under `Octet/Terminal/`.
 
 - [ ] **4. Bottom anchoring lags output by up to 200 ms (med).** *Partly fixed.* Done: The poll stops while the window is hidden, minimized or occluded, and pauses while scrolling. Remaining: It is still a 0.2 s timer that reads screen text each tick. Drive it from the engine's wakeup, and check grid metrics before reading text.
 
-- [ ] **5. The prompt line doesn't line up with the terminal grid (med).**
-  With no font family set it renders in SF Mono while the terminal uses its
-  built-in font, and at the settings size rather than the live size. The
-  caret drifts (`caret * cellWidth`), wide characters (CJK, emoji) count as
-  one column, and `font-size` truncates 13.5 to 13 (AppSettings.swift). Its
-  width comes from the whole window grid, not the pane, so in a split it
-  paints over the neighbouring pane, and long commands run past the pane
-  edge. Fix: use the terminal's own font, lay glyphs out per cell with
-  East-Asian width, clip to the pane rectangle, and wrap or scroll.
+- [x] **5. The prompt line doesn't line up with the terminal grid (med).**
+  Fixed: every character sits in its own cell (two for East Asian wide
+  and emoji, `CellWidth`), so the caret and selection land by column
+  whatever the font's glyph widths; the line stops at the focused pane's
+  right edge (from the layout) and scrolls sideways past it; fractional
+  font sizes reach the renderer. Still the settings font when none is set,
+  but per-cell placement keeps it on the grid.
 
 - [x] **6. Drag and drop, Services and context-menu Paste bypass the prompt line (med).** Fixed: drops,
   Services and context-menu Paste go to the prompt line; an image dropped
@@ -89,12 +87,9 @@ terminal view under `Octet/Terminal/`.
   shows at the terminal's bottom left with "⌘-click to open"
   (`HoverLinkPreview`, fed by the renderer's mouse-over-link action). Not
   exercised with a real pointer.
-- [ ] **17. The prompt line has no mouse integration (low).** Keys Octet
-  consumes never reach the renderer, so hide-mouse-while-typing never fires
-  on the prompt line, and the overlay ignores clicks, so a click can't move
-  the caret. Fix: `NSCursor.setHiddenUntilMouseMoves(true)` when the prompt
-  line consumes a key (if the setting is on), and map a click's x to a
-  column (`(x - origin.x) / cellWidth`) to set the caret.
+- [x] **17. The prompt line has no mouse integration (low).** Fixed: a click
+  on the line moves the caret to the character under the pointer, and the
+  pointer hides while typing there when that setting is on.
 
 ## From complaints about other terminals (2026-09-25)
 

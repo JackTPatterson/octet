@@ -125,6 +125,12 @@ final class PromptEditor: ObservableObject {
         return true
     }
 
+    /// A click on the line.
+    func moveCaret(to index: Int) {
+        line.moveCaret(to: index)
+        refreshSuggestion()
+    }
+
     func selectAll() -> Bool {
         guard isActive, paneId == store.keyPaneId else { return false }
         line.selectAll()
@@ -156,6 +162,9 @@ final class PromptEditor: ObservableObject {
         }
         let wasActive = isActive
         let taken = takeKey(event)
+        // Keys the line takes never reach the renderer, which is what hides
+        // the pointer while typing; do it here too.
+        if taken, isActive, SettingsStore.shared.values.hideMouseWhileTyping { NSCursor.setHiddenUntilMouseMoves(true) }
         if !taken, !wasActive, let pane = store.keyPaneId {
             shellLines.keyReachedPane(lineKey(pane), Self.lineEffect(of: event))
         }
@@ -384,7 +393,7 @@ final class PromptEditor: ObservableObject {
         cwd = pane?.effectiveCwd
         loadCompletionSources()
         line = PromptLine()
-        anchor = OctetTerminalRuntime.cursorAnchor()
+        anchor = OctetTerminalRuntime.cursorAnchor(rightEdge: paneRightEdge())
         isActive = true
         log("activate pane=\(paneId ?? "-") anchor=\(String(describing: anchor))")
         loadHistoryIfStale()
@@ -405,8 +414,18 @@ final class PromptEditor: ObservableObject {
             flush()
             return
         }
-        let current = OctetTerminalRuntime.cursorAnchor()
+        let current = OctetTerminalRuntime.cursorAnchor(rightEdge: paneRightEdge())
         if current != anchor { anchor = current }
+    }
+
+    /// The column just past the focused pane's right edge, so the line
+    /// stops where the pane does instead of painting over its neighbour.
+    private func paneRightEdge() -> Int? {
+        guard let paneId else { return nil }
+        for layout in store.snapshot.layouts {
+            if let pane = layout.panes.first(where: { $0.paneId == paneId }) { return pane.rect.x + pane.rect.width }
+        }
+        return nil
     }
 
     /// PATH and branches are disk work; read them off the main thread.

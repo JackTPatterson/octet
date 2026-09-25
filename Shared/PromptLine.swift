@@ -180,6 +180,11 @@ struct PromptLine: Equatable {
     mutating func moveLeft() { caret = max(0, caret - 1) }
     mutating func moveRight() { caret = min(text.count, caret + 1) }
     mutating func moveToStart() { caret = 0 }
+    /// Puts the caret before character `index` (a click on the line).
+    mutating func moveCaret(to index: Int) {
+        caret = min(max(0, index), text.count)
+        selectionAnchor = nil
+    }
     mutating func moveToEnd() { caret = text.count }
 
     /// Replaces the word under the caret, for accepting a completion.
