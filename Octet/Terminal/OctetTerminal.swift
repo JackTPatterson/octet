@@ -153,7 +153,7 @@ final class OctetTerminalRuntime {
             return (window, surface)
         }).first else { return }
         window.makeFirstResponder(surface)
-        let codes: [String: UInt16] = ["a": 0, "b": 11, "c": 8, "return": 36, "up": 126, "down": 125]
+        let codes: [String: UInt16] = ["a": 0, "b": 11, "c": 8, "return": 36, "up": 126, "down": 125, "home": 115, "end": 119, "pgup": 116, "pgdn": 121]
         for token in keys.split(separator: " ") {
             // `paste:<file>` pastes the file's text as ⌘V would, from a
             // pasteboard of its own so the real clipboard is left alone.
@@ -344,6 +344,14 @@ final class TerminalAnchor: ObservableObject {
     @Published var chromeCover: CGRect?
     /// What the grid shows right now, below the engine's chrome row.
     @Published var grid: TerminalGrid?
+    /// Where the first row under the engine's chrome is drawn, in the
+    /// terminal view: bottom anchoring moves it down. Always known, unlike
+    /// `grid`, which needs the cursor on screen.
+    @Published var contentTop: CGFloat = 0
+    /// Where the first column is drawn (the terminal's left padding).
+    @Published var contentLeft: CGFloat = 0
+    /// One cell, in points; zero until the surface reports a grid.
+    @Published var cellSize: CGSize = .zero
 }
 
 /// The terminal grid as the new-tab splash reads it: where the prompt is,
@@ -564,6 +572,13 @@ final class TopRowClippingView: NSView {
         // position to SwiftUI, which can paint over the terminal.
         let cover = drop > 0 ? CGRect(x: 0, y: drop - offset, width: bounds.width, height: offset) : nil
         if anchor.chromeCover != cover { anchor.chromeCover = cover }
+        var metrics = ghostty_surface_grid_metrics_s()
+        let padding = surfaceView.surface.map { ghostty_surface_grid_metrics($0, &metrics) } == true ? metrics.padding_top : 0
+        let contentTop = drop + padding
+        if anchor.contentTop != contentTop { anchor.contentTop = contentTop }
+        if anchor.contentLeft != metrics.padding_left { anchor.contentLeft = metrics.padding_left }
+        let cell = CGSize(width: metrics.cell_width, height: metrics.cell_height)
+        if cell.width > 0, anchor.cellSize != cell { anchor.cellSize = cell }
         if offset == 0, !retryScheduled {
             retryScheduled = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in

@@ -37,6 +37,9 @@ final class WindowContext: ObservableObject, Identifiable {
     /// This window's terminal, the only way to move this window's client.
     weak var surface: TerminalEngine.SurfaceView?
     private var outputSearch: OutputSearch?
+    #if DEBUG
+    var search: OutputSearch? { outputSearch }
+    #endif
 
     func findOutput(_ action: NSTextFinder.Action = .showFindInterface) {
         if let outputSearch, outputSearch.window?.parent != nil {

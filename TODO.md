@@ -49,7 +49,12 @@ terminal view under `Octet/Terminal/`.
 
 ## Missing features
 
-- [ ] **12. Find in scrollback (med).** *Partly fixed.* Done: ⌘F opens a find panel over the full scrollback (`OutputSearch.swift`), with ⌘G / ⇧⌘G for next and previous. Remaining: Matches aren't highlighted in the terminal, and ⌘↑/⌘↓ (jump to prompt) and ⌘Home/⌘PgUp still do nothing. Map them to `pane.scroll`.
+- [x] **12. Find in scrollback (med).** Done: ⌘F's panel searches the whole
+  scrollback; the match found is boxed in the terminal (`SearchHighlight`,
+  positioned from the real cell size and the bottom-anchoring offset the
+  terminal now publishes); ⌘↑/⌘↓ jump between prompts (31); ⌘Home, ⌘End,
+  ⌘PgUp and ⌘PgDn scroll to the top, the bottom, a page up and down.
+  Checked with the Debug `find:` hook and real key events.
 
 - [ ] **13. The terminal context menu is effectively unreachable and thin
   (med).** The session captures the mouse, so right-click is sent as a mouse

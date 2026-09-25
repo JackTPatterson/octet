@@ -451,6 +451,12 @@ enum OctetKeyHook {
         if isComposing(event) { return false }
         if event.modifierFlags.intersection([.command, .control, .option, .shift]) == .command,
            event.charactersIgnoringModifiers?.lowercased() == "v", paste() { return true }
+        // ⌘Home / ⌘End / ⌘PgUp / ⌘PgDn: the top, the bottom, a page up or down.
+        if event.modifierFlags.intersection([.command, .control, .option, .shift]) == .command,
+           [115, 119, 116, 121].contains(event.keyCode), let store, let pane = store.keyPaneId {
+            PromptJumper.scroll(pane: pane, key: event.keyCode, store: store)
+            return true
+        }
         // ⌘↑ / ⌘↓: previous and next prompt in a shell's scrollback.
         if event.modifierFlags.intersection([.command, .control, .option, .shift]) == .command,
            event.keyCode == 126 || event.keyCode == 125, let store,

@@ -377,6 +377,13 @@ struct RootView: View {
                     if !BroadcastMode.shared.isOn { BroadcastMode.shared.toggle(window: window) }
                 }
             }
+            // "find:<text>" finds text in the focused pane's output.
+            if let open = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], open.hasPrefix("find:") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+                    window.findOutput(.showFindInterface)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { window.search?.debugFind(String(open.dropFirst(5))) }
+                }
+            }
             // "broadcast" opens the broadcast prompt as ⌘⇧I does.
             if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "broadcast" {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
@@ -502,7 +509,8 @@ struct RootView: View {
                     } else if let hints = ui.hints {
                         HintsOverlay(session: hints, layout: store.snapshot.layouts.first {
                             $0.tabId == window.displayedFocusedTabId
-                        }, grid: terminalAnchor.grid, window: window)
+                        }, contentTop: terminalAnchor.contentTop, cellSize: terminalAnchor.cellSize,
+                           contentLeft: terminalAnchor.contentLeft, window: window)
                         .id(hints.id)
                     } else if let grid = terminalAnchor.grid, let tab = splash.tabId,
                               tab == window.displayedFocusedTabId {
@@ -510,9 +518,12 @@ struct RootView: View {
                             .id(tab)
                             .transition(motion.animates(.tabs) ? .opacity : .identity)
                     } else {
-                        LiveScrollPills(watcher: liveScroll, layout: store.snapshot.layouts.first {
-                            $0.tabId == window.displayedFocusedTabId
-                        })
+                        let layout = store.snapshot.layouts.first { $0.tabId == window.displayedFocusedTabId }
+                        ZStack {
+                            SearchHighlightView(layout: layout, contentTop: terminalAnchor.contentTop,
+                                                cellSize: terminalAnchor.cellSize, contentLeft: terminalAnchor.contentLeft)
+                            LiveScrollPills(watcher: liveScroll, layout: layout)
+                        }
                     }
                     if let dragged = tabDrag.tabId, let showing = splitTargetTab(for: dragged) {
                         splitDropLayer(moving: dragged, into: showing)

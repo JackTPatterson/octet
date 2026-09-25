@@ -100,6 +100,14 @@ final class OutputSearch: NSWindowController, NSSearchFieldDelegate, NSWindowDel
     @objc private func findNext() { search(backward: false) }
     @objc private func findPrevious() { search(backward: true) }
 
+    #if DEBUG
+    /// Verification hook: types a query and finds it.
+    func debugFind(_ text: String) {
+        query.stringValue = text
+        search(backward: true)
+    }
+    #endif
+
     private func setBusy(_ value: Bool) {
         busy = value
         next.isEnabled = !value
@@ -169,6 +177,14 @@ final class OutputSearch: NSWindowController, NSSearchFieldDelegate, NSWindowDel
                 }
                 guard valid else { return }
                 _ = try client.call("pane.scroll", ["pane_id": paneId, "offset_from_bottom": offset])
+                // Where the match sits in the view now, for the highlight.
+                if let match = found.match {
+                    let top = maximum - offset
+                    let highlight = SearchHighlight.Box(paneId: paneId, row: match.start.row - top,
+                                                        startColumn: match.start.col,
+                                                        endColumn: match.end.row == match.start.row ? match.end.col : nil)
+                    DispatchQueue.main.async { SearchHighlight.shared.box = highlight }
+                }
             }
             DispatchQueue.main.async {
                 guard let self, self.generation == requestID else { return }
@@ -204,6 +220,7 @@ final class OutputSearch: NSWindowController, NSSearchFieldDelegate, NSWindowDel
     }
 
     @objc func dismiss() {
+        SearchHighlight.shared.box = nil
         generation += 1
         pendingReveal?.cancel()
         pendingReveal = nil

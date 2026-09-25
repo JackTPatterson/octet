@@ -84,7 +84,10 @@ struct HintsOverlay: View {
     let layout: EngineLayout?
     /// Where the grid is drawn: text anchored to the bottom sits lower than
     /// its row number says.
-    let grid: TerminalGrid?
+    let contentTop: CGFloat
+    /// The real cell size, when known; else worked out from the layout.
+    var cellSize: CGSize = .zero
+    var contentLeft: CGFloat = 0
     let window: WindowContext
     @FocusState private var focused: Bool
 
@@ -95,13 +98,13 @@ struct HintsOverlay: View {
             ZStack(alignment: .topLeading) {
                 Color.black.opacity(0.18)
                 if let pane, let frame, pane.rect.width > 0, pane.rect.height > 0 {
-                    let cellWidth = frame.width / CGFloat(pane.rect.width)
-                    let cellHeight = frame.height / CGFloat(pane.rect.height)
-                    let shift = grid.map { $0.cursorTop - CGFloat($0.cursorRow) * cellHeight } ?? 0
+                    let cellWidth = cellSize.width > 0 ? cellSize.width : frame.width / CGFloat(pane.rect.width)
+                    let cellHeight = cellSize.height > 0 ? cellSize.height : frame.height / CGFloat(pane.rect.height)
+                    let shift = contentTop
                     ForEach(session.showing, id: \.label) { hint in
                         label(hint)
-                            .offset(x: frame.minX + CGFloat(hint.column) * cellWidth,
-                                    y: frame.minY + CGFloat(hint.row) * cellHeight + shift)
+                            .offset(x: CGFloat(pane.rect.x) * cellWidth + contentLeft + CGFloat(hint.column) * cellWidth,
+                                    y: shift + CGFloat(pane.rect.y + hint.row) * cellHeight)
                     }
                 }
             }
