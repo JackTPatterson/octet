@@ -123,6 +123,8 @@ enum PaletteCatalog {
             },
         ]
 
+        items.append(action("hints", "Open Link or File on Screen", "tool.fetch", shortcut: "⌘⇧H",
+                            keywords: ["hints", "url", "link", "open", "path", "file", "hash", "quick select"]) { HintsSession.start(window: window) })
         items.append(action("review", "Review Changes", "doc.text.magnifyingglass", shortcut: "⌘⇧R",
                             keywords: ["diff", "git", "changes", "comment", "code review", "agent"]) { window.toggleReview() })
         items += accountItems(window: window)

@@ -210,6 +210,29 @@ final class EditorWorkspace: ObservableObject {
         textView.window?.makeFirstResponder(textView)
     }
 
+    /// Selects a 1-based line and scrolls to it, once the text view holding
+    /// the newly opened document is there.
+    func reveal(line: Int, attempts: Int = 10) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            guard let self else { return }
+            guard let textView = self.textView, !textView.string.isEmpty else {
+                if attempts > 0 { self.reveal(line: line, attempts: attempts - 1) }
+                return
+            }
+            let text = textView.string as NSString
+            var location = 0
+            for _ in 1..<max(1, line) {
+                let next = text.range(of: "\n", range: NSRange(location: location, length: text.length - location))
+                guard next.location != NSNotFound else { break }
+                location = next.location + 1
+            }
+            let range = text.lineRange(for: NSRange(location: min(location, text.length), length: 0))
+            textView.setSelectedRange(range)
+            textView.scrollRangeToVisible(range)
+            self.focusEditor()
+        }
+    }
+
     func togglePresentation() {
         presentation = presentation == .split ? .full : .split
         requestedPresentation = presentation

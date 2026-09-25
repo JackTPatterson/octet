@@ -341,6 +341,17 @@ struct RootView: View {
                 let delay = Double(ProcessInfo.processInfo.environment["OCTET_DEBUG_KEYS_AFTER"] ?? "") ?? 10
                 DispatchQueue.main.asyncAfter(deadline: .now() + delay) { OctetTerminalRuntime.debugPress(keys) }
             }
+            // "hints" shows hint labels as ⌘⇧H does; "hints:<label>" also types one.
+            if let open = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], open.hasPrefix("hints") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                    HintsSession.start(window: window)
+                    if open.hasPrefix("hints:") {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                            ui.hints?.type(String(open.dropFirst(6)), copy: false, window: window)
+                        }
+                    }
+                }
+            }
             // "broadcast" opens the broadcast prompt as ⌘⇧I does.
             if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "broadcast" {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
@@ -454,6 +465,11 @@ struct RootView: View {
                             .id(conversation.id)
                     } else if twin.isVisible {
                         TwinView(twin: twin, store: store)
+                    } else if let hints = ui.hints {
+                        HintsOverlay(session: hints, layout: store.snapshot.layouts.first {
+                            $0.tabId == window.displayedFocusedTabId
+                        }, grid: terminalAnchor.grid, window: window)
+                        .id(hints.id)
                     } else if let grid = terminalAnchor.grid, let tab = splash.tabId,
                               tab == window.displayedFocusedTabId {
                         newTabSplash(clearOf: grid)
@@ -732,6 +748,8 @@ private struct WindowTransparency: NSViewRepresentable {
 }
 
 final class UIState: ObservableObject {
+    /// Hint labels over the terminal, while they're up.
+    @Published var hints: HintsSession?
     /// Palette items to open straight into, the first that exists.
     var paletteStart: [String]?
     /// The changes review over the terminal, while it's open.

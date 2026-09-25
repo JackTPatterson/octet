@@ -65,6 +65,7 @@ extension OctetShortcut {
     static let visualTwin = OctetShortcut(title: "Visual Twin / Terminal", key: "v", modifiers: [.command, .shift])
     static let review = OctetShortcut(title: "Review Changes", key: "r", modifiers: [.command, .shift])
     static let broadcast = OctetShortcut(title: "Broadcast to Agents…", key: "i", modifiers: [.command, .shift])
+    static let hints = OctetShortcut(title: "Open Link or File on Screen", key: "h", modifiers: [.command, .shift])
     static let increaseFontSize = OctetShortcut(title: "Increase Font Size", key: "=")
     static let decreaseFontSize = OctetShortcut(title: "Decrease Font Size", key: "-")
     static let resetFontSize = OctetShortcut(title: "Reset Font Size", key: "0")
@@ -101,7 +102,7 @@ extension OctetShortcut {
     static let groups: [(title: String, shortcuts: [OctetShortcut])] = [
         ("Octet", [settings, marketplace, quit]),
         ("File", [newTab, newConversation, agents, newWorkspace, newWindow, openFile, openFolder, saveFile, closeTab, reopenClosedTab]),
-        ("View", [palette, paletteAll, toggleSidebar, visualTwin, review, broadcast, increaseFontSize, decreaseFontSize, resetFontSize]),
+        ("View", [palette, paletteAll, toggleSidebar, visualTwin, review, broadcast, hints, increaseFontSize, decreaseFontSize, resetFontSize]),
         ("Pane", [splitRight, splitDown, toggleZoom, focusLeft, focusRight, focusUp, focusDown]),
         ("Navigate", [nextTab, previousTab, nextWorkspace, previousWorkspace, tabNumber, lastTab]),
         ("Terminal", [copy, paste, terminalPrefix]),

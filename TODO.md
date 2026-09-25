@@ -202,10 +202,15 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   command line and its completions were already switchable in Settings.
   Unit-tested; the keys weren't pressed end to end. Not done: rebinding
   which key accepts.
-- [ ] **29. Hints mode (med).** Ghostty #2394 (105) and 97 for keyboard URL
-  opening; kitty hints, WezTerm QuickSelect. Label URLs, hashes and
-  `file:line` on screen; open `file:line` in the editor (Ghostty #11907:
-  Claude Code's OSC 8 links don't open).
+- [x] **29. Hints mode (med).** Ghostty #2394 (105) and 97 for keyboard URL
+  opening; kitty hints, WezTerm QuickSelect. Done: ⌘⇧H (or palette › Open
+  Link or File on Screen) labels every link, path with a folder or line
+  (`src/app.swift:12:5`) and commit hash in the pane in front; type the
+  label to open it (links in the browser, paths in Octet's editor at the
+  line, hashes copied), ⇧ with it to copy instead, Esc to leave. Labels
+  follow bottom-anchored text. Checked with real pane text; the editor
+  opening at the line was checked by the file opening, not the selection
+  (the debug capture doesn't draw the editor's text).
 - [x] **30. Prune merged worktrees, show disk use per worktree (med).** cmux
   #6510; one report of 256 worktrees using 28 GB. Done: palette › Clean Up
   Worktrees lists the repository's worktrees with merged / uncommitted /
