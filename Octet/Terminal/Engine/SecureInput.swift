@@ -25,6 +25,8 @@ final class SecureInput: ObservableObject {
 
     /// True once EnableSecureEventInput has succeeded.
     @Published private(set) var enabled = false
+    /// On for a password prompt in the pane in front, not by choice.
+    @Published private(set) var forPassword = false
 
     private init() {
         global = UserDefaults.standard.bool(forKey: Self.defaultsKey)
@@ -38,15 +40,27 @@ final class SecureInput: ObservableObject {
         apply()
     }
 
+    private var wanted: Bool { global || forPassword }
+
     private func apply() {
         // Inactive: the activation notification applies it later.
-        guard NSApp?.isActive == true, enabled != global else { return }
+        guard NSApp?.isActive == true, enabled != wanted else { return }
         let err = enabled ? DisableSecureEventInput() : EnableSecureEventInput()
         if err == noErr {
-            enabled = global
+            enabled = wanted
         } else {
             Self.logger.warning("secure input apply failed err=\(err, privacy: .public)")
         }
+    }
+
+    /// Follows the pane in front: on while it asks for a password, off as
+    /// soon as it stops, so other apps' global shortcuts (which secure
+    /// input blocks) come back straight away.
+    func passwordPrompt(_ asking: Bool) {
+        let asking = asking && SettingsStore.shared.values.secureInputAtPasswords
+        guard asking != forPassword else { return }
+        forPassword = asking
+        apply()
     }
 
     private func resign() {

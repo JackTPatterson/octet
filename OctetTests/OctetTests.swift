@@ -3396,3 +3396,26 @@ final class HiddenHistoryTests: XCTestCase {
         XCTAssertEqual(history.ranked(matching: "git"), ["git pull"])
     }
 }
+
+final class SecretPromptTests: XCTestCase {
+    func testEchoOffInLineModeIsAPasswordPrompt() {
+        XCTAssertTrue(ShellPrompt.isSecretMode(tcflag_t(ICANON)))
+        XCTAssertFalse(ShellPrompt.isSecretMode(tcflag_t(ICANON | ECHO)))   // typing a command in `cat`
+        XCTAssertFalse(ShellPrompt.isSecretMode(0))                         // a line editor or full-screen program
+    }
+
+    func testReadsARealTerminalAskingForASecret() throws {
+        // A pty in the state `read -s` puts it in.
+        var master: Int32 = 0, slave: Int32 = 0
+        XCTAssertEqual(openpty(&master, &slave, nil, nil, nil), 0)
+        defer { close(master); close(slave) }
+        var mode = termios()
+        tcgetattr(slave, &mode)
+        mode.c_lflag &= ~tcflag_t(ECHO)
+        mode.c_lflag |= tcflag_t(ICANON)
+        tcsetattr(slave, TCSANOW, &mode)
+        var check = termios()
+        tcgetattr(slave, &check)
+        XCTAssertTrue(ShellPrompt.isSecretMode(check.c_lflag))
+    }
+}

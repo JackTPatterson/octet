@@ -64,11 +64,13 @@ terminal view under `Octet/Terminal/`.
   Debug `menu` step; not opened by a real click. Copying the session
   server's own copy-mode selection still goes through its copy mode.
 
-- [ ] **14. No automatic Secure Keyboard Entry at password prompts
-  (low-med).** Password prompts inside panes (`sudo`, `ssh`) never trigger it.
-  Fix: reuse `ShellPrompt`'s tty probe on the focused pane; when echo is off
-  and canonical mode is on, enable secure input temporarily with a lock hint,
-  and release it when the prompt ends.
+- [x] **14. No automatic Secure Keyboard Entry at password prompts
+  (low-med).** Done: while the pane in front's tty has echo off in line
+  mode (sudo, ssh, `read -s`), Secure Keyboard Entry is on with a padlock
+  badge, and off as soon as the prompt ends (`PasswordWatcher`, 0.4 s,
+  only while Octet is in front). Setting in Terminal. The detection was
+  checked on a real pane's `read -s`; the switch itself needs Octet in
+  front, so it wasn't exercised by the background test app.
 
 - [ ] **15. No bell, desktop notifications, progress or color-change
   handling (low).** These engine actions are unhandled. Fix: at least

@@ -82,6 +82,29 @@ enum ShellPrompt {
         return mode.c_lflag & tcflag_t(ICANON) == 0
     }
 
+    /// Whether the terminal the shell is on is asking for a secret right now:
+    /// echo off with line mode on, which is how `sudo`, `ssh`, `passwd` and
+    /// `read -s` read a password. Checked live on the shell's tty, so it
+    /// holds whichever program in the pane is asking. nil when it can't tell.
+    static func secretPrompt(shellPid pid: Int) -> Bool? {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(Int32(pid), PROC_PIDTBSDINFO, 0, &info, size) == size,
+              info.e_tdev != UInt32.max,
+              let name = devname(dev_t(bitPattern: info.e_tdev), S_IFCHR) else { return nil }
+        let fd = open("/dev/" + String(cString: name), O_RDONLY | O_NOCTTY | O_NONBLOCK)
+        guard fd >= 0 else { return nil }
+        defer { close(fd) }
+        var mode = termios()
+        guard tcgetattr(fd, &mode) == 0 else { return nil }
+        return isSecretMode(mode.c_lflag)
+    }
+
+    /// Echo off and canonical (line) mode on.
+    static func isSecretMode(_ flags: tcflag_t) -> Bool {
+        flags & tcflag_t(ECHO) == 0 && flags & tcflag_t(ICANON) != 0
+    }
+
     /// Whether the shell's line goes on past the cursor, from the text on the
     /// cursor's row from the cursor rightward. Only the first two cells
     /// count: the cursor sits on a character, or on the space before the

@@ -515,6 +515,13 @@ private struct TerminalSettings: View {
             }
             SettingsDivider()
             SettingsRow(
+                title: "Secure input at password prompts",
+                detail: "While sudo, ssh or anything else asks for a password in the pane in front, macOS Secure Keyboard Entry is on, so other apps can't read the keystrokes. It turns off as soon as the prompt ends."
+            ) {
+                Toggle("Secure input at password prompts", isOn: $settings.values.secureInputAtPasswords).labelsHidden().toggleStyle(.switch)
+            }
+            SettingsDivider()
+            SettingsRow(
                 title: "Preview long pastes into agents",
                 detail: "A paste of 25 lines or more into a pane running an agent opens first, so you can read and edit it; agents fold long pastes into a line you can't open."
             ) {

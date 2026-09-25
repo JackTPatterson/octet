@@ -55,6 +55,8 @@ struct OctetSettings: Codable, Equatable {
     var tidyAgentCopies = true
     /// Show a long paste into an agent, editable, before it's sent.
     var previewLongPastes = true
+    /// Turn on Secure Keyboard Entry while a pane asks for a password.
+    var secureInputAtPasswords = true
     var mouseScrollLines: Double = 3
     var optionAsAlt: OptionAsAlt = .off
     var hideMouseWhileTyping = true
@@ -254,6 +256,7 @@ struct OctetSettings: Codable, Equatable {
         clipboardToasts = value("clipboardToasts", defaults.clipboardToasts)
         tidyAgentCopies = value("tidyAgentCopies", defaults.tidyAgentCopies)
         previewLongPastes = value("previewLongPastes", defaults.previewLongPastes)
+        secureInputAtPasswords = value("secureInputAtPasswords", defaults.secureInputAtPasswords)
         mouseScrollLines = value("mouseScrollLines", defaults.mouseScrollLines)
         optionAsAlt = value("optionAsAlt", defaults.optionAsAlt)
         hideMouseWhileTyping = value("hideMouseWhileTyping", defaults.hideMouseWhileTyping)
