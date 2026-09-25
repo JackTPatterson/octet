@@ -24,7 +24,9 @@ enum SubagentHook {
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let agentType = (input?["subagent_type"] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let label = tabLabel(agentType: agentType, description: description)
+        let name = (input?["name"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let label = tabLabel(name: name, agentType: agentType, description: description)
 
         var command = [
             cliPath, "agent-watch",
@@ -49,9 +51,12 @@ enum SubagentHook {
         ]
     }
 
-    static func tabLabel(agentType: String, description: String) -> String {
+    /// A named agent (a teammate such as `profile-remaining-4`) is titled by
+    /// its name, which tells sibling tabs apart where the shared type
+    /// (`general-purpose`) does not; the description still heads the viewer.
+    static func tabLabel(name: String = "", agentType: String, description: String) -> String {
         let parts = [agentType, description].filter { !$0.isEmpty }
-        let label = parts.isEmpty ? "Subagent" : parts.joined(separator: ": ")
+        let label = !name.isEmpty ? name : parts.isEmpty ? "Subagent" : parts.joined(separator: ": ")
         return label.count > maxLabelLength ? String(label.prefix(maxLabelLength - 1)) + "…" : label
     }
 

@@ -76,6 +76,14 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         OTHER_LDFLAGS: "-lc++"
         ENABLE_APP_SANDBOX: NO
+      configs:
+        # Privacy grants (Files and Folders, Music, …) are stored per bundle
+        # ID together with the signing requirement. Debug is signed with the
+        # development certificate and Release with Developer ID, so under one
+        # ID each build overwrote the other's grant, and switching between
+        # them asked for every permission again.
+        Debug:
+          PRODUCT_BUNDLE_IDENTIFIER: com.jpxsoftware.octet.debug
     postBuildScripts:
       - name: Bundle terminal engine
         basedOnDependencyAnalysis: true

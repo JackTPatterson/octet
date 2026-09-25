@@ -163,6 +163,17 @@ final class SubagentTabTests: XCTestCase {
         XCTAssertEqual(root["cwd"] as? String, "/Users/me/app")
     }
 
+    func testNamedAgentTabUsesItsName() throws {
+        var named = payload
+        named["tool_input"] = ["subagent_type": "general-purpose", "name": "profile-remaining-4",
+                               "description": "Write the last profiles", "prompt": "…"]
+        let request = try XCTUnwrap(SubagentHook.tabRequest(
+            payload: named, environment: [EngineProtocol.workspaceIdVariable: "w2"], cliPath: "x"))
+        XCTAssertEqual(request["tab_label"] as? String, "profile-remaining-4")
+        let command = try XCTUnwrap((request["root"] as? [String: Any])?["command"] as? [String])
+        XCTAssertTrue(command.contains("Write the last profiles"))
+    }
+
     func testIgnoresOtherToolsAndNonEnginePanes() {
         var bash = payload
         bash["tool_name"] = "Bash"

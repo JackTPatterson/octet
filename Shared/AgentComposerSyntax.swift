@@ -34,10 +34,15 @@ enum AgentComposerSyntax {
                                                    includingPropertiesForKeys: [.isDirectoryKey],
                                                    options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return [] }
         let ignored = Set([".git", ".build", "build", "DerivedData", "node_modules", "Pods", ".next"])
+        // A session opened in the home folder would otherwise walk into the
+        // privacy-protected folders, and macOS asks about each one.
+        let home = NSHomeDirectory()
+        let protected = Set(["Desktop", "Documents", "Downloads", "Library", "Movies", "Music", "Pictures"]
+            .map { home + "/" + $0 })
         var matches: [(Reference, Int)] = []
         for case let url as URL in enumerator {
             let relative = String(url.path.dropFirst(cwd.hasSuffix("/") ? cwd.count : cwd.count + 1))
-            if ignored.contains(url.lastPathComponent) {
+            if ignored.contains(url.lastPathComponent) || protected.contains(url.path) {
                 enumerator.skipDescendants()
                 continue
             }
