@@ -29,7 +29,7 @@ struct TerminalTheme: Identifiable, Equatable, Codable {
         // Keep the default terminal surface visibly within Octet's charcoal
         // palette. #050505 rendered as perceptual black on most displays,
         // making the terminal look detached from the themed chrome.
-        TerminalTheme(name: "Dark", background: "101010", foreground: "ffffff", accent: "19aad8", ansi: [
+        TerminalTheme(name: "Dark", background: "101010", foreground: "ffffff", accent: "ffffff", ansi: [
             "616161", "ff8272", "b4fa72", "fefdc2", "a5d5fe", "ff8ffd", "d0d1fe", "f1f1f1",
             "8e8e8e", "ffc4bd", "d6fcb9", "fefdd5", "c1e3fe", "ffb1fe", "e5e6fe", "feffff",
         ], isLight: false),
