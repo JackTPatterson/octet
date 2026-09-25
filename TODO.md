@@ -148,9 +148,11 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   Settings → Agents → Accounts. Every shell Octet opens in the project (its
   worktrees too) and Octet's own conversations get `CLAUDE_CONFIG_DIR` /
   `CODEX_HOME`; the twin, recovery and activity read transcripts from the
-  account's folder; an Account chip shows which is in use. Remaining: usage
-  and limits per account (the chip reads the default one), Codex's
-  app-server conversations, and shells the session server opens by itself.
+  account's folder; an Account chip shows which is in use; Settings shows
+  each account's sign-in ("Signed in · Max"). Octet's Codex conversations
+  get it too. Remaining: usage and limits per account (the usage chip
+  reads the default sign-in; splitting it means a keychain token and a
+  cache per account), and shells the session server opens by itself.
 - [x] **45. Name the skill on a Skill tool row (med, small).** Done: the
   conversation view titles a skill call with the skill's name, its args as
   the line under it, and the twin writes `Skill(frontend-design)` as Claude

@@ -556,6 +556,8 @@ private struct AgentSettings: View {
     @ObservedObject var integrations: AgentIntegrations
     @ObservedObject private var discovery = AgentDiscoveryStore.shared
     @State private var hookInstalled: Set<String> = []
+    /// Each account's sign-in, read from its CLI when the page opens.
+    @State private var accountStatus: [String: String] = [:]
 
     /// How many agents the last scan found, and when it ran.
     private var discoveryDetail: String {
@@ -805,10 +807,14 @@ private struct AgentSettings: View {
             }
             ForEach(settings.values.accountProfiles) { profile in
                 SettingsDivider()
+                    .task(id: profile.id) {
+                        let status = await Task.detached { AccountActions.status(of: profile) }.value
+                        accountStatus[profile.id] = status
+                    }
                 let folders = settings.values.accountAssignments.filter { $0.profileId == profile.id }.map(\.folder)
                 SettingsRow(
                     title: "\(AgentBrand.forAgent(profile.agent)?.displayName ?? profile.agent) · \(profile.name)",
-                    detail: profile.home + " · " + (folders.isEmpty ? "No projects yet"
+                    detail: (accountStatus[profile.id].map { $0 + " · " } ?? "") + profile.home + " · " + (folders.isEmpty ? "No projects yet"
                         : "Used by " + folders.map { ($0 as NSString).abbreviatingWithTildeInPath }.joined(separator: ", "))
                 ) {
                     Button("Remove") { AccountActions.remove(profile) }

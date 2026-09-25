@@ -66,6 +66,33 @@ enum AccountActions {
                                    detail: "New tabs and conversations sign in with it. Agents already running keep the account they started with.")
     }
 
+    /// How an account is signed in, from the agent's own CLI pointed at its
+    /// folder: "Signed in · Max", "Not signed in".
+    nonisolated static func status(of profile: AccountProfile) -> String {
+        let command = profile.agent == "codex" ? "codex login status" : "claude auth status"
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh")
+        process.arguments = ["-l", "-c", command]
+        process.environment = ProcessInfo.processInfo.environment.merging([profile.variable: profile.expandedHome()]) { _, new in new }
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = output
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
+        guard (try? process.run()) != nil else { return "Couldn't run \(profile.agent)" }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        exited.wait()
+        let account = profile.agent == "codex"
+            ? AgentAccounts.codex(loginStatus: String(decoding: data, as: UTF8.self))
+            : AgentAccounts.claude(authStatus: data)
+        switch account.kind {
+        case .subscription: return "Signed in" + (account.plan.map { " · \($0)" } ?? "")
+        case .apiKey: return "Signed in with an API key"
+        case .signedOut: return "Not signed in"
+        case .unknown: return "Sign-in unknown"
+        }
+    }
+
     /// Forgets an account and where it was used. Its folder, and the sign-in
     /// in it, stay on disk.
     static func remove(_ profile: AccountProfile) {
