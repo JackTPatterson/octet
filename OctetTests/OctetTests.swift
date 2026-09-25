@@ -3385,3 +3385,14 @@ final class AgentTodosTests: XCTestCase {
         XCTAssertNil(AgentTodos.openCodeTodos(sessionId: "ses_none", database: path))
     }
 }
+
+final class HiddenHistoryTests: XCTestCase {
+    func testAHiddenCommandIsNeverSuggested() {
+        var history = CommandHistory(commands: [.init(command: "git push --force", at: Date(), count: 9),
+                                                .init(command: "git pull", at: Date(), count: 1)])
+        XCTAssertEqual(history.suggestion(for: "git p"), "git push --force")
+        history.hidden = ["git push --force"]
+        XCTAssertEqual(history.suggestion(for: "git p"), "git pull")
+        XCTAssertEqual(history.ranked(matching: "git"), ["git pull"])
+    }
+}

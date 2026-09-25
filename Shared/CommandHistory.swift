@@ -11,6 +11,9 @@ struct CommandHistory {
     }
 
     private(set) var entries: [Entry] = []
+    /// Commands never to suggest again, as asked; the shell's own history
+    /// file is left as it is.
+    var hidden: Set<String> = []
     /// command → index in `entries`, for counting repeats cheaply.
     private var seen: [String: Int] = [:]
 
@@ -54,7 +57,7 @@ struct CommandHistory {
     func ranked(matching prefix: String, limit: Int = 10) -> [String] {
         guard !prefix.isEmpty else { return [] }
         let now = Date()
-        let matches: [Entry] = entries.filter { $0.command.hasPrefix(prefix) && $0.command != prefix }
+        let matches: [Entry] = entries.filter { $0.command.hasPrefix(prefix) && $0.command != prefix && !hidden.contains($0.command) }
         // Frecency: repeats matter, but a command from this hour matters
         // more than one from last month.
         var scored: [(command: String, score: Double)] = []

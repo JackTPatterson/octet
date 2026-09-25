@@ -195,9 +195,13 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   Claude Code and Codex, since the kitty keyboard protocol passes through.
   Without it (a plain program) Shift+Enter is `\r`, as in any terminal.
   Not checked: OpenCode (see 47) and SSH, where the remote end decides.
-- [ ] **28. Completion escape hatches (med).** Warp #1811 (372), #1909 (269),
-  #3675 (96): one key to pass Tab to the shell, rebind accept, delete a
-  history suggestion.
+- [x] **28. Completion escape hatches (med).** Warp #1811 (372), #1909 (269),
+  #3675 (96). Done: ⌥⇥ sends Tab straight to the shell's own completion
+  past Octet's menu; ⇧⌦ on a suggestion stops Octet suggesting that
+  command (with Undo; the shell's history file isn't touched). Octet's
+  command line and its completions were already switchable in Settings.
+  Unit-tested; the keys weren't pressed end to end. Not done: rebinding
+  which key accepts.
 - [ ] **29. Hints mode (med).** Ghostty #2394 (105) and 97 for keyboard URL
   opening; kitty hints, WezTerm QuickSelect. Label URLs, hashes and
   `file:line` on screen; open `file:line` in the editor (Ghostty #11907:

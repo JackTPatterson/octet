@@ -220,6 +220,14 @@ final class PromptEditor: ObservableObject {
         let shift = event.modifierFlags.contains(.shift)
 
         switch event.keyCode {
+        case 48 where option && isActive:
+            // ⌥⇥: straight to the shell's own completion, past Octet's.
+            flush(then: "\t")
+            return true
+        case 117 where shift && isActive && suggestion != nil:
+            // ⇧⌦ on a suggestion: never suggest it again.
+            forget(suggestion!)
+            return true
         case 36, 76: // Return
             guard isActive else { return false }
             if completionsOpen {
@@ -688,8 +696,24 @@ final class PromptEditor: ObservableObject {
         }
         // What usually follows the last command wins over a plain history
         // match, since it knows where you are in a sequence.
-        suggestion = sequences.prediction(after: lastCommand, matching: line.text, in: cwd)
+        let predicted = sequences.prediction(after: lastCommand, matching: line.text, in: cwd)
+        suggestion = predicted.flatMap { history.hidden.contains($0) ? nil : $0 }
             ?? history.suggestion(for: line.text)
+    }
+
+    private static let hiddenKey = "octet.history.hidden"
+
+    /// Stops suggesting `command`, with an Undo.
+    private func forget(_ command: String) {
+        history.hidden.insert(command)
+        UserDefaults.standard.set(Array(history.hidden).sorted(), forKey: Self.hiddenKey)
+        refreshSuggestion()
+        ToastCenter.shared.info("Won't suggest that again", detail: command, action: .init(title: "Undo") { [weak self] in
+            guard let self else { return }
+            self.history.hidden.remove(command)
+            UserDefaults.standard.set(Array(self.history.hidden).sorted(), forKey: Self.hiddenKey)
+            self.refreshSuggestion()
+        })
     }
 
     /// History is read from the shells' own files, off the main thread.
@@ -706,6 +730,7 @@ final class PromptEditor: ObservableObject {
                 // Keep anything typed this session on top of the file's.
                 var merged = loaded
                 for entry in self.history.entries { merged.add(entry) }
+                merged.hidden = Set(UserDefaults.standard.stringArray(forKey: Self.hiddenKey) ?? [])
                 self.history = merged
                 self.sequences = sequences
                 self.refreshSuggestion()
