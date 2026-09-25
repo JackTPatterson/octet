@@ -2625,8 +2625,8 @@ final class EngineNavigationTests: XCTestCase {
 
     func testTheFirstNineAreOneJump() {
         XCTAssertEqual(EngineNavigation.toTab(from: 0, to: 1), [prefix, Stroke(key: "digit2")])
-        XCTAssertEqual(EngineNavigation.toWorkspace(from: nil, to: 0), [prefix, Stroke(key: "digit1", alt: true)])
-        XCTAssertEqual(EngineNavigation.toWorkspace(from: 3, to: 8), [prefix, Stroke(key: "digit9", alt: true)])
+        XCTAssertEqual(EngineNavigation.toWorkspace(from: nil, to: 0), [prefix, Stroke(key: "digit1", ctrl: true)])
+        XCTAssertEqual(EngineNavigation.toWorkspace(from: 3, to: 8), [prefix, Stroke(key: "digit9", ctrl: true)])
     }
 
     func testBeingThereAlreadyIsNoKeys() {
@@ -2639,7 +2639,7 @@ final class EngineNavigationTests: XCTestCase {
         XCTAssertEqual(EngineNavigation.toTab(from: nil, to: 10), [prefix, Stroke(key: "digit9")] + next + next)
         // From right next door, stepping is shorter than the jump.
         XCTAssertEqual(EngineNavigation.toTab(from: 11, to: 10), [prefix, Stroke(key: "p")])
-        XCTAssertEqual(EngineNavigation.toWorkspace(from: 9, to: 10), [prefix, Stroke(key: "n", alt: true)])
+        XCTAssertEqual(EngineNavigation.toWorkspace(from: 9, to: 10), [prefix, Stroke(key: "n", ctrl: true)])
     }
 
     func testStrokesCarryWhatTheTerminalNeeds() {
@@ -2647,13 +2647,14 @@ final class EngineNavigationTests: XCTestCase {
         XCTAssertEqual(prefix.codepoint, UInt32(("b" as Unicode.Scalar).value))
         XCTAssertEqual(Stroke(key: "digit2").text, "2")
         XCTAssertNil(Stroke(key: "digit2", alt: true).text)
+        XCTAssertNil(Stroke(key: "digit2", ctrl: true).text)
         XCTAssertEqual(Stroke(key: "digit2", alt: true).codepoint, UInt32(("2" as Unicode.Scalar).value))
     }
 
     func testTheConfigBindsWhatThePlannerSends() {
         let config = EngineNavigation.keysConfig
-        for binding in ["prefix = \"ctrl+b\"", "switch_tab = \"prefix+1..9\"", "switch_workspace = \"prefix+alt+1..9\"",
-                        "next_workspace = \"prefix+alt+n\"", "next_tab = \"prefix+n\""] {
+        for binding in ["prefix = \"ctrl+b\"", "switch_tab = \"prefix+1..9\"", "\"prefix+ctrl+1..9\"",
+                        "\"prefix+ctrl+n\"", "\"prefix+ctrl+p\"", "next_tab = \"prefix+n\""] {
             XCTAssertTrue(config.contains(binding), binding)
         }
     }

@@ -11,7 +11,11 @@ import Foundation
 /// where it's asked by being sent these keys.
 ///
 /// The engine's defaults leave workspace switching unbound, so Octet binds
-/// what it uses in the engine config it writes (`keysConfig`).
+/// what it uses in the engine config it writes (`keysConfig`). Workspace
+/// moves are sent with Control: the terminal only encodes Option as Alt
+/// when "Use Option as Alt" is on, and with it off (the default) a sent
+/// Alt+2 arrived as a plain 2, which the engine read as "tab 2". The Alt
+/// bindings stay for anyone who types them.
 enum EngineNavigation {
     /// One key press: a `TerminalEngine.Input.Key` raw value and modifiers.
     struct Stroke: Equatable {
@@ -42,9 +46,9 @@ enum EngineNavigation {
     switch_tab = "prefix+1..9"
     next_tab = "prefix+n"
     previous_tab = "prefix+p"
-    switch_workspace = "prefix+alt+1..9"
-    next_workspace = "prefix+alt+n"
-    previous_workspace = "prefix+alt+p"
+    switch_workspace = ["prefix+alt+1..9", "prefix+ctrl+1..9"]
+    next_workspace = ["prefix+alt+n", "prefix+ctrl+n"]
+    previous_workspace = ["prefix+alt+p", "prefix+ctrl+p"]
     """
 
     static let prefix = Stroke(key: "b", ctrl: true)
@@ -55,8 +59,8 @@ enum EngineNavigation {
     /// steps from where the client is when that's known and nearer.
     static func toWorkspace(from current: Int?, to target: Int) -> [Stroke] {
         guard target >= 0, current != target else { return [] }
-        return move(from: current, to: target, jump: { [prefix, Stroke(key: "digit\($0 + 1)", alt: true)] },
-                    next: [prefix, Stroke(key: "n", alt: true)], previous: [prefix, Stroke(key: "p", alt: true)])
+        return move(from: current, to: target, jump: { [prefix, Stroke(key: "digit\($0 + 1)", ctrl: true)] },
+                    next: [prefix, Stroke(key: "n", ctrl: true)], previous: [prefix, Stroke(key: "p", ctrl: true)])
     }
 
     /// Keys from the tab at `current` to the one at `target`, both positions

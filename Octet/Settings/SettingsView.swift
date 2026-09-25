@@ -639,7 +639,9 @@ private struct AgentSettings: View {
                 .frame(width: 140)
                 .disabled(!settings.values.agentSounds)
                 .onChange(of: settings.values.subagentFinishedSound) { _, name in
-                    if !name.isEmpty { NSSound(named: NSSound.Name(name))?.play() }
+                    if let path = SubagentWatch.soundPath(name), !name.isEmpty {
+                        NSSound(contentsOf: URL(fileURLWithPath: path), byReference: true)?.play()
+                    }
                 }
             }
         }

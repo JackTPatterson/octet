@@ -32,6 +32,9 @@ final class SessionStore: ObservableObject {
     @Published private(set) var groups: [ProjectGroup] = []
     /// Git branch per workspace id, read from `.git/HEAD` on each snapshot.
     @Published private(set) var branches: [String: String] = [:]
+    /// Where each subagent is working, by pane id, when it has left the
+    /// folder its tab opened in (another worktree, repo or subfolder).
+    @Published private(set) var agentLocations: [String: AgentLocation] = [:]
     /// Plugins installed in Octet's session; refreshed when the palette opens.
     @Published private(set) var plugins: [EnginePlugin] = []
 
@@ -481,6 +484,7 @@ final class SessionStore: ObservableObject {
                 (try? client.call("pane.process_info", ["pane_id": paneId])).flatMap(ShellPrompt.parse)
             }
             let branches = snapshot.map(Self.readBranches)
+            let locations = snapshot.map(Self.readLocations)
             let inferred = snapshot.flatMap { snapshot in
                 inference.map { AgentSessionFiles.infer(agents: snapshot.agents, firstSeen: $0) }
             }
@@ -495,7 +499,7 @@ final class SessionStore: ObservableObject {
                     let visible = ClosedTabs.visible(snapshot)
                     self.recovery.observe(visible, inferred: inferred ?? [:])
                     self.shellRecovery.observe(visible)
-                    self.apply(visible, branches: branches ?? [:])
+                    self.apply(visible, branches: branches ?? [:], locations: locations ?? [:])
                 case .failure(let error):
                     self.lastError = String(describing: error)
                 }
@@ -504,7 +508,7 @@ final class SessionStore: ObservableObject {
         }
     }
 
-    func apply(_ snapshot: EngineSnapshot, branches: [String: String]) {
+    func apply(_ snapshot: EngineSnapshot, branches: [String: String], locations: [String: AgentLocation] = [:]) {
         settleOptimisticTabs(with: snapshot)
         observeActivity(snapshot)
         autoNameTabs(in: snapshot)
@@ -513,6 +517,7 @@ final class SessionStore: ObservableObject {
         AgentOfferCenter.shared.observe(snapshot)
         refreshTip()
         if branches != self.branches { self.branches = branches }
+        if locations != self.agentLocations { self.agentLocations = locations }
         guard snapshot != self.snapshot || groups.isEmpty else { return }
         self.snapshot = snapshot
         let groups = ProjectGrouping.groups(snapshot: snapshot, resolveRoot: resolver.root(for:))
@@ -529,6 +534,28 @@ final class SessionStore: ObservableObject {
             }
         }
         return branches
+    }
+
+    /// Each subagent's reported folder, seen from where its tab opened.
+    private nonisolated static func readLocations(_ snapshot: EngineSnapshot) -> [String: AgentLocation] {
+        var locations: [String: AgentLocation] = [:]
+        for agent in snapshot.agents {
+            guard let cwd = agent.reportedCwd else { continue }
+            let home = snapshot.panes.first { $0.paneId == agent.paneId }?.cwd
+                ?? agent.workspaceId.flatMap(snapshot.directory(ofWorkspace:))
+            locations[agent.paneId] = AgentLocations.locate(cwd, home: home)
+        }
+        return locations
+    }
+
+    /// Where the agents of a workspace have gone, one entry per place.
+    func agentLocations(inWorkspace workspaceId: String) -> [(location: AgentLocation, count: Int)] {
+        AgentLocations.grouped(snapshot.agents(inWorkspace: workspaceId).compactMap { agentLocations[$0.paneId] })
+    }
+
+    /// Where a tab's agent has gone, if anywhere.
+    func agentLocation(inTab tabId: String) -> AgentLocation? {
+        primaryAgent(in: snapshot.agents(inTab: tabId)).flatMap { agentLocations[$0.paneId] }
     }
 
     // MARK: - Remote machines
@@ -1091,6 +1118,14 @@ final class SessionStore: ObservableObject {
 
     func renameWorkspace(_ id: String, to label: String) {
         perform("workspace.rename", ["workspace_id": id, "label": label], failure: "Couldn't rename workspace")
+    }
+
+    /// Renames from an edit field: nil (cancelled), blank or unchanged
+    /// names are left alone.
+    func renameWorkspace(_ id: String, to label: String?, from current: String) {
+        guard let label = label?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !label.isEmpty, label != current else { return }
+        renameWorkspace(id, to: label)
     }
 
     var focusedPaneId: String? {

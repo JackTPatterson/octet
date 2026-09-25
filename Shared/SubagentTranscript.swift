@@ -39,8 +39,14 @@ final class SubagentTranscriptRenderer {
     var onFinished: (() -> Void)?
     /// Called on every pass of the tail loop, for work that waits on time.
     var onTick: (() -> Void)?
+    /// Called with the subagent's folder when it first shows and on each change.
+    var onDirectory: ((String) -> Void)?
     /// When the subagent last finished; cleared if it is sent more work.
     private(set) var finishedAt: Date?
+    /// The folder the tab opened in, where the parent agent was.
+    var home = FileManager.default.currentDirectoryPath
+    private var cwd: String?
+    private var location: AgentLocation?
 
     private let esc = "\u{1B}["
 
@@ -80,6 +86,9 @@ final class SubagentTranscriptRenderer {
     func render(line: Data) {
         guard let entry = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
               let message = entry["message"] as? [String: Any] else { return }
+        if let cwd = entry["cwd"] as? String, !cwd.isEmpty, cwd != self.cwd {
+            moved(to: cwd)
+        }
         // Anything after a finish means the subagent is working again.
         finishedAt = nil
         switch entry["type"] as? String {
@@ -126,6 +135,44 @@ final class SubagentTranscriptRenderer {
         default:
             break
         }
+    }
+
+    /// Says so when the subagent changes folder, but only as often as the
+    /// place it is in changes: flipping between two folders of one repo is
+    /// news, a second line of the same place is not.
+    private func moved(to cwd: String) {
+        let first = self.cwd == nil
+        self.cwd = cwd
+        onDirectory?(cwd)
+        let location = AgentLocations.locate(cwd, home: home)
+        guard location != self.location else { return }
+        self.location = location
+        if let line = Self.locationLine(location, home: home) {
+            if !first || location != nil { print(line) }
+        }
+    }
+
+    /// "⤷ In worktree agent-a84… on main" and the path under it, dim.
+    static func locationLine(_ location: AgentLocation?, home: String) -> String? {
+        let esc = "\u{1B}["
+        let arrow = "\(esc)35m⤷\(esc)0m "
+        guard let location else {
+            return arrow + "\(esc)2mBack in \((home as NSString).lastPathComponent)\(esc)0m"
+        }
+        let place: String
+        switch location.kind {
+        case .worktree: place = "In worktree "
+        case .repository: place = "In repository "
+        case .subfolder, .folder: place = "In "
+        }
+        let branch = location.branch.map { "\(esc)2m on \(esc)0m\(esc)35m\($0)\(esc)0m" } ?? ""
+        return arrow + place + "\(esc)1m\(location.name)\(esc)0m" + branch
+            + "\n  \(esc)2m\(abbreviateHome(location.path))\(esc)0m"
+    }
+
+    private static func abbreviateHome(_ path: String) -> String {
+        let home = NSHomeDirectory()
+        return path.hasPrefix(home) ? "~" + path.dropFirst(home.count) : path
     }
 
     static func toolSummary(_ input: [String: Any]?) -> String {

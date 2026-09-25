@@ -107,11 +107,12 @@ private struct TabPeekRow: View {
         } title: {
             TabAutoName.display(label: tab.label, number: tab.number)
         } detail: {
-            detail(agent: agent, brand: brand, count: running.count)
+            detail(agent: agent, brand: brand, count: running.count,
+                   location: agent.flatMap { store.agentLocations[$0.paneId] })
         }
     }
 
-    private func detail(agent: EngineAgent?, brand: AgentBrand?, count: Int) -> String {
+    private func detail(agent: EngineAgent?, brand: AgentBrand?, count: Int, location: AgentLocation?) -> String {
         var parts: [String] = []
         if let agent, let brand {
             let state = stateLabel(agent.agentStatus)
@@ -119,6 +120,7 @@ private struct TabPeekRow: View {
         } else {
             parts.append("Shell")
         }
+        if let location { parts.append("in \(location.phrase)") }
         if count > 1 { parts.append("\(count) agents") }
         if tab.paneCount > 1 { parts.append("\(tab.paneCount) panes") }
         return parts.joined(separator: " · ")

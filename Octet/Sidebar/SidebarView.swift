@@ -157,23 +157,41 @@ private struct BranchChip: View {
 }
 
 /// How much of the model's window the conversation is using.
+/// How much of the model's window the conversation is using, as a ring
+/// that fills clockwise; the number is a hover away.
 private struct ContextChip: View {
     let usage: TwinUsage
+    @ObservedObject private var motion = MotionPreferences.shared
 
     var body: some View {
-        Text(usage.label)
-            .font(Theme.captionFont)
-            .foregroundStyle(colour)
-            .padding(.horizontal, 4)
-            .padding(.vertical, 1)
-            .background(RoundedRectangle(cornerRadius: 3).fill(colour.opacity(0.14)))
-            .help(detail)
+        Group {
+            if let fraction = usage.contextFraction {
+                ZStack {
+                    Circle().stroke(Theme.border, lineWidth: 2)
+                    Circle()
+                        .trim(from: 0, to: max(0.03, fraction))
+                        .stroke(colour, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                }
+                .frame(width: 12, height: 12)
+                .animation(motion.animation(.connections, .easeOut(duration: 0.4)), value: fraction)
+            } else {
+                // No window to measure against: just how much is in play.
+                Text(usage.label)
+                    .font(Theme.captionFont)
+                    .foregroundStyle(Theme.textTertiary)
+            }
+        }
+        .help(detail)
+        .accessibilityElement()
+        .accessibilityLabel("Context")
+        .accessibilityValue(usage.label)
     }
 
     /// Quiet until it matters, then increasingly not.
     private var colour: Color {
         switch usage.contextFraction ?? 0 {
-        case ..<0.7: Theme.textTertiary
+        case ..<0.7: Theme.textSecondary
         case ..<0.9: Color(hex: "e0af68")
         default: Color(hex: "e5484d")
         }
@@ -181,8 +199,8 @@ private struct ContextChip: View {
 
     private var detail: String {
         let used = TwinUsage.compact(usage.currentContextTokens)
-        guard let window = usage.contextWindow else { return "\(used) of context in play" }
-        return "\(used) of \(TwinUsage.compact(window)) context in play"
+        guard let window = usage.effectiveContextWindow else { return "\(used) of context in play" }
+        return "\(usage.label) of context used · \(used) of \(TwinUsage.compact(window))"
     }
 }
 
@@ -223,7 +241,7 @@ private struct WorkspaceCard: View {
                 if renaming {
                     InlineRenameField(initial: workspace.label, placeholder: "Workspace name") { label in
                         renaming = false
-                        if let label, !label.isEmpty { store.renameWorkspace(workspace.workspaceId, to: label) }
+                        store.renameWorkspace(workspace.workspaceId, to: label, from: workspace.label)
                     }
                 } else {
                     Text(workspace.label)
@@ -237,6 +255,9 @@ private struct WorkspaceCard: View {
                         .help("Pinned: never moves to Idle")
                 }
                 Spacer(minLength: 0)
+                if hovered && !renaming {
+                    WorkspaceRenameButton { renaming = true }
+                }
                 if elsewhere {
                     OctetIcon("rectangle.on.rectangle", size: 12)
                         .foregroundStyle(Theme.textTertiary)
@@ -263,6 +284,7 @@ private struct WorkspaceCard: View {
                     // How full this agent's context is, before it bites.
                     if let usage = store.usageTracker.usage(forTerminal: agent?.terminalId),
                        !usage.label.isEmpty {
+                        Spacer(minLength: 4)
                         ContextChip(usage: usage)
                     }
                 } else if workspace.tabCount > 1 {
@@ -272,6 +294,12 @@ private struct WorkspaceCard: View {
                         .font(Theme.uiFont)
                         .foregroundStyle(Theme.textTertiary)
                 }
+            }
+            // Subagents that left for a worktree, repo or folder of their own.
+            let locations = store.agentLocations(inWorkspace: workspace.workspaceId)
+            if !locations.isEmpty {
+                AgentLocationRow(locations: locations)
+                    .transition(.opacity)
             }
         }
         .padding(.horizontal, 10)
@@ -301,9 +329,7 @@ private struct WorkspaceCard: View {
         }
         .simultaneousGesture(TapGesture(count: 2).onEnded { renaming = true })
         .contextMenu {
-            Button("Rename Workspace…") { renaming = true }
-            Divider()
-            WorkspaceOrganizeMenu(store: store, workspace: workspace)
+            WorkspaceOrganizeMenu(store: store, workspace: workspace) { renaming = true }
         }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
@@ -389,9 +415,13 @@ struct WorkspaceOrganizeMenu: View {
     @EnvironmentObject private var window: WindowContext
     @ObservedObject var store: SessionStore
     let workspace: EngineWorkspace
+    /// Starts renaming where the workspace is shown.
+    let rename: () -> Void
 
     var body: some View {
         let id = workspace.workspaceId
+        Button("Rename Workspace…", action: rename)
+        Divider()
         let agents = store.snapshot.agents(inWorkspace: id).filter { AgentOffer.agentId($0) != nil }
         if agents.count == 1, let agent = agents.first {
             Button("Open on Octet UI") { window.openOnOctetUI(agent) }
@@ -514,6 +544,7 @@ private struct IdleRow: View {
     @ObservedObject var store: SessionStore
     let workspace: EngineWorkspace
     @State private var hovered = false
+    @State private var renaming = false
 
     var body: some View {
         let agent = store.primaryAgent(in: store.snapshot.agents(inWorkspace: workspace.workspaceId))
@@ -528,11 +559,18 @@ private struct IdleRow: View {
             }
             .foregroundStyle(Theme.textTertiary)
             .frame(width: 12)
-            Text(workspace.label)
-                .font(.system(size: 11.5))
-                .foregroundStyle(hovered ? Theme.textPrimary : Theme.textSecondary)
-                .lineLimit(1)
-            if let project = store.projectName(of: workspace.workspaceId),
+            if renaming {
+                InlineRenameField(initial: workspace.label, placeholder: "Workspace name") { label in
+                    renaming = false
+                    store.renameWorkspace(workspace.workspaceId, to: label, from: workspace.label)
+                }
+            } else {
+                Text(workspace.label)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(hovered ? Theme.textPrimary : Theme.textSecondary)
+                    .lineLimit(1)
+            }
+            if !renaming, let project = store.projectName(of: workspace.workspaceId),
                project.caseInsensitiveCompare(workspace.label) != .orderedSame {
                 Text(project)
                     .font(.system(size: 10.5))
@@ -540,7 +578,8 @@ private struct IdleRow: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 4)
-            if hovered {
+            if hovered && !renaming {
+                WorkspaceRenameButton { renaming = true }
                 Button {
                     store.closeWorkspace(workspace.workspaceId)
                 } label: {
@@ -561,7 +600,30 @@ private struct IdleRow: View {
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
         .onTapGesture { window.focusWorkspace(workspace.workspaceId) }
-        .contextMenu { WorkspaceOrganizeMenu(store: store, workspace: workspace) }
+        .simultaneousGesture(TapGesture(count: 2).onEnded { renaming = true })
+        .contextMenu { WorkspaceOrganizeMenu(store: store, workspace: workspace) { renaming = true } }
         .help("\(workspace.label) · last used \(WorkspaceActivity.ageLabel(since: store.activity.lastActive(workspace.workspaceId))) ago")
+    }
+}
+
+/// A pencil that appears on a hovered workspace, so renaming is found
+/// without knowing to double-click.
+struct WorkspaceRenameButton: View {
+    let action: () -> Void
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: action) {
+            OctetIcon("pencil", size: 12)
+                .foregroundStyle(hovered ? Theme.textPrimary : Theme.textTertiary)
+                .frame(width: 18, height: 18)
+                .background(hovered ? Theme.cardSelected : Color.clear)
+                .clipShape(RoundedRectangle(cornerRadius: 3))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
+        .help("Rename workspace")
+        .accessibilityLabel("Rename workspace")
     }
 }

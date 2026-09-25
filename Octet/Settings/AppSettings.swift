@@ -84,9 +84,9 @@ struct OctetSettings: Codable, Equatable {
     /// bundled ones turned off (they start on), by id.
     var enabledPlugins: [String] = []
     var disabledPlugins: [String] = []
-    /// The system sound a subagent's tab plays when it finishes, so it's
-    /// told apart from a main agent; empty for none.
-    var subagentFinishedSound = "Glass"
+    /// The sound a subagent's tab plays when it finishes, so it's told
+    /// apart from a main agent; empty for none.
+    var subagentFinishedSound = DoubleDing.name
     /// Whether a subagent's tab closes itself a while after it finishes.
     var subagentTabClosing: SubagentTabClosing = .never
     /// A banner over an agent running in the terminal, offering Octet's
@@ -110,6 +110,7 @@ struct OctetSettings: Codable, Equatable {
     var worktreesDirectory = "~/.octet/worktrees"
     /// Where the engine used to put worktrees; kept when it holds any.
     static let legacyWorktreesDirectory = EngineProtocol.legacyWorktreesDirectory
+    static let doubleDingMigrationKey = "octet.subagentSound.movedToDoubleDing"
     var checkForEngineUpdates = true
     var updateChannel: UpdateChannel = .stable
     var allowNestedSessions = false
@@ -263,6 +264,12 @@ struct OctetSettings: Codable, Equatable {
         agentOpening = value("agentOpening", defaults.agentOpening)
         subagentTabClosing = value("subagentTabClosing", defaults.subagentTabClosing)
         subagentFinishedSound = value("subagentFinishedSound", defaults.subagentFinishedSound)
+        // Glass was the default before Octet had a ding of its own: move off
+        // it once, and leave it be if chosen again afterwards.
+        if !UserDefaults.standard.bool(forKey: Self.doubleDingMigrationKey) {
+            UserDefaults.standard.set(true, forKey: Self.doubleDingMigrationKey)
+            if subagentFinishedSound == "Glass" { subagentFinishedSound = defaults.subagentFinishedSound }
+        }
         enabledPlugins = value("enabledPlugins", defaults.enabledPlugins)
         disabledPlugins = value("disabledPlugins", defaults.disabledPlugins)
         agentBanner = value("agentBanner", defaults.agentBanner)

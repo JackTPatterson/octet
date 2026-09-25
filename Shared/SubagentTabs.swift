@@ -84,6 +84,7 @@ enum SubagentWatch {
         renderer.printHeader(title: title)
         reporter.markSubagent()
         reporter.report(state: "working", message: title)
+        renderer.onDirectory = { cwd in reporter.markSubagent(cwd: cwd) }
         renderer.onFinished = {
             reporter.report(state: "idle", message: "finished")
             playFinishedSound()
@@ -127,8 +128,8 @@ extension SubagentWatch {
     static let closeDelayKey = "subagentTabCloseAfterSeconds"
     /// The system sound a finished subagent plays; empty or missing for none.
     static let finishedSoundKey = "subagentFinishedSound"
-    /// macOS's own sounds, offered in Settings.
-    static let sounds = ["Glass", "Pop", "Tink", "Purr", "Hero", "Submarine", "Funk", "Bottle", "Morse", "Ping"]
+    /// Octet's own ding first, then macOS's sounds, offered in Settings.
+    static let sounds = [DoubleDing.name, "Glass", "Pop", "Tink", "Purr", "Hero", "Submarine", "Funk", "Bottle", "Morse", "Ping"]
 
     static func finishedSound(bundleIdentifier: String? = appBundleIdentifier()) -> String? {
         let domain = (bundleIdentifier ?? "com.jpxsoftware.octet") as CFString
@@ -139,13 +140,18 @@ extension SubagentWatch {
 
     /// Plays without waiting; the viewer keeps tailing meanwhile.
     static func playFinishedSound() {
-        guard let name = finishedSound() else { return }
+        guard let name = finishedSound(), let path = soundPath(name) else { return }
         let player = Process()
         player.executableURL = URL(fileURLWithPath: "/usr/bin/afplay")
-        player.arguments = ["/System/Library/Sounds/\(name).aiff"]
+        player.arguments = [path]
         player.standardOutput = FileHandle.nullDevice
         player.standardError = FileHandle.nullDevice
         try? player.run()
+    }
+
+    /// The file a sound name plays from.
+    static func soundPath(_ name: String) -> String? {
+        name == DoubleDing.name ? DoubleDing.fileURL()?.path : "/System/Library/Sounds/\(name).aiff"
     }
 
     static func closeDelay(bundleIdentifier: String? = appBundleIdentifier()) -> TimeInterval {
@@ -191,15 +197,19 @@ struct PaneAgentReporter {
 
     static let roleToken = "octet_role"
     static let subagentRole = "subagent"
+    static let cwdToken = "octet_cwd"
 
     /// Tags the pane as a subagent viewer, so Octet can tell its tab apart
-    /// from a Claude session.
-    func markSubagent() {
+    /// from a Claude session, and says which folder the subagent is in.
+    /// Both go every time, since a report may replace the last one's tokens.
+    func markSubagent(cwd: String? = nil) {
         guard let client, let paneId else { return }
+        var tokens = [Self.roleToken: Self.subagentRole]
+        if let cwd { tokens[Self.cwdToken] = cwd }
         _ = try? client.call("pane.report_metadata", [
             "pane_id": paneId,
             "source": "octet:subagent",
-            "tokens": [Self.roleToken: Self.subagentRole],
+            "tokens": tokens,
         ])
     }
 

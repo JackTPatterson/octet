@@ -121,6 +121,14 @@ struct EngineAgent: Codable, Equatable, Identifiable {
     /// A tab watching a Claude subagent, not a Claude session of its own.
     var isSubagentViewer: Bool { tokens?[PaneAgentReporter.roleToken] == PaneAgentReporter.subagentRole }
 
+    /// The folder a subagent is working in, as its viewer read it from the
+    /// transcript. The viewer's own process never leaves the folder the tab
+    /// opened in, so this is the only trace of a `cd` or a worktree.
+    var reportedCwd: String? {
+        guard let cwd = tokens?[PaneAgentReporter.cwdToken] ?? nil, !cwd.isEmpty else { return nil }
+        return cwd
+    }
+
     /// The folder the agent is working in now, which may not be the one it
     /// started in.
     var effectiveCwd: String? { foregroundCwd ?? cwd }
@@ -193,6 +201,13 @@ struct EngineSnapshot: Codable, Equatable {
 
     func agents(inWorkspace workspaceId: String) -> [EngineAgent] {
         agents.filter { $0.workspaceId == workspaceId }
+    }
+
+    /// Where a pane's work is happening: a subagent's reported folder, else
+    /// the pane's own.
+    func workingDirectory(ofPane paneId: String) -> String? {
+        agents.first { $0.paneId == paneId }?.reportedCwd
+            ?? panes.first { $0.paneId == paneId }?.effectiveCwd
     }
 
     /// The directory that best describes a workspace: its first pane's cwd.

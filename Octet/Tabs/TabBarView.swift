@@ -251,6 +251,14 @@ private struct TabItem: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
+            if let location = store.agentLocation(inTab: tab.tabId), handoffTitle == nil, !renaming {
+                // The subagent is off in a worktree or folder of its own.
+                OctetIcon(location.icon, size: 10)
+                    .foregroundStyle(location.tint.opacity(isActive || hovered ? 1 : 0.75))
+                    .help(location.help(abbreviate: abbreviateHome))
+                    .accessibilityLabel("In \(location.phrase)")
+                    .transition(motion.animates(.connections) ? .scale(scale: 0.6).combined(with: .opacity) : .identity)
+            }
             if let ssh, handoffTitle == nil, !renaming {
                 SSHHostChip(target: ssh, compact: true)
                     .frame(maxWidth: 84)
@@ -263,6 +271,8 @@ private struct TabItem: View {
                 .opacity(hovered || isActive ? 1 : 0)
         }
         .animation(motion.animation(.connections, .spring(response: 0.4, dampingFraction: 0.7)), value: ssh)
+        .animation(motion.animation(.connections, .spring(response: 0.4, dampingFraction: 0.7)),
+                   value: store.agentLocation(inTab: tab.tabId))
         .padding(.leading, 12)
         .padding(.trailing, 6)
         // One width for every tab, so after a close the next tab's close

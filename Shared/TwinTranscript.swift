@@ -55,10 +55,19 @@ struct TwinUsage: Equatable {
 
     var total: Int { inputTokens + outputTokens }
 
+    /// The window to measure against. Claude Code logs `claude-opus-5-5`
+    /// for a 1M session as well as a 200k one, so a guessed 200k window
+    /// holding more than 200k was the 1M one all along.
+    var effectiveContextWindow: Int? {
+        guard let contextWindow else { return nil }
+        if contextWindow == Self.claudeWindow, currentContextTokens > contextWindow { return Self.claudeLongWindow }
+        return contextWindow
+    }
+
     /// How full the window is, when Octet can tell honestly.
     var contextFraction: Double? {
-        guard let contextWindow, contextWindow > 0, currentContextTokens > 0 else { return nil }
-        return min(1, Double(currentContextTokens) / Double(contextWindow))
+        guard let window = effectiveContextWindow, window > 0, currentContextTokens > 0 else { return nil }
+        return min(1, Double(currentContextTokens) / Double(window))
     }
 
     /// `38%` when the window is known, else `52k used`.
@@ -79,10 +88,13 @@ struct TwinUsage: Equatable {
     /// Windows Octet can infer from a model name when the agent doesn't say.
     static func window(forModel model: String?) -> Int? {
         guard let model = model?.lowercased() else { return nil }
-        if model.contains("1m") { return 1_000_000 }
-        if model.contains("claude") || model.contains("opus") || model.contains("sonnet") { return 200_000 }
+        if model.contains("1m") { return claudeLongWindow }
+        if model.contains("claude") || model.contains("opus") || model.contains("sonnet") { return claudeWindow }
         return nil
     }
+
+    static let claudeWindow = 200_000
+    static let claudeLongWindow = 1_000_000
 }
 
 enum TwinTranscript {

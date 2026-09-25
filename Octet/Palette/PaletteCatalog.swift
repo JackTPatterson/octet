@@ -137,7 +137,7 @@ enum PaletteCatalog {
                 id: "action.renameWorkspace", kind: .action, title: "Rename Workspace…", keywords: ["label", "space"],
                 icon: .symbol("pencil.line"),
                 effect: .prompt(title: "Rename Workspace", placeholder: "Workspace name", initial: workspace.label) { label in
-                    store.renameWorkspace(workspace.workspaceId, to: label)
+                    store.renameWorkspace(workspace.workspaceId, to: label, from: workspace.label)
                 }
             ))
             items.append(PaletteItem(

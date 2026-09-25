@@ -101,7 +101,8 @@ struct RootView: View {
     /// The folder the focused pane is working in, for the repository bar.
     private var focusedPaneCwd: String? {
         guard let pane = window.focusedPaneId else { return nil }
-        return store.snapshot.panes.first { $0.paneId == pane }?.effectiveCwd
+        // A subagent's tab follows the subagent into its worktree.
+        return store.snapshot.workingDirectory(ofPane: pane)
     }
 
     /// The agent running in the focused pane, if any.
