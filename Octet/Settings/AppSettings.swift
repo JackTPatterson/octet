@@ -458,6 +458,18 @@ final class SettingsStore: ObservableObject {
     private var pendingSessionReload: DispatchWorkItem?
 
     private init() {
+        #if DEBUG
+        // Debug has its own bundle ID (so macOS keeps its privacy grants
+        // apart from Release's). It takes Release's settings once rather than
+        // starting from defaults, which would, say, stop subagent tabs closing.
+        let seededKey = "octet.settings.seededFromRelease"
+        if !UserDefaults.standard.bool(forKey: seededKey) {
+            if let release = UserDefaults(suiteName: "com.jpxsoftware.octet")?.data(forKey: Self.key) {
+                UserDefaults.standard.set(release, forKey: Self.key)
+            }
+            UserDefaults.standard.set(true, forKey: seededKey)
+        }
+        #endif
         if let data = UserDefaults.standard.data(forKey: Self.key),
            let decoded = try? JSONDecoder().decode(OctetSettings.self, from: data) {
             values = decoded
