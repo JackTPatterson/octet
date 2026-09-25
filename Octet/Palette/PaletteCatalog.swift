@@ -126,6 +126,8 @@ enum PaletteCatalog {
         items.append(action("broadcastTyping", BroadcastMode.shared.isOn ? "Stop Typing into All Panes" : "Type into All Panes in Tab",
                             "rectangle.split.2x1", shortcut: "⌥⌘I",
                             keywords: ["broadcast", "synchronize", "sync", "panes", "mirror", "input"]) { BroadcastMode.shared.toggle(window: window) })
+        items.append(action("copyLastOutput", "Copy Last Command's Output", "doc.on.doc",
+                            keywords: ["copy", "output", "result", "command", "last"]) { PromptJumper.copyLastOutput(store: store) })
         items.append(action("hints", "Open Link or File on Screen", "tool.fetch", shortcut: "⌘⇧H",
                             keywords: ["hints", "url", "link", "open", "path", "file", "hash", "quick select"]) { HintsSession.start(window: window) })
         items.append(action("review", "Review Changes", "doc.text.magnifyingglass", shortcut: "⌘⇧R",

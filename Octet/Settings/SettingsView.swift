@@ -515,6 +515,13 @@ private struct TerminalSettings: View {
             }
             SettingsDivider()
             SettingsRow(
+                title: "Shell integration",
+                detail: "zsh and fish in Octet's panes mark each prompt and command (OSC 133), so ⌘↑/⌘↓ jump exactly between commands and each command's exit status and time show. Your own startup files load as usual. Applies to new panes."
+            ) {
+                Toggle("Shell integration", isOn: $settings.values.shellIntegration).labelsHidden().toggleStyle(.switch)
+            }
+            SettingsDivider()
+            SettingsRow(
                 title: "Secure input at password prompts",
                 detail: "While sudo, ssh or anything else asks for a password in the pane in front, macOS Secure Keyboard Entry is on, so other apps can't read the keystrokes. It turns off as soon as the prompt ends."
             ) {

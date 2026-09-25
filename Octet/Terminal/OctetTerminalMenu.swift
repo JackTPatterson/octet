@@ -17,6 +17,7 @@ enum OctetTerminalMenu {
         menu.addItem(item("Toggle Zoom") { window.toggleZoom() })
         menu.addItem(item("Close Pane") { window.closeFocusedPane() })
         menu.addItem(.separator())
+        menu.addItem(item("Copy Last Command's Output") { PromptJumper.copyLastOutput(store: window.store) })
         menu.addItem(item("Find…", key: "f") { window.findOutput(.showFindInterface) })
         menu.addItem(item("Open Link or File on Screen…", key: "h", shift: true) { HintsSession.start(window: window) })
         menu.addItem(item("Review Changes", key: "r", shift: true) { window.toggleReview() })

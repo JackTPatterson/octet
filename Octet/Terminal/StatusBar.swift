@@ -46,6 +46,7 @@ struct StatusBar: View {
         case "builtin.ssh": return ssh != nil
         case "builtin.agent": return agent != nil
         case "builtin.account": return !Self.accountLabel(for: model.directory).isEmpty
+        case "builtin.lastCommand": return model.lastCommand != nil
         case "builtin.remoteControl": return model.remoteControlOn
         case "builtin.runtime": return model.runtime != nil
         case "builtin.directory": return model.directory != nil
@@ -94,6 +95,14 @@ struct StatusBar: View {
             }
         case "builtin.agent":
             if let agent { agentChip(agent) }
+        case "builtin.lastCommand":
+            if let last = model.lastCommand {
+                StatusChip(tone: last.exitCode == 0 ? .normal : .danger,
+                           help: [last.command.map { "`\($0)`" }, last.exitCode.map { "exited \($0)" },
+                                  last.duration.map { "took " + PromptMarks.format($0) }].compactMap { $0 }.joined(separator: " · ")) {
+                    Text(PromptMarks.summary(last)).monospacedDigit()
+                }
+            }
         case "builtin.account":
             let label = Self.accountLabel(for: model.directory)
             if !label.isEmpty {

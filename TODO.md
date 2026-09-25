@@ -229,13 +229,16 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   not merged and their size on disk, and removes merged, clean ones (one or
   all) after asking, through the session server when a workspace is open
   on them. Branches are kept; `git worktree remove` refuses dirty ones.
-- [ ] **31. Command marks from OSC 133 (med).** *Partly done:* ⌘↑ / ⌘↓ in
-  a shell pane jump to the previous / next prompt (`PromptJump`), found by
-  the shape of the current prompt since the session server keeps no marks;
-  checked with real key events. Agent panes keep their own ⌘↑ / ⌘↓.
-  Remaining, and needing marks from the session server (Herdr has no
-  OSC 133 in its API): copy the last command's output, exit status and
-  duration per command, folding.
+- [x] **31. Command marks from OSC 133 (med).** Done. The session server
+  keeps marks now (`pane.marks`, from the engine patch), and zsh and fish
+  in Octet's panes emit them through Octet's shell wrapper
+  (`ShellIntegration`: a `.zshenv` that hands straight back to your own
+  files, a fish `vendor_conf.d` file; setting in Terminal). ⌘↑/⌘↓ jump
+  by the real prompt rows (by prompt shape where a shell has no marks); a
+  Last command chip shows "✓ 1.2s" / "✗ 1 · 340ms"; Copy Last Command's
+  Output is in the palette and the right-click menu. Checked with real
+  zsh: marks, exit codes and a 1.209 s `sleep 1.2`. Not done: folding a
+  command's output; bash (its login startup can't be hooked this way).
 - [x] **32. Prompt queue (med).** Claude Code #50246 (245), #33323; Codex
   #28864. Done: palette › Queue a Prompt for <agent> for each agent in the
   workspace, including another tab's ("after agent X finishes"); sent when

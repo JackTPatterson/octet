@@ -1,8 +1,37 @@
-import Foundation
+import AppKit
 
 /// ⌘↑ / ⌘↓ in a shell pane: scrolls to the previous or next prompt.
 @MainActor
 enum PromptJumper {
+    /// Copies the output of the last command that finished in the pane in
+    /// front, from its shell's prompt marks.
+    static func copyLastOutput(store: SessionStore) {
+        guard let paneId = store.keyPaneId else { return }
+        let client = store.client
+        DispatchQueue.global(qos: .userInitiated).async {
+            let marks = (try? client.call("pane.marks", ["pane_id": paneId])).flatMap(PromptMarks.init(response:))
+            var output: String?
+            if let marks, let last = marks.lastFinished,
+               let read = (try? client.call("pane.read", ["pane_id": paneId, "source": "recent", "lines": marks.totalRows]))?["read"]
+                as? [String: Any], let text = read["text"] as? String {
+                output = PromptMarks.output(of: last, in: text.components(separatedBy: "\n"))
+            }
+            DispatchQueue.main.async {
+                guard let output, !output.isEmpty else {
+                    ToastCenter.shared.info("No command output to copy",
+                                            detail: marks == nil || marks?.marks.isEmpty == true
+                                                ? "This shell doesn't mark its commands (Settings › Terminal › Shell integration)."
+                                                : "The last command printed nothing.")
+                    return
+                }
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(output, forType: .string)
+                ClipboardWatcher.shared.acknowledge()
+                ToastCenter.shared.info("Copied the last command's output", detail: ClipboardPreview.summary(output))
+            }
+        }
+    }
+
     /// ⌘Home (115), ⌘End (119), ⌘PgUp (116), ⌘PgDn (121).
     static func scroll(pane paneId: String, key: UInt16, store: SessionStore) {
         let client = store.client
@@ -36,12 +65,19 @@ enum PromptJumper {
                   let maxOffset = (scroll["max_offset_from_bottom"] as? NSNumber)?.intValue,
                   let viewport = (scroll["viewport_rows"] as? NSNumber)?.intValue else { return }
             let total = maxOffset + viewport
-            guard let read = (try? client.call("pane.read", ["pane_id": paneId, "source": "recent", "lines": total]))?["read"]
-                    as? [String: Any], let text = read["text"] as? String else { return }
-            var lines = text.components(separatedBy: "\n")
-            // A trailing newline isn't a row.
-            if lines.count > total, lines.last?.isEmpty == true { lines.removeLast() }
-            guard let offset = PromptJump.offset(direction, rows: PromptJump.promptRows(lines),
+            // The shell's own marks when it has them, exact; else prompts
+            // found by their shape.
+            var rows = (try? client.call("pane.marks", ["pane_id": paneId]))
+                .flatMap(PromptMarks.init(response:))?.promptRows ?? []
+            if rows.isEmpty {
+                guard let read = (try? client.call("pane.read", ["pane_id": paneId, "source": "recent", "lines": total]))?["read"]
+                        as? [String: Any], let text = read["text"] as? String else { return }
+                var lines = text.components(separatedBy: "\n")
+                // A trailing newline isn't a row.
+                if lines.count > total, lines.last?.isEmpty == true { lines.removeLast() }
+                rows = PromptJump.promptRows(lines)
+            }
+            guard let offset = PromptJump.offset(direction, rows: rows,
                                                  currentOffset: current, total: total, viewport: viewport) else { return }
             _ = try? client.call("pane.scroll", ["pane_id": paneId, "offset_from_bottom": offset])
         }

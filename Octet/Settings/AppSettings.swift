@@ -57,6 +57,8 @@ struct OctetSettings: Codable, Equatable {
     var previewLongPastes = true
     /// Turn on Secure Keyboard Entry while a pane asks for a password.
     var secureInputAtPasswords = true
+    /// Prompt marks from zsh and fish, through Octet's shell wrapper.
+    var shellIntegration = true
     var mouseScrollLines: Double = 3
     var optionAsAlt: OptionAsAlt = .off
     var hideMouseWhileTyping = true
@@ -257,6 +259,7 @@ struct OctetSettings: Codable, Equatable {
         tidyAgentCopies = value("tidyAgentCopies", defaults.tidyAgentCopies)
         previewLongPastes = value("previewLongPastes", defaults.previewLongPastes)
         secureInputAtPasswords = value("secureInputAtPasswords", defaults.secureInputAtPasswords)
+        shellIntegration = value("shellIntegration", defaults.shellIntegration)
         mouseScrollLines = value("mouseScrollLines", defaults.mouseScrollLines)
         optionAsAlt = value("optionAsAlt", defaults.optionAsAlt)
         hideMouseWhileTyping = value("hideMouseWhileTyping", defaults.hideMouseWhileTyping)
@@ -385,6 +388,22 @@ struct OctetSettings: Codable, Equatable {
         return lines.joined(separator: "\n")
     }
 
+    /// The shell panes start: the one chosen (or $SHELL), or Octet's wrapper
+    /// around it when shell integration applies to it.
+    var realShell: String {
+        defaultShell.isEmpty ? (ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh") : defaultShell
+    }
+
+    var usesShellIntegration: Bool {
+        shellIntegration && ["zsh", "fish"].contains((realShell as NSString).lastPathComponent)
+    }
+
+    var paneShell: String {
+        usesShellIntegration
+            ? ShellIntegration.directory(support: EngineSession.supportDirectory).appendingPathComponent("octet-shell").path
+            : defaultShell
+    }
+
     /// Session server config for Octet's session. Octet's chrome replaces the
     /// server's own sidebar and tab row, so those stay fixed.
     var sessionConfig: String {
@@ -398,7 +417,7 @@ struct OctetSettings: Codable, Equatable {
         name = "terminal"
 
         [terminal]
-        default_shell = \(tomlString(defaultShell))
+        default_shell = \(tomlString(paneShell))
         shell_mode = "\(shellMode.rawValue)"
         new_cwd = "\(newPaneDirectory.rawValue)"
         kitty_graphics = \(kittyGraphics)
@@ -598,6 +617,11 @@ final class SettingsStore: ObservableObject {
 
     func writeSessionConfig() {
         guard let sessionConfigPath else { return }
+        if values.usesShellIntegration {
+            // Written before the config points at it.
+            _ = try? ShellIntegration.install(in: ShellIntegration.directory(support: EngineSession.supportDirectory),
+                                              shell: values.realShell, login: values.shellMode != .nonLogin)
+        }
         do {
             try values.sessionConfig.write(toFile: sessionConfigPath, atomically: true, encoding: .utf8)
             sessionConfigWriteProblem = nil

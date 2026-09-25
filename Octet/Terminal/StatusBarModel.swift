@@ -25,6 +25,8 @@ final class StatusBarModel: ObservableObject {
     @Published private(set) var pluginOutputs: [String: StatusItemOutput] = [:]
     /// Remote Control, for a Claude Code session running in the pane: on,
     /// and its claude.ai link.
+    /// How the pane's last command ended, from the shell's prompt marks.
+    @Published private(set) var lastCommand: PromptMark?
     @Published private(set) var remoteControlOn = false
     @Published private(set) var remoteControlURL: URL?
 
@@ -63,9 +65,12 @@ final class StatusBarModel: ObservableObject {
         guard paneChanged || directory != self.directory || ssh != self.ssh else { return }
         self.pane = pane
         self.ssh = ssh
+        self.client = client
         if paneChanged {
             shellPid = nil
+            lastCommand = nil
             if let pane { lookUpShell(pane, client: client) }
+            refreshLastCommand()
         }
         if directory != self.directory {
             self.directory = directory
@@ -78,7 +83,7 @@ final class StatusBarModel: ObservableObject {
         }
         refreshPlugins()
         if timer == nil {
-            timer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
+            timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
                 MainActor.assumeIsolated { self?.tick() }
             }
         }
@@ -101,7 +106,23 @@ final class StatusBarModel: ObservableObject {
         }
     }
 
+    private var client: EngineClient?
+
+    /// The last finished command in the pane, when its shell marks them.
+    private func refreshLastCommand() {
+        guard let pane, let client else { return }
+        DispatchQueue.global(qos: .utility).async {
+            let marks = (try? client.call("pane.marks", ["pane_id": pane, "limit": 4])).flatMap(PromptMarks.init(response:))
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.pane == pane else { return }
+                let last = marks?.lastFinished
+                if last != self.lastCommand { self.lastCommand = last }
+            }
+        }
+    }
+
     private func tick() {
+        refreshLastCommand()
         refreshRemoteControl()
         guard directory != nil else { return }
         refreshGit()

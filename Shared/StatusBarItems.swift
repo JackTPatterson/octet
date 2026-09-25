@@ -70,6 +70,8 @@ enum StatusBarItems {
               sample: "Claude Code working", enabledByDefault: true, scope: .any),
         .init(id: "builtin.account", name: "Account", summary: "The agent account this folder uses, when it isn't the default",
               sample: "Claude · Work", symbol: "person.crop.circle", enabledByDefault: true, scope: .local),
+        .init(id: "builtin.lastCommand", name: "Last command", summary: "How the pane's last command ended and how long it took (needs shell integration)",
+              sample: "✓ 3.2s", symbol: "checkmark.circle", enabledByDefault: true, scope: .any),
         .init(id: "builtin.remoteControl", name: "Remote Control",
               summary: "While the agent in this pane is open in claude.ai or the Claude app",
               sample: "Remote", enabledByDefault: true, scope: .any),
