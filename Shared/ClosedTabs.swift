@@ -40,7 +40,8 @@ enum ClosedTabs {
             agents: snapshot.agents.filter { $0.workspaceId != holding && paneIds.contains($0.paneId) },
             focusedWorkspaceId: snapshot.focusedWorkspaceId == holding ? nil : snapshot.focusedWorkspaceId,
             focusedTabId: snapshot.focusedTabId.flatMap { tabIds.contains($0) ? $0 : nil },
-            focusedPaneId: snapshot.focusedPaneId.flatMap { paneIds.contains($0) ? $0 : nil }
+            focusedPaneId: snapshot.focusedPaneId.flatMap { paneIds.contains($0) ? $0 : nil },
+            layouts: snapshot.layouts.filter { tabIds.contains($0.tabId) }
         )
     }
 

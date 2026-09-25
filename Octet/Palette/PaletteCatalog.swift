@@ -123,6 +123,28 @@ enum PaletteCatalog {
             },
         ]
 
+        // Broadcast: the prompt's title names who receives it, so what's
+        // about to be sent where is never a guess.
+        for (scope, title, symbol) in [
+            (Broadcast.Scope.tab, "Broadcast to Panes in This Tab…", "rectangle.split.2x1"),
+            (.workspace, "Broadcast to Agents in This Workspace…", "tool.agent"),
+            (.everywhere, "Broadcast to All Agents…", "tool.agent"),
+        ] {
+            let targets = Broadcast.targets(scope, in: store.snapshot,
+                                            workspaceId: workspace?.workspaceId, tabId: tab?.tabId)
+            // A tab with one pane has nothing to broadcast to.
+            guard targets.count > (scope == .tab ? 1 : 0) else { continue }
+            items.append(PaletteItem(
+                id: "action.broadcast.\(scope.rawValue)", kind: .action, title: title,
+                subtitle: Broadcast.summary(targets),
+                keywords: ["send", "all", "prompt", "synchronize", "sync", "multiple", "compare"],
+                icon: .symbol(symbol),
+                effect: .prompt(title: "Send to \(Broadcast.summary(targets))", placeholder: "Prompt or command", initial: "") { text in
+                    store.broadcast(text, to: targets)
+                }
+            ))
+        }
+
         if let tab {
             items.append(PaletteItem(
                 id: "action.renameTab", kind: .action, title: "Rename Tab…", keywords: ["label"],

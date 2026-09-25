@@ -14,6 +14,7 @@ struct RootView: View {
     @StateObject private var terminalAnchor = TerminalAnchor()
     @StateObject private var splash = NewTabSplashModel()
     @StateObject private var statusBar = StatusBarModel()
+    @StateObject private var liveScroll = LiveScrollWatcher()
     /// The connection card over the terminal, while it shows.
     @State private var connecting: SSHTarget?
     @ObservedObject private var tabDrag = TabDrag.shared
@@ -58,6 +59,9 @@ struct RootView: View {
             }
         }
         .onChange(of: window.focusedPaneId) { _, _ in twin.snapshotChanged() }
+        .onChange(of: liveScrollPanes, initial: true) { _, panes in
+            liveScroll.watch(panes, client: store.client)
+        }
         // Process discovery lands after the first grid reading. Recheck once
         // the shell is recognized so an untouched initial tab gets its splash.
         .onChange(of: window.focusedPaneAtPrompt) { _, _ in observeSplash(terminalAnchor.grid) }
@@ -417,6 +421,10 @@ struct RootView: View {
                         newTabSplash(clearOf: grid)
                             .id(tab)
                             .transition(motion.animates(.tabs) ? .opacity : .identity)
+                    } else {
+                        LiveScrollPills(watcher: liveScroll, layout: store.snapshot.layouts.first {
+                            $0.tabId == window.displayedFocusedTabId
+                        })
                     }
                     if let dragged = tabDrag.tabId, let showing = splitTargetTab(for: dragged) {
                         splitDropLayer(moving: dragged, into: showing)
@@ -536,6 +544,12 @@ struct RootView: View {
             }
             store.splitTab(dragged, into: showing, beside: target.paneId, edge: edge)
         }
+    }
+
+    /// The panes in the tab showing, whose scroll position the pills follow.
+    private var liveScrollPanes: Set<String> {
+        let tab = window.displayedFocusedTabId
+        return Set(store.snapshot.panes.filter { $0.tabId == tab }.map(\.paneId))
     }
 
     /// Fetches the showing tab's panes when a tab drag starts, for its zones.

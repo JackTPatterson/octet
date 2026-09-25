@@ -74,6 +74,8 @@ struct OctetSettings: Codable, Equatable {
     /// How long a tab closed with something running in it keeps running,
     /// out of sight, so it can be reopened. Zero closes at once.
     var keepClosedTabsMinutes: Double = 30
+    /// Keep the Mac from idle-sleeping while an agent is working.
+    var keepAwake: KeepAwake.Mode = .pluggedIn
     /// Turn on Remote Control for every Claude conversation in Octet, so it
     /// can be continued from claude.ai or the Claude app.
     var claudeRemoteControl = false
@@ -108,6 +110,9 @@ struct OctetSettings: Codable, Equatable {
 
     // MARK: Advanced (session server)
     var worktreesDirectory = "~/.octet/worktrees"
+    /// Copy the main checkout's env files into a new worktree and run its
+    /// `.octet/setup` (or `conductor.json` setup) there.
+    var worktreeSetup = true
     /// Where the engine used to put worktrees; kept when it holds any.
     static let legacyWorktreesDirectory = EngineProtocol.legacyWorktreesDirectory
     static let doubleDingMigrationKey = "octet.subagentSound.movedToDoubleDing"
@@ -260,6 +265,7 @@ struct OctetSettings: Codable, Equatable {
         readClaudeAccountUsage = value("readClaudeAccountUsage", defaults.readClaudeAccountUsage)
         offerRecovery = value("offerRecovery", defaults.offerRecovery)
         keepClosedTabsMinutes = value("keepClosedTabsMinutes", defaults.keepClosedTabsMinutes)
+        keepAwake = value("keepAwake", defaults.keepAwake)
         claudeRemoteControl = value("claudeRemoteControl", defaults.claudeRemoteControl)
         agentOpening = value("agentOpening", defaults.agentOpening)
         subagentTabClosing = value("subagentTabClosing", defaults.subagentTabClosing)
@@ -283,6 +289,7 @@ struct OctetSettings: Codable, Equatable {
         twinByDefault = value("twinByDefault", defaults.twinByDefault)
         showTips = value("showTips", defaults.showTips)
         worktreesDirectory = value("worktreesDirectory", defaults.worktreesDirectory)
+        worktreeSetup = value("worktreeSetup", defaults.worktreeSetup)
         // Move off the old default unless worktrees already live there.
         if worktreesDirectory == Self.legacyWorktreesDirectory,
            !FileManager.default.fileExists(atPath: NSString(string: Self.legacyWorktreesDirectory).expandingTildeInPath) {
@@ -598,6 +605,7 @@ final class SettingsStore: ObservableObject {
     }
 
     private func apply(from old: OctetSettings) {
+        if values.keepAwake != old.keepAwake { SleepGuard.shared.update() }
         if values.importedTheme != old.importedTheme {
             TerminalTheme.imported = values.importedTheme
         }

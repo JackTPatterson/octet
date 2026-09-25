@@ -661,6 +661,18 @@ private struct AgentSettings: View {
             }
             SettingsDivider()
             SettingsRow(
+                title: "Keep the Mac awake while agents work",
+                detail: "While any agent is working, the Mac doesn't go to sleep on its own, so long tasks finish. The display can still turn off, and closing the lid still sleeps. It lets go as soon as the last agent stops."
+            ) {
+                Picker("Keep the Mac awake while agents work", selection: $settings.values.keepAwake) {
+                    ForEach(KeepAwake.Mode.allCases, id: \.self) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .labelsHidden().frame(width: 190)
+            }
+            SettingsDivider()
+            SettingsRow(
                 title: "Keep closed tabs running",
                 detail: "Close a tab or pane while something runs in it and it keeps running out of sight for this long. ⌘⇧T, or Reopen on the notice, brings it back as it was."
             ) {
@@ -963,6 +975,13 @@ private struct AdvancedSettings: View {
             SettingsRow(title: "Worktree folder", detail: "Where New Worktree creates <repo>/<branch> checkouts.") {
                 CommittedTextField(label: "Worktree folder", placeholder: "~/.octet/worktrees", value: $settings.values.worktreesDirectory, width: 220,
                                    validate: SettingsValidation.folder)
+            }
+            SettingsDivider()
+            SettingsRow(
+                title: "Set up new worktrees",
+                detail: "Copies the git-ignored .env files from the main checkout, then runs the project's .octet/setup (or the setup script in conductor.json) in the new worktree, with OCTET_ROOT_PATH, OCTET_WORKTREE_PATH and OCTET_PORT set. OCTET_PORT is the first of ten ports no other worktree has. Octet asks before running a project's script for the first time."
+            ) {
+                Toggle("Set up new worktrees", isOn: $settings.values.worktreeSetup).labelsHidden().toggleStyle(.switch)
             }
         }
         SettingsGroup(title: "Terminal engine") {

@@ -496,6 +496,7 @@ final class SessionStore: ObservableObject {
                     if focusedPaneId != self.focusedProcessPaneId { self.focusedProcessPaneId = focusedPaneId }
                     // Closed tabs wait in a workspace nothing else sees.
                     self.closedTabs.observe(snapshot)
+                    SleepGuard.shared.observe(snapshot)
                     let visible = ClosedTabs.visible(snapshot)
                     self.recovery.observe(visible, inferred: inferred ?? [:])
                     self.shellRecovery.observe(visible)
@@ -875,11 +876,13 @@ final class SessionStore: ObservableObject {
     /// An engine call for a window that steers itself: failures are toasted,
     /// and `then` hears where anything it created ended up.
     func call(_ method: String, _ params: [String: Any], failure: String,
+              result: (@MainActor ([String: Any]) -> Void)? = nil,
               then: @escaping @MainActor (EngineCreated) -> Void) {
         // What was made has to be in the snapshot before a window can be
         // steered to it by position.
-        perform(method, params, failure: failure) { [weak self] result in
-            self?.refresh { then(EngineCreated(result: result)) }
+        perform(method, params, failure: failure) { [weak self] raw in
+            result?(raw)
+            self?.refresh { then(EngineCreated(result: raw)) }
         }
     }
 
@@ -1057,6 +1060,26 @@ final class SessionStore: ObservableObject {
         OctetTerminalRuntime.focusTerminal()
     }
 
+    /// Sends one prompt to every target at once: a prompt to each agent
+    /// (typed and submitted in one step), a typed line to each shell.
+    func broadcast(_ text: String, to targets: [Broadcast.Target]) {
+        guard !targets.isEmpty else { return }
+        let client = self.client
+        let summary = Broadcast.summary(targets)
+        let toast = ToastCenter.shared.progress("Sending to \(summary)…")
+        DispatchQueue.global(qos: .userInitiated).async {
+            let failed = Broadcast.deliver(text, to: targets) { method, params in _ = try client.call(method, params) }
+            DispatchQueue.main.async {
+                if failed.isEmpty {
+                    ToastCenter.shared.succeed(toast, "Sent to \(summary)")
+                } else {
+                    ToastCenter.shared.fail(toast, "Couldn't send to \(failed.count) of \(targets.count)",
+                                            detail: failed.joined(separator: ", "))
+                }
+            }
+        }
+    }
+
     /// Starts an agent in the focused pane: by name when the shell would find
     /// it, else by the path discovery found it at.
     func runInFocusedPane(_ agent: DiscoveredAgent) {
@@ -1204,7 +1227,10 @@ final class SessionStore: ObservableObject {
         perform("worktree.create", params, toast: ToastText(
             progress: "Creating worktree \(branch)…", success: "Created worktree \(branch)",
             failure: "Couldn't create worktree \(branch)"
-        ))
+        )) { [weak self] result in
+            guard let self else { return }
+            WorktreeSetupRunner.shared.run(after: result, store: self)
+        }
     }
 
     func reloadSessionConfig(quiet: Bool = false) {

@@ -232,10 +232,11 @@ final class WindowContext: ObservableObject, Identifiable {
 
     /// Something made through the API with `focus: false`, then this window
     /// sent to it: with more than one window, `focus: true` would move them all.
-    private func create(_ method: String, _ params: [String: Any], failure: String) {
+    private func create(_ method: String, _ params: [String: Any], failure: String,
+                        result: (@MainActor ([String: Any]) -> Void)? = nil) {
         var params = params
         params["focus"] = false
-        store.call(method, params, failure: failure) { [weak self] created in
+        store.call(method, params, failure: failure, result: result) { [weak self] created in
             guard let self, let workspace = created.workspaceId ?? self.workspaceId else { return }
             self.steer(toWorkspace: workspace, tab: created.tabId)
         }
@@ -284,7 +285,9 @@ final class WindowContext: ObservableObject, Identifiable {
         guard steers else { return store.createWorktree(branch: branch) }
         var params: [String: Any] = ["branch": branch]
         if let workspaceId { params["workspace_id"] = workspaceId }
-        create("worktree.create", params, failure: "Couldn't create worktree \(branch)")
+        create("worktree.create", params, failure: "Couldn't create worktree \(branch)") { [store] result in
+            WorktreeSetupRunner.shared.run(after: result, store: store)
+        }
     }
 
     /// Opens an engine layout here: an agent attached from a board, a

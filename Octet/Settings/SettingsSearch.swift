@@ -103,6 +103,7 @@ enum SettingsSearchIndex {
         .init(.agents, "Resume agents after a restart", ["resume", "restart", "recover", "reboot", "session"]),
         .init(.agents, "Offer to recover lost sessions", ["recover", "recovery", "crash", "lost", "session", "terminal", "shell"]),
         .init(.agents, "Remote Control for Claude conversations", ["remote", "control", "phone", "mobile", "claude.ai", "app"]),
+        .init(.agents, "Keep the Mac awake while agents work", ["sleep", "caffeinate", "awake", "battery", "power", "amphetamine"]),
         .init(.agents, "Keep closed tabs running", ["reopen", "closed", "undo", "accident", "tab", "recover"]),
         .init(.agents, "When you run an agent in a terminal",
               ["claude", "codex", "opencode", "open", "native", "conversation", "chat", "terminal", "interface", "launch"]),
@@ -133,6 +134,7 @@ enum SettingsSearchIndex {
 
     private static let advanced: [SettingsSearchEntry] = [
         .init(.advanced, "Worktree folder", ["worktree", "git", "branch", "checkout", "folder"]),
+        .init(.advanced, "Set up new worktrees", ["env", ".env", "setup", "script", "port", "conductor", "worktree", "copy"]),
         .init(.advanced, "Check for engine updates", ["update", "upgrade", "engine", "version"]),
         .init(.advanced, "Update channel", ["update", "preview", "beta", "stable", "channel"]),
         .init(.advanced, "Allow a nested session", ["nested", "session", "inside"]),

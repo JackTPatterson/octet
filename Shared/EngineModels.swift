@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// The session server's semantic agent state.
@@ -146,6 +147,34 @@ struct EngineAgent: Codable, Equatable, Identifiable {
     }
 }
 
+/// Where a tab's panes sit, in cells of the tab's area.
+struct EngineLayout: Codable, Equatable {
+    struct Rect: Codable, Equatable {
+        let x: Int, y: Int, width: Int, height: Int
+    }
+
+    struct Pane: Codable, Equatable {
+        let paneId: String
+        let rect: Rect
+
+        enum CodingKeys: String, CodingKey { case paneId = "pane_id", rect }
+    }
+
+    let tabId: String
+    let area: Rect
+    let panes: [Pane]
+
+    enum CodingKeys: String, CodingKey { case tabId = "tab_id", area, panes }
+
+    /// A pane's frame in a view of `size` that shows the whole area.
+    func frame(ofPane paneId: String, in size: CGSize) -> CGRect? {
+        guard let pane = panes.first(where: { $0.paneId == paneId }), area.width > 0, area.height > 0 else { return nil }
+        let scaleX = size.width / CGFloat(area.width), scaleY = size.height / CGFloat(area.height)
+        return CGRect(x: CGFloat(pane.rect.x - area.x) * scaleX, y: CGFloat(pane.rect.y - area.y) * scaleY,
+                      width: CGFloat(pane.rect.width) * scaleX, height: CGFloat(pane.rect.height) * scaleY)
+    }
+}
+
 struct EngineSnapshot: Codable, Equatable {
     let workspaces: [EngineWorkspace]
     let tabs: [EngineTab]
@@ -154,6 +183,7 @@ struct EngineSnapshot: Codable, Equatable {
     let focusedWorkspaceId: String?
     let focusedTabId: String?
     let focusedPaneId: String?
+    var layouts: [EngineLayout] = []
 
     static let empty = EngineSnapshot(
         workspaces: [], tabs: [], panes: [], agents: [],
@@ -161,7 +191,7 @@ struct EngineSnapshot: Codable, Equatable {
     )
 
     enum CodingKeys: String, CodingKey {
-        case workspaces, tabs, panes, agents
+        case workspaces, tabs, panes, agents, layouts
         case focusedWorkspaceId = "focused_workspace_id"
         case focusedTabId = "focused_tab_id"
         case focusedPaneId = "focused_pane_id"
@@ -169,8 +199,10 @@ struct EngineSnapshot: Codable, Equatable {
 
     init(
         workspaces: [EngineWorkspace], tabs: [EngineTab], panes: [EnginePane], agents: [EngineAgent],
-        focusedWorkspaceId: String?, focusedTabId: String?, focusedPaneId: String?
+        focusedWorkspaceId: String?, focusedTabId: String?, focusedPaneId: String?,
+        layouts: [EngineLayout] = []
     ) {
+        self.layouts = layouts
         self.workspaces = workspaces
         self.tabs = tabs
         self.panes = panes
@@ -189,6 +221,8 @@ struct EngineSnapshot: Codable, Equatable {
         focusedWorkspaceId = try c.decodeIfPresent(String.self, forKey: .focusedWorkspaceId)
         focusedTabId = try c.decodeIfPresent(String.self, forKey: .focusedTabId)
         focusedPaneId = try c.decodeIfPresent(String.self, forKey: .focusedPaneId)
+        // A layout the model can't read shouldn't cost the whole snapshot.
+        layouts = (try? c.decodeIfPresent([EngineLayout].self, forKey: .layouts)) ?? []
     }
 
     func tabs(inWorkspace workspaceId: String) -> [EngineTab] {
