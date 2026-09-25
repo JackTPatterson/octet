@@ -257,6 +257,12 @@ final class SessionStore: ObservableObject {
                 }
             }
             let processTree = Self.processTree()
+            // Only the wrapper is left out of the lists; what a tool call
+            // starts is still found beneath it in the tree.
+            let toolShells = Self.agentToolShells(among: processTree.filter { process in
+                let command = (process.name as NSString).lastPathComponent.lowercased()
+                return ShellPrompt.shells.contains(command) || ShellPrompt.shells.contains("-" + command)
+            }.map(\.pid))
             for (paneId, info) in found {
                 var enriched = info
                 let namedAgentRoots = info.foreground.filter { process in
@@ -281,6 +287,7 @@ final class SessionStore: ObservableObject {
                 }
                 let roots = Set(rootProcesses.map(\.pid))
                 enriched.background = Self.descendants(of: roots, in: processTree)
+                    .filter { !toolShells.contains($0.pid) }
                     .map { (name: $0.name, pid: $0.pid) }
                 found[paneId] = enriched
             }
@@ -301,6 +308,7 @@ final class SessionStore: ObservableObject {
             var nativeFound: [String: [RuntimeChildProcess]] = [:]
             for (sessionId, pid) in nativeRoots {
                 nativeFound[sessionId] = Self.descendants(of: [pid], in: processTree)
+                    .filter { !toolShells.contains($0.pid) }
                     .map { RuntimeChildProcess(pid: $0.pid, parentPid: $0.parent, name: $0.name) }
             }
             var spawned: [Int: SpawnedRuntimeAgent] = [:]
@@ -420,6 +428,27 @@ final class SessionStore: ObservableObject {
             guard fields.count == 3, let pid = Int(fields[0]), let parent = Int(fields[1]) else { return nil }
             return RuntimeProcess(pid: pid, parent: parent, name: String(fields[2]))
         }
+    }
+
+    /// Claude Code runs each Bash call in a `zsh -c` that sources its shell
+    /// snapshot. Those are tool calls, already shown in the transcript (and
+    /// background ones as tasks), not shells the agent opened.
+    private nonisolated static func agentToolShells(among pids: [Int]) -> Set<Int> {
+        guard !pids.isEmpty else { return [] }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/ps")
+        process.arguments = ["-o", "pid=,args=", "-p", pids.map(String.init).joined(separator: ",")]
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        do { try process.run() } catch { return [] }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return Set(String(decoding: data, as: UTF8.self).split(separator: "\n").compactMap { line in
+            let fields = line.split(maxSplits: 1, whereSeparator: \.isWhitespace)
+            guard fields.count == 2, fields[1].contains("/.claude/shell-snapshots/") else { return nil }
+            return Int(fields[0])
+        })
     }
 
     private nonisolated static func descendants(of roots: Set<Int>, in tree: [RuntimeProcess]) -> [RuntimeProcess] {
