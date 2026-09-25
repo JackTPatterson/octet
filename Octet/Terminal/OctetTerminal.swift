@@ -187,6 +187,14 @@ final class OctetTerminalRuntime {
                 }
                 continue
             }
+            // `drop-image:<png>` drops the image's data (no file) on the terminal.
+            if token.hasPrefix("drop-image:"), let data = FileManager.default.contents(atPath: String(token.dropFirst(11))) {
+                let board = NSPasteboard(name: NSPasteboard.Name("com.jpxsoftware.octet.debug-drop"))
+                board.clearContents()
+                board.setData(data, forType: .png)
+                if let store = OctetKeyHook.store { _ = PasteHandler.handle(board, store: store) }
+                continue
+            }
             // `confirm-paste` presses Paste on a paste preview.
             if token == "confirm-paste" {
                 if let store = OctetKeyHook.store { PastePreviewCenter.shared.send(store: store) }

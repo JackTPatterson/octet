@@ -1658,6 +1658,10 @@ extension TerminalEngine.SurfaceView {
     static let dropTypes: Set<NSPasteboard.PasteboardType> = [
         .string,
         .fileURL,
+        // Octet: images dropped without a file become one (see PasteHandler).
+        .png,
+        .tiff,
+        NSPasteboard.PasteboardType("public.jpeg"),
     ]
 
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
@@ -1676,6 +1680,9 @@ extension TerminalEngine.SurfaceView {
 
     override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
         let pb = sender.draggingPasteboard
+
+        // Octet: an image goes in as a file path, as a pasted one does.
+        if let store = OctetKeyHook.store, PasteHandler.handle(pb, store: store) { return true }
 
         let content = pb.getOpinionatedStringContents()
 

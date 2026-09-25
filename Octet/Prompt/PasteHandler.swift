@@ -16,8 +16,13 @@ enum PasteHandler {
     /// Handles the key when the clipboard holds an image. Returns false for
     /// everything else, so ordinary paste behaves as it always did.
     static func handleCommandV(store: SessionStore) -> Bool {
+        handle(NSPasteboard.general, store: store)
+    }
+
+    /// The same for anything that carries an image: ⌘V, or a drop onto the
+    /// terminal (a screenshot dragged from a browser has no file of its own).
+    static func handle(_ pasteboard: NSPasteboard, store: SessionStore) -> Bool {
         guard SettingsStore.shared.values.pasteImagesAsFiles else { return false }
-        let pasteboard = NSPasteboard.general
         // A file the user copied in Finder already has a path: paste that.
         if let files = pasteboard.readObjects(forClasses: [NSURL.self]) as? [URL],
            let file = files.first, file.isFileURL, isImage(file) {

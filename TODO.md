@@ -29,7 +29,10 @@ terminal view under `Octet/Terminal/`.
   edge. Fix: use the terminal's own font, lay glyphs out per cell with
   East-Asian width, clip to the pane rectangle, and wrap or scroll.
 
-- [ ] **6. Drag and drop, Services and context-menu Paste bypass the prompt line (med).** *Partly fixed.* Done: Drops, Services and context-menu Paste go to the prompt line when it's active. Remaining: Dropped images in agent panes don't go through `PasteHandler`'s image-to-path logic.
+- [x] **6. Drag and drop, Services and context-menu Paste bypass the prompt line (med).** Fixed: drops,
+  Services and context-menu Paste go to the prompt line; an image dropped
+  without a file (dragged from a browser) is saved and its path inserted,
+  as a pasted one is. Checked with the Debug `drop-image:` step.
 
 - [x] **7. Clicks and scrolling above bottom-anchored content go nowhere (med).** Fixed: `TopRowClippingView.hitTest` returns the surface view for any point in bounds.
 
