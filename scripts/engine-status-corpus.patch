@@ -1,0 +1,1201 @@
+diff --git a/src/detect/corpus/cases.toml b/src/detect/corpus/cases.toml
+new file mode 100644
+index 00000000..f498d752
+--- /dev/null
++++ b/src/detect/corpus/cases.toml
+@@ -0,0 +1,142 @@
++# Screens recorded from real sessions (Claude Code 2.1.283, Codex 0.153.4,
++# 2026-09-25) with the status a person would give each. Paths and names
++# are replaced; nothing else is edited. "skip" means no state change.
++# Checked by detect::manifest::tests::bundled_manifests_read_recorded_screens.
++
++[[case]]
++screen = "claude/trust-dialog.txt"
++agent = "claude"
++expect = "blocked"
++note = "first launch in a folder: the trust question"
++
++[[case]]
++screen = "claude/idle-fresh.txt"
++agent = "claude"
++expect = "idle"
++note = "a fresh session at its prompt"
++
++[[case]]
++screen = "claude/idle-draft.txt"
++agent = "claude"
++expect = "idle"
++note = "a prompt being typed, not sent"
++
++[[case]]
++screen = "claude/turn-2.txt"
++agent = "claude"
++expect = "working"
++note = "a turn running a shell command, spinner and esc to interrupt"
++
++[[case]]
++screen = "claude/turn-4.txt"
++agent = "claude"
++expect = "idle"
++note = "the turn finished: 'Sautéed for 5s · done'"
++
++[[case]]
++screen = "claude/bash-8.txt"
++agent = "claude"
++expect = "blocked"
++note = "Bash permission with four options and Tab to amend"
++
++[[case]]
++screen = "claude/approved-1.txt"
++agent = "claude"
++expect = "working"
++note = "just after approving the command"
++
++[[case]]
++screen = "claude/edit-10.txt"
++agent = "claude"
++expect = "blocked"
++note = "an edit waiting for permission, with its diff"
++
++[[case]]
++screen = "claude/declined-3.txt"
++agent = "claude"
++expect = "idle"
++note = "the edit declined with Esc"
++
++[[case]]
++screen = "claude/question-8.txt"
++agent = "claude"
++expect = "blocked"
++note = "AskUserQuestion: a multiple-choice form"
++
++[[case]]
++screen = "claude/answered.txt"
++agent = "claude"
++expect = "idle"
++note = "after answering the form"
++
++[[case]]
++screen = "claude/echoed-prompt-6.txt"
++agent = "claude"
++expect = "idle"
++note = "a reply that quotes 'Do you want to proceed? 1. Yes 2. No'"
++
++[[case]]
++screen = "claude/long-8.txt"
++agent = "claude"
++expect = "idle"
++note = "turn done with a background shell still running"
++
++[[case]]
++screen = "claude/fgrun-4.txt"
++agent = "claude"
++expect = "working"
++note = "a silent 20 s foreground command"
++
++[[case]]
++screen = "claude/streaming.txt"
++agent = "claude"
++expect = "working"
++note = "a reply streaming in"
++
++[[case]]
++screen = "claude/interrupted.txt"
++agent = "claude"
++expect = "idle"
++note = "interrupted with Esc: 'What should Claude do instead?'"
++
++[[case]]
++screen = "claude/slash-menu.txt"
++agent = "claude"
++expect = "idle"
++note = "the / command menu open at the prompt"
++
++[[case]]
++screen = "claude/draft-lookalike.txt"
++agent = "claude"
++expect = "idle"
++note = "a draft that reads like a permission prompt"
++
++[[case]]
++screen = "claude/model-picker.txt"
++agent = "claude"
++expect = "skip"
++note = "the /model picker: no state change"
++
++[[case]]
++screen = "codex/update-prompt.txt"
++agent = "codex"
++expect = "blocked"
++note = "the update offer on launch"
++
++[[case]]
++screen = "codex/trust-dialog.txt"
++agent = "codex"
++expect = "blocked"
++note = "first launch in a folder: the trust question"
++
++[[case]]
++screen = "codex/idle-fresh.txt"
++agent = "codex"
++expect = "idle"
++note = "a fresh session at its prompt, MCP warnings above"
++
++[[case]]
++screen = "codex/net-8.txt"
++agent = "codex"
++expect = "idle"
++note = "a turn refused by the usage limit"
+diff --git a/src/detect/corpus/claude/answered.txt b/src/detect/corpus/claude/answered.txt
+new file mode 100644
+index 00000000..de3c07b0
+--- /dev/null
++++ b/src/detect/corpus/claude/answered.txt
+@@ -0,0 +1,40 @@
++
++✻ Sautéed for 5s · done 9:12 PM
++
++❯ Run the shell command: mkdir build-out
++
++  Ran 1 shell command
++
++⏺ I created the build-out directory in the project folder.
++
++✻ Baked for 4s · done 9:13 PM
++
++❯ Add a subtract(a, b) function to math_utils.py
++
++  Read 1 file
++
++⏺ Update(math_utils.py)
++  ⎿  User rejected update to math_utils.py
++      1  def add(a, b):
++      2      return a + b
++      3 +
++      4 +
++      5 +def subtract(a, b):
++      6 +    return a - b
++
++✻ Worked for 4s · done 9:13 PM
++
++❯ Use the AskUserQuestion tool to ask me whether this project should use tabs or spaces. Do nothing else.
++
++⏺ User answered Claude's questions:
++  ⎿  · Should this project use tabs or spaces for indentation? → Spaces
++
++⏺ You chose spaces for indentation. The subtract function still isn't in math_utils.py; I'll wait for your go-ahead
++  before adding it.
++
++✻ Brewed for 5s · done 9:13 PM
++                                                                                                   ◐ medium · /effort
++───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
++❯ go ahead and add subtract
++───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
++  ⏸ manual mode on · ? for shortcuts · ← 6 agents
+diff --git a/src/detect/corpus/claude/approved-1.txt b/src/detect/corpus/claude/approved-1.txt
+new file mode 100644
+index 00000000..3396e487
+--- /dev/null
++++ b/src/detect/corpus/claude/approved-1.txt
+@@ -0,0 +1,40 @@
++
++ ▐▛███▛█   Claude Code v2.1.283
++▝▜██████▀  Opus 5.5 · Claude Max
++ ▝▝   ▝▝   /…/me/src/corpus-proj
++
++
++❯ Run the shell command: echo corpus-check
++
++  Ran 1 shell command
++
++⏺ The command printed:
++
++  corpus-check
++
++✻ Sautéed for 5s · done 9:12 PM
++
++❯ Run the shell command: mkdir build-out
++
++  Creating build-out directory
++  ⎿  $ mkdir build-out
++
++
++
++
++
++
++
++
++
++
++
++
++
++· Kerfuffling… (3s · ↓ 80 tokens)
++  ⎿  Tip: Use /memory to view and manage Claude memory
++                                                                                                   ◐ medium · /effort
++───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
++❯
++───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
++  ⏸ manual mode on · esc to interrupt · ← 6 agents
+diff --git a/src/detect/corpus/claude/bash-8.txt b/src/detect/corpus/claude/bash-8.txt
+new file mode 100644
+index 00000000..789e4f53
+--- /dev/null
++++ b/src/detect/corpus/claude/bash-8.txt
+@@ -0,0 +1,36 @@
++
++ ▐▛███▛█   Claude Code v2.1.283
++▝▜██████▀  Opus 5.5 · Claude Max
++ ▝▝   ▝▝   /…/me/src/corpus-proj
++
++
++❯ Run the shell command: echo corpus-check
++
++  Ran 1 shell command
++
++⏺ The command printed:
++
++  corpus-check
++
++✻ Sautéed for 5s · done 9:12 PM
++
++❯ Run the shell command: mkdir build-out
++
++  Creating build-out directory
++  ⎿  $ mkdir build-out
++
++───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
++ Bash command
++ Tip: auto mode handles these prompts for you — choose "switch to auto mode" below
++
++   mkdir build-out
++   Create build-out directory
++
++ Do you want to proceed?
++ ❯ 1. Yes
++   2. Yes, and always allow access to /private/tmp/claude/-Users-me-Developer-herd/session
++      /scratchpad/corpus-proj from this project
++   3. Yes, and switch to auto mode · auto mode handles these prompts for you
++   4. No
++
++ Esc to cancel · Tab to amend
+diff --git a/src/detect/corpus/claude/declined-3.txt b/src/detect/corpus/claude/declined-3.txt
+new file mode 100644
+index 00000000..51f1efe1
+--- /dev/null
++++ b/src/detect/corpus/claude/declined-3.txt
+@@ -0,0 +1,40 @@
++ ▝▝   ▝▝   /…/me/src/corpus-proj
++
++
++❯ Run the shell command: echo corpus-check
++
++  Ran 1 shell command
++
++⏺ The command printed:
++
++  corpus-check
++
++✻ Sautéed for 5s · done 9:12 PM
++
++❯ Run the shell command: mkdir build-out
++
++  Ran 1 shell command
++
++⏺ I created the build-out directory in the project folder.
++
++✻ Baked for 4s · done 9:13 PM
++
++❯ Add a subtract(a, b) function to math_utils.py
++
++  Read 1 file
++
++⏺ Update(math_utils.py)
++  ⎿  User rejected update to math_utils.py
++      1  def add(a, b):
++      2      return a + b
++      3 +
++      4 +
++      5 +def subtract(a, b):
++      6 +    return a - b
++
++✻ Worked for 4s · done 9:13 PM
++                                                                                                   ◐ medium · /effort
++───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
++❯
++───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
++  ⏸ manual mode on · ? for shortcuts · ← 6 agents
+diff --git a/src/detect/corpus/claude/draft-lookalike.txt b/src/detect/corpus/claude/draft-lookalike.txt
+new file mode 100644
+index 00000000..a147dd84
+--- /dev/null
++++ b/src/detect/corpus/claude/draft-lookalike.txt
+@@ -0,0 +1,40 @@
++  1. Yes
++  2. No
++
++✻ Brewed for 1s · done 9:14 PM
++
++❯ Run the shell command: sleep 30
++
++  Ran 1 shell command
++
++⏺ sleep 30 is running in the background, because this environment blocks sleep commands in the foreground. I'll get a
++  notification when it finishes.
++
++✻ Worked for 4s · done 9:14 PM
++
++❯ Run this in the foreground, not in the background: python3 -c 'import time; time.sleep(20)'
++
++  Ran 1 shell command
++
++⏺ Background command "Wait 30 seconds" completed (exit code 0)
++
++⏺ The 20-second Python sleep ran in the foreground and finished with no output. The earlier background sleep 30 has
++  also finished, with exit code 0.
++
++✻ Worked for 24s · done 9:15 PM
++
++❯ Write a 300 word essay about indentation styles.
++
++⏺ The Quiet War: Indentation Styles in Programming
++
++  Few debates in software development last as long or run as hot as tabs versus spaces. On the surface it looks
++  trivial, since both just push code to the right. But indentation shapes how we read, share and maintain code, so the
++  choice matters more than it seems.
++
++  Indentation exists for people, not mach
++  ⎿  Interrupted · What should Claude do instead?
++
++───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
++❯ Do you want to proceed? 1. Yes 2. No (esc to cancel)
++───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
++  ⏸ manual mode on
+diff --git a/src/detect/corpus/claude/echoed-prompt-6.txt b/src/detect/corpus/claude/echoed-prompt-6.txt
+new file mode 100644
+index 00000000..255abd5e
+--- /dev/null
++++ b/src/detect/corpus/claude/echoed-prompt-6.txt
+@@ -0,0 +1,40 @@
++
++✻ Baked for 4s · done 9:13 PM
++
++❯ Add a subtract(a, b) function to math_utils.py
++
++  Read 1 file
++
++⏺ Update(math_utils.py)
++  ⎿  User rejected update to math_utils.py
++      1  def add(a, b):
++      2      return a + b
++      3 +
++      4 +
++      5 +def subtract(a, b):
++      6 +    return a - b
++
++✻ Worked for 4s · done 9:13 PM
++
++❯ Use the AskUserQuestion tool to ask me whether this project should use tabs or spaces. Do nothing else.
++
++⏺ User answered Claude's questions:
++  ⎿  · Should this project use tabs or spaces for indentation? → Spaces
++
++⏺ You chose spaces for indentation. The subtract function still isn't in math_utils.py; I'll wait for your go-ahead
++  before adding it.
++
++✻ Brewed for 5s · done 9:13 PM
++
++❯ Reply with exactly these three lines and nothing else: "Do you want to proceed?" then "1. Yes" then "2. No"
++
++⏺ Do you want to proceed?
++  1. Yes
++  2. No
++
++✻ Brewed for 1s · done 9:14 PM
++
++───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
++❯
++───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
++  ⏸ manual mode on · ? for shortcuts · ← 6 agents
+diff --git a/src/detect/corpus/claude/edit-10.txt b/src/detect/corpus/claude/edit-10.txt
+new file mode 100644
+index 00000000..2ae1df7d
+--- /dev/null
++++ b/src/detect/corpus/claude/edit-10.txt
+@@ -0,0 +1,40 @@
++
++  Ran 1 shell command
++
++⏺ The command printed:
++
++  corpus-check
++
++✻ Sautéed for 5s · done 9:12 PM
++
++❯ Run the shell command: mkdir build-out
++
++  Ran 1 shell command
++
++⏺ I created the build-out directory in the project folder.
++
++✻ Baked for 4s · done 9:13 PM
++
++❯ Add a subtract(a, b) function to math_utils.py
++
++  Read 1 file
++
++⏺ Update(math_utils.py)
++
++───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
++ Edit file
++ math_utils.py
++╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
++ 1  def add(a, b):
++ 2      return a + b
++ 3 +
++ 4 +
++ 5 +def subtract(a, b):
++ 6 +    return a - b
++╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
++ Do you want to make this edit to math_utils.py?
++ ❯ 1. Yes
++   2. Yes, and switch to accept edits (auto-approve file edits and common file commands) for this session (shift+tab)
++   3. No
++
++ Esc to cancel · Tab to amend
+diff --git a/src/detect/corpus/claude/fgrun-4.txt b/src/detect/corpus/claude/fgrun-4.txt
+new file mode 100644
+index 00000000..c9515861
+--- /dev/null
++++ b/src/detect/corpus/claude/fgrun-4.txt
+@@ -0,0 +1,40 @@
++
++❯ Use the AskUserQuestion tool to ask me whether this project should use tabs or spaces. Do nothing else.
++
++⏺ User answered Claude's questions:
++  ⎿  · Should this project use tabs or spaces for indentation? → Spaces
++
++⏺ You chose spaces for indentation. The subtract function still isn't in math_utils.py; I'll wait for your go-ahead
++  before adding it.
++
++✻ Brewed for 5s · done 9:13 PM
++
++❯ Reply with exactly these three lines and nothing else: "Do you want to proceed?" then "1. Yes" then "2. No"
++
++⏺ Do you want to proceed?
++  1. Yes
++  2. No
++
++✻ Brewed for 1s · done 9:14 PM
++
++❯ Run the shell command: sleep 30
++
++  Ran 1 shell command
++
++⏺ sleep 30 is running in the background, because this environment blocks sleep commands in the foreground. I'll get a
++  notification when it finishes.
++
++✻ Worked for 4s · done 9:14 PM
++
++❯ Run this in the foreground, not in the background: python3 -c 'import time; time.sleep(20)'
++
++  Running a 20-second Python sleep · 38s
++  ⎿  $ python3 -c 'import time; time.sleep(20)' (10s)
++     (ctrl+b to run in background)
++
++✶ Tinkering… (12s · ↓ 97 tokens)
++
++───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
++❯
++───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
++  ⏸ manual mode on · esc to interrupt · ← 6 agents
+diff --git a/src/detect/corpus/claude/idle-draft.txt b/src/detect/corpus/claude/idle-draft.txt
+new file mode 100644
+index 00000000..ab4a5dec
+--- /dev/null
++++ b/src/detect/corpus/claude/idle-draft.txt
+@@ -0,0 +1,40 @@
++
++ ▐▛███▛█   Claude Code v2.1.283
++▝▜██████▀  Opus 5.5 · Claude Max
++ ▝▝   ▝▝   /…/me/src/corpus-proj
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++                                                                                                   ◐ medium · /effort
++───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
++❯ draft text not sent yet
++───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
++  ⏵⏵ auto mode on (shift+tab to cycle)
+diff --git a/src/detect/corpus/claude/idle-fresh.txt b/src/detect/corpus/claude/idle-fresh.txt
+new file mode 100644
+index 00000000..600b297b
+--- /dev/null
++++ b/src/detect/corpus/claude/idle-fresh.txt
+@@ -0,0 +1,40 @@
++
++ ▐▛███▛█   Claude Code v2.1.283
++▝▜██████▀  Opus 5.5 · Claude Max
++ ▝▝   ▝▝   /…/me/src/corpus-proj
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++                                                                                                   ◐ medium · /effort
++───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
++❯ Try "create a util logging.py that..."
++───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
++  ⏵⏵ auto mode on (shift+tab to cycle) · ← 6 agents
+diff --git a/src/detect/corpus/claude/interrupted.txt b/src/detect/corpus/claude/interrupted.txt
+new file mode 100644
+index 00000000..cd6684e4
+--- /dev/null
++++ b/src/detect/corpus/claude/interrupted.txt
+@@ -0,0 +1,40 @@
++  1. Yes
++  2. No
++
++✻ Brewed for 1s · done 9:14 PM
++
++❯ Run the shell command: sleep 30
++
++  Ran 1 shell command
++
++⏺ sleep 30 is running in the background, because this environment blocks sleep commands in the foreground. I'll get a
++  notification when it finishes.
++
++✻ Worked for 4s · done 9:14 PM
++
++❯ Run this in the foreground, not in the background: python3 -c 'import time; time.sleep(20)'
++
++  Ran 1 shell command
++
++⏺ Background command "Wait 30 seconds" completed (exit code 0)
++
++⏺ The 20-second Python sleep ran in the foreground and finished with no output. The earlier background sleep 30 has
++  also finished, with exit code 0.
++
++✻ Worked for 24s · done 9:15 PM
++
++❯ Write a 300 word essay about indentation styles.
++
++⏺ The Quiet War: Indentation Styles in Programming
++
++  Few debates in software development last as long or run as hot as tabs versus spaces. On the surface it looks
++  trivial, since both just push code to the right. But indentation shapes how we read, share and maintain code, so the
++  choice matters more than it seems.
++
++  Indentation exists for people, not mach
++  ⎿  Interrupted · What should Claude do instead?
++
++───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
++❯
++───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
++  ⏸ manual mode on · ? for shortcuts · ← 6 agents
+diff --git a/src/detect/corpus/claude/long-8.txt b/src/detect/corpus/claude/long-8.txt
+new file mode 100644
+index 00000000..3133e0bc
+--- /dev/null
++++ b/src/detect/corpus/claude/long-8.txt
+@@ -0,0 +1,40 @@
++      1  def add(a, b):
++      2      return a + b
++      3 +
++      4 +
++      5 +def subtract(a, b):
++      6 +    return a - b
++
++✻ Worked for 4s · done 9:13 PM · 1 shell still running
++
++❯ Use the AskUserQuestion tool to ask me whether this project should use tabs or spaces. Do nothing else.
++
++⏺ User answered Claude's questions:
++  ⎿  · Should this project use tabs or spaces for indentation? → Spaces
++
++⏺ You chose spaces for indentation. The subtract function still isn't in math_utils.py; I'll wait for your go-ahead
++  before adding it.
++
++✻ Brewed for 5s · done 9:13 PM · 1 shell still running
++
++❯ Reply with exactly these three lines and nothing else: "Do you want to proceed?" then "1. Yes" then "2. No"
++
++⏺ Do you want to proceed?
++  1. Yes
++  2. No
++
++✻ Brewed for 1s · done 9:14 PM · 1 shell still running
++
++❯ Run the shell command: sleep 30
++
++  Ran 1 shell command
++
++⏺ sleep 30 is running in the background, because this environment blocks sleep commands in the foreground. I'll get a
++  notification when it finishes.
++
++✻ Worked for 4s · done 9:14 PM · 1 shell still running
++
++───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
++❯
++───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
++  ⏸ manual mode on · 1 shell · ← 6 agents · ↓ to manage
+diff --git a/src/detect/corpus/claude/model-picker.txt b/src/detect/corpus/claude/model-picker.txt
+new file mode 100644
+index 00000000..c96971b6
+--- /dev/null
++++ b/src/detect/corpus/claude/model-picker.txt
+@@ -0,0 +1,40 @@
++
++⏺ Background command "Wait 30 seconds" completed (exit code 0)
++
++⏺ The 20-second Python sleep ran in the foreground and finished with no output. The earlier background sleep 30 has
++  also finished, with exit code 0.
++
++✻ Worked for 24s · done 9:15 PM
++
++❯ Write a 300 word essay about indentation styles.
++
++⏺ The Quiet War: Indentation Styles in Programming
++
++  Few debates in software development last as long or run as hot as tabs versus spaces. On the surface it looks
++  trivial, since both just push code to the right. But indentation shapes how we read, share and maintain code, so the
++  choice matters more than it seems.
++
++  Indentation exists for people, not mach
++  ⎿  Interrupted · What should Claude do instead?
++▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
++   Select model
++   Switch between Claude models. Your pick becomes the default for new sessions. For other/previous model names,
++   specify with --model.
++
++   ❯ 1.  Default (recommended) ✔  Opus 5.5 · Best for everyday, complex tasks
++     2.  Opus 5.5                 Most capable for ambitious work
++     3.  Fable 5.1                For your toughest challenges
++     4.  Sonnet 5                 Most efficient for everyday tasks
++     5.  Haiku 4.5                Fastest for quick answers
++     6.  Opus 5                   Best for everyday, complex tasks
++     7.  Fable 5                  Most capable for your hardest and longest-running tasks
++     8.  Opus 4.8                 Best for everyday, complex tasks
++     9.  Opus 4.7                 Best for everyday, complex tasks
++   ↓ 10. Opus 4.6                 Best for everyday, complex tasks
++      … +1 model
++
++   ◐ Medium effort (default) ←/→ to adjust
++
++   Use /fast to turn on Fast mode (Opus 5.5).
++
++   Enter to set as default · s to use this session only · Esc to cancel
+diff --git a/src/detect/corpus/claude/question-8.txt b/src/detect/corpus/claude/question-8.txt
+new file mode 100644
+index 00000000..db919b65
+--- /dev/null
++++ b/src/detect/corpus/claude/question-8.txt
+@@ -0,0 +1,40 @@
++
++
++❯ Run the shell command: mkdir build-out
++
++  Ran 1 shell command
++
++⏺ I created the build-out directory in the project folder.
++
++✻ Baked for 4s · done 9:13 PM
++
++❯ Add a subtract(a, b) function to math_utils.py
++
++  Read 1 file
++
++⏺ Update(math_utils.py)
++  ⎿  User rejected update to math_utils.py
++      1  def add(a, b):
++      2      return a + b
++      3 +
++      4 +
++      5 +def subtract(a, b):
++      6 +    return a - b
++
++✻ Worked for 4s · done 9:13 PM
++
++❯ Use the AskUserQuestion tool to ask me whether this project should use tabs or spaces. Do nothing else.
++───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
++ ☐ Indentation
++
++Should this project use tabs or spaces for indentation?
++
++❯ 1. Spaces
++     Indent with spaces (the PEP 8 standard for Python, 4 per level).
++  2. Tabs
++     Indent with tab characters.
++  3. Type something.
++───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
++  4. Chat about this
++
++Enter to select · ↑/↓ to navigate · Esc to cancel
+diff --git a/src/detect/corpus/claude/slash-menu.txt b/src/detect/corpus/claude/slash-menu.txt
+new file mode 100644
+index 00000000..8b001365
+--- /dev/null
++++ b/src/detect/corpus/claude/slash-menu.txt
+@@ -0,0 +1,40 @@
++  1. Yes
++  2. No
++
++✻ Brewed for 1s · done 9:14 PM
++
++❯ Run the shell command: sleep 30
++
++  Ran 1 shell command
++
++⏺ sleep 30 is running in the background, because this environment blocks sleep commands in the foreground. I'll get a
++  notification when it finishes.
++
++✻ Worked for 4s · done 9:14 PM
++
++❯ Run this in the foreground, not in the background: python3 -c 'import time; time.sleep(20)'
++
++  Ran 1 shell command
++
++⏺ Background command "Wait 30 seconds" completed (exit code 0)
++
++⏺ The 20-second Python sleep ran in the foreground and finished with no output. The earlier background sleep 30 has
++  also finished, with exit code 0.
++
++✻ Worked for 24s · done 9:15 PM
++
++❯ Write a 300 word essay about indentation styles.
++
++⏺ The Quiet War: Indentation Styles in Programming
++
++  Few debates in software development last as long or run as hot as tabs versus spaces. On the surface it looks
++  trivial, since both just push code to the right. But indentation shapes how we read, share and maintain code, so the
++
++  /firecrawl-scrape                       Extract clean markdown from any URL, including JavaScript-rendered SPAs.
++                                          Use this skill whenever the user provides a URL and wants its content, say…
++  /frontend-design:frontend-design        (frontend-design) Guidance for distinctive, intentional visual design when
++                                          building new UI or reshaping an existing one. Helps with aesthetic directi…
++───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
++❯ /
++───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
++  ⏸ manual mode on
+diff --git a/src/detect/corpus/claude/streaming.txt b/src/detect/corpus/claude/streaming.txt
+new file mode 100644
+index 00000000..96bc5c62
+--- /dev/null
++++ b/src/detect/corpus/claude/streaming.txt
+@@ -0,0 +1,40 @@
++
++⏺ Do you want to proceed?
++  1. Yes
++  2. No
++
++✻ Brewed for 1s · done 9:14 PM
++
++❯ Run the shell command: sleep 30
++
++  Ran 1 shell command
++
++⏺ sleep 30 is running in the background, because this environment blocks sleep commands in the foreground. I'll get a
++  notification when it finishes.
++
++✻ Worked for 4s · done 9:14 PM
++
++❯ Run this in the foreground, not in the background: python3 -c 'import time; time.sleep(20)'
++
++  Ran 1 shell command
++
++⏺ Background command "Wait 30 seconds" completed (exit code 0)
++
++⏺ The 20-second Python sleep ran in the foreground and finished with no output. The earlier background sleep 30 has
++  also finished, with exit code 0.
++
++✻ Worked for 24s · done 9:15 PM
++
++❯ Write a 300 word essay about indentation styles.
++
++⏺ The Quiet War: Indentation Styles in Programming
++
++  Few debates in software development last as long or run as hot as tabs versus spaces. On the surface it looks
++  trivial, since both just push code to the right. But indentation shapes how we read, share and maintain code, so the
++  choice matters more than it seems.
++
++
++───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
++❯
++───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
++  ⏸ manual mode on · esc to interrupt · ← 6 agents
+diff --git a/src/detect/corpus/claude/trust-dialog.txt b/src/detect/corpus/claude/trust-dialog.txt
+new file mode 100644
+index 00000000..fe8e01c5
+--- /dev/null
++++ b/src/detect/corpus/claude/trust-dialog.txt
+@@ -0,0 +1,19 @@
++me@mac corpus-proj % claude
++
++───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
++ Accessing workspace:
++
++ /Users/me/src/corpus-pr
++ oj
++
++ Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source
++ project, or work from your team). If not, take a moment to review what's in this folder first.
++
++ Claude Code'll be able to read, edit, and execute files here.
++
++ Security guide
++
++ ❯ No, exit
++   Yes, I trust this folder
++
++ Enter to confirm · Esc to cancel
+diff --git a/src/detect/corpus/claude/turn-2.txt b/src/detect/corpus/claude/turn-2.txt
+new file mode 100644
+index 00000000..d41df8be
+--- /dev/null
++++ b/src/detect/corpus/claude/turn-2.txt
+@@ -0,0 +1,40 @@
++
++ ▐▛███▛█   Claude Code v2.1.283
++▝▜██████▀  Opus 5.5 · Claude Max
++ ▝▝   ▝▝   /…/me/src/corpus-proj
++
++
++❯ Run the shell command: echo corpus-check
++
++⏺ Printing corpus-check
++  ⎿  $ echo corpus-check
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++✳ Shimmying… (3s · ↓ 8 tokens)
++
++───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
++❯
++───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
++  ⏸ manual mode on · esc to interrupt · ← 6 agents
+diff --git a/src/detect/corpus/claude/turn-4.txt b/src/detect/corpus/claude/turn-4.txt
+new file mode 100644
+index 00000000..1d3c7efb
+--- /dev/null
++++ b/src/detect/corpus/claude/turn-4.txt
+@@ -0,0 +1,40 @@
++
++ ▐▛███▛█   Claude Code v2.1.283
++▝▜██████▀  Opus 5.5 · Claude Max
++ ▝▝   ▝▝   /…/me/src/corpus-proj
++
++
++❯ Run the shell command: echo corpus-check
++
++  Ran 1 shell command
++
++⏺ The command printed:
++
++  corpus-check
++
++✻ Sautéed for 5s · done 9:12 PM
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
++❯
++───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
++  ⏸ manual mode on · ? for shortcuts · ← 6 agents
+diff --git a/src/detect/corpus/codex/idle-fresh.txt b/src/detect/corpus/codex/idle-fresh.txt
+new file mode 100644
+index 00000000..21f0e8e3
+--- /dev/null
++++ b/src/detect/corpus/codex/idle-fresh.txt
+@@ -0,0 +1,31 @@
++╭─────────────────────────────────────────────────────────────────────────────────────────────────────╮
++│ ✨ Update available! 0.153.4 -> 0.157.0                                                             │
++│ Run sh -c 'curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh' to update. │
++│                                                                                                     │
++│ See full release notes:                                                                             │
++│ https://github.com/openai/codex/releases/latest                                                     │
++╰─────────────────────────────────────────────────────────────────────────────────────────────────────╯
++
++⚠ `[features].codex_hooks` is deprecated. Use `[features].hooks` instead.
++Enable it with `--enable hooks` or `[features].hooks` in config.toml. See
++https://developers.openai.com/codex/config-basic#feature-flags for details.
++
++╭──────────────────────────────────────────────────╮
++│ >_ OpenAI Codex (v0.153.4)                       │
++│                                                  │
++│ model:     gpt-5.6-sol medium   /model to change │
++│ directory: /private/tmp/…/scratchpad/corpus-proj │
++╰──────────────────────────────────────────────────╯
++
++  Tip: New Use /fast to enable our fastest inference with increased plan usage.
++
++• You have 3 usage limit resets available. Run /usage to use one.
++
++⚠ MCP client for `pencil` failed to start: MCP startup failed: No such file or directory (os error 2)
++
++⚠ MCP startup incomplete (failed: pencil)
++
++
++› Ask Codex to do anything
++
++  gpt-5.6-sol medium · /private/tmp/claude/-Users-me-Developer-herd/session39-811745394b9…
+diff --git a/src/detect/corpus/codex/net-8.txt b/src/detect/corpus/codex/net-8.txt
+new file mode 100644
+index 00000000..d6e4b8f4
+--- /dev/null
++++ b/src/detect/corpus/codex/net-8.txt
+@@ -0,0 +1,35 @@
++https://developers.openai.com/codex/config-basic#feature-flags for details.
++
++╭──────────────────────────────────────────────────╮
++│ >_ OpenAI Codex (v0.153.4)                       │
++│                                                  │
++│ model:     gpt-5.6-sol medium   /model to change │
++│ directory: /private/tmp/…/scratchpad/corpus-proj │
++╰──────────────────────────────────────────────────╯
++
++  Tip: New Use /fast to enable our fastest inference with increased plan usage.
++
++• You have 3 usage limit resets available. Run /usage to use one.
++
++⚠ MCP client for `pencil` failed to start: MCP startup failed: No such file or directory (os error 2)
++
++⚠ MCP startup incomplete (failed: pencil)
++
++
++› Run the shell command: echo corpus-check
++
++
++• Hook failed
++  └ hook exited with code 1
++
++⚠ `[features].codex_hooks` is deprecated. Use `[features].hooks` instead.
++Enable it with `--enable hooks` or `[features].hooks` in config.toml. See
++https://developers.openai.com/codex/config-basic#feature-flags for details.
++
++■ You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at
++Sep 28th, 2026 10:35 AM.
++
++
++› Ask Codex to do anything
++
++  gpt-5.6-luna medium · /private/tmp/claude/-Users-me-Developer-herd/session39-811745394b…
+diff --git a/src/detect/corpus/codex/trust-dialog.txt b/src/detect/corpus/codex/trust-dialog.txt
+new file mode 100644
+index 00000000..1ba19e9e
+--- /dev/null
++++ b/src/detect/corpus/codex/trust-dialog.txt
+@@ -0,0 +1,9 @@
++> You are in /private/tmp/claude/-Users-me-Developer-herd/session/scratchpa
++
++  Do you trust the contents of this directory? Working with untrusted contents comes with higher risk of prompt
++  injection. Trusting the directory allows project-local config, hooks, and exec policies to load.
++
++› 1. Yes, continue
++  2. No, quit
++
++  Press enter to continue
+diff --git a/src/detect/corpus/codex/update-prompt.txt b/src/detect/corpus/codex/update-prompt.txt
+new file mode 100644
+index 00000000..1ff893da
+--- /dev/null
++++ b/src/detect/corpus/codex/update-prompt.txt
+@@ -0,0 +1,10 @@
++
++  ✨ Update available! 0.153.4 -> 0.157.0
++
++  Release notes: https://github.com/openai/codex/releases/latest
++
++› 1. Update now (runs `sh -c 'curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh'`)
++  2. Skip
++  3. Skip until next version
++
++  Press enter to continue
+diff --git a/src/detect/manifest/tests.rs b/src/detect/manifest/tests.rs
+index 07e9aa38..7052da19 100644
+--- a/src/detect/manifest/tests.rs
++++ b/src/detect/manifest/tests.rs
+@@ -785,3 +785,50 @@ contains = ["active"]
+ "#;
+     assert!(parse_manifest(manifest).is_err());
+ }
++
++/// Real screens, recorded from live sessions, against the bundled rules:
++/// a regression corpus for the stuck "working", false "needs input" and
++/// missed prompts people report. Add a screen to `src/detect/corpus` and a
++/// case to its `cases.toml` whenever a status is read wrong.
++#[test]
++fn bundled_manifests_read_recorded_screens() {
++    #[derive(serde::Deserialize)]
++    struct Cases {
++        case: Vec<Case>,
++    }
++    #[derive(serde::Deserialize)]
++    struct Case {
++        screen: String,
++        agent: String,
++        expect: String,
++        note: String,
++    }
++
++    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/detect/corpus");
++    let cases: Cases = toml::from_str(&std::fs::read_to_string(root.join("cases.toml")).unwrap()).unwrap();
++    assert!(!cases.case.is_empty());
++    let mut wrong = Vec::new();
++    for case in &cases.case {
++        let agent = parse_agent_label(&case.agent).unwrap_or_else(|| panic!("unknown agent {}", case.agent));
++        let screen = std::fs::read_to_string(root.join(&case.screen)).unwrap();
++        let loaded = bundled_loaded_manifest(agent, bundled_manifest(agent).unwrap(), None, None, false);
++        let explain = evaluate_loaded_manifest(
++            agent,
++            DetectionInput { screen: &screen, osc_title: "", osc_progress: "" },
++            loaded,
++            false,
++        );
++        let got = if explain.skip_state_update {
++            "skip".to_string()
++        } else {
++            format!("{:?}", explain.state).to_lowercase()
++        };
++        if got != case.expect {
++            wrong.push(format!(
++                "{} ({}): expected {}, read {} by rule {:?}",
++                case.screen, case.note, case.expect, got, explain.matched_rule
++            ));
++        }
++    }
++    assert!(wrong.is_empty(), "screens read wrong:\n{}", wrong.join("\n"));
++}
+diff --git a/src/detect/manifests/claude.toml b/src/detect/manifests/claude.toml
+index 0c7bdcf2..0993053e 100644
+--- a/src/detect/manifests/claude.toml
++++ b/src/detect/manifests/claude.toml
+@@ -1,7 +1,7 @@
+ id = "claude"
+-version = "2026.09.11.1"
++version = "2026.09.25.1"
+ min_engine_version = 2
+-updated_at = "2026-09-11T00:00:00Z"
++updated_at = "2026-09-25T00:00:00Z"
+ aliases = ["claude-code"]
+ 
+ [[rules]]
+@@ -121,6 +121,25 @@ all = [
+   ] },
+ ]
+ 
++[[rules]]
++id = "idle_prompt_footer"
++state = "idle"
++priority = 960
++region = "bottom_non_empty_lines(1)"
++visible_idle = true
++# The status line under an empty or drafted prompt. Forms and permission
++# dialogs replace it with their own key hints, and a running turn shows
++# "esc to interrupt", so a draft that happens to read like a prompt
++# ("do you want to proceed? … esc to cancel") can't pass for one.
++# It starts with the permission mode ("⏸ manual mode on", "⏵⏵ auto mode
++# on"), or reads "? for shortcuts" when there's no mode to show.
++line_regex = ['^\s*(?:[⏸⏵]|\? for shortcuts)']
++not = [
++  { contains = ["esc to interrupt"] },
++  { contains = ["esc to cancel"] },
++  { contains = ["enter to select"] },
++]
++
+ [[rules]]
+ id = "live_prompt_box"
+ state = "idle"

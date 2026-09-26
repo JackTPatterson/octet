@@ -355,8 +355,23 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   Checked 2026-09-25: the pinned manaflow-ai/ghostty commit (4a0e9e1,
   2026-09-17) contains upstream's fixes 9ee78d8 and 17da138 (compare:
   0 behind).
-- [ ] **44. Agent status accuracy (med).** cmux #1027: stuck "Running", false
-  "Needs input", missed prompts. Needs a regression corpus.
+- [x] **44. Agent status accuracy (med).** cmux #1027: stuck "Running", false
+  "Needs input", missed prompts. Needs a regression corpus. Done: the
+  status comes from the engine reading the screen (per-agent rule files;
+  Octet only relays it), so the corpus lives there
+  (`scripts/engine-status-corpus.patch`): 23 screens recorded from real
+  Claude Code 2.1.283 and Codex 0.153.4 sessions (trust dialogs, idle,
+  drafting, a turn working, a silent 20 s command, streaming, Bash and
+  edit permissions, a question form, a reply quoting "Do you want to
+  proceed? 1. Yes 2. No", interrupted, background shell, the / menu, the
+  model picker, Codex's update offer and usage limit), paths and names
+  replaced, each with the status it should read as. 22 read right; a
+  draft that reads like a permission prompt read as needs-input, fixed by
+  an idle rule on Claude's prompt status line. Checked on every engine
+  build. Codex turns weren't recorded (the plan's usage limit was hit).
+  Note: the engine prefers downloaded rule files with a newer version, so
+  an upstream Claude rules update would replace this rule until it's
+  upstreamed or the corpus is rerun against it.
 
 Already covered, for the record: a session manager (Ghostty #3358, 609, their
 top request), close protection (closed tabs keep running and reopen with
