@@ -10,6 +10,9 @@ struct OctetSettings: Codable, Equatable {
     var confirmQuit = true
     /// A shortcut from any app that brings Octet forward or hides it.
     var globalHotkey: GlobalHotkey.Choice = .off
+    /// The hotkey drops a window down from the top of the screen, over
+    /// full-screen apps, instead of bringing Octet forward.
+    var hotkeyDropDown = false
     var newPaneDirectory: NewPaneDirectory = .follow
     var defaultShell = ""
     var shellMode: ShellMode = .auto
@@ -252,6 +255,7 @@ struct OctetSettings: Codable, Equatable {
         }
         confirmQuit = value("confirmQuit", defaults.confirmQuit)
         globalHotkey = value("globalHotkey", defaults.globalHotkey)
+        hotkeyDropDown = value("hotkeyDropDown", defaults.hotkeyDropDown)
         newPaneDirectory = value("newPaneDirectory", defaults.newPaneDirectory)
         defaultShell = value("defaultShell", defaults.defaultShell)
         shellMode = value("shellMode", defaults.shellMode)
@@ -698,6 +702,7 @@ final class SettingsStore: ObservableObject {
     private func apply(from old: OctetSettings) {
         if values.keepAwake != old.keepAwake { SleepGuard.shared.update() }
         if values.globalHotkey != old.globalHotkey { GlobalHotkey.shared.apply(values.globalHotkey) }
+        if !values.hotkeyDropDown, old.hotkeyDropDown { GlobalHotkey.shared.restoreDropDown() }
         if values.accountProfiles != old.accountProfiles || values.accountAssignments != old.accountAssignments {
             AccountProfiles.configure(profiles: values.accountProfiles, assignments: values.accountAssignments)
             writeAccountTable()

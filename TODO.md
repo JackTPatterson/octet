@@ -279,8 +279,13 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   #2758, Warp #91. Done: Settings › General › Hotkey from any app (off,
   ⌃`, ⌥Space, ⌥⌘T) brings Octet forward from any app, or hides it when it's
   already in front; Carbon hotkeys, so no accessibility permission. A
-  shortcut another app holds is reported. Build-checked only. Not done: a
-  drop-down window that slides over full-screen apps.
+  shortcut another app holds is reported. Build-checked only. Settings › Drop down
+  from the top turns it into a Quake-style window: the hotkey slides the
+  window down over the top 45% of the screen under the pointer, on every
+  Space including a full-screen app's, and slides it away again; turning
+  it off puts the window back. A real launch showed the drop (full width,
+  floating); hiding again needs Octet in front, which a background test
+  launch can't be.
 - [x] **35. Scripting: URL scheme and CLI (med).** Ghostty #2353 (257), Warp
   #3364. Done: `octet://open?path=`, `octet://run?agent=&path=&prompt=`
   and `octet://send?text=` (`OctetURL`), and `octet-cli open [folder]`,

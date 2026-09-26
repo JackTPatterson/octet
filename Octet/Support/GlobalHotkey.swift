@@ -58,6 +58,7 @@ final class GlobalHotkey {
 
     /// In front with a window showing: hide. Otherwise: come forward.
     func toggle() {
+        if SettingsStore.shared.values.hotkeyDropDown { return toggleDropDown() }
         if NSApp.isActive, NSApp.keyWindow?.isVisible == true {
             NSApp.hide(nil)
             return
@@ -66,5 +67,64 @@ final class GlobalHotkey {
         if let window = WindowRegistry.shared.key { window.bringForward() }
         else { NSApp.windows.first { $0.canBecomeMain }?.makeKeyAndOrderFront(nil) }
         OctetTerminalRuntime.focusTerminal()
+    }
+
+    // MARK: - Drop-down
+
+    /// The window the hotkey drops down, and how it was before, to put back.
+    private weak var dropped: NSWindow?
+    private var before: (frame: NSRect, level: NSWindow.Level, behavior: NSWindow.CollectionBehavior)?
+
+    /// The top of the screen the pointer is on, full width: over every
+    /// Space, a full-screen app's included, like a Quake console.
+    static func dropDownFrame(in visible: NSRect, share: CGFloat = 0.45) -> NSRect {
+        let height = (visible.height * share).rounded()
+        return NSRect(x: visible.minX, y: visible.maxY - height, width: visible.width, height: height)
+    }
+
+    private func toggleDropDown() {
+        if let window = dropped, window.isVisible, NSApp.isActive {
+            // Slide up and away.
+            let away = window.frame.offsetBy(dx: 0, dy: window.frame.height)
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = !MotionPreferences.shared.enabled || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.16
+                window.animator().setFrame(away, display: true)
+            }, completionHandler: {
+                MainActor.assumeIsolated {
+                    window.orderOut(nil)
+                    NSApp.hide(nil)
+                }
+            })
+            return
+        }
+        guard let window = dropped ?? WindowRegistry.shared.key?.nsWindow
+                ?? NSApp.windows.first(where: { $0.canBecomeMain }) else { return }
+        if dropped !== window {
+            restoreDropDown()
+            dropped = window
+            before = (window.frame, window.level, window.collectionBehavior)
+        }
+        window.collectionBehavior = before!.behavior.union([.canJoinAllSpaces, .fullScreenAuxiliary]).subtracting(.moveToActiveSpace)
+        window.level = .floating
+        let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
+        let target = Self.dropDownFrame(in: screen?.visibleFrame ?? window.frame)
+        window.setFrame(target.offsetBy(dx: 0, dy: target.height), display: false)
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = !MotionPreferences.shared.enabled || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.18
+            window.animator().setFrame(target, display: true)
+        }
+        OctetTerminalRuntime.focusTerminal()
+    }
+
+    /// Puts the dropped-down window back as it was (the setting turned off).
+    func restoreDropDown() {
+        guard let window = dropped, let before else { return }
+        window.level = before.level
+        window.collectionBehavior = before.behavior
+        window.setFrame(before.frame, display: true)
+        dropped = nil
+        self.before = nil
     }
 }

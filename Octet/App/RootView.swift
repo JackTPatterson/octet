@@ -296,6 +296,7 @@ struct RootView: View {
     #if DEBUG
     /// The key hook runs once, however many times a window appears.
     private static var debugKeysPressed = false
+    private static var debugHotkeyPressed = false
     #endif
 
     private func appeared() {
@@ -350,6 +351,12 @@ struct RootView: View {
                 Self.debugKeysPressed = true
                 let delay = Double(ProcessInfo.processInfo.environment["OCTET_DEBUG_KEYS_AFTER"] ?? "") ?? 10
                 DispatchQueue.main.asyncAfter(deadline: .now() + delay) { OctetTerminalRuntime.debugPress(keys) }
+            }
+            // "hotkey" presses the global hotkey after 4 s, and again after 8 s.
+            if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "hotkey", !Self.debugHotkeyPressed {
+                Self.debugHotkeyPressed = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 4) { GlobalHotkey.shared.toggle() }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 8) { GlobalHotkey.shared.toggle() }
             }
             // "hints" shows hint labels as ⌘⇧H does; "hints:<label>" also types one.
             if let open = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], open.hasPrefix("hints") {

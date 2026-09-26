@@ -245,6 +245,15 @@ private struct GeneralSettings: View {
                 }
                 .labelsHidden().frame(width: 190)
             }
+            SettingsDivider()
+            SettingsRow(
+                title: "Drop down from the top",
+                detail: "The hotkey slides a window down over the top of the screen, even over a full-screen app, and slides it away again."
+            ) {
+                Toggle("Drop down from the top", isOn: $settings.values.hotkeyDropDown)
+                    .labelsHidden().toggleStyle(.switch)
+                    .disabled(settings.values.globalHotkey == .off)
+            }
         }
         SettingsGroup(title: "New panes & shells") {
             SettingsRow(title: "Start new tabs and workspaces in", detail: "Follow uses the focused pane's folder.") {
