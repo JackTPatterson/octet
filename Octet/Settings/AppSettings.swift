@@ -62,7 +62,7 @@ struct OctetSettings: Codable, Equatable {
     var previewLongPastes = true
     /// Turn on Secure Keyboard Entry while a pane asks for a password.
     var secureInputAtPasswords = true
-    /// Prompt marks from zsh and fish, through Octet's shell wrapper.
+    /// Prompt marks from zsh, bash and fish, through Octet's shell wrapper.
     var shellIntegration = true
     /// ntfy topic for agent notices on your phone; empty is off.
     var phoneTopic = ""
@@ -427,7 +427,7 @@ struct OctetSettings: Codable, Equatable {
         defaultShell.isEmpty ? (ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh") : defaultShell
     }
 
-    /// Every shell goes through the wrapper: zsh and fish for marks, all of
+    /// Every shell goes through the wrapper: zsh, bash and fish for marks, all of
     /// them for the account their folder uses.
     var usesShellIntegration: Bool { shellIntegration }
 

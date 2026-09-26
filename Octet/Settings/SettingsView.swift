@@ -535,7 +535,7 @@ private struct TerminalSettings: View {
             SettingsDivider()
             SettingsRow(
                 title: "Shell integration",
-                detail: "zsh and fish in Octet's panes mark each prompt and command (OSC 133), so ⌘↑/⌘↓ jump exactly between commands and each command's exit status and time show. Your own startup files load as usual. Applies to new panes."
+                detail: "zsh, bash and fish in Octet's panes mark each prompt and command (OSC 133), so ⌘↑/⌘↓ jump exactly between commands and each command's exit status and time show. Your own startup files load as usual. Applies to new panes."
             ) {
                 Toggle("Shell integration", isOn: $settings.values.shellIntegration).labelsHidden().toggleStyle(.switch)
             }

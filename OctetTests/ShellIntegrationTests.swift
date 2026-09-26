@@ -55,6 +55,38 @@ final class ShellIntegrationTests: XCTestCase {
         XCTAssertTrue(text.contains("\u{1b}]133;D;0\u{07}"), text)
         XCTAssertTrue(text.contains("\u{1b}]133;D;1\u{07}"), text)
     }
+
+    /// macOS's own bash (3.2) through the wrapper: a login shell loads
+    /// ~/.bash_profile, a plain one ~/.bashrc, and both mark prompts,
+    /// commands and a failing command's status.
+    func testBashMarksPromptsAndLoadsTheRightStartupFile() throws {
+        let home = base.appendingPathComponent("home")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        try "export FROM_PROFILE=yes\n".write(to: home.appendingPathComponent(".bash_profile"), atomically: true, encoding: .utf8)
+        try "export FROM_RC=yes\n".write(to: home.appendingPathComponent(".bashrc"), atomically: true, encoding: .utf8)
+        for login in [true, false] {
+            let wrapper = try ShellIntegration.install(in: base.appendingPathComponent("si-\(login)"), shell: "/bin/bash", login: login)
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: wrapper)
+            process.environment = ["HOME": home.path, "TERM": "xterm-256color", "PATH": "/usr/bin:/bin", "PS1": "$ "]
+            let input = Pipe(), output = Pipe()
+            process.standardInput = input
+            process.standardOutput = output
+            process.standardError = output
+            try process.run()
+            input.fileHandleForWriting.write(Data("echo profile=$FROM_PROFILE rc=$FROM_RC shell=$SHELL\nfalse\nexit\n".utf8))
+            try input.fileHandleForWriting.close()
+            let data = output.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            let text = String(decoding: data, as: UTF8.self)
+
+            XCTAssertTrue(text.contains(login ? "profile=yes rc= " : "profile= rc=yes"), text)
+            XCTAssertTrue(text.contains("shell=/bin/bash"), text)
+            for mark in ["A", "B", "C", "D;0", "D;1"] {
+                XCTAssertTrue(text.contains("\u{1b}]133;\(mark)\u{07}"), "no \(mark) mark, login \(login): \(text)")
+            }
+        }
+    }
 }
 
 final class ShellAccountTests: XCTestCase {

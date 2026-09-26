@@ -262,8 +262,14 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   by the real prompt rows (by prompt shape where a shell has no marks); a
   Last command chip shows "✓ 1.2s" / "✗ 1 · 340ms"; Copy Last Command's
   Output is in the palette and the right-click menu. Checked with real
-  zsh: marks, exit codes and a 1.209 s `sleep 1.2`. Not done: folding a
-  command's output; bash (its login startup can't be hooked this way).
+  zsh: marks, exit codes and a 1.209 s `sleep 1.2`. Bash too
+  (2026-09-26): started on Octet's rc file (`--rcfile`, which macOS's
+  bash 3.2 honours; `--posix`/`$ENV` doesn't work there), which loads
+  ~/.bash_profile for a login shell or ~/.bashrc otherwise, then marks
+  with PROMPT_COMMAND and a DEBUG trap (3.2 has no PS0); a user's own
+  DEBUG trap is left alone. Checked in a real pty with /bin/bash 3.2
+  (login and not) and Homebrew bash 5.3. Not done: folding a command's
+  output (needs the session server).
 - [x] **32. Prompt queue (med).** Claude Code #50246 (245), #33323; Codex
   #28864. Done: palette › Queue a Prompt for <agent> for each agent in the
   workspace, including another tab's ("after agent X finishes"); sent when

@@ -5,7 +5,8 @@ import Foundation
 /// what jump-to-prompt, "copy last output" and a command's time and status
 /// are built on. Done the way Ghostty does it: the pane's shell is a small
 /// wrapper that points zsh at a `.zshenv` of Octet's (which hands straight
-/// back to the user's own files) or adds a fish `vendor_conf.d` file, then
+/// back to the user's own files) or adds a fish `vendor_conf.d` file, or
+/// starts bash on Octet's rc file (which loads the user's own files), then
 /// becomes the real shell. Other shells start untouched.
 enum ShellIntegration {
     /// The folder the files live in, under Octet's support folder.
@@ -25,6 +26,7 @@ enum ShellIntegration {
         try zshenv.write(to: zsh.appendingPathComponent(".zshenv"), atomically: true, encoding: .utf8)
         try zshIntegration.write(to: directory.appendingPathComponent("octet.zsh"), atomically: true, encoding: .utf8)
         try fishIntegration.write(to: fish.appendingPathComponent("octet.fish"), atomically: true, encoding: .utf8)
+        try bashIntegration.write(to: directory.appendingPathComponent("octet.bash"), atomically: true, encoding: .utf8)
         let wrapper = directory.appendingPathComponent("octet-shell")
         try wrapperScript(shell: shell, login: login, directory: directory.path)
             .write(to: wrapper, atomically: true, encoding: .utf8)
@@ -80,6 +82,15 @@ enum ShellIntegration {
             export ZDOTDIR="$dir/zsh" OCTET_INTEGRATION_DIR="$dir" ;;
           fish)
             export XDG_DATA_DIRS="$dir/fish:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}" ;;
+          bash)
+            # Started on Octet's rc file, which loads your own files as a
+            # login shell would (or ~/.bashrc), then adds the marks. --rcfile
+            # works in every bash, macOS's 3.2 included. Only for an
+            # interactive shell with no arguments.
+            if [ $# -eq 0 ]; then
+              bash_rc=1
+              \(login ? "export OCTET_BASH_LOGIN=1" : ":")
+            fi ;;
         esac
         # The agent account the folder uses (Octet › Accounts), unless the
         # pane was started with one on purpose. Deeper folders come later
@@ -102,6 +113,7 @@ enum ShellIntegration {
         fi
         # Programs that start "$SHELL" get your shell, not this script.
         export SHELL="$shell"
+        if [ -n "${bash_rc:-}" ]; then exec "$shell" --rcfile "$dir/octet.bash" -i; fi
         \(login ? "exec -l \"$shell\" \"$@\"" : "exec \"$shell\" \"$@\"")
 
         """
@@ -154,6 +166,52 @@ enum ShellIntegration {
     }
     autoload -Uz add-zsh-hook
     add-zsh-hook precmd _octet_install
+
+    """
+
+    /// Bash's rc file: the user's startup files as bash would have read
+    /// them, then the marks. The command mark
+    /// comes from a DEBUG trap (bash 3.2 on macOS has no PS0), only for the
+    /// first command after a prompt, and not if the user already has one.
+    static let bashIntegration = """
+    # Octet shell integration for bash.
+    if [ -n "${OCTET_BASH_LOGIN:-}" ]; then
+      unset OCTET_BASH_LOGIN
+      [ -r /etc/profile ] && builtin source /etc/profile
+      for _octet_file in "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile"; do
+        if [ -r "$_octet_file" ]; then builtin source "$_octet_file"; break; fi
+      done
+      unset _octet_file
+    else
+      [ -r "$HOME/.bashrc" ] && builtin source "$HOME/.bashrc"
+    fi
+
+    _octet_running=
+    _octet_at_prompt=
+    _octet_prompt_start() {
+      local status=$?
+      if [ -n "$_octet_running" ]; then
+        builtin printf '\\e]133;D;%s\\a' "$status"
+        _octet_running=
+      fi
+      builtin printf '\\e]133;A\\a'
+      return $status
+    }
+    # Last, after anything that rebuilds PS1 (starship, oh-my-bash).
+    _octet_prompt_end() {
+      [[ $PS1 == *'133;B'* ]] || PS1="$PS1"'\\[\\e]133;B\\a\\]'
+      _octet_at_prompt=1
+    }
+    _octet_preexec() {
+      [ -n "$_octet_at_prompt" ] || return 0
+      [ -n "${COMP_LINE:-}" ] && return 0
+      case "$BASH_COMMAND" in _octet_*) return 0 ;; esac
+      _octet_at_prompt=
+      builtin printf '\\e]133;C\\a'
+      _octet_running=1
+    }
+    PROMPT_COMMAND="_octet_prompt_start${PROMPT_COMMAND:+; $PROMPT_COMMAND}; _octet_prompt_end"
+    [ -z "$(trap -p DEBUG)" ] && trap '_octet_preexec' DEBUG
 
     """
 
