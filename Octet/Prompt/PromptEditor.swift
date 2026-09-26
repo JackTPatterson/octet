@@ -289,7 +289,7 @@ final class PromptEditor: ObservableObject {
             line.clearSelection()
             if option {
                 if !line.acceptWord(of: suggestion) { line.moveWordRight() }
-            } else if line.caretAtEnd, line.accept(suggestion: suggestion) {
+            } else if SettingsStore.shared.values.suggestionAcceptKey.right, line.caretAtEnd, line.accept(suggestion: suggestion) {
                 // Accepting the suggestion is what → means at the end.
             } else {
                 line.moveRight()
@@ -314,6 +314,10 @@ final class PromptEditor: ObservableObject {
             }
             if completionsOpen {
                 acceptCompletion()
+            } else if SettingsStore.shared.values.suggestionAcceptKey.tab, line.caretAtEnd,
+                      line.accept(suggestion: suggestion) {
+                // Tab takes the suggestion, as it's been set to.
+                refreshSuggestion()
             } else {
                 openCompletions()
                 if completionsOpen { return true }

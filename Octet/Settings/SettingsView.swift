@@ -779,6 +779,17 @@ private struct AgentSettings: View {
             }
             SettingsDivider()
             SettingsRow(
+                title: "Accept a suggestion with",
+                detail: "The key that takes the grey suggestion from your history at the end of the line. ⌥→ takes one word of it either way."
+            ) {
+                Picker("Accept a suggestion with", selection: $settings.values.suggestionAcceptKey) {
+                    ForEach(OctetSettings.SuggestionAcceptKey.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                .labelsHidden().frame(width: 130)
+                .disabled(!settings.values.promptEditor)
+            }
+            SettingsDivider()
+            SettingsRow(
                 title: "Paste images as files",
                 detail: "⌘V with an image on the clipboard writes it out and pastes the path, which is what agents can actually read."
             ) {

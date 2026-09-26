@@ -153,8 +153,23 @@ final class OctetTerminalRuntime {
             return (window, surface)
         }).first else { return }
         window.makeFirstResponder(surface)
-        let codes: [String: UInt16] = ["a": 0, "b": 11, "c": 8, "return": 36, "up": 126, "down": 125, "home": 115, "end": 119, "pgup": 116, "pgdn": 121]
-        for token in keys.split(separator: " ") {
+        var codes: [String: UInt16] = ["return": 36, "tab": 48, "space": 49, "up": 126, "down": 125, "right": 124, "left": 123,
+                                       "home": 115, "end": 119, "pgup": 116, "pgdn": 121]
+        for (letter, code) in zip("asdfhgzxcv_bqweryt", [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17] as [UInt16]) where letter != "_" {
+            codes[String(letter)] = code
+        }
+        for (letter, code) in zip("ouipljkn m", [31, 32, 34, 35, 37, 38, 40, 45, 49, 46] as [UInt16]) where letter != " " {
+            codes[String(letter)] = code
+        }
+        let tokens = keys.split(separator: " ")
+        for (index, token) in tokens.enumerated() {
+            // `wait:<seconds>` presses the rest later, as a person would
+            // after a command finishes.
+            if token.hasPrefix("wait:") {
+                let rest = tokens[(index + 1)...].joined(separator: " ")
+                DispatchQueue.main.asyncAfter(deadline: .now() + (Double(token.dropFirst(5)) ?? 1)) { debugPress(rest) }
+                return
+            }
             // `paste:<file>` pastes the file's text as ⌘V would, from a
             // pasteboard of its own so the real clipboard is left alone.
             if token.hasPrefix("paste:"), let text = try? String(contentsOfFile: String(token.dropFirst(6)), encoding: .utf8) {
@@ -208,12 +223,16 @@ final class OctetTerminalRuntime {
             if parts.contains("opt") { flags.insert(.option) }
             if parts.contains("ctrl") { flags.insert(.control) }
             if parts.contains("cmd") { flags.insert(.command) }
-            let character = key == "return" ? "\r" : (flags.contains(.shift) ? key.uppercased() : key)
+            let special: [String: String] = ["return": "\r", "tab": "\t", "space": " ",
+                                             "up": "\u{F700}", "down": "\u{F701}", "left": "\u{F702}", "right": "\u{F703}",
+                                             "home": "\u{F729}", "end": "\u{F72B}", "pgup": "\u{F72C}", "pgdn": "\u{F72D}"]
+            let typed = special[key] ?? key
+            let character = flags.contains(.shift) ? typed.uppercased() : typed
             for type in [NSEvent.EventType.keyDown, .keyUp] {
                 guard let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: flags,
                                                    timestamp: ProcessInfo.processInfo.systemUptime,
                                                    windowNumber: window.windowNumber, context: nil,
-                                                   characters: character, charactersIgnoringModifiers: key == "return" ? "\r" : key,
+                                                   characters: character, charactersIgnoringModifiers: typed,
                                                    isARepeat: false, keyCode: code) else { continue }
                 if type == .keyDown { surface.keyDown(with: event) } else { surface.keyUp(with: event) }
             }

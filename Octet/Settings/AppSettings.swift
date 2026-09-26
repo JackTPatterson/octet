@@ -118,6 +118,7 @@ struct OctetSettings: Codable, Equatable {
     var checkForAgentUpdates = true
     var promptEditor = true
     var promptCompletions = true
+    var suggestionAcceptKey: SuggestionAcceptKey = .right
     var pasteImagesAsFiles = true
     var autoNameTabs = true
     var visualTwin = true
@@ -179,6 +180,25 @@ struct OctetSettings: Codable, Equatable {
         }
     }
     enum UpdateChannel: String, Codable, CaseIterable { case stable, preview }
+
+    /// Which key takes the grey history suggestion at the end of the line.
+    enum SuggestionAcceptKey: String, Codable, CaseIterable {
+        case right
+        /// Tab takes the suggestion when there is one; otherwise it completes.
+        case tab
+        case either
+
+        var title: String {
+            switch self {
+            case .right: "→"
+            case .tab: "Tab"
+            case .either: "→ or Tab"
+            }
+        }
+
+        var right: Bool { self != .tab }
+        var tab: Bool { self != .right }
+    }
 
     enum SubagentTabClosing: String, Codable, CaseIterable {
         /// Open until closed by hand.
@@ -311,6 +331,7 @@ struct OctetSettings: Codable, Equatable {
         checkForAgentUpdates = value("checkForAgentUpdates", defaults.checkForAgentUpdates)
         promptEditor = value("promptEditor", defaults.promptEditor)
         promptCompletions = value("promptCompletions", defaults.promptCompletions)
+        suggestionAcceptKey = value("suggestionAcceptKey", defaults.suggestionAcceptKey)
         pasteImagesAsFiles = value("pasteImagesAsFiles", defaults.pasteImagesAsFiles)
         autoNameTabs = value("autoNameTabs", defaults.autoNameTabs)
         visualTwin = value("visualTwin", defaults.visualTwin)

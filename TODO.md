@@ -233,8 +233,9 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   past Octet's menu; ⇧⌦ on a suggestion stops Octet suggesting that
   command (with Undo; the shell's history file isn't touched). Octet's
   command line and its completions were already switchable in Settings.
-  Unit-tested; the keys weren't pressed end to end. Not done: rebinding
-  which key accepts.
+  Unit-tested; the keys weren't pressed end to end. Settings › Accept a
+  suggestion with: →, Tab, or either (checked with real keys: in Tab mode,
+  Tab takes the suggestion and → only moves).
 - [x] **29. Hints mode (med).** Ghostty #2394 (105) and 97 for keyboard URL
   opening; kitty hints, WezTerm QuickSelect. Done: ⌘⇧H (or palette › Open
   Link or File on Screen) labels every link, path with a folder or line

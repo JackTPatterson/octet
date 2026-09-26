@@ -118,6 +118,7 @@ enum SettingsSearchIndex {
         .init(.agents, "Offer Octet's view over a running agent",
               ["banner", "offer", "dismiss", "conversation", "chat", "claude", "codex", "opencode"]),
         .init(.agents, "Octet's command line", ["prompt", "editor", "command line", "history", "suggestion", "highlight", "autosuggest"]),
+        .init(.agents, "Accept a suggestion with", ["suggestion", "autosuggest", "accept", "tab", "arrow", "right", "key"]),
         .init(.agents, "Paste images as files", ["paste", "image", "screenshot", "clipboard", "file"]),
         .init(.agents, "Command specs", ["completion", "autocomplete", "fig", "spec", "install"]),
         .init(.agents, "Name tabs after their work", ["tab", "title", "rename", "name", "auto"]),
