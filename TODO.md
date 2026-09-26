@@ -322,8 +322,10 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   #28765 (44). Done for the push: Settings › Agents › Notices on your phone
   sends "needs you" (high priority) and "finished" to an ntfy topic while
   Octet isn't in front (`PhonePush`; ntfy.sh or your own server). Off until
-  a topic is set. Not done: approve/deny from the phone, which needs a way
-  back into this Mac; Claude's Remote Control covers that for Claude.
+  a topic is set. Deferred: approve/deny from the phone, which needs a
+  relay back into this Mac, i.e. a server we'd host (features that need
+  one are deferred, 2026-09-26); Claude's Remote Control covers that for
+  Claude.
 - [x] **38. Audit timeline (low-med).** Commands and files per agent, with
   `rm -rf`, force-push and `sudo` flagged (cc-audit-log et al.).
   Done: palette › Agent Command Log… lists the shell commands Claude and
