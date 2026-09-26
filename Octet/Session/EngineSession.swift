@@ -45,9 +45,22 @@ struct EngineSession {
     /// and shows native tabs instead.
     static let hiddenTopRows = 1
 
-    /// Shell command the terminal surface runs.
+    /// Shell command the terminal surface runs: the client, once the
+    /// terminal has its real size. The surface starts at a stand-in size
+    /// (800×600 pixels) and gets the window's a moment later; a client
+    /// attaching in that moment shrinks every pane to it and back, and a
+    /// full-screen program that misses the second resize stays drawn in a
+    /// corner. So wait (up to 2 s) for the first resize and for it to
+    /// settle, then become the client, still as a login process (`-` first
+    /// in its name), as the surface started it.
     var command: String {
-        "\(shellQuote(enginePath)) --session \(Self.name)"
+        let wait = #"""
+        s=$(stty size 2>/dev/null); n=0
+        while [ $n -lt 40 ] && [ "$(stty size 2>/dev/null)" = "$s" ]; do /bin/sleep 0.05; n=$((n+1)); done
+        last=; while [ "$(stty size 2>/dev/null)" != "$last" ]; do last=$(stty size 2>/dev/null); /bin/sleep 0.1; done
+        exec -a "-$0" "$0" --session "$1"
+        """#
+        return "/bin/bash --noprofile --norc -c \(shellQuote(wait)) \(shellQuote(enginePath)) \(shellQuote(Self.name))"
     }
 
     var environment: [String: String] {

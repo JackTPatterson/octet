@@ -190,11 +190,17 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   visible, quitting doesn't ask (nothing is lost; the session keeps
   running). Not reproduced without clicking, so unverified.
 
-- [ ] **47. OpenCode drew into a corner after Octet reattached (low, seen
+- [x] **47. OpenCode drew into a corner after Octet reattached (low, seen
   once).** OpenCode started while the app was running, then the app was
   restarted: OpenCode kept drawing in about a 20-column box at the top left
-  of its pane, as if it never heard the size. Check whether a reattach
-  sends a resize (SIGWINCH) to the pane.
+  of its pane, as if it never heard the size. Found: on attach the client
+  started at the surface's stand-in size (800×600 px, 46×15 cells), so
+  every pane got resized to 46×15 and back; a program that misses the
+  second resize stays small. Fixed: the client starts once the terminal
+  has its real size (up to 2 s), so a reattach sends no resize at all
+  (checked with a SIGWINCH logger across a real restart). Two apps on one
+  session (a Debug run next to the everyday app) did the same thing;
+  Debug builds now use `octet-debug`.
 
 ### Worth doing
 
