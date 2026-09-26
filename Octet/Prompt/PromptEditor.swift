@@ -670,6 +670,17 @@ final class PromptEditor: ObservableObject {
 
     /// Escape, Tab, or a key Octet doesn't handle: give the shell what was
     /// typed and get out of the way.
+    /// An input method started composing while Octet had the line: the
+    /// line goes to the shell, and the key is held until it lands there, so
+    /// the composed text comes after it. False when Octet didn't have it.
+    func handOffForComposition(_ event: NSEvent) -> Bool {
+        guard isActive else { return false }
+        flush()
+        guard !sendsInFlight.isEmpty, let view = event.window?.firstResponder as? NSView else { return false }
+        heldKeys.append(.key(event, view))
+        return true
+    }
+
     private func flush(then trailing: String = "") {
         let text = line.shellInput(trailing: trailing, restoreCaret: true)
         if !text.isEmpty {

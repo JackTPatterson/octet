@@ -467,7 +467,11 @@ enum OctetKeyHook {
         }
         // Input methods and dead keys compose text over several keystrokes;
         // raw key codes would break Japanese, Chinese, Korean and Option-accents.
-        if isComposing(event) { return false }
+        if isComposing(event) {
+            // Composing after Octet started the line: the line goes to the
+            // shell first, and this key follows it once it's there.
+            return prompt?.handOffForComposition(event) ?? false
+        }
         if event.modifierFlags.intersection([.command, .control, .option, .shift]) == .command,
            event.charactersIgnoringModifiers?.lowercased() == "v", paste() { return true }
         // ⌘Home / ⌘End / ⌘PgUp / ⌘PgDn: the top, the bottom, a page up or down.
@@ -491,8 +495,14 @@ private func isComposing(_ event: NSEvent) -> Bool {
     // A dead key (Option-e, Option-u…) produces no characters on its own.
     if event.characters?.isEmpty ?? true, event.modifierFlags.intersection([.command, .control]).isEmpty { return true }
     // CJK and other non-ASCII input sources run through an input method.
-    guard let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
-          let raw = TISGetInputSourceProperty(source, kTISPropertyInputSourceIsASCIICapable) else { return false }
+    guard let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue() else { return false }
+    // An input method (Pinyin, Kotoeri, 2-Set Korean…), in any of its
+    // modes, not a plain keyboard layout: it may compose, so it gets the keys.
+    if let type = TISGetInputSourceProperty(source, kTISPropertyInputSourceType) {
+        let kind = Unmanaged<CFString>.fromOpaque(type).takeUnretainedValue() as String
+        if kind != (kTISTypeKeyboardLayout as String) { return true }
+    }
+    guard let raw = TISGetInputSourceProperty(source, kTISPropertyInputSourceIsASCIICapable) else { return false }
     return !CFBooleanGetValue(Unmanaged<CFBoolean>.fromOpaque(raw).takeUnretainedValue())
 }
 

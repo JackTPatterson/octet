@@ -342,7 +342,14 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   keypress (a synthetic event can't easily carry which Option key), and
   Octet's command line, which reads ⌥ itself at a bare prompt.
 - [ ] **42. CJK IME composition, in the terminal and the prompt line (med).**
-  Ghostty #12278, #10310, #4634, #7225.
+  Ghostty #12278, #10310, #4634, #7225. *Partly done 2026-09-25:* Octet's
+  command line already stepped aside for marked text, dead keys and
+  non-ASCII sources; now any input method (not a plain layout, whatever
+  mode it's in) gets the keys, and a line Octet had started goes to the
+  shell first, with the composing key held until it lands. The US layout
+  still reads as a plain layout. Not checked: composing with a real
+  Japanese/Chinese/Korean input method (none is enabled here, and
+  switching yours in a test would be rude).
 - [x] **43. Pinned GhosttyKit includes the Jan 2026 scrollback leak fix
   (med).** Ghostty #10289 (71 GB with several Claude Code windows).
   Checked 2026-09-25: the pinned manaflow-ai/ghostty commit (4a0e9e1,
