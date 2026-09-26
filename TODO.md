@@ -273,7 +273,13 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   first. Parsing is tested; the links weren't opened in a running copy.
   Not done: reading a pane's screen from a script (the session server's
   `pane.read` already does that over its socket).
-- [ ] **36. Floating popup pane (med).** Ghostty #3197 (242), WezTerm #270.
+- [x] **36. Floating popup pane (med).** Ghostty #3197 (242), WezTerm #270.
+  Done: palette › Open Popup Terminal and Run in Popup… (lazygit, htop, a
+  picker) open a popup pane (80% of the terminal) over the pane in front,
+  in its folder, gone when the command exits: a small session-server
+  plugin Octet writes to its support folder and links once
+  (`PopupTerminal`). Linking and opening were checked against a scratch
+  session; the popup wasn't looked at in a running copy.
 - [ ] **37. Mobile push with approve/deny (med).** Claude Code #29438 (69),
   #28765 (44); ntfy/Pushover hooks exist to fill the gap.
 - [ ] **38. Audit timeline (low-med).** Commands and files per agent, with

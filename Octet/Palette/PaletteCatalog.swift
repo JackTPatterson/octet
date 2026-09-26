@@ -126,6 +126,16 @@ enum PaletteCatalog {
         items.append(action("broadcastTyping", BroadcastMode.shared.isOn ? "Stop Typing into All Panes" : "Type into All Panes in Tab",
                             "rectangle.split.2x1", shortcut: "⌥⌘I",
                             keywords: ["broadcast", "synchronize", "sync", "panes", "mirror", "input"]) { BroadcastMode.shared.toggle(window: window) })
+        items.append(action("popupShell", "Open Popup Terminal", "rectangle.on.rectangle",
+                            keywords: ["popup", "floating", "float", "scratch", "quick", "overlay"]) { PopupTerminal.open(nil, store: store) })
+        items.append(PaletteItem(
+            id: "action.popupRun", kind: .action, title: "Run in Popup…",
+            subtitle: "lazygit, htop, a file picker: over the pane in front, gone when it exits",
+            keywords: ["popup", "floating", "lazygit", "run", "overlay"], icon: .symbol("rectangle.on.rectangle"),
+            effect: .prompt(title: "Run in a popup", placeholder: "Command, e.g. lazygit", initial: "") { command in
+                PopupTerminal.open(command, store: store)
+            }
+        ))
         items.append(action("copyLastOutput", "Copy Last Command's Output", "doc.on.doc",
                             keywords: ["copy", "output", "result", "command", "last"]) { PromptJumper.copyLastOutput(store: store) })
         items.append(action("hints", "Open Link or File on Screen", "tool.fetch", shortcut: "⌘⇧H",
