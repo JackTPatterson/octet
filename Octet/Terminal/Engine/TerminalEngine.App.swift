@@ -165,6 +165,8 @@ extension TerminalEngine {
         func appTick() {
             guard let app = self.app else { return }
             ghostty_app_tick(app)
+            // Octet: the grid may have changed; bottom anchoring follows.
+            NotificationCenter.default.post(name: .octetTerminalTicked, object: nil)
         }
 
         // MARK: Notifications

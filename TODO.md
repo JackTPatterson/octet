@@ -17,7 +17,12 @@ terminal view under `Octet/Terminal/`.
 
 - [x] **3. Font size changes leave the hidden top row wrong (med).** Fixed: `TopRowClippingView` relayouts on `cellSize` changes (OctetTerminal.swift).
 
-- [ ] **4. Bottom anchoring lags output by up to 200 ms (med).** *Partly fixed.* Done: The poll stops while the window is hidden, minimized or occluded, and pauses while scrolling. Remaining: It is still a 0.2 s timer that reads screen text each tick. Drive it from the engine's wakeup, and check grid metrics before reading text.
+- [x] **4. Bottom anchoring lags output by up to 200 ms (med).** Fixed: it's
+  driven by the renderer's tick (output arrived), coalesced to one check a
+  frame, with a 1 s timer as a safety net instead of the 0.2 s poll; it
+  still stops while the window is hidden, minimized or occluded, and pauses
+  while scrolling. The grid metrics are read before any text. Build-checked
+  (not launched).
 
 - [x] **5. The prompt line doesn't line up with the terminal grid (med).**
   Fixed: every character sits in its own cell (two for East Asian wide

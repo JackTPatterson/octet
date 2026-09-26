@@ -436,15 +436,25 @@ final class TopRowClippingView: NSView {
         anchorTimer?.invalidate()
     }
 
-    /// Watches the cursor so the shift follows the prompt as output grows.
+    /// Follows the prompt as output grows: on every renderer tick (output
+    /// arrived), coalesced to one check per frame, with a slow timer as a
+    /// safety net for changes that don't tick.
     private func startBottomAnchor() {
         guard anchorTimer == nil else { return }
-        let timer = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.updateBottomAnchor() }
         }
         RunLoop.main.add(timer, forMode: .common)
         anchorTimer = timer
+        tickObservation = NotificationCenter.default.publisher(for: .octetTerminalTicked)
+            .throttle(for: .milliseconds(16), scheduler: RunLoop.main, latest: true)
+            .sink { [weak self] _ in
+                guard let self, self.anchorTimer != nil else { return }
+                self.updateBottomAnchor()
+            }
     }
+
+    private var tickObservation: AnyCancellable?
 
     /// Hidden/minimized/fully covered windows need no main-thread grid scans.
     private func updatePollingLifecycle() {
@@ -452,6 +462,7 @@ final class TopRowClippingView: NSView {
               window.occlusionState.contains(.visible), !NSApp.isHidden else {
             anchorTimer?.invalidate()
             anchorTimer = nil
+            tickObservation = nil
             return
         }
         updateBottomAnchor()
@@ -610,3 +621,8 @@ final class TopRowClippingView: NSView {
     }
 }
 
+
+extension Notification.Name {
+    /// The renderer ran a tick: output or state may have changed.
+    static let octetTerminalTicked = Notification.Name("OctetTerminalTicked")
+}
