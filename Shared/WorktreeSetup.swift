@@ -22,6 +22,30 @@ enum WorktreeSetup {
         return Created(repoRoot: root, checkoutPath: path, paneId: (result["root_pane"] as? [String: Any])?["pane_id"] as? String)
     }
 
+    /// The linked worktree `path` is in, found by walking up to its `.git`:
+    /// a linked worktree's is a file, `gitdir: <main>/.git/worktrees/<name>`;
+    /// the main checkout's is a folder. Nil outside a linked worktree.
+    static func linkedWorktree(containing path: String, exists: (String) -> Bool,
+                               read: (String) -> String?) -> (repoRoot: String, checkout: String)? {
+        var folder = (path as NSString).standardizingPath
+        while !folder.isEmpty {
+            let dotGit = (folder as NSString).appendingPathComponent(".git")
+            if exists(dotGit) {
+                guard let text = read(dotGit), let line = text.split(separator: "\n").first,
+                      line.hasPrefix("gitdir:") else { return nil }
+                var gitdir = line.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespaces)
+                if !gitdir.hasPrefix("/") {
+                    gitdir = ((folder as NSString).appendingPathComponent(gitdir) as NSString).standardizingPath
+                }
+                guard let range = gitdir.range(of: "/.git/worktrees/") else { return nil }
+                return (String(gitdir[..<range.lowerBound]), folder)
+            }
+            if folder == "/" { return nil }
+            folder = (folder as NSString).deletingLastPathComponent
+        }
+        return nil
+    }
+
     // MARK: - Env files
 
     /// Folders whose env files belong to a dependency or a build, not the project.

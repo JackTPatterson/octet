@@ -128,7 +128,7 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   a typed line. ⌘⇧I opens straight into it. ⌥⌘I types into every pane of
   the tab live, as iTerm2's broadcast input does, with a banner while it's
   on (checked with real key events).
-- [ ] **21. Worktree setup: copy env files, run a setup script, give each
+- [x] **21. Worktree setup: copy env files, run a setup script, give each
   worktree its own port (high).** Conductor HN, Claude Squad #260, the dev.to
   "worktrees don't actually work" post. *Mostly done:* a worktree made from
   Octet gets the main checkout's git-ignored `.env*` files (never
@@ -137,8 +137,12 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   and `OCTET_PORT` (a block of ten from 3100). Octet asks before a repo's
   script runs the first time. Setting: Advanced → Set up new worktrees.
   Each workspace's listening ports show on its sidebar card, click to open
-  (`PortsWatcher`, every 5 s in front, 30 s behind). Remaining: worktrees
-  an agent makes itself (`claude --worktree`) don't get set up.
+  (`PortsWatcher`, every 5 s in front, 30 s behind). Worktrees an agent
+  makes itself (`claude --worktree`, anything that runs `git worktree add`)
+  are caught when a pane first shows up in one made in the last half hour:
+  the env files are copied, and a setup script is offered as Run Setup,
+  in a tab of its own since the agent has the pane (checked with a real
+  launch).
 - [x] **22. Checkpoints that rewind code, not just chat (high, large).** Codex
   #9203 (512), #11626 (225); Claude Code #353 (178), #87575 (/rewind misses
   Bash edits). Done: as an agent starts working, Octet snapshots its

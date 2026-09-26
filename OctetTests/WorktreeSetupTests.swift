@@ -97,4 +97,24 @@ final class WorktreeSetupTests: XCTestCase {
         // A second run finds nothing left to copy.
         XCTAssertEqual(WorktreeSetup.copyEnvFiles(from: repo, to: worktree), [])
     }
+
+    func testFindsTheLinkedWorktreeAPaneIsIn() {
+        let files = [
+            "/repo/.git": nil,  // a folder: the main checkout
+            "/repo/.claude/worktrees/fix-login/.git": "gitdir: /repo/.git/worktrees/fix-login\n",
+            "/elsewhere/wt/.git": "gitdir: ../../repo/.git/worktrees/wt",
+            "/sub/.git": "gitdir: /sub-parent/.git/modules/sub",
+        ] as [String: String?]
+        func find(_ path: String) -> (repoRoot: String, checkout: String)? {
+            WorktreeSetup.linkedWorktree(containing: path, exists: { files[$0] != nil },
+                                         read: { files[$0] ?? nil })
+        }
+        let agent = find("/repo/.claude/worktrees/fix-login/src/app")
+        XCTAssertEqual(agent?.repoRoot, "/repo")
+        XCTAssertEqual(agent?.checkout, "/repo/.claude/worktrees/fix-login")
+        XCTAssertEqual(find("/elsewhere/wt")?.repoRoot, "/repo")
+        XCTAssertNil(find("/repo/src"), "the main checkout isn't a linked worktree")
+        XCTAssertNil(find("/sub/x"), "a submodule isn't either")
+        XCTAssertNil(find("/tmp/nothing"))
+    }
 }

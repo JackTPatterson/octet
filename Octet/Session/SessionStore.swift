@@ -522,6 +522,7 @@ final class SessionStore: ObservableObject {
         notifyAgentActivity(in: snapshot)
         usageTracker.refreshIfDue()
         AgentOfferCenter.shared.observe(snapshot)
+        AgentWorktreeWatcher.shared.observe(snapshot, store: self)
         refreshTip()
         if branches != self.branches { self.branches = branches }
         if locations != self.agentLocations { self.agentLocations = locations }

@@ -13,6 +13,7 @@ final class WorktreeSetupRunner {
 
     func run(after result: [String: Any], store: SessionStore) {
         guard SettingsStore.shared.values.worktreeSetup, let created = WorktreeSetup.parse(result) else { return }
+        AgentWorktreeWatcher.shared.markHandled(created.checkoutPath)
         DispatchQueue.global(qos: .userInitiated).async {
             let copied = WorktreeSetup.copyEnvFiles(from: created.repoRoot, to: created.checkoutPath)
             let script = WorktreeSetup.script(
@@ -27,6 +28,26 @@ final class WorktreeSetupRunner {
                 }
                 guard let script, let paneId = created.paneId else { return }
                 self.runWhenTrusted(script, created: created, paneId: paneId, store: store)
+            }
+        }
+    }
+
+    /// Runs a worktree's setup script in a new tab of its own: for a
+    /// worktree an agent made, whose pane the agent is using.
+    func runInNewTab(_ script: WorktreeSetup.Script, repoRoot: String, checkout: String, store: SessionStore) {
+        var params: [String: Any] = ["cwd": checkout, "focus": true, "label": "Setup"]
+        if let workspace = store.focusedWorkspace { params["workspace_id"] = workspace.workspaceId }
+        let client = store.client
+        DispatchQueue.global(qos: .userInitiated).async {
+            let paneId = (try? client.call("tab.create", params))
+                .flatMap { ($0["root_pane"] as? [String: Any])?["pane_id"] as? String }
+            DispatchQueue.main.async {
+                guard let paneId else {
+                    ToastCenter.shared.fail(nil, "Couldn't open a tab for the setup")
+                    return
+                }
+                self.runWhenTrusted(script, created: .init(repoRoot: repoRoot, checkoutPath: checkout, paneId: paneId),
+                                    paneId: paneId, store: store)
             }
         }
     }
@@ -60,7 +81,7 @@ final class WorktreeSetupRunner {
 
     // MARK: - Env files
 
-    private static func list(_ files: [String]) -> String {
+    static func list(_ files: [String]) -> String {
         files.count <= 3 ? files.joined(separator: ", ") : "\(files.count) env files"
     }
 
