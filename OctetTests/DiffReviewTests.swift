@@ -148,4 +148,27 @@ final class DiffReviewTests: XCTestCase {
         XCTAssertEqual(try git.run(["status", "--porcelain"], in: repo), "")
         XCTAssertEqual(ReviewDiff.read(in: repo, base: .uncommitted, git: git)?.files, [])
     }
+
+    func testPairsLinesSideBySide() throws {
+        let text = """
+        diff --git a/a.txt b/a.txt
+        --- a/a.txt
+        +++ b/a.txt
+        @@ -1,6 +1,6 @@
+         keep
+        -old one
+        -old two
+        -old three
+        +new one
+         middle
+        +added only
+         end
+        """
+        let hunk = try XCTUnwrap(ReviewDiff.parse(text).first?.hunks.first)
+        let rows = hunk.pairs.map { "\($0.left?.text ?? "·")|\($0.right?.text ?? "·")" }
+        XCTAssertEqual(rows, ["keep|keep", "old one|new one", "old two|·", "old three|·",
+                              "middle|middle", "·|added only", "end|end"])
+        XCTAssertEqual(hunk.pairs[1].left?.oldNumber, 2)
+        XCTAssertEqual(hunk.pairs[1].right?.newNumber, 2)
+    }
 }

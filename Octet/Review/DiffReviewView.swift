@@ -114,6 +114,8 @@ struct DiffReviewView: View {
     @ObservedObject var store: SessionStore
     let close: () -> Void
     @State private var targetPane: String?
+    /// Old and new side by side, rather than one column.
+    @AppStorage("octet.review.split") private var split = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -158,6 +160,12 @@ struct DiffReviewView: View {
             }
             .pickerStyle(.segmented).labelsHidden().frame(width: 220)
             .help("Uncommitted: against HEAD. This branch: everything since it left the default branch.")
+            Picker("Layout", selection: $split) {
+                Image(systemName: "rectangle").tag(false).help("One column")
+                Image(systemName: "rectangle.split.2x1").tag(true).help("Side by side")
+            }
+            .pickerStyle(.segmented).labelsHidden().frame(width: 76)
+            .help("One column, or old and new side by side")
             OctetButton(title: "Previous", icon: "arrow.up", kind: .ghost, compact: true) { model.step(-1) }
                 .keyboardShortcut(.upArrow, modifiers: .option)
                 .help("Previous file (⌥↑)")
@@ -260,8 +268,15 @@ struct DiffReviewView: View {
                                 .padding(.horizontal, 12).padding(.vertical, 5)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .background(Theme.card)
-                            ForEach(hunk.lines) { line in
-                                DiffReviewLine(line: line, path: file.path, text: colored[line.index], model: model)
+                            if split {
+                                ForEach(hunk.pairs) { pair in
+                                    DiffSplitRow(pair: pair, path: file.path, colored: colored,
+                                                 half: max(200, proxy.size.width / 2), model: model)
+                                }
+                            } else {
+                                ForEach(hunk.lines) { line in
+                                    DiffReviewLine(line: line, path: file.path, text: colored[line.index], model: model)
+                                }
                             }
                         }
                     }
@@ -402,44 +417,8 @@ private struct DiffReviewLine: View {
             .buttonStyle(.plain)
             .onHover { hovered = $0 }
             .help("Leave a note on this line")
-            if drafting {
-                noteEditor
-            } else if let note {
-                Button { model.beginNote(on: line, in: path) } label: {
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "text.bubble.fill").foregroundStyle(Theme.accent)
-                        Text(note.text).foregroundStyle(Theme.textPrimary).fixedSize(horizontal: false, vertical: true)
-                        Spacer()
-                    }
-                    .font(Theme.uiFont)
-                    .padding(8)
-                    .frame(maxWidth: 640, alignment: .leading)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(Theme.card))
-                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.border, lineWidth: 1))
-                }
-                .buttonStyle(.plain)
-                .padding(.leading, 100).padding(.vertical, 4)
-            }
+            DiffNoteArea(line: line, path: path, model: model)
         }
-    }
-
-    private var noteEditor: some View {
-        VStack(alignment: .trailing, spacing: 6) {
-            TextField("What should the agent change here?", text: $model.draft, axis: .vertical)
-                .textFieldStyle(.plain)
-                .font(Theme.uiFont)
-                .lineLimit(2...8)
-                .padding(8)
-                .background(RoundedRectangle(cornerRadius: 6).fill(Theme.card))
-                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.accent, lineWidth: 1))
-                .onSubmit { model.saveNote() }
-            HStack(spacing: 6) {
-                OctetButton(title: "Cancel", kind: .ghost, compact: true) { model.drafting = nil }
-                OctetButton(title: "Save note", kind: .primary, compact: true) { model.saveNote() }
-            }
-        }
-        .frame(maxWidth: 640)
-        .padding(.leading, 100).padding(.vertical, 6)
     }
 
     private func number(_ value: Int?) -> some View {
@@ -470,6 +449,113 @@ private struct DiffReviewLine: View {
         case .added: DiffReviewView.addedColor.opacity(0.12)
         case .removed: Theme.danger.opacity(0.12)
         case .context: hovered ? Theme.hover : .clear
+        }
+    }
+}
+
+/// A line's note under it, or the editor while one is being written.
+private struct DiffNoteArea: View {
+    let line: ReviewDiff.Line
+    let path: String
+    @ObservedObject var model: DiffReviewModel
+
+    var body: some View {
+        let note = model.notes(on: line, in: path)
+        let drafting = model.drafting.map { $0.path == path && $0.line == line } ?? false
+        if drafting {
+            noteEditor
+        } else if let note {
+            Button { model.beginNote(on: line, in: path) } label: {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "text.bubble.fill").foregroundStyle(Theme.accent)
+                    Text(note.text).foregroundStyle(Theme.textPrimary).fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                }
+                .font(Theme.uiFont)
+                .padding(8)
+                .frame(maxWidth: 640, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 6).fill(Theme.card))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.border, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .padding(.leading, 100).padding(.vertical, 4)
+        }
+    }
+
+    private var noteEditor: some View {
+        VStack(alignment: .trailing, spacing: 6) {
+            TextField("What should the agent change here?", text: $model.draft, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(Theme.uiFont)
+                .lineLimit(2...8)
+                .padding(8)
+                .background(RoundedRectangle(cornerRadius: 6).fill(Theme.card))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.accent, lineWidth: 1))
+                .onSubmit { model.saveNote() }
+            HStack(spacing: 6) {
+                OctetButton(title: "Cancel", kind: .ghost, compact: true) { model.drafting = nil }
+                OctetButton(title: "Save note", kind: .primary, compact: true) { model.saveNote() }
+            }
+        }
+        .frame(maxWidth: 640)
+        .padding(.leading, 100).padding(.vertical, 6)
+    }
+}
+
+/// Old and new lines side by side; either side takes a note.
+private struct DiffSplitRow: View {
+    let pair: ReviewDiff.Hunk.Pair
+    let path: String
+    let colored: [Int: AttributedString]
+    let half: CGFloat
+    @ObservedObject var model: DiffReviewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 0) {
+                side(pair.left, number: pair.left?.oldNumber)
+                Rectangle().fill(Theme.divider).frame(width: 1)
+                side(pair.right, number: pair.right?.newNumber)
+            }
+            .font(Theme.monoFont)
+            // A context line is the same on both sides: one note.
+            ForEach(pair.left == pair.right ? [pair.left].compactMap { $0 } : [pair.left, pair.right].compactMap { $0 }) { line in
+                DiffNoteArea(line: line, path: path, model: model)
+            }
+        }
+    }
+
+    private func side(_ line: ReviewDiff.Line?, number: Int?) -> some View {
+        Button { if let line { model.beginNote(on: line, in: path) } } label: {
+            HStack(spacing: 0) {
+                Text(number.map(String.init) ?? "")
+                    .foregroundStyle(Theme.textTertiary)
+                    .frame(width: 42, alignment: .trailing)
+                    .padding(.trailing, 8)
+                Group {
+                    if let line, let text = colored[line.index] { Text(text) } else { Text(line?.text ?? " ") }
+                }
+                .opacity(line?.kind == .context ? 0.8 : 1)
+                .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 1)
+            .frame(width: half - 1, alignment: .leading)
+            .clipped()
+            .background(background(line))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(line == nil)
+        .help(line == nil ? "" : "Leave a note on this line")
+    }
+
+    private func background(_ line: ReviewDiff.Line?) -> Color {
+        switch line?.kind {
+        case .added: DiffReviewView.addedColor.opacity(0.12)
+        case .removed: Theme.danger.opacity(0.12)
+        case .context: .clear
+        case nil: Theme.card.opacity(0.5)
         }
     }
 }

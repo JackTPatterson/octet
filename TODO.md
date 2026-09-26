@@ -163,8 +163,10 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   leave a note; ⌘↩ sends every note to an agent in the project as one
   message. Files over 3,000 changed lines (or past 20,000 in all) are
   counted, not drawn. Syntax colours, and Commit All with a message once
-  there are no notes left. Remaining: a split (side-by-side) view, and
-  staging single files or hunks.
+  there are no notes left. A split view puts old and new side by side
+  (removed runs against the lines that replace them; either side takes a
+  note), switched in the header and remembered (checked with a real
+  launch). Remaining: staging single files or hunks.
 - [ ] **24. Multiple accounts per agent (high).** Claude Code #18435 (991),
   #36151 (1023). *Mostly done:* palette Add Claude/Codex Account (its own
   config folder, then a tab to sign in), Use Account for This Project, and

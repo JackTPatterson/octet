@@ -22,6 +22,45 @@ struct ReviewDiff: Equatable {
     struct Hunk: Equatable {
         let header: String
         let lines: [Line]
+
+        /// One row of a side-by-side view: the old file's line on the left,
+        /// the new one's on the right.
+        struct Pair: Equatable, Identifiable {
+            let left: Line?
+            let right: Line?
+            var id: Int { (left ?? right)?.index ?? 0 }
+        }
+
+        /// The lines side by side: context on both sides, and each run of
+        /// removed lines against the added lines that replace it, row for
+        /// row, with blanks where one side runs longer.
+        var pairs: [Pair] {
+            var result: [Pair] = []
+            var removed: [Line] = []
+            var added: [Line] = []
+            func flush() {
+                for row in 0..<max(removed.count, added.count) {
+                    result.append(Pair(left: row < removed.count ? removed[row] : nil,
+                                       right: row < added.count ? added[row] : nil))
+                }
+                removed = []
+                added = []
+            }
+            for line in lines {
+                switch line.kind {
+                case .removed:
+                    if !added.isEmpty { flush() }
+                    removed.append(line)
+                case .added:
+                    added.append(line)
+                case .context:
+                    flush()
+                    result.append(Pair(left: line, right: line))
+                }
+            }
+            flush()
+            return result
+        }
     }
 
     struct File: Equatable, Identifiable {
