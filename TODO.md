@@ -301,8 +301,11 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   `run <agent> [--in] [--prompt]`, `send <text>` on top of them. A link
   that types into the terminal, or starts an agent with instructions, asks
   first. Parsing is tested; the links weren't opened in a running copy.
-  Not done: reading a pane's screen from a script (the session server's
-  `pane.read` already does that over its socket).
+  Reading from a script too (2026-09-26): `octet-cli panes` lists every
+  pane (id, agent, status, folder, * for the one in front), and
+  `octet-cli read [--pane <id>] [--lines <n>]` prints a pane's screen or
+  that many lines back; inside a pane it finds the session by itself.
+  Checked against a scratch session.
 - [x] **36. Floating popup pane (med).** Ghostty #3197 (242), WezTerm #270.
   Done: palette › Open Popup Terminal and Run in Popup… (lazygit, htop, a
   picker) open a popup pane (80% of the terminal) over the pane in front,

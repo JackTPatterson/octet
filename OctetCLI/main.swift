@@ -10,6 +10,11 @@ import Foundation
 //   octet-cli run <agent> [--in <folder>] [--prompt <text>]
 //                                      an agent in a new tab
 //   octet-cli send <text>               type and run it in the pane in front (asks)
+//   octet-cli panes                     every pane: id, agent, status, folder
+//   octet-cli read [--pane <id>] [--lines <n>]
+//                                      a pane's screen as text (default: the
+//                                      pane in front); --lines reads that many
+//                                      lines back through its scrollback
 //   octet-cli mcp-permission --socket <path>
 //                                      permission prompt tool for conversations
 //                                      Octet drives headless (stdio MCP server)
@@ -115,6 +120,34 @@ case "open", "run", "send":
     try? open.run()
     open.waitUntilExit()
     exit(open.terminationStatus)
+case "panes", "read":
+    // Inside a pane the session server says where it is; elsewhere, Octet's
+    // session (or OCTET_SESSION's).
+    let socket = option("--socket", in: arguments) ?? environment[EngineProtocol.socketPathVariable]
+        ?? EngineClient.socketPath(session: option("--session", in: arguments) ?? environment["OCTET_SESSION"] ?? "octet")
+    let client = EngineClient(socketPath: socket)
+    do {
+        let snapshot = try client.call("session.snapshot")["snapshot"] as? [String: Any] ?? [:]
+        if arguments[0] == "panes" {
+            print(PaneListing.lines(snapshot: snapshot).joined(separator: "\n"))
+            exit(0)
+        }
+        guard let pane = option("--pane", in: arguments) ?? snapshot["focused_pane_id"] as? String else {
+            fail("No pane in front; name one with --pane (see octet-cli panes).")
+        }
+        var params: [String: Any] = ["pane_id": pane, "source": "visible"]
+        if let lines = option("--lines", in: arguments).flatMap(Int.init), lines > 0 {
+            params["source"] = "recent"
+            params["lines"] = lines
+        }
+        let read = try client.call("pane.read", params)["read"] as? [String: Any]
+        print(PaneListing.trimmed(read?["text"] as? String ?? ""))
+        exit(0)
+    } catch EngineSocketError.server(_, let message) {
+        fail(message.isEmpty ? "The session refused that." : message)
+    } catch {
+        fail("Couldn't reach Octet's session at \(socket): \(error)")
+    }
 case "mcp-permission":
     guard let socketPath = option("--socket", in: Array(arguments.dropFirst())) else {
         fail("usage: octet-cli mcp-permission --socket <path>")
@@ -126,5 +159,5 @@ case "mcp-permission":
     }
 
 default:
-    fail("usage: octet-cli <open [folder]|run <agent> [--in <folder>] [--prompt <text>]|send <text>|hook <agent>|agent-watch|install-subagent-hook [agent]|uninstall-subagent-hook [agent]|mcp-permission --socket <path>>")
+    fail("usage: octet-cli <open [folder]|run <agent> [--in <folder>] [--prompt <text>]|send <text>|panes|read [--pane <id>] [--lines <n>]|hook <agent>|agent-watch|install-subagent-hook [agent]|uninstall-subagent-hook [agent]|mcp-permission --socket <path>>")
 }
