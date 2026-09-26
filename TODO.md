@@ -150,9 +150,11 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   into `refs/octet/checkpoints/<worktree>/…`, the last 50 kept; HEAD, the
   index and the stash are untouched. Palette › Restore a Checkpoint lists
   them with how many files differ, restores after asking (removing files
-  made since), and offers Undo. About 0.25 s on a 16k-file repo. Remaining:
-  a restore button on the twin's turns, and the conversation rewinding with
-  the files.
+  made since), and offers Undo. About 0.25 s on a 16k-file repo. Each prompt in the
+  twin has a restore button (on hover, and in its right-click menu) that
+  finds the checkpoint taken as the agent started on it (unit-tested; the
+  button is build-checked). Remaining: the conversation rewinding with the
+  files.
 - [x] **23. Diff review with line comments sent to the agent (high, large).**
   Claude Code #33932 (276), #23626 (141, pick the base branch); Conductor's
   best-liked feature. Done: ⌘⇧R or palette › Review Changes opens the

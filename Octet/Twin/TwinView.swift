@@ -87,6 +87,30 @@ struct TwinView: View {
 
     // MARK: - Transcript
 
+    /// On a prompt: put the project's files back as they were before the
+    /// agent started on it, from the checkpoint taken then.
+    private func restoreAction(for row: TwinRow, in rows: [TwinRow]) -> (() -> Void)? {
+        guard case .user = row.kind, let sent = row.at,
+              let directory = twin.agent.flatMap({ store.snapshot.workingDirectory(ofPane: $0.paneId) }) else { return nil }
+        let later = rows.drop { $0.id != row.id }.dropFirst()
+        let next = later.first { if case .user = $0.kind { return true }; return false }?.at
+        return {
+            DispatchQueue.global(qos: .userInitiated).async {
+                let checkpoints = Checkpoints.list(in: directory)
+                let found = Checkpoints.checkpoint(forPromptAt: sent, nextPromptAt: next, in: checkpoints)
+                let changed = found.map { Checkpoints.changes(since: $0, in: directory) } ?? []
+                DispatchQueue.main.async {
+                    guard let found else {
+                        ToastCenter.shared.info("No checkpoint for this prompt",
+                                                detail: "Octet takes one as an agent starts working, while it's running.")
+                        return
+                    }
+                    CheckpointActions.confirmRestore(found, changed: changed, in: directory)
+                }
+            }
+        }
+    }
+
     private var transcript: some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -98,8 +122,9 @@ struct TwinView: View {
                             .padding(.vertical, 20)
                             .frame(maxWidth: .infinity, alignment: .center)
                     }
+                    let rows = self.rows
                     ForEach(rows) { row in
-                        TwinRowView(row: row, style: style)
+                        TwinRowView(row: row, style: style, restore: restoreAction(for: row, in: rows))
                             .id(row.id)
                     }
                     ForEach(twin.pending) { message in
@@ -241,7 +266,9 @@ private struct TwinPendingRow: View {
 private struct TwinRowView: View {
     let row: TwinRow
     let style: TwinStyle
+    var restore: (() -> Void)?
     @State private var expanded = false
+    @State private var hovered = false
 
     var body: some View {
         switch row.kind {
@@ -250,8 +277,25 @@ private struct TwinRowView: View {
                 Rectangle().fill(Theme.accent).frame(width: 2)
                 TwinText(text: text)
                     .foregroundStyle(Theme.textPrimary)
+                Spacer(minLength: 0)
+                if let restore {
+                    Button(action: restore) {
+                        Image(systemName: "arrow.uturn.backward")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Theme.textTertiary)
+                    }
+                    .buttonStyle(.plain)
+                    .opacity(hovered ? 1 : 0)
+                    .help("Restore the files to before this prompt")
+                    .accessibilityLabel("Restore the files to before this prompt")
+                }
             }
             .padding(.vertical, 2)
+            .onHover { hovered = $0 }
+            .contextMenu {
+                MessageCopyMenu(text: text)
+                if let restore { Button("Restore Files to Before This Prompt…", action: restore) }
+            }
         case .assistant(let text):
             TwinText(text: text)
                 .foregroundStyle(Theme.textMuted)

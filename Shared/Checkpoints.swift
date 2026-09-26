@@ -74,6 +74,15 @@ enum Checkpoints {
     // MARK: - Listing
 
     /// Newest first.
+    /// The checkpoint taken as the agent started on a prompt sent at
+    /// `sent`: the first one from just before it (the clocks differ a
+    /// little) up to the next prompt.
+    static func checkpoint(forPromptAt sent: Date, nextPromptAt next: Date?, in checkpoints: [Checkpoint]) -> Checkpoint? {
+        checkpoints
+            .filter { point in point.date >= sent.addingTimeInterval(-30) && next.map { point.date < $0 } ?? true }
+            .min { $0.date < $1.date }
+    }
+
     static func list(in directory: String, git: Git = Git()) -> [Checkpoint] {
         guard let top = git.topLevel(directory) else { return [] }
         return list(top: top, git: git)

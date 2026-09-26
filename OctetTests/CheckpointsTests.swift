@@ -125,4 +125,16 @@ final class CheckpointsTests: XCTestCase {
         XCTAssertEqual(labels.count, Checkpoints.keep)
         XCTAssertEqual(labels.first, "\(Checkpoints.keep + 2)")
     }
+
+    func testFindsTheCheckpointForAPrompt() {
+        let t = Date(timeIntervalSince1970: 1_000_000)
+        func point(_ offset: TimeInterval, _ label: String) -> Checkpoint {
+            Checkpoint(ref: label, commit: label, date: t.addingTimeInterval(offset), label: label)
+        }
+        let list = [point(400, "third"), point(200, "second"), point(2, "first"), point(-500, "older")]
+        XCTAssertEqual(Checkpoints.checkpoint(forPromptAt: t, nextPromptAt: t.addingTimeInterval(150), in: list)?.label, "first")
+        XCTAssertEqual(Checkpoints.checkpoint(forPromptAt: t.addingTimeInterval(190), nextPromptAt: nil, in: list)?.label, "second")
+        XCTAssertNil(Checkpoints.checkpoint(forPromptAt: t.addingTimeInterval(100), nextPromptAt: t.addingTimeInterval(150), in: list),
+                     "no checkpoint between this prompt and the next")
+    }
 }
