@@ -8,6 +8,8 @@ import Foundation
 struct OctetSettings: Codable, Equatable {
     // MARK: General (Octet + session server)
     var confirmQuit = true
+    /// A shortcut from any app that brings Octet forward or hides it.
+    var globalHotkey: GlobalHotkey.Choice = .off
     var newPaneDirectory: NewPaneDirectory = .follow
     var defaultShell = ""
     var shellMode: ShellMode = .auto
@@ -226,6 +228,7 @@ struct OctetSettings: Codable, Equatable {
             (try? container.decodeIfPresent(T.self, forKey: DynamicKey(key))) ?? fallback
         }
         confirmQuit = value("confirmQuit", defaults.confirmQuit)
+        globalHotkey = value("globalHotkey", defaults.globalHotkey)
         newPaneDirectory = value("newPaneDirectory", defaults.newPaneDirectory)
         defaultShell = value("defaultShell", defaults.defaultShell)
         shellMode = value("shellMode", defaults.shellMode)
@@ -668,6 +671,7 @@ final class SettingsStore: ObservableObject {
 
     private func apply(from old: OctetSettings) {
         if values.keepAwake != old.keepAwake { SleepGuard.shared.update() }
+        if values.globalHotkey != old.globalHotkey { GlobalHotkey.shared.apply(values.globalHotkey) }
         if values.accountProfiles != old.accountProfiles || values.accountAssignments != old.accountAssignments {
             AccountProfiles.configure(profiles: values.accountProfiles, assignments: values.accountAssignments)
             writeAccountTable()

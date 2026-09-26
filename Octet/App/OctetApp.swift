@@ -109,6 +109,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSWindow.allowsAutomaticWindowTabbing = false
         // Restores a saved Secure Keyboard Entry choice.
         _ = SecureInput.shared
+        GlobalHotkey.shared.apply(SettingsStore.shared.values.globalHotkey)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }

@@ -235,6 +235,16 @@ private struct GeneralSettings: View {
             SettingsRow(title: "Confirm before quitting", detail: "Quitting Octet leaves terminals and agents running in the background.") {
                 Toggle("Confirm before quitting", isOn: $settings.values.confirmQuit).labelsHidden().toggleStyle(.switch)
             }
+            SettingsDivider()
+            SettingsRow(
+                title: "Hotkey from any app",
+                detail: "Brings Octet to the front from whatever you're in, and hides it again when it's already there."
+            ) {
+                Picker("Hotkey from any app", selection: $settings.values.globalHotkey) {
+                    ForEach(GlobalHotkey.Choice.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                .labelsHidden().frame(width: 190)
+            }
         }
         SettingsGroup(title: "New panes & shells") {
             SettingsRow(title: "Start new tabs and workspaces in", detail: "Follow uses the focused pane's folder.") {

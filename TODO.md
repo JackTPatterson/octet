@@ -259,8 +259,12 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
 
 ### Larger bets
 
-- [ ] **34. Global hotkey window (med).** WezTerm #1751 (its top issue), cmux
-  #2758, Warp #91. Summon the agents board over any app.
+- [x] **34. Global hotkey window (med).** WezTerm #1751 (its top issue), cmux
+  #2758, Warp #91. Done: Settings › General › Hotkey from any app (off,
+  ⌃`, ⌥Space, ⌥⌘T) brings Octet forward from any app, or hides it when it's
+  already in front; Carbon hotkeys, so no accessibility permission. A
+  shortcut another app holds is reported. Build-checked only. Not done: a
+  drop-down window that slides over full-screen apps.
 - [ ] **35. Scripting: URL scheme and CLI (med).** Ghostty #2353 (257), Warp
   #3364; iTerm2's Python API is what switchers miss. `octet://open?path=`,
   `octet-cli run <agent> --in <dir>`, send text to a pane.
