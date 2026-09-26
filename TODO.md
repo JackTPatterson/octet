@@ -261,7 +261,8 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   workspace, including another tab's ("after agent X finishes"); sent when
   that agent is idle or done, one per turn, in order; Queued Prompts lists
   them to cancel. Checked end to end: held while working, delivered on
-  finishing. Not done: showing the queue on the tab or sidebar.
+  finishing. A tab running an agent with prompts waiting shows
+  their count next to its name (build-checked only).
 - [x] **33. Session title pinning and stable tab order (low-med).** Claude
   Code #2112 (182), Ghostty #3709. Already so: a tab you name keeps its
   name, and nothing reorders tabs or ⌘1–9 but you (checked 2026-09-25:

@@ -197,8 +197,15 @@ private struct TabItem: View {
     let selection: Namespace.ID
     let handoffTitle: String?
     @ObservedObject private var motion = MotionPreferences.shared
+    @ObservedObject private var prompts = PromptQueueCenter.shared
     @State private var hovered = false
     @State private var renaming = false
+
+    /// Prompts waiting for this tab's agents to finish their turn.
+    private var queued: Int {
+        let panes = Set(store.snapshot.panes.filter { $0.tabId == tab.tabId }.map(\.paneId))
+        return prompts.queue.items.filter { panes.contains($0.paneId) }.count
+    }
 
     private var title: String { TabAutoName.display(label: tab.label, number: tab.number) }
 
@@ -250,6 +257,18 @@ private struct TabItem: View {
                     .foregroundStyle(isActive ? Theme.textPrimary : Theme.textSecondary)
                     .lineLimit(1)
                     .truncationMode(.tail)
+            }
+            if queued > 0, !renaming {
+                HStack(spacing: 2) {
+                    Image(systemName: "text.line.first.and.arrowtriangle.forward").font(.system(size: 9, weight: .semibold))
+                    Text("\(queued)").font(.system(size: 10, weight: .semibold).monospacedDigit())
+                }
+                .foregroundStyle(Theme.textSecondary)
+                .padding(.horizontal, 4)
+                .frame(height: 15)
+                .background(Capsule().fill(Theme.textPrimary.opacity(0.08)))
+                .help(queued == 1 ? "1 prompt queued for when the agent finishes" : "\(queued) prompts queued for when the agent finishes")
+                .accessibilityLabel("\(queued) queued")
             }
             if let location = store.agentLocation(inTab: tab.tabId), handoffTitle == nil, !renaming {
                 // The subagent is off in a worktree or folder of its own.
