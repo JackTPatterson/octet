@@ -77,11 +77,13 @@ struct ReviewDiff: Equatable {
         var id: String { path }
     }
 
-    enum Base: Equatable {
+    enum Base: Hashable {
         /// What isn't committed yet: against HEAD.
         case uncommitted
         /// The whole branch: against where it left the default branch.
         case branch
+        /// Against a given commit: where a best-of-N attempt started.
+        case since(commit: String, name: String)
     }
 
     var files: [File]
@@ -218,6 +220,7 @@ struct ReviewDiff: Equatable {
 
     /// HEAD, or where HEAD's branch left the default branch.
     static func resolveBase(_ base: Base, top: String, git: Git) -> (commit: String, name: String)? {
+        if case .since(let commit, let name) = base { return (commit, name) }
         guard let head = try? git.run(["rev-parse", "-q", "--verify", "HEAD"], in: top), !head.isEmpty else { return nil }
         guard base == .branch, let main = defaultBranch(top: top, git: git),
               let fork = try? git.run(["merge-base", "HEAD", main], in: top), !fork.isEmpty else { return (head, "HEAD") }

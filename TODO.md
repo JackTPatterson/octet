@@ -318,8 +318,16 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   label Quick Looks any file; bare names like `shot.png` get a label too.
   Right-clicking a selected file name offers Quick Look (⌘Y), Open and
   Show in Finder. Checked with a real launch: the panel opens on the file.
-- [ ] **40. Best-of-N: one task, several agents, compare diffs (low-med).**
-  Builds on 20 and 23.
+- [x] **40. Best-of-N: one task, several agents, compare diffs (low-med).**
+  Builds on 20 and 23. Done: palette › Try a Task with Several Agents…
+  gives the task to Claude Code and Codex (or one of them twice), each in
+  a worktree of its own from the main checkout's HEAD with the env files
+  copied, started on the task. Compare Attempts lists each attempt's files
+  and +/− since that commit; choosing one opens Review against the
+  attempt's start. Checked with a real launch and stand-in agents: both
+  worktrees made from the main checkout (even with a worktree in front),
+  env copied, the task run in each. Not done: a repo's setup script (it
+  would be typed into the agent), and merging the winner for you.
 
 ### libghostty host risks to verify
 

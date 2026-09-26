@@ -20,8 +20,13 @@ final class DiffReviewModel: ObservableObject {
     private var timer: Timer?
     private var generation = 0
 
-    init(directory: String) {
+    /// A best-of-N attempt's starting point, offered as a third comparison.
+    let attemptBase: ReviewDiff.Base?
+
+    init(directory: String, since attemptBase: ReviewDiff.Base? = nil) {
         self.directory = directory
+        self.attemptBase = attemptBase
+        if let attemptBase { base = attemptBase }
     }
 
     var selectedFile: ReviewDiff.File? {
@@ -157,8 +162,9 @@ struct DiffReviewView: View {
             Picker("Compare with", selection: $model.base) {
                 Text("Uncommitted").tag(ReviewDiff.Base.uncommitted)
                 Text("This branch").tag(ReviewDiff.Base.branch)
+                if let attempt = model.attemptBase { Text("The attempt").tag(attempt) }
             }
-            .pickerStyle(.segmented).labelsHidden().frame(width: 220)
+            .pickerStyle(.segmented).labelsHidden().frame(width: model.attemptBase == nil ? 220 : 320)
             .help("Uncommitted: against HEAD. This branch: everything since it left the default branch.")
             Picker("Layout", selection: $split) {
                 Image(systemName: "rectangle").tag(false).help("One column")

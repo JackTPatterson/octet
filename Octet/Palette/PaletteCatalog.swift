@@ -145,6 +145,7 @@ enum PaletteCatalog {
         items += accountItems(window: window)
         if let item = checkpointItem(window: window) { items.append(item) }
         if let item = commandLogItem(window: window) { items.append(item) }
+        items += bestOfNItems(window: window)
         if let item = WorktreeCleanupActions.item(window: window) { items.append(item) }
 
         items += queueItems(window: window)
@@ -571,6 +572,66 @@ enum PaletteCatalog {
                 }
             }
         )
+    }
+
+    /// Best of N: give one task to several agents in worktrees of their own,
+    /// then compare what each did.
+    static func bestOfNItems(window: WindowContext) -> [PaletteItem] {
+        var items: [PaletteItem] = []
+        let center = BestOfNCenter.shared
+        if let workspace = window.focusedWorkspace, !center.runners.isEmpty {
+            let names = center.runners.map(\.name)
+            let who = Set(names).count == 1 ? "\(names.count)× \(names[0])" : names.joined(separator: " and ")
+            items.append(PaletteItem(
+                id: "action.bestOfN", kind: .action, title: "Try a Task with Several Agents…",
+                subtitle: "\(who), each in its own worktree, to compare",
+                keywords: ["best of n", "parallel", "compare", "race", "attempts", "worktree", "multiple agents"],
+                icon: .symbol("square.stack.3d.up"),
+                effect: .prompt(title: "What should they do?", placeholder: "Describe the task", initial: "") { task in
+                    center.start(task: task, in: workspace.workspaceId, store: window.store)
+                }
+            ))
+        }
+        let tasks = center.byTask
+        if !tasks.isEmpty {
+            items.append(PaletteItem(
+                id: "action.compareAttempts", kind: .action, title: "Compare Attempts…",
+                subtitle: "What each agent did with \(tasks.count == 1 ? "the task" : "\(tasks.count) tasks")",
+                keywords: ["best of n", "compare", "attempts", "diff", "review", "pick"],
+                icon: .symbol("square.split.2x1"),
+                effect: .list(title: "Attempts") { deliver in
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        var rows: [PaletteItem] = []
+                        for (task, attempts) in tasks {
+                            for attempt in attempts {
+                                let base = ReviewDiff.Base.since(commit: attempt.base, name: "the attempt's start")
+                                let diff = ReviewDiff.read(in: attempt.checkout, base: base)
+                                let stats = diff.map { $0.files.isEmpty ? "No changes yet"
+                                    : "\($0.files.count) \($0.files.count == 1 ? "file" : "files") · +\($0.added) −\($0.removed)" }
+                                    ?? "Can't read its changes"
+                                rows.append(PaletteItem(
+                                    id: "attempt.\(attempt.checkout)", kind: .action,
+                                    title: "\(attempt.agent) · \(task)",
+                                    subtitle: "\(stats) · \(attempt.branch)",
+                                    icon: .symbol("arrow.triangle.branch"),
+                                    effect: .run {
+                                        window.ui.review = DiffReviewModel(directory: attempt.checkout, since: base)
+                                    }
+                                ))
+                            }
+                            rows.append(PaletteItem(
+                                id: "attempt.forget.\(task)", kind: .action, title: "Stop Tracking “\(task)”",
+                                subtitle: "Takes it off this list; the worktrees and branches stay",
+                                icon: .symbol("xmark.circle"),
+                                effect: .run { center.forget(task: task) }
+                            ))
+                        }
+                        DispatchQueue.main.async { deliver(rows) }
+                    }
+                }
+            ))
+        }
+        return items
     }
 
     /// Accounts: add one, sign in to one, choose the project's.

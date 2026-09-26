@@ -352,6 +352,16 @@ struct RootView: View {
                 let delay = Double(ProcessInfo.processInfo.environment["OCTET_DEBUG_KEYS_AFTER"] ?? "") ?? 10
                 DispatchQueue.main.asyncAfter(deadline: .now() + delay) { OctetTerminalRuntime.debugPress(keys) }
             }
+            // "bestofn:<task>" starts a best-of-N task in the focused workspace.
+            if let open = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], open.hasPrefix("bestofn:"),
+               !Self.debugHotkeyPressed {
+                Self.debugHotkeyPressed = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                    if let workspace = window.focusedWorkspace {
+                        BestOfNCenter.shared.start(task: String(open.dropFirst(8)), in: workspace.workspaceId, store: store)
+                    }
+                }
+            }
             // "hotkey" presses the global hotkey after 4 s, and again after 8 s.
             if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "hotkey", !Self.debugHotkeyPressed {
                 Self.debugHotkeyPressed = true
