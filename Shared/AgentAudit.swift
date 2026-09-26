@@ -104,8 +104,22 @@ enum AgentAudit {
     static func load(cwd: String, since: Date, home: String = NSHomeDirectory()) -> [Entry] {
         var entries: [Entry] = []
         let files = FileManager.default
-        func lines(_ path: String) -> [String] {
-            (try? String(contentsOfFile: path, encoding: .utf8))?.split(separator: "\n").map(String.init) ?? []
+        // Transcripts run to hundreds of megabytes: only the lines holding
+        // one of the needles are turned into strings to be parsed.
+        func lines(_ path: String, containing needles: [String]) -> [String] {
+            guard let data = try? Data(contentsOf: URL(fileURLWithPath: path), options: .mappedIfSafe) else { return [] }
+            let patterns = needles.map { Data($0.utf8) }
+            var found: [String] = []
+            var start = data.startIndex
+            while start < data.endIndex {
+                let end = data[start...].firstIndex(of: 0x0A) ?? data.endIndex
+                let line = data[start..<end]
+                if patterns.contains(where: { line.range(of: $0) != nil }) {
+                    found.append(String(decoding: line, as: UTF8.self))
+                }
+                start = data.index(after: end)
+            }
+            return found
         }
         func modified(_ path: String) -> Date {
             (try? files.attributesOfItem(atPath: path)[.modificationDate] as? Date) ?? .distantPast
@@ -114,7 +128,7 @@ enum AgentAudit {
         for name in (try? files.contentsOfDirectory(atPath: claude)) ?? [] where name.hasSuffix(".jsonl") {
             let path = claude + "/" + name
             guard modified(path) >= since else { continue }
-            entries += lines(path).flatMap(Self.claude(line:))
+            entries += lines(path, containing: ["\"Bash\""]).flatMap(Self.claude(line:))
         }
         let calendar = Calendar(identifier: .gregorian)
         let days = max(1, calendar.dateComponents([.day], from: since, to: Date()).day ?? 1) + 1
@@ -126,7 +140,7 @@ enum AgentAudit {
                 for name in (try? files.contentsOfDirectory(atPath: folder)) ?? [] where name.hasSuffix(".jsonl") {
                     let path = folder + "/" + name
                     guard modified(path) >= since, AgentSessionFiles.codexSessionMeta(path)?.cwd == cwd else { continue }
-                    entries += lines(path).flatMap(Self.codex(line:))
+                    entries += lines(path, containing: ["cmd", "\"command\""]).flatMap(Self.codex(line:))
                 }
             }
         }

@@ -286,8 +286,11 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   Octet isn't in front (`PhonePush`; ntfy.sh or your own server). Off until
   a topic is set. Not done: approve/deny from the phone, which needs a way
   back into this Mac; Claude's Remote Control covers that for Claude.
-- [ ] **38. Audit timeline (low-med).** Commands and files per agent, with
+- [x] **38. Audit timeline (low-med).** Commands and files per agent, with
   `rm -rf`, force-push and `sudo` flagged (cc-audit-log et al.).
+  Done: palette › Agent Command Log… lists the shell commands Claude and
+  Codex ran in the focused project this week, risky ones marked; a row
+  copies its command. Heredoc bodies aren't counted as commands.
 - [ ] **39. Quick Look for paths agents print (low-med).** Wave's standout;
   Warp #4739 (99), #7115 (78).
 - [ ] **40. Best-of-N: one task, several agents, compare diffs (low-med).**

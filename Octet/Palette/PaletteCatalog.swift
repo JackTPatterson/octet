@@ -144,6 +144,7 @@ enum PaletteCatalog {
                             keywords: ["diff", "git", "changes", "comment", "code review", "agent"]) { window.toggleReview() })
         items += accountItems(window: window)
         if let item = checkpointItem(window: window) { items.append(item) }
+        if let item = commandLogItem(window: window) { items.append(item) }
         if let item = WorktreeCleanupActions.item(window: window) { items.append(item) }
 
         items += queueItems(window: window)
@@ -528,6 +529,45 @@ enum PaletteCatalog {
                         )
                     }
                     DispatchQueue.main.async { deliver(items) }
+                }
+            }
+        )
+    }
+
+    /// Agent Command Log: the shell commands Claude and Codex ran in the
+    /// focused project this week, newest first, with the risky ones marked.
+    static func commandLogItem(window: WindowContext) -> PaletteItem? {
+        let snapshot = window.store.snapshot
+        guard let directory = window.focusedPaneId.flatMap({ snapshot.workingDirectory(ofPane: $0) })
+                ?? window.focusedWorkspace.flatMap({ snapshot.directory(ofWorkspace: $0.workspaceId) }) else { return nil }
+        let project = URL(fileURLWithPath: directory).lastPathComponent
+        return PaletteItem(
+            id: "action.agentCommandLog", kind: .action, title: "Agent Command Log…",
+            subtitle: "What agents ran in \(project) this week",
+            keywords: ["audit", "history", "commands", "bash", "shell", "ran", "risky", "timeline"],
+            icon: .symbol("list.bullet.rectangle"),
+            effect: .list(title: "Agent commands in \(project)") { deliver in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let since = Date().addingTimeInterval(-7 * 24 * 3600)
+                    let entries = AgentAudit.load(cwd: directory, since: since)
+                        .sorted { $0.date > $1.date }.prefix(400)
+                    let items = entries.enumerated().map { index, entry in
+                        let line = entry.command.split(separator: "\n").first.map(String.init) ?? entry.command
+                        let when = entry.date.formatted(date: .abbreviated, time: .shortened)
+                        return PaletteItem(
+                            id: "agentCommand.\(index)", kind: .action,
+                            title: line,
+                            subtitle: entry.risks.isEmpty ? "\(entry.agent) · \(when)"
+                                : "⚠ \(entry.risks.joined(separator: ", ")) · \(entry.agent) · \(when)",
+                            icon: .symbol(entry.risks.isEmpty ? "terminal" : "exclamationmark.triangle"),
+                            effect: .run {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(entry.command, forType: .string)
+                                ToastCenter.shared.info("Copied the command")
+                            }
+                        )
+                    }
+                    DispatchQueue.main.async { deliver(Array(items)) }
                 }
             }
         )
