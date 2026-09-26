@@ -7,7 +7,10 @@ import Foundation
 enum PopupTerminal {
     static let pluginId = "jpxsoftware.octet-popup"
 
-    static let manifest = """
+    /// The script is named by its full path: the pane starts in the folder
+    /// it opens on, not the plugin's (a bare `popup.sh` exited 127).
+    static func manifest(scriptPath: String) -> String {
+        """
     id = "\(pluginId)"
     name = "Octet Popup"
     version = "1.0.0"
@@ -21,9 +24,14 @@ enum PopupTerminal {
     placement = "popup"
     width = "80%"
     height = "80%"
-    command = ["sh", "popup.sh"]
+    command = ["sh", \(tomlString(scriptPath))]
 
     """
+    }
+
+    static func tomlString(_ value: String) -> String {
+        "\"" + value.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
+    }
 
     static let script = """
     #!/bin/sh
@@ -38,15 +46,16 @@ enum PopupTerminal {
         let folder = EngineSession.supportDirectory.appendingPathComponent("engine-plugins/octet-popup", isDirectory: true)
         let cwd = store.keyPaneId.flatMap { store.snapshot.workingDirectory(ofPane: $0) } ?? NSHomeDirectory()
         let client = store.client
-        let linked = store.plugins.contains { $0.pluginId == pluginId }
         DispatchQueue.global(qos: .userInitiated).async {
             do {
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-                try manifest.write(to: folder.appendingPathComponent("herdr-plugin.toml"), atomically: true, encoding: .utf8)
                 let scriptURL = folder.appendingPathComponent("popup.sh")
+                try manifest(scriptPath: scriptURL.path)
+                    .write(to: folder.appendingPathComponent("herdr-plugin.toml"), atomically: true, encoding: .utf8)
                 try script.write(to: scriptURL, atomically: true, encoding: .utf8)
                 try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
-                if !linked { _ = try? client.call("plugin.link", ["path": folder.path]) }
+                // Every time: linking again picks up a changed manifest.
+                _ = try? client.call("plugin.link", ["path": folder.path])
                 var params: [String: Any] = ["plugin_id": pluginId, "entrypoint": "popup", "cwd": cwd, "focus": true]
                 if let command, !command.isEmpty { params["env"] = ["OCTET_POPUP_COMMAND": command] }
                 _ = try client.call("plugin.pane.open", params)

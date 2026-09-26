@@ -362,6 +362,14 @@ struct RootView: View {
                     }
                 }
             }
+            // "popup" or "popup:<command>" opens the popup terminal.
+            if let open = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], open.hasPrefix("popup"),
+               !Self.debugHotkeyPressed {
+                Self.debugHotkeyPressed = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+                    PopupTerminal.open(open.hasPrefix("popup:") ? String(open.dropFirst(6)) : nil, store: store)
+                }
+            }
             // "hotkey" presses the global hotkey after 4 s, and again after 8 s.
             if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "hotkey", !Self.debugHotkeyPressed {
                 Self.debugHotkeyPressed = true

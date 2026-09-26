@@ -311,8 +311,13 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   picker) open a popup pane (80% of the terminal) over the pane in front,
   in its folder, gone when the command exits: a small session-server
   plugin Octet writes to its support folder and links once
-  (`PopupTerminal`). Linking and opening were checked against a scratch
-  session; the popup wasn't looked at in a running copy.
+  (`PopupTerminal`). Looked at in a running copy on 2026-09-26, which
+  found it never worked: the plugin ran `sh popup.sh` from the pane's
+  folder, so the script wasn't found and the popup closed at once (exit
+  127; the API check passed because opening succeeds before the program
+  runs). The manifest now names the script by its full path and Octet
+  relinks the plugin each time; a real launch shows the popup with the
+  command's output.
 - [x] **37. Mobile push with approve/deny (med).** Claude Code #29438 (69),
   #28765 (44). Done for the push: Settings › Agents › Notices on your phone
   sends "needs you" (high priority) and "finished" to an ntfy topic while
