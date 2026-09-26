@@ -394,9 +394,9 @@ struct OctetSettings: Codable, Equatable {
         defaultShell.isEmpty ? (ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh") : defaultShell
     }
 
-    var usesShellIntegration: Bool {
-        shellIntegration && ["zsh", "fish"].contains((realShell as NSString).lastPathComponent)
-    }
+    /// Every shell goes through the wrapper: zsh and fish for marks, all of
+    /// them for the account their folder uses.
+    var usesShellIntegration: Bool { shellIntegration }
 
     var paneShell: String {
         usesShellIntegration
@@ -621,6 +621,7 @@ final class SettingsStore: ObservableObject {
             // Written before the config points at it.
             _ = try? ShellIntegration.install(in: ShellIntegration.directory(support: EngineSession.supportDirectory),
                                               shell: values.realShell, login: values.shellMode != .nonLogin)
+            writeAccountTable()
         }
         do {
             try values.sessionConfig.write(toFile: sessionConfigPath, atomically: true, encoding: .utf8)
@@ -629,6 +630,19 @@ final class SettingsStore: ObservableObject {
             sessionConfigWriteProblem = "Couldn't write \(sessionConfigPath): \(error.localizedDescription)"
         }
         refreshConfigProblems()
+    }
+
+    /// The folders' agent accounts, for the pane shell wrapper.
+    func writeAccountTable() {
+        let (profiles, assignments) = (values.accountProfiles, values.accountAssignments)
+        let directory = ShellIntegration.directory(support: EngineSession.supportDirectory)
+        DispatchQueue.global(qos: .utility).async {
+            let table = ShellIntegration.accountTable(profiles: profiles, assignments: assignments) { folder in
+                let text = (try? Git().run(["worktree", "list", "--porcelain"], in: folder)) ?? ""
+                return WorktreeCleanup.parse(text).filter { !$0.isMain }.map(\.path)
+            }
+            ShellIntegration.writeAccountTable(table, in: directory)
+        }
     }
 
     /// Re-reads what the terminal engine rejected.
@@ -656,6 +670,7 @@ final class SettingsStore: ObservableObject {
         if values.keepAwake != old.keepAwake { SleepGuard.shared.update() }
         if values.accountProfiles != old.accountProfiles || values.accountAssignments != old.accountAssignments {
             AccountProfiles.configure(profiles: values.accountProfiles, assignments: values.accountAssignments)
+            writeAccountTable()
         }
         if values.importedTheme != old.importedTheme {
             TerminalTheme.imported = values.importedTheme

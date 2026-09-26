@@ -32,6 +32,37 @@ enum ShellIntegration {
         return wrapper.path
     }
 
+    /// folder<TAB>variable<TAB>value per line, shallow folders first so the
+    /// wrapper lets deeper ones win. `worktrees` adds a repository's linked
+    /// worktrees, which live outside it but use its account.
+    static func accountTable(profiles: [AccountProfile], assignments: [AccountAssignment],
+                             worktrees: (String) -> [String] = { _ in [] }, userHome: String = NSHomeDirectory()) -> String {
+        let byId = Dictionary(profiles.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var rows: [(folder: String, variable: String, value: String)] = []
+        for assignment in assignments {
+            guard let profile = byId[assignment.profileId] else { continue }
+            for folder in [assignment.folder] + worktrees(assignment.folder) {
+                // As named and as it really is: a shell only knows one of them.
+                // realpath, not resolvingSymlinksInPath: that one maps
+                // /private/var back to /var, the opposite of what a shell sees.
+                let real = realpath(folder, nil).map { pointer in
+                    defer { free(pointer) }
+                    return String(cString: pointer)
+                } ?? folder
+                for path in Set([folder, real]) {
+                    rows.append((path, profile.variable, profile.expandedHome(userHome: userHome)))
+                }
+            }
+        }
+        return rows.sorted { ($0.folder.count, $0.folder) < ($1.folder.count, $1.folder) }
+            .map { "\($0.folder)\t\($0.variable)\t\($0.value)\n" }.joined()
+    }
+
+    static func writeAccountTable(_ table: String, in directory: URL) {
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try? table.write(to: directory.appendingPathComponent("accounts.tsv"), atomically: true, encoding: .utf8)
+    }
+
     static func quote(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
 
     /// Becomes the real shell with the integration in place. bash, not sh:
@@ -50,6 +81,25 @@ enum ShellIntegration {
           fish)
             export XDG_DATA_DIRS="$dir/fish:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}" ;;
         esac
+        # The agent account the folder uses (Octet › Accounts), unless the
+        # pane was started with one on purpose. Deeper folders come later
+        # and win. (macOS bash 3.2: no associative arrays.)
+        if [ -f "$dir/accounts.tsv" ]; then
+          ours=" "
+          here="$PWD/"
+          real="$(pwd -P)/"
+          while IFS=$'\t' read -r folder var value; do
+            # The folder as named, or as it really is (/var is /private/var).
+            case "$here|$real" in
+              "$folder"/*|*"|$folder"/*)
+                if [ -z "${!var+x}" ] || [ "${ours#* $var }" != "$ours" ]; then
+                  export "$var=$value"
+                  ours="$ours$var "
+                fi ;;
+            esac
+          done < "$dir/accounts.tsv"
+          unset ours here real folder var value
+        fi
         # Programs that start "$SHELL" get your shell, not this script.
         export SHELL="$shell"
         \(login ? "exec -l \"$shell\" \"$@\"" : "exec \"$shell\" \"$@\"")

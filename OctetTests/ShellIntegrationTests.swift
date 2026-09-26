@@ -56,3 +56,55 @@ final class ShellIntegrationTests: XCTestCase {
         XCTAssertTrue(text.contains("\u{1b}]133;D;1\u{07}"), text)
     }
 }
+
+final class ShellAccountTests: XCTestCase {
+    func testTheTableListsFoldersShallowFirstWithTheirWorktrees() {
+        let work = AccountProfile(id: "w", name: "Work", agent: "claude", home: "~/.claude-work")
+        let side = AccountProfile(id: "s", name: "Side", agent: "claude", home: "/acct/side")
+        let table = ShellIntegration.accountTable(
+            profiles: [work, side],
+            assignments: [AccountAssignment(folder: "/src/api/sub", profileId: "s"), AccountAssignment(folder: "/src/api", profileId: "w")],
+            worktrees: { $0 == "/src/api" ? ["/wt/api/feat"] : [] }, userHome: "/Users/me")
+        XCTAssertEqual(table, """
+        /src/api\tCLAUDE_CONFIG_DIR\t/Users/me/.claude-work
+        /src/api/sub\tCLAUDE_CONFIG_DIR\t/acct/side
+        /wt/api/feat\tCLAUDE_CONFIG_DIR\t/Users/me/.claude-work
+
+        """)
+    }
+
+    /// A shell the session server starts in an assigned folder gets the
+    /// account; the deeper folder wins; one started with an account keeps it.
+    func testTheWrapperSetsTheFoldersAccount() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("octet-acct-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let project = base.appendingPathComponent("api"), deeper = project.appendingPathComponent("sub")
+        try FileManager.default.createDirectory(at: deeper, withIntermediateDirectories: true)
+        let dir = base.appendingPathComponent("si")
+        let wrapper = try ShellIntegration.install(in: dir, shell: "/bin/zsh", login: false)
+        let table = ShellIntegration.accountTable(
+            profiles: [AccountProfile(id: "w", name: "Work", agent: "claude", home: "/acct/work"),
+                       AccountProfile(id: "s", name: "Side", agent: "claude", home: "/acct/side")],
+            assignments: [AccountAssignment(folder: project.path, profileId: "w"),
+                          AccountAssignment(folder: deeper.path, profileId: "s")])
+        ShellIntegration.writeAccountTable(table, in: dir)
+
+        func run(in folder: URL, env: [String: String] = [:]) throws -> String {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: wrapper)
+            process.arguments = ["-c", "echo \"$CLAUDE_CONFIG_DIR\""]
+            process.currentDirectoryURL = folder
+            process.environment = ["HOME": base.path, "PATH": "/usr/bin:/bin"].merging(env) { _, new in new }
+            let out = Pipe()
+            process.standardOutput = out
+            try process.run()
+            process.waitUntilExit()
+            return String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        XCTAssertEqual(try run(in: project), "/acct/work")
+        XCTAssertEqual(try run(in: deeper), "/acct/side")
+        XCTAssertEqual(try run(in: base), "")
+        XCTAssertEqual(try run(in: project, env: ["CLAUDE_CONFIG_DIR": "/signing-in"]), "/signing-in")
+    }
+}

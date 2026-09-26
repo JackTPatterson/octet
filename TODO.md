@@ -164,7 +164,9 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   each account's sign-in ("Signed in · Max"). Octet's Codex conversations
   get it too. Remaining: usage and limits per account (the usage chip
   reads the default sign-in; splitting it means a keychain token and a
-  cache per account), and shells the session server opens by itself.
+  cache per account). Shells the session server opens by itself now get
+  the account too: Octet's pane shell wrapper reads a folder → account
+  table (worktrees and symlinked paths included).
 - [x] **45. Name the skill on a Skill tool row (med, small).** Done: the
   conversation view titles a skill call with the skill's name, its args as
   the line under it, and the twin writes `Skill(frontend-design)` as Claude
