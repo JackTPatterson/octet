@@ -856,6 +856,7 @@ private struct AgentSettings: View {
                     }
             }
         }
+        if PhonePush.offered {
         SettingsGroup(title: "Phone") {
             SettingsRow(
                 title: "Notices on your phone",
@@ -871,6 +872,7 @@ private struct AgentSettings: View {
                 CommittedTextField(label: "ntfy server", placeholder: "https://ntfy.sh", value: $settings.values.phoneServer, width: 220,
                                    validate: { _ in nil })
             }
+        }
         }
         SettingsGroup(title: "Accounts") {
             SettingsRow(

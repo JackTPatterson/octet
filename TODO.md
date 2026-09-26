@@ -318,7 +318,9 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   runs). The manifest now names the script by its full path and Octet
   relinks the plugin each time; a real launch shows the popup with the
   command's output.
-- [x] **37. Mobile push with approve/deny (med).** Claude Code #29438 (69),
+- [x] **37. Mobile push with approve/deny (med).** *Hidden 2026-09-26:*
+  `PhonePush.offered` is false, so the Settings rows and search entry are
+  gone and nothing is sent even with a saved topic; the code stays. Claude Code #29438 (69),
   #28765 (44). Done for the push: Settings › Agents › Notices on your phone
   sends "needs you" (high priority) and "finished" to an ntfy topic while
   Octet isn't in front (`PhonePush`; ntfy.sh or your own server). Off until

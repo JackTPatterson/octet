@@ -4,6 +4,10 @@ import Foundation
 /// server): install the ntfy app, subscribe to a topic, put the topic in
 /// Settings. Only the agent, the tab and what happened are sent.
 enum PhonePush {
+    /// Hidden for now (2026-09-26): no Settings rows, and nothing is sent
+    /// even if a topic was saved. Flip to bring the feature back.
+    static let offered = false
+
     static func request(server: String, topic: String, event: AgentEvent, agentName: String) -> URLRequest? {
         let topic = topic.trimmingCharacters(in: .whitespaces)
         guard !topic.isEmpty, topic.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }),

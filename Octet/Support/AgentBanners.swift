@@ -33,7 +33,7 @@ final class AgentBannerCenter: ObservableObject {
     /// from Octet (it isn't in front).
     private func pushToPhone(_ events: [AgentEvent]) {
         let settings = SettingsStore.shared.values
-        guard !settings.phoneTopic.isEmpty, !NSApp.isActive else { return }
+        guard PhonePush.offered, !settings.phoneTopic.isEmpty, !NSApp.isActive else { return }
         for event in events {
             let name = AgentBrand.forAgent(event.agent)?.displayName ?? event.agent ?? "An agent"
             guard let request = PhonePush.request(server: settings.phoneServer, topic: settings.phoneTopic,

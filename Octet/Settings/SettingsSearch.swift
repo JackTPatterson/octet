@@ -109,7 +109,6 @@ enum SettingsSearchIndex {
         .init(.agents, "Remote Control for Claude conversations", ["remote", "control", "phone", "mobile", "claude.ai", "app"]),
         .init(.general, "Hotkey from any app", ["hotkey", "quake", "global", "shortcut", "summon", "dropdown"]),
         .init(.general, "Drop down from the top", ["hotkey", "quake", "dropdown", "drop-down", "full screen", "visor", "guake"]),
-        .init(.agents, "Notices on your phone", ["phone", "mobile", "push", "ntfy", "iphone", "notification"]),
         .init(.agents, "Agent accounts", ["account", "login", "profile", "work", "personal", "switch", "sign in", "claude_config_dir", "codex_home"]),
         .init(.agents, "Keep the Mac awake while agents work", ["sleep", "caffeinate", "awake", "battery", "power", "amphetamine"]),
         .init(.agents, "Checkpoint before each agent turn", ["undo", "rewind", "restore", "snapshot", "checkpoint", "revert", "git"]),
