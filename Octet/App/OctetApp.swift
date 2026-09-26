@@ -122,10 +122,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Finder's “Open With Octet” and `open -a Octet file` are full-editor
     /// intents. In-app ⌘O is terminal context and starts as a split instead.
+    /// Files, and `octet://` links, which are commands (OctetURL).
     @MainActor
-    func application(_ sender: NSApplication, openFiles filenames: [String]) {
-        openWhenReady(filenames.map(URL.init(fileURLWithPath:)))
-        sender.reply(toOpenOrPrint: .success)
+    func application(_ application: NSApplication, open urls: [URL]) {
+        let files = urls.filter(\.isFileURL)
+        if !files.isEmpty { openWhenReady(files) }
+        for url in urls where !url.isFileURL {
+            guard let command = OctetURL(url) else {
+                ToastCenter.shared.fail(nil, "Octet doesn't know that link", detail: url.absoluteString)
+                continue
+            }
+            runWhenReady(command)
+        }
+    }
+
+    @MainActor
+    private func runWhenReady(_ command: OctetURL, attempts: Int = 0) {
+        guard !WindowRegistry.shared.windows.isEmpty else {
+            guard attempts < 30 else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in self?.runWhenReady(command, attempts: attempts + 1) }
+            return
+        }
+        OctetURLHandler.handle(command)
     }
 
     @MainActor

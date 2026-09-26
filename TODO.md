@@ -265,9 +265,14 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   already in front; Carbon hotkeys, so no accessibility permission. A
   shortcut another app holds is reported. Build-checked only. Not done: a
   drop-down window that slides over full-screen apps.
-- [ ] **35. Scripting: URL scheme and CLI (med).** Ghostty #2353 (257), Warp
-  #3364; iTerm2's Python API is what switchers miss. `octet://open?path=`,
-  `octet-cli run <agent> --in <dir>`, send text to a pane.
+- [x] **35. Scripting: URL scheme and CLI (med).** Ghostty #2353 (257), Warp
+  #3364. Done: `octet://open?path=`, `octet://run?agent=&path=&prompt=`
+  and `octet://send?text=` (`OctetURL`), and `octet-cli open [folder]`,
+  `run <agent> [--in] [--prompt]`, `send <text>` on top of them. A link
+  that types into the terminal, or starts an agent with instructions, asks
+  first. Parsing is tested; the links weren't opened in a running copy.
+  Not done: reading a pane's screen from a script (the session server's
+  `pane.read` already does that over its socket).
 - [ ] **36. Floating popup pane (med).** Ghostty #3197 (242), WezTerm #270.
 - [ ] **37. Mobile push with approve/deny (med).** Claude Code #29438 (69),
   #28765 (44); ntfy/Pushover hooks exist to fill the gap.

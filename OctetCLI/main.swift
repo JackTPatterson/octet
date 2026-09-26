@@ -6,6 +6,10 @@ import Foundation
 //   octet-cli agent-watch …             live subagent transcript viewer
 //   octet-cli install-subagent-hook …   add the hook to an agent's config
 //   octet-cli uninstall-subagent-hook … remove it
+//   octet-cli open [folder]             a workspace on a folder (default: here)
+//   octet-cli run <agent> [--in <folder>] [--prompt <text>]
+//                                      an agent in a new tab
+//   octet-cli send <text>               type and run it in the pane in front (asks)
 //   octet-cli mcp-permission --socket <path>
 //                                      permission prompt tool for conversations
 //                                      Octet drives headless (stdio MCP server)
@@ -87,6 +91,30 @@ case "uninstall-subagent-hook", "uninstall-claude-hook":
         }
     }
 
+case "open", "run", "send":
+    let command: OctetURL
+    switch arguments[0] {
+    case "open":
+        let folder = arguments.dropFirst().first ?? FileManager.default.currentDirectoryPath
+        command = .open(path: URL(fileURLWithPath: folder).standardizedFileURL.path)
+    case "run":
+        guard let agent = arguments.dropFirst().first, !agent.hasPrefix("--") else {
+            fail("usage: octet-cli run <agent> [--in <folder>] [--prompt <text>]")
+        }
+        let folder = option("--in", in: arguments) ?? FileManager.default.currentDirectoryPath
+        command = .run(agent: agent, path: URL(fileURLWithPath: folder).standardizedFileURL.path,
+                       prompt: option("--prompt", in: arguments))
+    default:
+        let text = arguments.dropFirst().joined(separator: " ")
+        guard !text.isEmpty else { fail("usage: octet-cli send <text>") }
+        command = .send(text: text)
+    }
+    let open = Process()
+    open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+    open.arguments = [command.url.absoluteString]
+    try? open.run()
+    open.waitUntilExit()
+    exit(open.terminationStatus)
 case "mcp-permission":
     guard let socketPath = option("--socket", in: Array(arguments.dropFirst())) else {
         fail("usage: octet-cli mcp-permission --socket <path>")
@@ -98,5 +126,5 @@ case "mcp-permission":
     }
 
 default:
-    fail("usage: octet-cli <hook <agent>|agent-watch|install-subagent-hook [agent]|uninstall-subagent-hook [agent]|mcp-permission --socket <path>>")
+    fail("usage: octet-cli <open [folder]|run <agent> [--in <folder>] [--prompt <text>]|send <text>|hook <agent>|agent-watch|install-subagent-hook [agent]|uninstall-subagent-hook [agent]|mcp-permission --socket <path>>")
 }
