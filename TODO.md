@@ -280,8 +280,12 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   plugin Octet writes to its support folder and links once
   (`PopupTerminal`). Linking and opening were checked against a scratch
   session; the popup wasn't looked at in a running copy.
-- [ ] **37. Mobile push with approve/deny (med).** Claude Code #29438 (69),
-  #28765 (44); ntfy/Pushover hooks exist to fill the gap.
+- [x] **37. Mobile push with approve/deny (med).** Claude Code #29438 (69),
+  #28765 (44). Done for the push: Settings › Agents › Notices on your phone
+  sends "needs you" (high priority) and "finished" to an ntfy topic while
+  Octet isn't in front (`PhonePush`; ntfy.sh or your own server). Off until
+  a topic is set. Not done: approve/deny from the phone, which needs a way
+  back into this Mac; Claude's Remote Control covers that for Claude.
 - [ ] **38. Audit timeline (low-med).** Commands and files per agent, with
   `rm -rf`, force-push and `sudo` flagged (cc-audit-log et al.).
 - [ ] **39. Quick Look for paths agents print (low-med).** Wave's standout;

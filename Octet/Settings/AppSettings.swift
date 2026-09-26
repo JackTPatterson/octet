@@ -61,6 +61,9 @@ struct OctetSettings: Codable, Equatable {
     var secureInputAtPasswords = true
     /// Prompt marks from zsh and fish, through Octet's shell wrapper.
     var shellIntegration = true
+    /// ntfy topic for agent notices on your phone; empty is off.
+    var phoneTopic = ""
+    var phoneServer = ""
     var mouseScrollLines: Double = 3
     var optionAsAlt: OptionAsAlt = .off
     var hideMouseWhileTyping = true
@@ -263,6 +266,8 @@ struct OctetSettings: Codable, Equatable {
         previewLongPastes = value("previewLongPastes", defaults.previewLongPastes)
         secureInputAtPasswords = value("secureInputAtPasswords", defaults.secureInputAtPasswords)
         shellIntegration = value("shellIntegration", defaults.shellIntegration)
+        phoneTopic = value("phoneTopic", defaults.phoneTopic)
+        phoneServer = value("phoneServer", defaults.phoneServer)
         mouseScrollLines = value("mouseScrollLines", defaults.mouseScrollLines)
         optionAsAlt = value("optionAsAlt", defaults.optionAsAlt)
         hideMouseWhileTyping = value("hideMouseWhileTyping", defaults.hideMouseWhileTyping)

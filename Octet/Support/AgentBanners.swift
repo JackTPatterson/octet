@@ -16,6 +16,7 @@ final class AgentBannerCenter: ObservableObject {
     @Published private(set) var banners: [Banner] = []
 
     func show(_ events: [AgentEvent]) {
+        pushToPhone(events)
         guard SettingsStore.shared.values.notifications == .banner else { return }
         for event in events where !banners.contains(where: { $0.id == event.id }) {
             banners.append(Banner(event: event))
@@ -25,6 +26,19 @@ final class AgentBannerCenter: ObservableObject {
         }
         if banners.count > Self.maxVisible {
             banners.removeFirst(banners.count - Self.maxVisible)
+        }
+    }
+
+    /// Sends the notices to the phone topic in Settings, while you're away
+    /// from Octet (it isn't in front).
+    private func pushToPhone(_ events: [AgentEvent]) {
+        let settings = SettingsStore.shared.values
+        guard !settings.phoneTopic.isEmpty, !NSApp.isActive else { return }
+        for event in events {
+            let name = AgentBrand.forAgent(event.agent)?.displayName ?? event.agent ?? "An agent"
+            guard let request = PhonePush.request(server: settings.phoneServer, topic: settings.phoneTopic,
+                                                  event: event, agentName: name) else { continue }
+            URLSession.shared.dataTask(with: request).resume()
         }
     }
 

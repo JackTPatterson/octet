@@ -836,6 +836,22 @@ private struct AgentSettings: View {
                     }
             }
         }
+        SettingsGroup(title: "Phone") {
+            SettingsRow(
+                title: "Notices on your phone",
+                detail: "When an agent needs you or finishes while Octet isn't in front, a push goes to this ntfy topic. Install the ntfy app and subscribe to the same topic. Anyone who knows the topic can read it, so pick something hard to guess. Only the agent, the tab and what happened are sent."
+            ) {
+                CommittedTextField(label: "ntfy topic", placeholder: "topic, e.g. octet-7fq2k", value: $settings.values.phoneTopic, width: 220,
+                                   validate: { value in
+                                       value.isEmpty || value.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" })
+                                           ? nil : "Letters, numbers, - and _ only" })
+            }
+            SettingsDivider()
+            SettingsRow(title: "ntfy server", detail: "Leave empty for ntfy.sh, or your own server's address.") {
+                CommittedTextField(label: "ntfy server", placeholder: "https://ntfy.sh", value: $settings.values.phoneServer, width: 220,
+                                   validate: { _ in nil })
+            }
+        }
         SettingsGroup(title: "Accounts") {
             SettingsRow(
                 title: "Agent accounts",
