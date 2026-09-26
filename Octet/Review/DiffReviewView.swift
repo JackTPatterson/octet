@@ -17,6 +17,8 @@ final class DiffReviewModel: ObservableObject {
     @Published var draft = ""
     @Published var commitMessage = ""
     @Published private(set) var committing = false
+    /// Files with something staged: a commit takes only those when any are.
+    @Published private(set) var staged: Set<String> = []
     private var timer: Timer?
     private var generation = 0
 
@@ -53,9 +55,11 @@ final class DiffReviewModel: ObservableObject {
         if !quietly { loading = true }
         DispatchQueue.global(qos: .userInitiated).async {
             let diff = ReviewDiff.read(in: directory, base: base)
+            let staged = ReviewDiff.stagedPaths(in: directory)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     guard self.generation == generation else { return }
+                    if staged != self.staged { self.staged = staged }
                     self.loading = false
                     self.notARepository = diff == nil
                     if diff != self.diff { self.diff = diff }
@@ -87,12 +91,44 @@ final class DiffReviewModel: ObservableObject {
         draft = ""
     }
 
-    /// Commits every change shown, when the review is done.
+    /// Hunks can be staged only against HEAD: that's what the index holds.
+    var canStage: Bool { base == .uncommitted }
+
+    func stage(_ hunk: ReviewDiff.Hunk, of file: ReviewDiff.File) {
+        let patch = ReviewDiff.patch(for: file, hunk: hunk), directory = self.directory
+        git("Couldn't stage that change") { try ReviewDiff.stage(patch, in: directory) }
+    }
+
+    func toggleStaged(_ file: ReviewDiff.File) {
+        let path = file.path, directory = self.directory, unstage = staged.contains(path)
+        git(unstage ? "Couldn't unstage \(path)" : "Couldn't stage \(path)") {
+            unstage ? try ReviewDiff.unstage(path: path, in: directory) : try ReviewDiff.stage(path: path, in: directory)
+        }
+    }
+
+    private func git(_ failure: String, _ work: @escaping @Sendable () throws -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let outcome = Result { try work() }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    if case .failure(let error) = outcome {
+                        ToastCenter.shared.fail(nil, failure, detail: String(describing: error))
+                    }
+                    self.refresh(quietly: true)
+                }
+            }
+        }
+    }
+
+    /// Commits what's staged, or every change shown when nothing is.
     func commitAll() {
-        let message = commitMessage, directory = self.directory
+        let message = commitMessage, directory = self.directory, onlyStaged = !staged.isEmpty
         committing = true
         DispatchQueue.global(qos: .userInitiated).async {
-            let outcome = Result { try ReviewDiff.commitAll(message: message, in: directory) }
+            let outcome = Result {
+                onlyStaged ? try ReviewDiff.commitStaged(message: message, in: directory)
+                    : try ReviewDiff.commitAll(message: message, in: directory)
+            }
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     self.committing = false
@@ -217,6 +253,10 @@ struct DiffReviewView: View {
                                 }
                             }
                             Spacer(minLength: 4)
+                            if model.staged.contains(file.path) {
+                                Circle().fill(DiffReviewView.addedColor).frame(width: 6, height: 6)
+                                    .help("Staged")
+                            }
                             if notes > 0 {
                                 Text("\(notes)").font(Theme.captionFont.weight(.semibold)).foregroundStyle(Theme.onAccent)
                                     .padding(.horizontal, 5).background(Capsule().fill(Theme.accent))
@@ -229,6 +269,9 @@ struct DiffReviewView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .contextMenu {
+                        Button(model.staged.contains(file.path) ? "Unstage File" : "Stage File") { model.toggleStaged(file) }
+                    }
                 }
             }
             .padding(.vertical, 6)
@@ -269,11 +312,21 @@ struct DiffReviewView: View {
                 ScrollView([.vertical, .horizontal]) {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(Array(file.hunks.enumerated()), id: \.offset) { _, hunk in
-                            Text(hunk.header)
-                                .font(Theme.monoFont).foregroundStyle(Theme.textTertiary)
-                                .padding(.horizontal, 12).padding(.vertical, 5)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(Theme.card)
+                            HStack {
+                                Text(hunk.header)
+                                    .font(Theme.monoFont).foregroundStyle(Theme.textTertiary)
+                                Spacer()
+                                if model.canStage {
+                                    Button("Stage") { model.stage(hunk, of: file) }
+                                        .buttonStyle(.plain)
+                                        .font(Theme.captionFont.weight(.semibold))
+                                        .foregroundStyle(Theme.textSecondary)
+                                        .help("Stage just this change, to commit it on its own")
+                                }
+                            }
+                            .padding(.horizontal, 12).padding(.vertical, 5)
+                            .frame(width: proxy.size.width, alignment: .leading)
+                            .background(Theme.card)
                             if split {
                                 ForEach(hunk.pairs) { pair in
                                     DiffSplitRow(pair: pair, path: file.path, colored: colored,
@@ -350,11 +403,13 @@ struct DiffReviewView: View {
             if count == 0, model.diff.map({ !$0.files.isEmpty }) == true {
                 OctetTextField(placeholder: "Commit message", text: $model.commitMessage) { model.commitAll() }
                     .frame(width: 280)
-                OctetButton(title: model.committing ? "Committing…" : "Commit All", kind: .secondary, compact: true) {
+                OctetButton(title: model.committing ? "Committing…"
+                                : model.staged.isEmpty ? "Commit All" : "Commit Staged (\(model.staged.count))",
+                            kind: .secondary, compact: true) {
                     model.commitAll()
                 }
                 .disabled(model.committing || model.commitMessage.trimmingCharacters(in: .whitespaces).isEmpty)
-                .help("Stage every change shown and commit it")
+                .help(model.staged.isEmpty ? "Stage every change shown and commit it" : "Commit only what's staged")
             }
             if candidates.count > 1 {
                 Picker("Send to", selection: Binding(get: { target?.paneId }, set: { targetPane = $0 })) {

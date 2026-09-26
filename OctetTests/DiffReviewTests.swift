@@ -171,4 +171,38 @@ final class DiffReviewTests: XCTestCase {
         XCTAssertEqual(hunk.pairs[1].left?.oldNumber, 2)
         XCTAssertEqual(hunk.pairs[1].right?.newNumber, 2)
     }
+
+    func testStagesOneHunkAndCommitsOnlyThat() throws {
+        let git = Git()
+        let repo = FileManager.default.temporaryDirectory.appendingPathComponent("octet-stage-\(UUID().uuidString)").path
+        defer { try? FileManager.default.removeItem(atPath: repo) }
+        try FileManager.default.createDirectory(atPath: repo, withIntermediateDirectories: true)
+        try git.run(["init", "-q"], in: repo)
+        try git.run(["config", "user.email", "t@t"], in: repo)
+        try git.run(["config", "user.name", "t"], in: repo)
+        let lines = (1...30).map { "line \($0)" }
+        try (lines.joined(separator: "\n") + "\n").write(toFile: repo + "/a.txt", atomically: true, encoding: .utf8)
+        try git.run(["add", "."], in: repo)
+        try git.run(["commit", "-qm", "base"], in: repo)
+        var changed = lines
+        changed[1] = "line two, changed"
+        changed[27] = "line twenty-eight, changed"
+        try (changed.joined(separator: "\n") + "\n").write(toFile: repo + "/a.txt", atomically: true, encoding: .utf8)
+        try "new\n".write(toFile: repo + "/new.txt", atomically: true, encoding: .utf8)
+
+        let diff = try XCTUnwrap(ReviewDiff.read(in: repo, base: .uncommitted, git: git))
+        let file = try XCTUnwrap(diff.files.first { $0.path == "a.txt" })
+        XCTAssertEqual(file.hunks.count, 2)
+        try ReviewDiff.stage(ReviewDiff.patch(for: file, hunk: file.hunks[0]), in: repo, git: git)
+        let added = try XCTUnwrap(diff.files.first { $0.path == "new.txt" })
+        try ReviewDiff.stage(ReviewDiff.patch(for: added, hunk: added.hunks[0]), in: repo, git: git)
+        XCTAssertEqual(ReviewDiff.stagedPaths(in: repo, git: git), ["a.txt", "new.txt"])
+
+        try ReviewDiff.unstage(path: "new.txt", in: repo, git: git)
+        _ = try ReviewDiff.commitStaged(message: "Only the first change", in: repo, git: git)
+        let committed = try git.run(["show", "HEAD:a.txt"], in: repo)
+        XCTAssertTrue(committed.contains("line two, changed"))
+        XCTAssertFalse(committed.contains("twenty-eight"))
+        XCTAssertEqual(try git.run(["status", "--porcelain"], in: repo), "M a.txt\n?? new.txt")
+    }
 }

@@ -198,6 +198,64 @@ struct ReviewDiff: Equatable {
         return try git.run(["rev-parse", "--short", "HEAD"], in: top)
     }
 
+    // MARK: - Staging
+
+    /// One hunk as a patch `git apply` takes, against the file's old side.
+    static func patch(for file: File, hunk: Hunk) -> String {
+        var text = "diff --git a/\(file.path) b/\(file.path)\n"
+        switch file.status {
+        case .added: text += "new file mode 100644\n--- /dev/null\n+++ b/\(file.path)\n"
+        case .deleted: text += "deleted file mode 100644\n--- a/\(file.path)\n+++ /dev/null\n"
+        case .modified: text += "--- a/\(file.path)\n+++ b/\(file.path)\n"
+        }
+        text += hunk.header + "\n"
+        for line in hunk.lines {
+            switch line.kind {
+            case .context: text += " "
+            case .added: text += "+"
+            case .removed: text += "-"
+            }
+            text += line.text + "\n"
+        }
+        return text
+    }
+
+    /// Stages one hunk of a diff against HEAD.
+    static func stage(_ patch: String, in directory: String, git: Git = Git()) throws {
+        guard let top = git.topLevel(directory) else { throw Checkpoints.GitError(description: "Not a git repository") }
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("octet-hunk-\(UUID().uuidString).patch")
+        try patch.write(to: file, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: file) }
+        try git.run(["apply", "--cached", "--recount", "--whitespace=nowarn", file.path], in: top)
+    }
+
+    static func stage(path: String, in directory: String, git: Git = Git()) throws {
+        guard let top = git.topLevel(directory) else { throw Checkpoints.GitError(description: "Not a git repository") }
+        try git.run(["add", "-A", "--", path], in: top)
+    }
+
+    static func unstage(path: String, in directory: String, git: Git = Git()) throws {
+        guard let top = git.topLevel(directory) else { throw Checkpoints.GitError(description: "Not a git repository") }
+        try git.run(["reset", "-q", "--", path], in: top)
+    }
+
+    /// Paths with anything staged, relative to the top of the repository.
+    static func stagedPaths(in directory: String, git: Git = Git()) -> Set<String> {
+        guard let top = git.topLevel(directory),
+              let output = try? git.run(["-c", "core.quotepath=off", "diff", "--cached", "--name-only", "--no-renames"], in: top)
+        else { return [] }
+        return Set(output.split(separator: "\n").map(String.init))
+    }
+
+    /// Commits what's staged, leaving the rest as it is.
+    static func commitStaged(message: String, in directory: String, git: Git = Git()) throws -> String {
+        let message = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty else { throw Checkpoints.GitError(description: "A commit needs a message") }
+        guard let top = git.topLevel(directory) else { throw Checkpoints.GitError(description: "Not a git repository") }
+        try git.run(["commit", "-q", "-m", message], in: top)
+        return try git.run(["rev-parse", "--short", "HEAD"], in: top)
+    }
+
     // MARK: - Reading a working tree
 
     /// The diff for the tree `directory` is in, or nil outside a repository.
