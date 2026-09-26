@@ -2,8 +2,9 @@ import AppKit
 import SwiftUI
 
 /// ⌘⇧H: labels on every link, `file:line` and commit hash in the pane in
-/// front. Type a label to open it (a hash is copied); hold ⇧ to copy
-/// instead; Esc leaves.
+/// front. Type a label to open it (a hash is copied; an image or PDF
+/// shows in Quick Look); hold ⇧ to copy instead, ⌥ to Quick Look any
+/// file; Esc leaves.
 @MainActor
 final class HintsSession: ObservableObject, Identifiable {
     let id = UUID()
@@ -41,18 +42,18 @@ final class HintsSession: ObservableObject, Identifiable {
     }
 
     /// A typed letter: narrows the labels, and acts once one is whole.
-    func type(_ letter: String, copy: Bool, window: WindowContext) {
+    func type(_ letter: String, copy: Bool, preview: Bool = false, window: WindowContext) {
         typed += letter.lowercased()
         let matches = showing
         if let hint = matches.first(where: { $0.label == typed }) {
             window.ui.hints = nil
-            act(on: hint, copy: copy, window: window)
+            act(on: hint, copy: copy, preview: preview, window: window)
         } else if matches.isEmpty {
             window.ui.hints = nil
         }
     }
 
-    private func act(on hint: Hints.Hint, copy: Bool, window: WindowContext) {
+    private func act(on hint: Hints.Hint, copy: Bool, preview: Bool, window: WindowContext) {
         if copy || hint.kind == .hash {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(hint.text, forType: .string)
@@ -69,6 +70,10 @@ final class HintsSession: ObservableObject, Identifiable {
             let path = Hints.file(of: hint, cwd: cwd)
             guard FileManager.default.fileExists(atPath: path) else {
                 ToastCenter.shared.fail(nil, "There's no \((path as NSString).lastPathComponent) here", detail: path)
+                return
+            }
+            if preview || Hints.prefersPreview(path) {
+                QuickLook.shared.show(URL(fileURLWithPath: path))
                 return
             }
             window.openFile(URL(fileURLWithPath: path), presentation: .split)
@@ -123,9 +128,10 @@ struct HintsOverlay: View {
                 OctetTerminalRuntime.focusTerminal()
                 return .handled
             }
-            let letter = press.characters.lowercased()
+            // ⌥ turns letters into symbols (⌥A is å): use the key itself.
+            let letter = press.modifiers.contains(.option) ? String(press.key.character).lowercased() : press.characters.lowercased()
             guard letter.count == 1, letter.first?.isLetter == true else { return .ignored }
-            session.type(letter, copy: press.modifiers.contains(.shift), window: window)
+            session.type(letter, copy: press.modifiers.contains(.shift), preview: press.modifiers.contains(.option), window: window)
             return .handled
         }
         .onTapGesture { window.ui.hints = nil }

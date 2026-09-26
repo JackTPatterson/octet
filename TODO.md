@@ -291,8 +291,12 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   Done: palette › Agent Command Log… lists the shell commands Claude and
   Codex ran in the focused project this week, risky ones marked; a row
   copies its command. Heredoc bodies aren't counted as commands.
-- [ ] **39. Quick Look for paths agents print (low-med).** Wave's standout;
-  Warp #4739 (99), #7115 (78).
+- [x] **39. Quick Look for paths agents print (low-med).** Wave's standout;
+  Warp #4739 (99), #7115 (78). Done: in hints (⌘⇧H) an image, PDF, media
+  or office file opens in Quick Look instead of the editor, and ⌥ with a
+  label Quick Looks any file; bare names like `shot.png` get a label too.
+  Right-clicking a selected file name offers Quick Look (⌘Y), Open and
+  Show in Finder. Checked with a real launch: the panel opens on the file.
 - [ ] **40. Best-of-N: one task, several agents, compare diffs (low-med).**
   Builds on 20 and 23.
 

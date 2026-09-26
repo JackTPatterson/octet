@@ -9,6 +9,13 @@ enum OctetTerminalMenu {
         let menu = NSMenu()
         if let text = surface.accessibilitySelectedText(), !text.isEmpty {
             menu.addItem(item("Copy", key: "c") { surface.copy(nil) })
+            // A selected file name: look at it or open it.
+            if let url = existingFile(named: text, window: window) {
+                let name = url.lastPathComponent
+                menu.addItem(item("Quick Look “\(name)”", key: "y") { QuickLook.shared.show(url) })
+                menu.addItem(item("Open “\(name)”") { window.openFile(url, presentation: .split) })
+                menu.addItem(item("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) })
+            }
         }
         menu.addItem(item("Paste", key: "v") { surface.paste(nil) })
         menu.addItem(.separator())
@@ -29,6 +36,18 @@ enum OctetTerminalMenu {
             EngineClient.inputQueue.async { _ = try? client.call("pane.send_text", ["pane_id": pane, "text": "\u{0c}"]) }
         })
         return menu
+    }
+
+    /// The selection as a file, from the pane's folder, if there's one there.
+    private static func existingFile(named text: String, window: WindowContext) -> URL? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "`'\"")))
+        guard !trimmed.isEmpty, !trimmed.contains("\n"), trimmed.count < 1024 else { return nil }
+        let cwd = window.store.keyPaneId.flatMap { window.store.snapshot.workingDirectory(ofPane: $0) }
+        let hint = Hints.Hint(label: "", kind: .path, text: trimmed, row: 0, column: 0)
+        let path = Hints.file(of: hint, cwd: cwd)
+        var folder: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &folder), !folder.boolValue else { return nil }
+        return URL(fileURLWithPath: path)
     }
 
     private static func item(_ title: String, key: String = "", shift: Bool = false,

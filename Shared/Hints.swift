@@ -49,7 +49,8 @@ enum Hints {
                     }
                     guard range.length > 0, !taken.contains(where: { NSIntersectionRange($0, range).length > 0 }) else { continue }
                     let text = ns.substring(with: range)
-                    if kind == .path, !text.contains("/"), !text.contains(":") { continue }
+                    // A bare name needs a line, or to be a file you'd look at.
+                    if kind == .path, !text.contains("/"), !text.contains(":"), !prefersPreview(text) { continue }
                     if kind == .hash, !(text.contains(where: \.isLetter) && text.contains(where: \.isNumber)) { continue }
                     taken.append(range)
                     let column = (ns.substring(to: range.location) as String).count
@@ -67,6 +68,19 @@ enum Hints {
             }
             return hint
         }
+    }
+
+    /// Images, PDFs, media and office files: shown in Quick Look, not opened
+    /// in the editor.
+    static let previewExtensions: Set<String> = [
+        "png", "jpg", "jpeg", "gif", "heic", "webp", "tif", "tiff", "bmp", "ico", "icns", "svg",
+        "pdf", "mov", "mp4", "m4v", "webm", "mp3", "wav", "m4a", "aiff",
+        "key", "numbers", "pages", "docx", "xlsx", "pptx", "usdz",
+    ]
+
+    static func prefersPreview(_ path: String) -> Bool {
+        let name = String(path.split(separator: ":").first ?? "")
+        return previewExtensions.contains((name as NSString).pathExtension.lowercased())
     }
 
     /// The file a path hint names, from the pane's folder.

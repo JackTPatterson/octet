@@ -29,4 +29,13 @@ final class HintsTests: XCTestCase {
         XCTAssertEqual(Hints.labels(count: 28).prefix(2), ["aa", "as"])
         XCTAssertEqual(Hints.labels(count: 28).count, 28)
     }
+
+    func testImagesAndPDFsAreFoundByNameAndPreviewed() {
+        let hints = Hints.find(in: ["Saved screenshot.png and report.PDF; see notes.txt"])
+        XCTAssertEqual(hints.map(\.text), ["screenshot.png", "report.PDF"])
+        XCTAssertTrue(Hints.prefersPreview("out/chart.svg"))
+        XCTAssertTrue(Hints.prefersPreview("report.PDF"))
+        XCTAssertFalse(Hints.prefersPreview("src/app.swift:12"))
+        XCTAssertFalse(Hints.prefersPreview("Makefile"))
+    }
 }
