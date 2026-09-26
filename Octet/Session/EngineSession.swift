@@ -5,7 +5,16 @@ import Foundation
 struct EngineSession {
     /// Octet's named session, separate from a standalone session in any terminal.
     /// `OCTET_SESSION` runs an isolated session (used to test restarts).
-    static let name = ProcessInfo.processInfo.environment["OCTET_SESSION"].flatMap { $0.isEmpty ? nil : $0 } ?? "octet"
+    /// A Debug build has its own unless told otherwise: two apps on one
+    /// session fight over the panes' size, and a pane drawn for the other
+    /// app's window only comes right when you click into this one.
+    static let name = ProcessInfo.processInfo.environment["OCTET_SESSION"].flatMap { $0.isEmpty ? nil : $0 } ?? defaultName
+
+    #if DEBUG
+    static let defaultName = "octet-debug"
+    #else
+    static let defaultName = "octet"
+    #endif
 
     /// Octet's support folder; isolated sessions get their own subfolder.
     static var supportDirectory: URL {
