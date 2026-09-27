@@ -41,6 +41,12 @@ ln -s /Applications "$stage/Applications"
 echo "==> Building the image"
 # Room for the app plus what Finder writes while laying out the window.
 megabytes=$(( $(du -sm "$stage" | cut -f1) + 20 ))
+# Finder names disks by volume name, so with another "$volume" mounted it
+# can't tell the two apart and the layout step fails. Stop early instead.
+if [ -d "/Volumes/$volume" ]; then
+    echo "error: a volume named \"$volume\" is already mounted (an older Octet disk image?). Eject it and run again." >&2
+    exit 1
+fi
 hdiutil create -srcfolder "$stage" -volname "$volume" -fs HFS+ \
     -format UDRW -size "${megabytes}m" -ov "$work/rw.dmg" >/dev/null
 mount="$(hdiutil attach -readwrite -noverify -noautoopen "$work/rw.dmg" \
