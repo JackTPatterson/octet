@@ -33,6 +33,12 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Octet finds and talks to Octet on your other Macs, so agents on each can message the other's and hand them tasks. Only when Settings › Other Macs is on.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_octet-peer._tcp</string>
+	</array>
 	<key>OctetPrerelease</key>
 	<string>$(OCTET_PRERELEASE)</string>
 	<key>CFBundleDocumentTypes</key>

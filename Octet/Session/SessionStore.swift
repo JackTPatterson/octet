@@ -184,6 +184,7 @@ final class SessionStore: ObservableObject {
         PortsWatcher.shared.start(store: self)
         PasswordWatcher.shared.start(store: self)
         AttentionWatcher.shared.start(store: self)
+        PeerCenter.shared.apply(store: self)
         let client = self.client
         let thread = Thread { [weak self] in
             while self != nil {
@@ -523,6 +524,7 @@ final class SessionStore: ObservableObject {
         usageTracker.refreshIfDue()
         AgentOfferCenter.shared.observe(snapshot)
         AgentWorktreeWatcher.shared.observe(snapshot, store: self)
+        PeerCenter.shared.observe(snapshot)
         refreshTip()
         if branches != self.branches { self.branches = branches }
         if locations != self.agentLocations { self.agentLocations = locations }

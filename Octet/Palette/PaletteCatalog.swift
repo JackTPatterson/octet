@@ -146,6 +146,7 @@ enum PaletteCatalog {
         if let item = checkpointItem(window: window) { items.append(item) }
         if let item = commandLogItem(window: window) { items.append(item) }
         items += bestOfNItems(window: window)
+        items += peerItems()
         if let item = WorktreeCleanupActions.item(window: window) { items.append(item) }
 
         items += queueItems(window: window)
@@ -632,6 +633,95 @@ enum PaletteCatalog {
             ))
         }
         return items
+    }
+
+    /// Other Macs: message an agent on one, give one a task, see what's been said.
+    static func peerItems() -> [PaletteItem] {
+        let center = PeerCenter.shared
+        guard center.running else { return [] }
+        var items: [PaletteItem] = []
+        let online = center.paired.filter { center.online.contains($0.device) || $0.lastHost != nil }
+        if !online.isEmpty {
+            items.append(PaletteItem(
+                id: "action.peerMessage", kind: .action, title: "Message an Agent on Another Mac…",
+                subtitle: online.map(\.name).joined(separator: ", "),
+                keywords: ["other mac", "peer", "remote", "message", "send", "agent", "network"],
+                icon: .symbol("bubble.left.and.bubble.right"),
+                effect: .list(title: "Agents on other Macs") { deliver in
+                    remoteAgents(online) { machine, agent in
+                        PaletteItem(id: "peer.message.\(machine).\(agent.id)", kind: .action,
+                                    title: "\(agent.name) in \(agent.project)", subtitle: "\(machine) · \(agent.status)",
+                                    icon: .symbol("bubble.left"),
+                                    effect: .prompt(title: "Message \(agent.name) on \(machine)", placeholder: "What to say", initial: "") { text in
+                                        center.request(.send, ["machine": machine, "agent": agent.id, "text": text]) { answer in
+                                            if let error = answer["error"] as? String {
+                                                ToastCenter.shared.fail(nil, "Not delivered", detail: error)
+                                            } else {
+                                                ToastCenter.shared.succeed(nil, "Delivered to \(agent.name) on \(machine)")
+                                            }
+                                        }
+                                    })
+                    } done: { deliver($0) }
+                }
+            ))
+            items.append(PaletteItem(
+                id: "action.peerTask", kind: .action, title: "Give a Task to Another Mac…",
+                subtitle: "A new agent in one of its projects; the result comes back here",
+                keywords: ["other mac", "peer", "remote", "delegate", "task", "offload"],
+                icon: .symbol("arrow.up.forward.app"),
+                effect: .list(title: "Where should it run?") { deliver in
+                    remoteAgents(online) { machine, agent in
+                        let kind = agent.agent == "codex" ? "codex" : "claude"
+                        return PaletteItem(id: "peer.task.\(machine).\(agent.id)", kind: .action,
+                                           title: "\(kind == "codex" ? "Codex" : "Claude Code") in \(agent.project)",
+                                           subtitle: "\(machine) · \(agent.folder)", icon: .symbol("arrow.up.forward.app"),
+                                           effect: .prompt(title: "Task for \(machine), in \(agent.project)", placeholder: "What should it do?", initial: "") { task in
+                                               center.request(.delegate, ["machine": machine, "agent_type": kind, "folder": agent.folder, "task": task]) { answer in
+                                                   if let error = answer["error"] as? String {
+                                                       ToastCenter.shared.fail(nil, "Not started", detail: error)
+                                                   } else {
+                                                       ToastCenter.shared.succeed(nil, "Started on \(machine)", detail: "You'll get a notice when it finishes.")
+                                                   }
+                                               }
+                                           })
+                    } done: { deliver($0) }
+                }
+            ))
+        }
+        items.append(PaletteItem(
+            id: "action.peerActivity", kind: .action, title: "Other Macs Activity…",
+            subtitle: center.activity.isEmpty ? "Nothing yet" : "\(center.activity.count) recent",
+            keywords: ["other mac", "peer", "log", "activity", "messages", "tasks"],
+            icon: .symbol("list.bullet"),
+            effect: .list(title: "Other Macs") { deliver in
+                deliver(center.activity.map { entry in
+                    PaletteItem(id: "peer.activity.\(entry.id)", kind: .action,
+                                title: entry.summary,
+                                subtitle: "\(entry.incoming ? "from" : "to") \(entry.machine) · \(entry.date.formatted(date: .omitted, time: .shortened))",
+                                icon: .symbol(entry.incoming ? "arrow.down.left" : "arrow.up.right"), effect: .run {})
+                })
+            }
+        ))
+        return items
+    }
+
+    /// Every agent on the given Macs, as palette rows.
+    private static func remoteAgents(_ peers: [PairedPeer], row: @escaping (String, PeerProtocol.Agent) -> PaletteItem,
+                                     done: @escaping ([PaletteItem]) -> Void) {
+        let group = DispatchGroup()
+        var rows: [PaletteItem] = []
+        for peer in peers {
+            group.enter()
+            PeerCenter.shared.request(.agents, ["machine": peer.name]) { answer in
+                let agents = ((answer["result"] as? [String: Any])?["agents"] as? [[String: Any]] ?? []).compactMap(PeerProtocol.Agent.init)
+                rows += agents.map { row(peer.name, $0) }
+                group.leave()
+            }
+        }
+        group.notify(queue: .main) {
+            done(rows.isEmpty ? [PaletteItem(id: "peer.none", kind: .action, title: "No agents running on your other Macs",
+                                             subtitle: "Or they aren't reachable right now", icon: .symbol("desktopcomputer"), effect: .run {})] : rows)
+        }
     }
 
     /// Accounts: add one, sign in to one, choose the project's.

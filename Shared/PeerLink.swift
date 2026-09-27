@@ -176,11 +176,11 @@ struct DiscoveredPeer: Equatable, Identifiable {
 protocol PeerHost: AnyObject {
     /// A request from a paired Mac. Reply once, from any thread.
     func handle(method: PeerProtocol.Method, params: [String: Any], from peer: PairedPeer,
-                reply: @escaping (Result<[String: Any], PeerProtocol.RemoteError>) -> Void)
+                reply: @escaping @Sendable (Result<[String: Any], PeerProtocol.RemoteError>) -> Void)
     /// An event from a paired Mac.
     func handle(event: String, data: [String: Any], from peer: PairedPeer)
     /// An unknown Mac, with the code both screens show. Answer once.
-    func approvePairing(name: String, code: String, fingerprint: String, incoming: Bool, answer: @escaping (Bool) -> Void)
+    func approvePairing(name: String, code: String, fingerprint: String, incoming: Bool, answer: @escaping @Sendable (Bool) -> Void)
     /// Pairing, connections or the Macs nearby changed.
     func peersChanged()
 }
@@ -191,13 +191,13 @@ final class PeerNode {
     let store: PeerStore
     let queue = DispatchQueue(label: "com.jpxsoftware.octet.peers")
     weak var host: PeerHost?
-    private let machineName: () -> String
+    private let machineName: @Sendable () -> String
     private var listener: NWListener?
     private var browser: NWBrowser?
     private var connections: [UUID: PeerConnection] = [:]
     /// Ready connections by device.
     private var ready: [String: PeerConnection] = [:]
-    private var pending: [String: (Result<[String: Any], PeerProtocol.RemoteError>) -> Void] = [:]
+    private var pending: [String: @Sendable (Result<[String: Any], PeerProtocol.RemoteError>) -> Void] = [:]
     private var waitingForConnection: [String: [(PeerConnection?) -> Void]] = [:]
     private(set) var port: UInt16?
     private(set) var discovered: [DiscoveredPeer] = []
@@ -205,7 +205,7 @@ final class PeerNode {
     /// always when the listener is on.
     var acceptsPairing = true
 
-    init(store: PeerStore, machineName: @escaping () -> String) {
+    init(store: PeerStore, machineName: @escaping @Sendable () -> String) {
         self.store = store
         self.machineName = machineName
     }
@@ -289,7 +289,7 @@ final class PeerNode {
 
     /// Connects to `endpoint`. An unknown Mac is paired (both people accept
     /// the code) when `pairing` is set, refused otherwise.
-    func connect(to endpoint: NWEndpoint, pairing: Bool, completion: ((Result<PairedPeer, Error>) -> Void)? = nil) {
+    func connect(to endpoint: NWEndpoint, pairing: Bool, completion: (@Sendable (Result<PairedPeer, Error>) -> Void)? = nil) {
         queue.async {
             guard let connection = try? PeerConnection(connection: NWConnection(to: endpoint, using: .tcp), role: .client,
                                                        identity: self.store.identity, device: self.store.device,
@@ -298,7 +298,7 @@ final class PeerNode {
         }
     }
 
-    private func wire(_ connection: PeerConnection, pairing: Bool, completion: ((Result<PairedPeer, Error>) -> Void)?) {
+    private func wire(_ connection: PeerConnection, pairing: Bool, completion: (@Sendable (Result<PairedPeer, Error>) -> Void)?) {
         var finished = false
         let finish: (Result<PairedPeer, Error>) -> Void = { result in
             guard !finished else { return }
@@ -393,7 +393,7 @@ final class PeerNode {
 
     /// Calls `method` on a paired Mac, connecting first if needed.
     func call(device: String, method: PeerProtocol.Method, params: [String: Any], timeout: TimeInterval = 30,
-              completion: @escaping (Result<[String: Any], PeerProtocol.RemoteError>) -> Void) {
+              completion: @escaping @Sendable (Result<[String: Any], PeerProtocol.RemoteError>) -> Void) {
         queue.async {
             self.withConnection(to: device) { connection in
                 guard let connection else {

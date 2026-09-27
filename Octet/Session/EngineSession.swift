@@ -75,6 +75,7 @@ struct EngineSession {
         if let cli = Bundle.main.url(forAuxiliaryExecutable: "octet-cli")?.path {
             env["OCTET_CLI"] = cli
         }
+        env[PeerControl.socketVariable] = Self.supportDirectory.appendingPathComponent(PeerControl.socketName).path
         return env
     }
 

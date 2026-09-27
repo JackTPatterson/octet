@@ -86,6 +86,11 @@ struct OctetSettings: Codable, Equatable {
     /// credential and an endpoint Anthropic doesn't document; without it the
     /// chip reads Claude Code's cache and any conversation Octet runs.
     var readClaudeAccountUsage = false
+    /// Settings › Other Macs: pair with Octets on the network so agents on
+    /// each can message the other's and hand them tasks. Off by default.
+    var peersEnabled = false
+    /// What other Macs call this one; empty is the computer's name.
+    var peerName = ""
     var offerRecovery = true
     /// How long a tab closed with something running in it keeps running,
     /// out of sight, so it can be reopened. Zero closes at once.
@@ -312,6 +317,8 @@ struct OctetSettings: Codable, Equatable {
         resumeAgentsOnRestore = value("resumeAgentsOnRestore", defaults.resumeAgentsOnRestore)
         paneHistory = value("paneHistory", defaults.paneHistory)
         readClaudeAccountUsage = value("readClaudeAccountUsage", defaults.readClaudeAccountUsage)
+        peersEnabled = value("peersEnabled", defaults.peersEnabled)
+        peerName = value("peerName", defaults.peerName)
         offerRecovery = value("offerRecovery", defaults.offerRecovery)
         keepClosedTabsMinutes = value("keepClosedTabsMinutes", defaults.keepClosedTabsMinutes)
         keepAwake = value("keepAwake", defaults.keepAwake)
@@ -702,6 +709,9 @@ final class SettingsStore: ObservableObject {
     private func apply(from old: OctetSettings) {
         if values.keepAwake != old.keepAwake { SleepGuard.shared.update() }
         if values.globalHotkey != old.globalHotkey { GlobalHotkey.shared.apply(values.globalHotkey) }
+        if values.peersEnabled != old.peersEnabled { PeerCenter.shared.apply() }
+        // A new name is advertised by starting again.
+        if values.peerName != old.peerName, values.peersEnabled { PeerCenter.shared.restart() }
         if !values.hotkeyDropDown, old.hotkeyDropDown { GlobalHotkey.shared.restoreDropDown() }
         if values.accountProfiles != old.accountProfiles || values.accountAssignments != old.accountAssignments {
             AccountProfiles.configure(profiles: values.accountProfiles, assignments: values.accountAssignments)

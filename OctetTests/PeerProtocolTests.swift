@@ -13,11 +13,12 @@ final class PeerProtocolTests: XCTestCase {
 
     func testAMessageSaysWhoSentItAndHowToAnswer() {
         let from = PeerProtocol.Sender(machine: "Studio", agent: "w2:p1", agentName: "Codex")
-        let prompt = PeerProtocol.prompt("Run the tests", from: from)
-        XCTAssertTrue(prompt.hasPrefix("[Message from Codex on Studio, over Octet]\n\nRun the tests"))
+        let prompt = PeerProtocol.prompt("Run the tests", from: from, allowed: .approved, here: "Laptop")
+        XCTAssertTrue(prompt.hasPrefix("[Message from Codex on Studio, delivered by Octet]\n\nRun the tests"))
+        XCTAssertTrue(prompt.contains("The person at Laptop approved delivering this message."))
         XCTAssertTrue(prompt.contains("machine \"Studio\" and agent \"w2:p1\""))
-        let script = PeerProtocol.prompt("hi", from: .init(machine: "Studio", agent: nil, agentName: nil))
-        XCTAssertEqual(script, "[Message from Studio, over Octet]\n\nhi")
+        let script = PeerProtocol.prompt("hi", from: .init(machine: "Studio", agent: nil, agentName: nil), allowed: .trusted, here: "Laptop")
+        XCTAssertEqual(script, "[Message from Studio, delivered by Octet]\n\nhi\n\n(The person at Laptop lets Studio send messages without asking.)")
         XCTAssertTrue(PeerProtocol.taskPrompt("Fix it", from: from).hasSuffix("\n\nFix it"))
     }
 
@@ -34,5 +35,11 @@ final class PeerProtocolTests: XCTestCase {
         XCTAssertEqual(PeerProtocol.Agent(["id": "w1:p1", "agent": "claude"])?.status, "unknown")
         XCTAssertNil(PeerProtocol.Agent(["agent": "claude"]))
         XCTAssertEqual(PeerProtocol.tail("a  \nb\nc\n\n  \n", lines: 2), "b\nc")
+        XCTAssertEqual(PeerProtocol.tail("\n\na\n\n\n\nb\n", lines: 10), "a\n\nb")
+        // layout.apply's answer, as the session server sends it.
+        let applied: [String: Any] = ["type": "layout_apply", "layout": ["tab_id": "w1:t3", "focused_pane_id": "w1:p3",
+                                                                         "root": ["type": "pane", "pane_id": "w1:p3"]]]
+        XCTAssertEqual(PeerProtocol.paneId(inLayoutResult: applied), "w1:p3")
+        XCTAssertNil(PeerProtocol.paneId(inLayoutResult: ["type": "ok"]))
     }
 }

@@ -395,3 +395,33 @@ Already covered, for the record: a session manager (Ghostty #3358, 609, their
 top request), close protection (closed tabs keep running and reopen with
 ⌘⇧T), context usage per agent, sticky manual tab names, image paste, and no
 account or telemetry (Warp #900, 462).
+
+### Other Macs (2026-09-27)
+
+- [x] **48. Agents on different Macs talk to each other (Octet only).**
+  Settings › Other Macs (off by default) pairs Octets on the same network
+  directly, no server of ours: Bonjour finds them, or pair by host:port
+  (a tailnet). Each Mac has a signing identity; each connection runs a
+  fresh X25519 exchange that both sides sign, then everything is sealed
+  (ChaChaPoly, a counter per direction). First contact shows the same
+  6-digit code on both Macs; both people accept. A paired Mac can list
+  this Mac's agents and read their screens; messages (delivered as the
+  agent's next prompt, saying who sent it and that the person here
+  allowed it) and tasks (a new agent tab in a folder, the end of its
+  screen sent back when it finishes) ask first unless its trust says
+  otherwise (Ask each time / Allow messages / Allow messages and tasks).
+  Agents get MCP tools (octet-peers: list_machines, list_agents,
+  send_to_agent, read_agent, delegate_task, wait_for_task) via Settings ›
+  Let agents use other Macs, and are told on start that they're in Octet
+  and which Macs are paired; scripts get `octet-cli peer …`. Only inside
+  Octet: elsewhere the tools list is empty and the CLI refuses, and the
+  app accepts a request only from a pane of its own session. Palette:
+  Message an Agent on Another Mac, Give a Task to Another Mac, Other Macs
+  Activity. Checked: crypto (MITM codes differ, tampered/replayed/
+  reordered frames refused), two nodes over TCP (pairing, reconnect,
+  strangers and impostors refused), and two Octet copies on one Mac: a
+  real Claude Code on "Laptop" found "Studio" by itself, messaged its
+  agent, which answered, and read the answer back; a delegated task ran
+  and returned its result. Not checked: two physical Macs (Bonjour and
+  the local-network prompt), and the approval dialogs by hand (the test
+  used an auto-approve hook; the trust rules are unit-tested).

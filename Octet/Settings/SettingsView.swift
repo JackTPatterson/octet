@@ -874,6 +874,7 @@ private struct AgentSettings: View {
             }
         }
         }
+        PeersSettingsGroup(settings: settings)
         SettingsGroup(title: "Accounts") {
             SettingsRow(
                 title: "Agent accounts",

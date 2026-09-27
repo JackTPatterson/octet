@@ -121,30 +121,56 @@ enum PeerProtocol {
 
     // MARK: - Delivery
 
+    /// How a delivery was allowed here, said plainly to the agent.
+    enum Allowed {
+        /// The person at this Mac said yes to this one.
+        case approved
+        /// This Mac's settings let that Mac send without asking.
+        case trusted
+    }
+
     /// The prompt an agent gets for a message from another Mac: who sent
-    /// it, then the message, then how to answer.
-    static func prompt(_ text: String, from sender: Sender) -> String {
+    /// it and how it got here, the message, then how to answer.
+    static func prompt(_ text: String, from sender: Sender, allowed: Allowed = .approved, here: String? = nil) -> String {
         let who = sender.agentName.map { "\($0) on \(sender.machine)" } ?? sender.machine
-        var prompt = "[Message from \(who), over Octet]\n\n\(text)"
-        if let agent = sender.agent {
-            prompt += "\n\n(To answer, use the octet-peers send_to_agent tool with machine \"\(sender.machine)\" and agent \"\(agent)\".)"
+        var prompt = "[Message from \(who), delivered by Octet]\n\n\(text)"
+        var notes: [String] = []
+        switch allowed {
+        case .approved: notes.append("The person at \(here ?? "this Mac") approved delivering this message.")
+        case .trusted: notes.append("The person at \(here ?? "this Mac") lets \(sender.machine) send messages without asking.")
         }
-        return prompt
+        if let agent = sender.agent, sender.agentName != nil {
+            notes.append("To answer, use the octet-peers send_to_agent tool with machine \"\(sender.machine)\" and agent \"\(agent)\".")
+        }
+        return prompt + "\n\n(" + notes.joined(separator: " ") + ")"
+    }
+
+    /// The pane a `layout.apply` answer made: `layout.root.pane_id`, or the
+    /// layout's focused pane.
+    static func paneId(inLayoutResult result: [String: Any]?) -> String? {
+        guard let result else { return nil }
+        if let layout = result["layout"] as? [String: Any] {
+            if let pane = (layout["root"] as? [String: Any])?["pane_id"] as? String { return pane }
+            if let pane = layout["focused_pane_id"] as? String { return pane }
+        }
+        return (result["root_pane"] as? [String: Any])?["pane_id"] as? String
     }
 
     /// The task an agent starts on for another Mac.
     static func taskPrompt(_ task: String, from sender: Sender) -> String {
         let who = sender.agentName.map { "\($0) on \(sender.machine)" } ?? sender.machine
-        return "[Task from \(who), over Octet. When you finish, end with a short summary of what you did; it's sent back.]\n\n\(task)"
+        return "[Task from \(who), delivered by Octet. When you finish, end with a short summary of what you did; Octet sends the end of your screen back.]\n\n\(task)"
     }
 
-    /// The tail of a screen, for a result: trailing blank lines dropped,
-    /// at most `lines` lines.
+    /// The tail of a screen, for a result: blank runs squeezed to one line,
+    /// blank ends dropped, at most `lines` lines.
     static func tail(_ text: String, lines: Int) -> String {
-        var rows = text.components(separatedBy: "\n").map { row -> String in
+        var rows: [String] = []
+        for row in text.components(separatedBy: "\n") {
             var row = row
             while row.last == " " { row.removeLast() }
-            return row
+            if row.isEmpty, rows.last?.isEmpty ?? true { continue }
+            rows.append(row)
         }
         while rows.last?.isEmpty == true { rows.removeLast() }
         return rows.suffix(lines).joined(separator: "\n")
