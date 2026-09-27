@@ -91,7 +91,15 @@ spctl --assess --type execute --verbose=2 "$app"
 # release filename stable between the GitHub asset and Sparkle's appcast.
 short_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")"
 build_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Contents/Info.plist")"
-release_tag="${OCTET_RELEASE_TAG:-v${short_version}-alpha.${build_version}}"
+# The pre-release name (alpha, beta) is the build's own; a stable build has
+# none. Numbered by OCTET_PRERELEASE_NUMBER, else the build number.
+prerelease="$(/usr/libexec/PlistBuddy -c 'Print :OctetPrerelease' "$app/Contents/Info.plist" 2>/dev/null || true)"
+if [ -n "$prerelease" ]; then
+    default_tag="v${short_version}-${prerelease}.${OCTET_PRERELEASE_NUMBER:-$build_version}"
+else
+    default_tag="v${short_version}"
+fi
+release_tag="${OCTET_RELEASE_TAG:-$default_tag}"
 asset_stem="Octet-${release_tag#v}-arm64"
 zip="$out/$asset_stem.zip"
 dmg="$out/$asset_stem.dmg"
