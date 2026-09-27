@@ -55,6 +55,14 @@ mount="$(hdiutil attach -readwrite -noverify -noautoopen "$work/rw.dmg" \
 # Another "Octet" volume may be mounted already, making this one "Octet 1".
 disk="$(basename "$mount")"
 
+# Finder learns about a new disk a moment after it mounts; asking sooner
+# fails with "Can't get disk".
+tries=0
+until osascript -e "tell application \"Finder\" to get name of disk \"$disk\"" >/dev/null 2>&1 || [ "$tries" -ge 20 ]; do
+    sleep 0.5
+    tries=$((tries + 1))
+done
+
 echo "==> Laying out the window"
 # Positions are icon centres and must match dmg-background.swift. The window
 # is the background's 660x400 plus the title bar.
