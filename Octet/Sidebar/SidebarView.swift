@@ -327,7 +327,8 @@ private struct WorkspaceCard: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(cardBackground(isSelected: isSelected, hue: brand?.hueHex))
+        .background(cardBackground(isSelected: isSelected,
+                                   hue: store.workspaceColor(workspace.workspaceId)?.hex ?? brand?.hueHex))
         .overlay(
             RoundedRectangle(cornerRadius: Theme.rowRadius)
                 .strokeBorder(isSelected ? Theme.textTertiary.opacity(0.55)
@@ -444,6 +445,10 @@ struct WorkspaceOrganizeMenu: View {
         let id = workspace.workspaceId
         Button("Rename Workspace…", action: rename)
         Divider()
+        TabColorPicker(title: "Workspace Color", selection: Binding(
+            get: { store.workspaceColor(id) },
+            set: { store.setWorkspaceColor(id, $0) }))
+        Divider()
         let agents = store.snapshot.agents(inWorkspace: id).filter { AgentOffer.agentId($0) != nil }
         if agents.count == 1, let agent = agents.first {
             Button("Open on Octet UI") { window.openOnOctetUI(agent) }
@@ -463,7 +468,7 @@ struct WorkspaceOrganizeMenu: View {
         }
         if store.idleWorkspaces.contains(where: { $0.workspaceId == id }) {
             Button("Keep in View Now") {
-                store.setPinned(id, false)
+                store.keepInView(id)
                 window.focusWorkspace(id)
             }
         } else {

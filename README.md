@@ -149,7 +149,7 @@ Reinstall the hook after moving the app because its configuration stores the CLI
 - macOS 14 or newer on Apple Silicon
 - Xcode 26 or 27 with command-line tools
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen): `brew install xcodegen`
-- [Herdr](https://github.com/herdrdev/herdr): `brew install herdr` (or Rust, to build the patched engine yourself)
+- [Herdr](https://github.com/herdrdev/herdr): `brew install herdr` (or Rust and Zig 0.16, to build the patched engine yourself)
 
 Two build inputs are downloaded or built by script rather than committed: `Vendor/GhosttyKit.xcframework` (about 120 MB) and the session-server binary at `Vendor/engine/octet-engine`.
 
@@ -270,9 +270,17 @@ Terminal content can start at the top of a pane or remain anchored near the bott
 
 For the original implementation plan and protocol-level notes, see [docs/PLAN.md](docs/PLAN.md). The native-agent UI design is documented in [docs/NATIVE-AGENT-UI.md](docs/NATIVE-AGENT-UI.md).
 
+## Continuous integration and releases
+
+Every pull request and every push to `master` builds Octet and runs its tests ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
+
+Production releases ship from the `release` branch ([`.github/workflows/release.yml`](.github/workflows/release.yml)). To release, bump `CURRENT_PROJECT_VERSION` (and `MARKETING_VERSION` for a new version) in `project.yml` on `master`, then bring `master` into `release`, either with a pull request or with `git push origin master:release`. The workflow tests the build, then runs `scripts/release.sh` in the `production` environment, which signs, notarizes and packages the build. It publishes the DMG and ZIP as a GitHub release and commits the refreshed `appcast.xml` to `master`, so installed copies update. A version that is already published stops the run before anything is signed.
+
+The `production` environment (Settings › Environments) holds the secrets listed at the top of `release.yml`: the Developer ID certificate as a base64 `.p12` and its password, the Apple ID, team and app-specific password for notarization, and Sparkle's EdDSA private key (`generate_keys -x`). Add required reviewers there to approve each release before it's signed.
+
 ## Release builds
 
-The release script performs the full distribution pipeline: Release build, Developer ID signing, hardened-runtime validation, notarization, stapling, Gatekeeper assessment, DMG packaging, Sparkle archive signing, and appcast generation.
+The same pipeline runs locally from a Mac with the certificate and credentials in its keychain. The release script performs the full distribution pipeline: Release build, Developer ID signing, hardened-runtime validation, notarization, stapling, Gatekeeper assessment, DMG packaging, Sparkle archive signing, and appcast generation.
 
 ```sh
 scripts/release.sh

@@ -1,16 +1,29 @@
-import Foundation
+import AppKit
 
 /// How Claude and Codex are signed in, and how much of a subscription's
 /// allowance is used. Subscriptions show allowance; API-key accounts show
-/// cost. Checked at launch and every few minutes through each CLI, and
-/// updated live from conversations' rate-limit events.
+/// cost. How each is signed in is checked every few minutes through its CLI;
+/// Claude's allowance is read every minute, when Octet comes forward, and
+/// when its chip is hovered, and live from conversations' rate-limit events.
 @MainActor
 final class AccountStore: ObservableObject {
     static let shared = AccountStore()
 
     @Published private(set) var accounts: [String: AgentAccount] = [:]
     @Published private(set) var history: [String: [UsageHistorySample]] = [:]
+    /// Why the last read didn't come from the Claude account, when it didn't.
+    @Published private(set) var claudeFallback: ClaudeUsage.Fallback?
     private var timer: Timer?
+    private var activation: NSObjectProtocol?
+    private var refreshing = false
+    private var lastRefresh = Date.distantPast
+    private var lastSignInCheck = Date.distantPast
+    private var lastAccountAsk = Date.distantPast
+    /// How often each part runs: the sign-in checks start a login shell each;
+    /// the cache read is a file; the account is one request.
+    private static let tick: TimeInterval = 60
+    private static let signInEvery: TimeInterval = 300
+    private static let askAccountEvery: TimeInterval = 120
     private static let savedKey = "octet.accounts.v1"
     private static let historyKey = "octet.accounts.history.v1"
 
@@ -27,12 +40,22 @@ final class AccountStore: ObservableObject {
 
     func start() {
         guard timer == nil else { return }
-        refresh()
-        let timer = Timer(timeInterval: 300, repeats: true) { _ in
+        refresh(force: true)
+        let timer = Timer(timeInterval: Self.tick, repeats: true) { _ in
             MainActor.assumeIsolated { AccountStore.shared.refresh() }
         }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
+        // Back at the keyboard is when a stale number would mislead.
+        activation = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { _ in MainActor.assumeIsolated { AccountStore.shared.refreshSoon() } }
+    }
+
+    /// Someone is looking: read now, unless a read just ran.
+    func refreshSoon() {
+        guard Date().timeIntervalSince(lastRefresh) > 20 else { return }
+        refresh(eager: true)
     }
 
     /// A conversation's stream reported Claude's plan windows.
@@ -43,33 +66,57 @@ final class AccountStore: ObservableObject {
 
     private func update(_ agent: String, _ windows: [UsageWindow]) {
         var account = accounts[agent] ?? AgentAccount(agent: agent, kind: .subscription)
-        account.windows = windows
+        account.windows = AgentAccounts.mergeWindows(newer: windows, older: account.windows)
         account.updatedAt = Date()
         set(account)
     }
 
-    func refresh() {
+    /// `force` checks everything now; `eager` asks the account sooner than
+    /// its usual spacing, for someone looking at the chip.
+    func refresh(force: Bool = false, eager: Bool = false) {
+        guard !refreshing else { return }
+        let now = Date()
+        let checkSignIn = force || now.timeIntervalSince(lastSignInCheck) >= Self.signInEvery
         // Read here, on the main actor, and handed to the background work.
         let askAccount = SettingsStore.shared.values.readClaudeAccountUsage
+            && (force || now.timeIntervalSince(lastAccountAsk) >= (eager ? 30 : Self.askAccountEvery))
+        let knownClaude = accounts["claude"]
+        refreshing = true
+        lastRefresh = now
+        if checkSignIn { lastSignInCheck = now }
+        if askAccount { lastAccountAsk = now }
         DispatchQueue.global(qos: .utility).async {
             var found: [AgentAccount] = []
             var refusal: String?
+            var fallback: ClaudeUsage.Fallback?
+            // How Claude is signed in: asked every few minutes, else as last
+            // known. A failed check (not on the login shell's PATH, an older
+            // CLI) keeps what was known rather than hiding the allowance.
+            var claude: AgentAccount?
+            if checkSignIn, let output = Self.run("claude auth status") {
+                claude = AgentAccounts.claude(authStatus: Data(output.utf8))
+            } else if let knownClaude {
+                claude = AgentAccount(agent: "claude", kind: knownClaude.kind, plan: knownClaude.plan)
+            } else {
+                // Never checked successfully: the cache can still say.
+                claude = AgentAccount(agent: "claude", kind: .unknown)
+            }
             // The CLI doesn't report windows, so they come from the account
             // itself (when allowed) or Claude Code's cache; `merge` keeps a
             // fresher stream's over either.
-            if let output = Self.run("claude auth status") {
-                var claude = AgentAccounts.claude(authStatus: Data(output.utf8))
-                if claude.kind == .subscription {
-                    let reading = ClaudeUsage.read(askAccount: askAccount)
-                    refusal = reading.refusal
-                    if let (windows, at) = reading.windows {
-                        claude.windows = windows
-                        claude.updatedAt = at
-                    }
+            if var account = claude, account.kind == .subscription || account.kind == .unknown {
+                let reading = ClaudeUsage.read(askAccount: askAccount)
+                refusal = reading.refusal
+                fallback = reading.fallback
+                if let (windows, at) = reading.windows {
+                    account.windows = windows
+                    account.updatedAt = at
+                    if account.kind == .unknown { account.kind = .subscription }
                 }
-                found.append(claude)
+                claude = account
             }
-            if let output = Self.run("codex login status") {
+            if let claude { found.append(claude) }
+            if checkSignIn, let output = Self.run("codex login status") {
                 var codex = AgentAccounts.codex(loginStatus: output)
                 if codex.kind == .subscription, let (windows, at) = CodexUsage.windows() {
                     codex.windows = windows
@@ -79,8 +126,15 @@ final class AccountStore: ObservableObject {
             }
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
-                    found.forEach { AccountStore.shared.merge($0) }
-                    if let refusal { AccountStore.shared.stopAskingAccount(refusal) }
+                    let store = AccountStore.shared
+                    store.refreshing = false
+                    found.forEach { store.merge($0) }
+                    // Only a read that asked the account can say why it didn't answer.
+                    if askAccount, store.claudeFallback != fallback { store.claudeFallback = fallback }
+                    if !SettingsStore.shared.values.readClaudeAccountUsage, store.claudeFallback != nil {
+                        store.claudeFallback = nil
+                    }
+                    if let refusal { store.stopAskingAccount(refusal) }
                 }
             }
         }
@@ -95,24 +149,36 @@ final class AccountStore: ObservableObject {
                                 detail: "\(reason) The chip uses Claude Code's cache instead. You can turn it back on in Settings.")
     }
 
-    /// The switch was turned on: ask now rather than in five minutes, and
+    /// The switch was turned on: ask now rather than in a few minutes, and
     /// let this read show the keychain dialog, since the person just asked.
     func accountUsageSettingChanged() {
         ClaudeUsage.allowPrompt()
-        refresh()
+        claudeFallback = nil
+        refresh(force: true)
     }
 
-    /// Takes a refreshed account, keeping the windows already known when it
-    /// brings none of its own. A refresh runs in a shell and takes seconds, so
-    /// without this a refresh that started before a stream reported windows
-    /// would land afterwards and erase them. Windows are dropped when the way
-    /// the account signs in changes, since they no longer describe it.
+    /// Turns live account reads on from the chip's card.
+    func enableAccountUsage() {
+        SettingsStore.shared.values.readClaudeAccountUsage = true
+        accountUsageSettingChanged()
+    }
+
+    /// Takes a refreshed account, window by window: the newer reading's
+    /// windows win, and the older one fills in any still running that the
+    /// newer didn't mention. A refresh runs in a shell and takes seconds, so
+    /// a refresh that started before a stream reported windows can land
+    /// afterwards; and a stream may report only one window. Windows are
+    /// dropped when the way the account signs in changes, since they no
+    /// longer describe it.
     private func merge(_ account: AgentAccount) {
         var merged = account
-        if let known = accounts[account.agent], known.kind == merged.kind, !known.windows.isEmpty,
-           merged.windows.isEmpty || (known.updatedAt ?? .distantPast) > (merged.updatedAt ?? .distantPast) {
-            merged.windows = known.windows
-            merged.updatedAt = known.updatedAt
+        if let known = accounts[account.agent], known.kind == merged.kind, !known.windows.isEmpty {
+            if merged.windows.isEmpty || (known.updatedAt ?? .distantPast) > (merged.updatedAt ?? .distantPast) {
+                merged.windows = AgentAccounts.mergeWindows(newer: known.windows, older: merged.windows)
+                merged.updatedAt = known.updatedAt
+            } else {
+                merged.windows = AgentAccounts.mergeWindows(newer: merged.windows, older: known.windows)
+            }
         }
         set(merged)
     }
@@ -157,8 +223,19 @@ final class AccountStore: ObservableObject {
         let output = Pipe()
         process.standardOutput = output
         process.standardError = output
+        let read = DispatchSemaphore(value: 0)
+        var data = Data()
+        DispatchQueue.global(qos: .utility).async {
+            data = output.fileHandleForReading.readDataToEndOfFile()
+            read.signal()
+        }
         do { try process.run() } catch { return nil }
-        let data = output.fileHandleForReading.readDataToEndOfFile()
+        // A login shell that hangs (a stuck profile script) would otherwise
+        // stall every refresh after it.
+        if read.wait(timeout: .now() + 20) == .timedOut {
+            process.terminate()
+            return nil
+        }
         process.waitUntilExit()
         let text = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         return process.terminationStatus == 0 || text.lowercased().contains("not logged in") ? text : nil

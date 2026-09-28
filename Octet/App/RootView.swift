@@ -35,8 +35,9 @@ struct RootView: View {
     /// Where the terminal starts across the window.
     private var sidebarInset: CGFloat { ui.sidebarVisible ? ui.sidebarWidth + 1 : 0 }
     private var windowHeight: CGFloat { NSApp.keyWindow?.contentView?.bounds.height ?? 800 }
-    private var runtimePanelWidth: CGFloat { ui.runtimeInspectorEntryID == nil ? 293 : 441 }
+    private let runtimePanelWidth: CGFloat = 293
     static let todoPanelWidth: CGFloat = 293
+    static let gitPanelWidth: CGFloat = 321
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -211,7 +212,19 @@ struct RootView: View {
                 ZStack(alignment: .leading) {
                     Rectangle().fill(Theme.divider).frame(width: 1)
                         .frame(maxHeight: .infinity, alignment: .leading)
-                    RuntimePanel(store: store)
+                    GitPanel(model: window.git, ui: ui)
+                        .frame(width: Self.gitPanelWidth - 1)
+                        .padding(.leading, 1)
+                        .offset(x: ui.gitPanelVisible ? 0 : Self.gitPanelWidth)
+                }
+                .frame(width: ui.gitPanelVisible ? Self.gitPanelWidth : 0, alignment: .leading)
+                .clipped()
+                .allowsHitTesting(ui.gitPanelVisible)
+                .accessibilityHidden(!ui.gitPanelVisible)
+                ZStack(alignment: .leading) {
+                    Rectangle().fill(Theme.divider).frame(width: 1)
+                        .frame(maxHeight: .infinity, alignment: .leading)
+                    RuntimePanel(store: store, ui: ui)
                         .frame(width: runtimePanelWidth - 1)
                         .padding(.leading, 1)
                         .offset(x: ui.runtimePanelVisible ? 0 : runtimePanelWidth)
@@ -284,8 +297,10 @@ struct RootView: View {
         .animation(motion.animation(.sidebar), value: ui.sidebarVisible)
         .animation(motion.animation(.sidebar), value: ui.runtimePanelVisible)
         .animation(motion.animation(.sidebar), value: ui.todoPanelVisible)
+        .animation(motion.animation(.sidebar), value: ui.gitPanelVisible)
         .onAppear {
             window.todos.attach(window)
+            window.git.attach(window)
             window.terminalQuestions.attach(window)
         }
         .animation(motion.animation(.sidebar), value: boardHere)
@@ -831,12 +846,15 @@ final class UIState: ObservableObject {
     @Published var sidebarVisible = UserDefaults.standard.object(forKey: "octet.sidebarVisible") as? Bool ?? true {
         didSet { UserDefaults.standard.set(sidebarVisible, forKey: "octet.sidebarVisible") }
     }
-    /// The right-hand panel shows one thing at a time: runtimes or todos.
+    /// The right-hand panel shows one thing at a time: runtimes, todos or git.
     @Published var runtimePanelVisible = false {
-        didSet { if runtimePanelVisible { todoPanelVisible = false } }
+        didSet { if runtimePanelVisible { todoPanelVisible = false; gitPanelVisible = false } }
     }
     @Published var todoPanelVisible = false {
-        didSet { if todoPanelVisible { runtimePanelVisible = false } }
+        didSet { if todoPanelVisible { runtimePanelVisible = false; gitPanelVisible = false } }
+    }
+    @Published var gitPanelVisible = false {
+        didSet { if gitPanelVisible { runtimePanelVisible = false; todoPanelVisible = false } }
     }
     /// Runtime identities already announced in this window. Views are rebuilt
     /// during tab switches, but old processes must not look newly created.
@@ -844,9 +862,8 @@ final class UIState: ObservableObject {
     /// Whether the agent in front has any runtimes, set by the Runtime panel
     /// (which works them out); the tab bar hides its button when it has none.
     @Published var runtimeHasEntries = false
-    /// Selecting a runtime collapses the list to an icon rail and opens its
-    /// inspector immediately to the rail's left.
-    @Published var runtimeInspectorEntryID: String?
+    /// Runtimes opened in place in the list, to show their details.
+    @Published var runtimeExpandedEntryIDs: Set<String> = []
     @Published var paletteVisible = false
     /// Drag the sidebar's edge to resize it (200pt up to half the window).
     @Published var sidebarWidth: CGFloat = {

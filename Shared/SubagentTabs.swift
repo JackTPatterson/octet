@@ -40,6 +40,10 @@ enum SubagentHook {
         if !description.isEmpty {
             command += ["--description", description]
         }
+        // The pane that launched it, so the tab can follow its root's colour.
+        if let parent = environment[EngineProtocol.paneIdVariable], !parent.isEmpty {
+            command += ["--parent-pane", parent]
+        }
 
         var pane: [String: Any] = ["type": "pane", "label": label, "command": command]
         if let cwd = payload["cwd"] as? String, !cwd.isEmpty { pane["cwd"] = cwd }
@@ -77,12 +81,14 @@ enum SubagentWatch {
         description: String?,
         since: TimeInterval,
         title: String,
+        parentPaneId: String? = nil,
         environment: [String: String]
     ) -> Never {
-        let reporter = PaneAgentReporter(environment: environment)
+        let reporter = PaneAgentReporter(environment: environment, parentPaneId: parentPaneId, toolUseId: toolUseId)
         let renderer = SubagentTranscriptRenderer()
         renderer.printHeader(title: title)
         reporter.markSubagent()
+        reporter.placeBesideParent()
         reporter.report(state: "working", message: title)
         renderer.onDirectory = { cwd in reporter.markSubagent(cwd: cwd) }
         renderer.onFinished = {
@@ -177,8 +183,15 @@ extension SubagentWatch {
 struct PaneAgentReporter {
     let client: EngineClient?
     let paneId: String?
+    /// The agent's pane that launched this subagent, reported with the role.
+    let parentPaneId: String?
+    /// The tool call that started the subagent, which its transcript's
+    /// metadata names too: how Octet knows whose edits are whose.
+    let toolUseId: String?
 
-    init(environment: [String: String]) {
+    init(environment: [String: String], parentPaneId: String? = nil, toolUseId: String? = nil) {
+        self.parentPaneId = parentPaneId
+        self.toolUseId = toolUseId
         paneId = environment[EngineProtocol.paneIdVariable]
         client = environment[EngineProtocol.socketPathVariable].map(EngineClient.init(socketPath:))
     }
@@ -198,6 +211,8 @@ struct PaneAgentReporter {
     static let roleToken = "octet_role"
     static let subagentRole = "subagent"
     static let cwdToken = "octet_cwd"
+    static let parentPaneToken = "octet_parent_pane"
+    static let toolUseToken = "octet_tool_use"
 
     /// Tags the pane as a subagent viewer, so Octet can tell its tab apart
     /// from a Claude session, and says which folder the subagent is in.
@@ -206,11 +221,28 @@ struct PaneAgentReporter {
         guard let client, let paneId else { return }
         var tokens = [Self.roleToken: Self.subagentRole]
         if let cwd { tokens[Self.cwdToken] = cwd }
+        if let parentPaneId { tokens[Self.parentPaneToken] = parentPaneId }
+        if let toolUseId { tokens[Self.toolUseToken] = toolUseId }
         _ = try? client.call("pane.report_metadata", [
             "pane_id": paneId,
             "source": "octet:subagent",
             "tokens": tokens,
         ])
+    }
+
+    /// Moves this viewer's tab in beside the tab that launched it, after
+    /// that tab's earlier subagents. Octet keeps it there afterwards.
+    func placeBesideParent() {
+        guard let client, let paneId, let parentPaneId, let snapshot = try? client.snapshot(),
+              let own = snapshot.panes.first(where: { $0.paneId == paneId }),
+              let parent = snapshot.panes.first(where: { $0.paneId == parentPaneId })?.tabId,
+              parent != own.tabId else { return }
+        // The pane's own report may not show in the snapshot yet.
+        let tabs = snapshot.tabs(inWorkspace: own.workspaceId).map(\.tabId)
+        let moves = SubagentTabOrder.moves(tabs) { $0 == own.tabId ? parent : snapshot.parentTabId(ofTab: $0) }
+        for move in moves {
+            guard (try? client.call("tab.move", ["tab_id": move.tabId, "insert_index": move.gap])) != nil else { return }
+        }
     }
 
     func report(state: String, message: String) {

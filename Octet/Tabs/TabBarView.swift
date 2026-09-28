@@ -80,6 +80,7 @@ struct TabBarView: View {
             // or while its panel is open so it can still be closed.
             HStack(spacing: 2) {
                 TodoPanelButton(model: window.todos, isShowing: $ui.todoPanelVisible)
+                GitPanelButton(model: window.git, isShowing: $ui.gitPanelVisible)
                 if ui.runtimeHasEntries || ui.runtimePanelVisible {
                     RuntimePanelButton(isShowing: $ui.runtimePanelVisible)
                 }
@@ -227,6 +228,10 @@ private struct TabItem: View {
     var body: some View {
         let agent = store.primaryAgent(in: store.snapshot.agents(inTab: tab.tabId))
         let brand = AgentBrand.forAgent(agent?.agent)
+        // A colour picked by hand, here or on the root agent's tab or the
+        // workspace, outranks the vendor's.
+        let picked = store.tabColor(tab)
+        let hue = picked?.hex ?? brand?.hueHex
 
         HStack(spacing: 6) {
             if let agent, handoffTitle == nil {
@@ -301,16 +306,16 @@ private struct TabItem: View {
         .background {
             ZStack {
                 if hovered && !isActive { Theme.hover }
-                if let hue = brand?.hueHex, !isActive {
+                if let hue, !isActive {
                     Color(hex: hue).opacity(hovered ? Theme.tabColorHoverOpacity : Theme.tabColorOpacity)
                 }
                 // A single selection surface slides between tabs.
                 if isActive {
                     ZStack(alignment: .top) {
                         Theme.terminalBackground
-                        if let hue = brand?.hueHex { Color(hex: hue).opacity(0.08) }
+                        if let hue { Color(hex: hue).opacity(picked == nil ? 0.08 : 0.12) }
                         Rectangle()
-                            .fill(Color.white.opacity(0.9))
+                            .fill(picked?.color ?? Color.white.opacity(0.9))
                             .frame(height: 2)
                     }
                     .matchedGeometryEffect(id: "selectedTab", in: selection)
@@ -329,6 +334,10 @@ private struct TabItem: View {
             if TabAutoName.isUnnamed(tab.label) == false {
                 Button("Reset Tab Name") { store.renameTab(tab.tabId, to: "") }
             }
+            Divider()
+            TabColorPicker(title: "Tab Color", selection: Binding(
+                get: { store.ownTabColor(tab) },
+                set: { store.setTabColor(tab, $0) }))
             Divider()
             Button("Move Tab Left") { store.moveTab(tab.tabId, by: -1) }.disabled(index == 0)
             Button("Move Tab Right") { store.moveTab(tab.tabId, by: 1) }.disabled(index >= count - 1)

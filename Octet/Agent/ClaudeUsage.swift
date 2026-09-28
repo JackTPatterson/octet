@@ -20,10 +20,21 @@ import Security
 /// `AccountStore.merge`.
 enum ClaudeUsage {
     struct Reading {
-        var windows: ([UsageWindow], Date)?
+        /// The windows and when they were read, nil when that's unknown.
+        var windows: ([UsageWindow], Date?)?
         /// Set when asking the account can't work until something changes,
         /// so the setting should turn itself off rather than keep trying.
         var refusal: String?
+        /// Why the account wasn't asked, or didn't answer, this time.
+        var fallback: Fallback?
+    }
+
+    /// Why a read fell back on Claude Code's cache, for the chip's card.
+    enum Fallback: Equatable {
+        /// macOS wouldn't hand over the token without asking again: the
+        /// person allowed it once, or Claude Code rewrote the item.
+        case needsKeychain
+        case problem(String)
     }
 
     /// What asking the account came to.
@@ -31,7 +42,7 @@ enum ClaudeUsage {
         case windows([UsageWindow], Date)
         /// Worth another try later: offline, a timeout, a busy server, or no
         /// token right now (Claude Code refreshes its own).
-        case unavailable
+        case unavailable(Fallback)
         /// Won't work until something changes: the keychain prompt was
         /// declined, or the endpoint refuses or is gone.
         case refused(String)
@@ -42,7 +53,7 @@ enum ClaudeUsage {
         if askAccount {
             switch fromAccount() {
             case .windows(let windows, let at): reading.windows = (windows, at)
-            case .unavailable: break
+            case .unavailable(let fallback): reading.fallback = fallback
             case .refused(let reason): reading.refusal = reason
             }
         }
@@ -57,7 +68,7 @@ enum ClaudeUsage {
         let fresh: Bool
         switch self.token() {
         case .token(let value, let isFresh): (token, fresh) = (value, isFresh)
-        case .missing: return .unavailable
+        case .missing(let fallback): return .unavailable(fallback)
         case .declined: return .refused("Keychain access to Claude Code's sign-in was declined.")
         }
         var request = URLRequest(url: endpoint, timeoutInterval: 8)
@@ -77,39 +88,46 @@ enum ClaudeUsage {
 
         switch status {
         case 200?:
-            guard let payload, let json = try? JSONSerialization.jsonObject(with: payload) else { return .unavailable }
+            guard let payload, let json = try? JSONSerialization.jsonObject(with: payload) else {
+                return .unavailable(.problem("Claude's usage answer couldn't be read."))
+            }
             let windows = AgentAccounts.claudeWindows(utilization: json)
-            return windows.isEmpty ? .unavailable : .windows(windows, Date())
+            return windows.isEmpty ? .unavailable(.problem("Claude's usage answer had no windows Octet knows.")) : .windows(windows, Date())
         case 401?, 403?:
             // A held token may simply have been rotated by Claude Code: drop
             // it and read a fresh one next time. Only a token straight from
             // the keychain being refused means this won't work.
             forgetToken()
-            return fresh ? .refused("Your Claude account didn't accept the request (\(status!)).") : .unavailable
+            return fresh ? .refused("Your Claude account didn't accept the request (\(status!)).")
+                : .unavailable(.problem("Claude Code's sign-in had changed; trying the new one next."))
         case 404?, 410?:
             return .refused("The usage endpoint is gone (\(status!)); Anthropic may have changed it.")
-        default:
-            // Offline, a timeout, rate limited, or a server error.
-            return .unavailable
+        case 429?:
+            return .unavailable(.problem("Claude's usage service asked Octet to slow down."))
+        case let code?:
+            return .unavailable(.problem("Claude's usage service answered \(code)."))
+        case nil:
+            // Offline or a timeout.
+            return .unavailable(.problem("Claude's usage service didn't answer."))
         }
     }
 
-    private static func fromCache() -> ([UsageWindow], Date)? {
+    private static func fromCache() -> ([UsageWindow], Date?)? {
         guard let data = FileManager.default.contents(atPath: NSHomeDirectory() + "/.claude.json"),
               let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let cached = json["cachedUsageUtilization"],
               let (windows, fetched) = AgentAccounts.claudeWindows(cachedUsage: cached) else { return nil }
-        // A cache with no date is of unknown age; treat it as just read, and
-        // let the windows' own reset times retire it.
-        return (windows, fetched ?? Date())
+        // A cache with no date is of unknown age, not new: calling it fresh
+        // let a days-old reading outrank live ones and never look stale.
+        return (windows, fetched)
     }
 
     private enum Token {
         /// `fresh` when just read from the keychain rather than held.
         case token(String, fresh: Bool)
-        /// Not signed in through the keychain, or the token has run out;
-        /// Claude Code refreshes its own in place.
-        case missing
+        /// Not signed in through the keychain, the token has run out (Claude
+        /// Code refreshes its own in place), or macOS wants to ask again.
+        case missing(Fallback)
         /// The person answered the keychain prompt with Deny.
         case declined
     }
@@ -167,15 +185,21 @@ enum ClaudeUsage {
         // read that wasn't allowed to show UI (errSecInteractionNotAllowed),
         // is not, and is tried again later.
         if status == errSecUserCanceled || status == errSecAuthFailed { return .declined }
+        if status == errSecInteractionNotAllowed { return .missing(.needsKeychain) }
+        if status == errSecItemNotFound { return .missing(.problem("Claude Code's sign-in isn't in the keychain.")) }
         guard status == errSecSuccess,
               let data = item as? Data,
               let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let oauth = json["claudeAiOauth"] as? [String: Any],
-              let token = oauth["accessToken"] as? String else { return .missing }
+              let token = oauth["accessToken"] as? String else {
+            return .missing(.problem("Claude Code's sign-in couldn't be read from the keychain."))
+        }
         let expiresAt = (oauth["expiresAt"] as? Double).map { Date(timeIntervalSince1970: $0 / 1000) }
         // Claude Code refreshes an expired token in place; until it does,
         // there's nothing to hold.
-        if let expiresAt, expiresAt < Date() { return .missing }
+        if let expiresAt, expiresAt < Date() {
+            return .missing(.problem("Claude Code's sign-in has run out; it renews the next time Claude Code runs."))
+        }
         held = (token, expiresAt)
         return .token(token, fresh: true)
     }

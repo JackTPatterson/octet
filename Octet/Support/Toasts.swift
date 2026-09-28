@@ -51,8 +51,8 @@ final class ToastCenter: ObservableObject {
         finish(handle, style: .success, title: title, detail: detail, after: 3.5)
     }
 
-    func fail(_ handle: Handle?, _ title: String, detail: String? = nil) {
-        finish(handle, style: .failure, title: title, detail: detail, after: 8)
+    func fail(_ handle: Handle?, _ title: String, detail: String? = nil, action: Action? = nil) {
+        finish(handle, style: .failure, title: title, detail: detail, after: 8, action: action)
     }
 
     func info(_ title: String, detail: String? = nil, after seconds: TimeInterval = 3.5, action: Action? = nil) {

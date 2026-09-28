@@ -55,6 +55,8 @@ struct OctetApp: App {
         WindowGroup(for: OctetWindowSpec.self) { $spec in
             OctetWindowRoot(spec: spec, store: store, session: session, prompt: prompt)
                 .frame(minWidth: 720, minHeight: 420)
+                // An open window takes the event rather than a new one.
+                .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
                 .onAppear {
                     // Once for the app, not once per window.
                     guard !Self.started else { return }
@@ -72,6 +74,10 @@ struct OctetApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1280, height: 820)
+        // Files and octet:// links go to the app delegate, which opens them
+        // in the window in front. Left to SwiftUI, each one also made a new
+        // window: a second view of the same session, with the file nowhere.
+        .handlesExternalEvents(matching: [])
         .commands { OctetCommands(store: store, updater: updaterController.updater) }
 
         Settings {

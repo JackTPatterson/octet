@@ -15,6 +15,8 @@ final class StatusBarModel: ObservableObject {
         var operation = GitOperation()
         var changes: WorkingTreeChanges?
         var pullRequest: GitHubPullRequest?
+        /// GitHub Actions for HEAD (or the branch's latest pushed commit).
+        var ci: CIStatus?
     }
 
     @Published private(set) var directory: String?
@@ -51,6 +53,11 @@ final class StatusBarModel: ObservableObject {
     private var readingPullRequest = false
     private var pullRequestReadAt = Date.distantPast
     private var pullRequestBranch: String?
+    private var readingCI = false
+    private var ciReadAt = Date.distantPast
+    private var ciBranch: String?
+    /// Failed runs' jobs, read once per run.
+    private var ciFailedJobs: [Int: [String]] = [:]
     /// When each plugin chip last ran, keyed by its id and where it ran.
     private var pluginRanAt: [String: Date] = [:]
     private var pluginRunning: Set<String> = []
@@ -197,6 +204,7 @@ final class StatusBarModel: ObservableObject {
         version = detected.flatMap { Self.versions[Self.key($0, location.root)] }
         repo = Repo(root: location.root, gitDir: location.gitDir, linkedWorktree: location.isLinkedWorktree)
         pullRequestBranch = nil
+        ciBranch = nil
         refreshGit()
         loadVersion()
     }
@@ -217,6 +225,117 @@ final class StatusBarModel: ObservableObject {
         readWorkingTree()
         if pullRequestBranch != branch || Date().timeIntervalSince(pullRequestReadAt) > 30 {
             readPullRequest()
+        }
+        // Every 15s while something runs, so the chip follows along; every
+        // minute otherwise, which also notices a push starting new runs.
+        let ciInterval: TimeInterval = repo.ci?.overall == .running ? 15 : 60
+        if ciBranch != branch || Date().timeIntervalSince(ciReadAt) > ciInterval {
+            readCI()
+        }
+    }
+
+    /// Reads now, as after a rerun or a push from the popover.
+    func refreshCINow() {
+        ciReadAt = .distantPast
+        readCI()
+    }
+
+    private func readCI() {
+        guard let repo, let branch = repo.branch, !repo.detached, !readingCI,
+              OctetPluginHost.shared.statusBarOrder.contains("builtin.ci") else { return }
+        readingCI = true
+        ciReadAt = Date()
+        let root = repo.root
+        let known = ciFailedJobs
+        DispatchQueue.global(qos: .utility).async {
+            let head = try? Git().run(["rev-parse", "HEAD"], in: root)
+            let result = LoginShell.run(["gh", "run", "list", "--branch", branch, "--limit", "30",
+                                         "--json", GitHubRuns.listFields], in: root)
+            var status = result.status == 0 ? GitHubRuns.status(runs: GitHubRuns.parseRuns(Data(result.output.utf8)), head: head) : nil
+            // Which jobs failed, for the popover and the agent's prompt.
+            var jobs = known
+            if var current = status {
+                for index in current.runs.indices where current.runs[index].state == .failed {
+                    let id = current.runs[index].id
+                    if jobs[id] == nil {
+                        let view = LoginShell.run(["gh", "run", "view", String(id), "--json", "jobs"], in: root)
+                        if view.status == 0 { jobs[id] = GitHubRuns.parseFailedJobs(Data(view.output.utf8)) }
+                    }
+                    current.runs[index].failedJobs = jobs[id] ?? []
+                }
+                status = current
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.readingCI = false
+                self.ciBranch = branch
+                self.ciFailedJobs = jobs
+                guard var current = self.repo, current.root == root else { return }
+                // A failed call (offline, signed out, not on GitHub) keeps the
+                // last answer, and a branch with no runs has none.
+                let next = result.status == 0 ? status : current.ci
+                guard next != current.ci else { return }
+                let before = current.ci
+                current.ci = next
+                self.repo = current
+                if let next { self.announce(next, after: before, branch: branch) }
+            }
+        }
+    }
+
+    /// Says so when runs this pane was watching finish: only a change seen
+    /// here, from running to done on the same commit, never a first read.
+    private func announce(_ status: CIStatus, after before: CIStatus?, branch: String) {
+        guard let before, before.sha == status.sha, before.overall == .running, status.overall != .running else { return }
+        let pane = self.pane
+        switch status.overall {
+        case .passed:
+            ToastCenter.shared.succeed(nil, "CI passed on \(branch)")
+        case .failed:
+            let names = status.failed.map(\.workflow).joined(separator: ", ")
+            ToastCenter.shared.fail(nil, "CI failed on \(branch)", detail: names,
+                                    action: .init(title: "Ask Agent to Fix") {
+                                        MainActor.assumeIsolated {
+                                            StatusBarModel.askAgentToFix(status, branch: branch, pane: pane)
+                                        }
+                                    })
+        case .cancelled, .running:
+            break
+        }
+    }
+
+    /// Sends the failure to the agent in `pane` (or the pane in front) as a
+    /// prompt: what failed, and how to read its log.
+    static func askAgentToFix(_ status: CIStatus, branch: String?, pane: String?) {
+        guard let window = WindowRegistry.shared.key else { return }
+        let snapshot = window.store.snapshot
+        let candidates = [pane, window.focusedPaneId].compactMap { $0 }
+        guard let agent = candidates.lazy.compactMap({ id in
+            snapshot.agents.first { $0.paneId == id && $0.agent != nil && !$0.isSubagentViewer }
+        }).first else {
+            ToastCenter.shared.info("No agent here to ask", detail: "Start an agent in this pane, then try again.")
+            return
+        }
+        let name = AgentBrand.forAgent(agent.agent)?.displayName ?? agent.agent ?? "Agent"
+        window.store.broadcast(GitHubRuns.fixPrompt(status, branch: branch),
+                               to: [Broadcast.Target(paneId: agent.paneId, name: name, isAgent: true)])
+    }
+
+    /// Re-runs the failed jobs of each failed run.
+    func rerunFailed(_ status: CIStatus) {
+        guard let root = repo?.root else { return }
+        let ids = status.failed.map(\.id)
+        DispatchQueue.global(qos: .userInitiated).async {
+            let failures = ids.filter { LoginShell.run(["gh", "run", "rerun", String($0), "--failed"], in: root).status != 0 }
+            DispatchQueue.main.async { [weak self] in
+                if failures.isEmpty {
+                    ToastCenter.shared.info("Re-running \(ids.count == 1 ? "the failed jobs" : "failed jobs in \(ids.count) runs")")
+                } else {
+                    ToastCenter.shared.fail(nil, "Couldn't re-run \(failures.count) of \(ids.count)",
+                                            detail: "Check that the GitHub CLI is signed in with access to this repository.")
+                }
+                self?.refreshCINow()
+            }
         }
     }
 

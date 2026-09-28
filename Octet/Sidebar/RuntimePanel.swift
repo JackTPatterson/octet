@@ -7,6 +7,8 @@ import SwiftUI
 struct RuntimePanel: View {
     @EnvironmentObject private var window: WindowContext
     @ObservedObject var store: SessionStore
+    /// Observed here, so opening a row redraws the list.
+    @ObservedObject var ui: UIState
     @ObservedObject private var center = AgentCenter.shared
     @ObservedObject private var claudeAgents = AgentsStore.shared
     @ObservedObject private var codexAgents = CodexAgentsStore.shared
@@ -34,74 +36,57 @@ struct RuntimePanel: View {
     var body: some View {
         runtimeContent
         .onAppear {
-            window.ui.seenRuntimeEntryIDs.formUnion(entries.map(\.id))
+            ui.seenRuntimeEntryIDs.formUnion(entries.map(\.id))
             reload()
         }
         .onChange(of: workspaceId) { _, _ in
-            window.ui.seenRuntimeEntryIDs.formUnion(entries.map(\.id))
+            ui.seenRuntimeEntryIDs.formUnion(entries.map(\.id))
             flashingEntryIDs = []
-            window.ui.runtimeInspectorEntryID = nil
+            ui.runtimeExpandedEntryIDs = []
             reload()
         }
         .onChange(of: scopeID) { _, _ in
-            // Details belong to one tab/conversation. Never let an inspector
-            // from the previous scope linger while the new list is loading.
-            withoutLayoutAnimation { window.ui.runtimeInspectorEntryID = nil }
+            // Details belong to one tab/conversation. Never let a row opened
+            // in the previous scope stay open while the new list loads.
+            withoutLayoutAnimation { ui.runtimeExpandedEntryIDs = [] }
             flashingEntryIDs = []
-            window.ui.seenRuntimeEntryIDs.formUnion(entries.map(\.id))
+            ui.seenRuntimeEntryIDs.formUnion(entries.map(\.id))
             reload()
         }
         .onChange(of: entries.map(\.id)) { _, ids in
             revealNewEntries(ids)
-            if let selected = window.ui.runtimeInspectorEntryID, !ids.contains(selected) {
-                window.ui.runtimeInspectorEntryID = nil
-            }
+            let open = ui.runtimeExpandedEntryIDs
+            if !open.isSubset(of: ids) { ui.runtimeExpandedEntryIDs = open.intersection(ids) }
         }
         .onChange(of: entries.isEmpty, initial: true) { _, empty in
-            window.ui.runtimeHasEntries = !empty
+            ui.runtimeHasEntries = !empty
         }
         .onReceive(refresh) { _ in reload() }
     }
 
     @ViewBuilder private var runtimeContent: some View {
-        let current = entries
-        let selected = window.ui.runtimeInspectorEntryID.flatMap { id in
-            current.first(where: { $0.id == id })
-        }
-        if let selected {
-            HStack(spacing: 0) {
-                RuntimeInspector(entry: selected,
-                                 close: showList)
-                    .frame(width: 387)
-                Rectangle().fill(Theme.divider).frame(width: 1)
-                RuntimeRail(entries: current,
-                            selectedID: selected.id,
-                            select: select)
-                    .frame(width: 52)
-            }
-        } else {
-            runtimeList(current)
-        }
+        runtimeList(entries)
     }
 
     private func runtimeList(_ current: [RuntimeEntry]) -> some View {
-        let selectedID = window.ui.runtimeInspectorEntryID
-        return VStack(spacing: 0) {
+        VStack(spacing: 0) {
             header
             Rectangle().fill(Theme.divider).frame(height: 1)
             if current.isEmpty {
                 empty
             } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 14) {
-                        ForEach(RuntimeKind.allCases) { kind in
-                            let rows = current.filter { $0.kind == kind }
-                            if !rows.isEmpty { section(kind, rows: rows, selectedID: selectedID) }
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 14) {
+                            ForEach(RuntimeKind.allCases) { kind in
+                                let rows = current.filter { $0.kind == kind }
+                                if !rows.isEmpty { section(kind, rows: rows, proxy: proxy) }
+                            }
                         }
+                        .padding(10)
                     }
-                    .padding(10)
+                    .scrollIndicators(.hidden)
                 }
-                .scrollIndicators(.hidden)
             }
         }
         .background(Theme.sidebar)
@@ -109,20 +94,25 @@ struct RuntimePanel: View {
 
     private func close() {
         withoutLayoutAnimation {
-            window.ui.runtimeInspectorEntryID = nil
-            window.ui.runtimePanelVisible = false
+            ui.runtimeExpandedEntryIDs = []
+            ui.runtimePanelVisible = false
         }
     }
 
-    private func showList() {
-        motion.perform(.sidebar, .smooth(duration: 0.16)) {
-            window.ui.runtimeInspectorEntryID = nil
+    /// Opens or closes a row in place. An opened row near the bottom is
+    /// scrolled into view once it has grown, so its details aren't cut off.
+    private func toggle(_ entry: RuntimeEntry, proxy: ScrollViewProxy) {
+        let opening = !ui.runtimeExpandedEntryIDs.contains(entry.id)
+        motion.perform(.sidebar, .spring(response: 0.32, dampingFraction: 0.86)) {
+            if opening {
+                ui.runtimeExpandedEntryIDs.insert(entry.id)
+            } else {
+                ui.runtimeExpandedEntryIDs.remove(entry.id)
+            }
         }
-    }
-
-    private func select(_ entry: RuntimeEntry) {
-        motion.perform(.sidebar, .smooth(duration: 0.18)) {
-            window.ui.runtimeInspectorEntryID = entry.id
+        guard opening else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + (motion.animates(.sidebar) ? 0.2 : 0)) {
+            motion.perform(.sidebar, .smooth(duration: 0.25)) { proxy.scrollTo(entry.id) }
         }
     }
 
@@ -165,7 +155,7 @@ struct RuntimePanel: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func section(_ kind: RuntimeKind, rows: [RuntimeEntry], selectedID: String?) -> some View {
+    private func section(_ kind: RuntimeKind, rows: [RuntimeEntry], proxy: ScrollViewProxy) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack {
                 Text(kind.title.uppercased())
@@ -178,7 +168,8 @@ struct RuntimePanel: View {
             ForEach(rows) { row in
                 RuntimeRow(entry: row,
                            flashes: flashingEntryIDs.contains(row.id),
-                           selected: row.id == selectedID) { select(row) }
+                           expanded: ui.runtimeExpandedEntryIDs.contains(row.id)) { toggle(row, proxy: proxy) }
+                    .id(row.id)
             }
         }
     }
@@ -186,11 +177,11 @@ struct RuntimePanel: View {
     private func revealNewEntries(_ ids: [String]) {
         let current = Set(ids)
         let revealable = Set(entries.filter(\.autoReveal).map(\.id))
-        let added = current.subtracting(window.ui.seenRuntimeEntryIDs).intersection(revealable)
-        window.ui.seenRuntimeEntryIDs.formUnion(current)
+        let added = current.subtracting(ui.seenRuntimeEntryIDs).intersection(revealable)
+        ui.seenRuntimeEntryIDs.formUnion(current)
         flashingEntryIDs.formIntersection(current)
         guard !added.isEmpty else { return }
-        window.ui.runtimePanelVisible = true
+        ui.runtimePanelVisible = true
         flashingEntryIDs.formUnion(added)
         DispatchQueue.main.asyncAfter(deadline: .now() + (motion.animates(.sidebar) ? 0.85 : 0.15)) {
             flashingEntryIDs.subtract(added)
@@ -590,26 +581,53 @@ private struct RuntimeEntry: Identifiable {
     }
 }
 
+/// One runtime, as an accordion: the summary is always there, and a click
+/// opens its details beneath it, inside the same card.
 private struct RuntimeRow: View {
     let entry: RuntimeEntry
     let flashes: Bool
-    let selected: Bool
-    let action: () -> Void
+    let expanded: Bool
+    let toggle: () -> Void
     @ObservedObject private var motion = MotionPreferences.shared
     @State private var hovered = false
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 0) {
-                if entry.depth > 0 {
-                    Color.clear.frame(width: CGFloat(entry.depth - 1) * 12)
-                    Image(systemName: "arrow.turn.down.right")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(entry.tint.opacity(0.72))
-                        .frame(width: 22)
-                        .accessibilityHidden(true)
+        HStack(alignment: .top, spacing: 0) {
+            if entry.depth > 0 {
+                Color.clear.frame(width: CGFloat(entry.depth - 1) * 12)
+                Image(systemName: "arrow.turn.down.right")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(entry.tint.opacity(0.72))
+                    .frame(width: 22)
+                    .padding(.top, 9)
+                    .accessibilityHidden(true)
+            }
+            VStack(alignment: .leading, spacing: 0) {
+                summary
+                if expanded {
+                    RuntimeDetails(entry: entry)
+                        .transition(motion.animates(.sidebar)
+                            ? .asymmetric(insertion: .opacity.combined(with: .offset(y: -6)), removal: .opacity)
+                            : .identity)
                 }
-                HStack(alignment: .top, spacing: 8) {
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(flashes ? entry.tint.opacity(0.22)
+                        : expanded ? entry.tint.opacity(0.07)
+                        : hovered ? Theme.hover : Theme.card)
+            .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius)
+                .strokeBorder(expanded ? entry.tint.opacity(0.42) : Theme.border, lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .animation(motion.animation(.sidebar, .easeOut(duration: 0.55)), value: flashes)
+        .animation(motion.animation(.sidebar, .easeOut(duration: 0.14)), value: hovered)
+    }
+
+    /// The row's always-visible line, which opens and closes it.
+    private var summary: some View {
+        Button(action: toggle) {
+            HStack(alignment: .top, spacing: 8) {
                 RuntimeGlyph(entry: entry, size: 14).frame(width: 18)
                 VStack(alignment: .leading, spacing: 2) {
                     HStack {
@@ -629,27 +647,124 @@ private struct RuntimeRow: View {
                         .lineLimit(1)
                 }
                 OctetIcon("chevron.right", size: 11)
-                    .foregroundStyle(Theme.textTertiary)
+                    .foregroundStyle(expanded ? entry.tint : hovered ? Theme.textSecondary : Theme.textTertiary)
+                    .rotationEffect(.degrees(expanded ? 90 : 0))
                     .padding(.top, 2)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 7)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(flashes ? entry.tint.opacity(0.22)
-                            : selected ? entry.tint.opacity(0.11)
-                            : hovered ? Theme.hover : Theme.card)
-                .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius)
-                    .strokeBorder(selected ? entry.tint.opacity(0.5) : Theme.border, lineWidth: 1))
-                .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { hovered = $0 }
-        .animation(motion.animation(.sidebar, .easeOut(duration: 0.55)), value: flashes)
+        .help(expanded ? "Hide details" : "Show details")
         .accessibilityLabel("\(entry.title), level \(entry.depth + 1), \(entry.detail), \(entry.location)")
-        .accessibilityValue(selected ? "Selected" : "")
-        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+        .accessibilityHint(expanded ? "Hides the details" : "Shows the details")
+    }
+}
+
+/// What a runtime row shows when open: its status, what it was asked or
+/// runs, its latest output, and where it belongs.
+private struct RuntimeDetails: View {
+    let entry: RuntimeEntry
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Rectangle().fill(entry.tint.opacity(0.25)).frame(height: 1)
+            RuntimeDetailSection(title: "Status", tint: entry.tint) {
+                HStack(spacing: 7) {
+                    LoadingLine(width: 16, color: entry.tint)
+                    Text(entry.process ?? (entry.kind == .monitor ? "Watching" : "Active"))
+                        .font(Theme.uiFontMedium)
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                }
+            }
+            if let prompt = entry.prompt ?? entry.command, !prompt.isEmpty {
+                RuntimeDetailSection(title: entry.kind == .agent ? "Assigned prompt" : "Command", tint: entry.tint) {
+                    ExpandableText(text: prompt, font: entry.kind == .agent ? Theme.uiFont : Theme.monoFont)
+                }
+            }
+            if let output = entry.output, !output.isEmpty {
+                RuntimeDetailSection(title: "Latest output", tint: entry.tint) {
+                    ExpandableText(text: output, font: Theme.uiFont)
+                }
+            }
+            RuntimeDetailSection(title: "Context", tint: entry.tint) {
+                VStack(alignment: .leading, spacing: 4) {
+                    metadata("Session", entry.location)
+                    metadata("Runtime", String(entry.kind.title.dropLast()))
+                    if entry.kind == .agent { metadata("Hierarchy", "Level \(entry.depth + 1)") }
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.bottom, 10)
+    }
+
+    private func metadata(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(label).foregroundStyle(Theme.textTertiary).frame(width: 62, alignment: .leading)
+            Text(value).foregroundStyle(Theme.textPrimary).textSelection(.enabled).lineLimit(2)
+        }
+        .font(Theme.captionFont)
+    }
+}
+
+private struct RuntimeDetailSection<Content: View>: View {
+    let title: String
+    let tint: Color
+    let content: Content
+
+    init(title: String, tint: Color, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.tint = tint
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title.uppercased())
+                .font(Theme.headerFont)
+                .kerning(0.35)
+                .foregroundStyle(tint)
+            content
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+/// Long prompts and output start at a few lines, so one open row doesn't
+/// push the rest of the list away; "Show all" opens the rest.
+private struct ExpandableText: View {
+    let text: String
+    let font: Font
+    static let collapsedLines = 6
+    @ObservedObject private var motion = MotionPreferences.shared
+    @State private var showsAll = false
+
+    private var isLong: Bool {
+        text.count > 360 || text.reduce(0) { $1 == "\n" ? $0 + 1 : $0 } >= Self.collapsedLines
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(text)
+                .font(font)
+                .foregroundStyle(Theme.textSecondary)
+                .lineLimit(showsAll ? nil : Self.collapsedLines)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+            if isLong {
+                Button(showsAll ? "Show less" : "Show all") {
+                    motion.perform(.sidebar, .smooth(duration: 0.2)) { showsAll.toggle() }
+                }
+                .buttonStyle(.plain)
+                .font(Theme.captionFont.weight(.medium))
+                .foregroundStyle(Theme.accent)
+            }
+        }
     }
 }
 
@@ -674,176 +789,5 @@ private struct RuntimeGlyph: View {
             }
         }
         .accessibilityHidden(true)
-    }
-}
-
-/// The runtime list collapsed in place. Its trailing edge never moves, so a
-/// user can move between related runtimes without the targets jumping around.
-private struct RuntimeRail: View {
-    let entries: [RuntimeEntry]
-    let selectedID: String?
-    let select: (RuntimeEntry) -> Void
-
-    var body: some View {
-        VStack(spacing: 0) {
-            ScrollView {
-                LazyVStack(spacing: 7) {
-                    ForEach(entries) { entry in
-                        Button { select(entry) } label: {
-                            ZStack {
-                                RoundedRectangle(cornerRadius: 7)
-                                    .fill(entry.tint.opacity(entry.id == selectedID ? 0.14 : 0.055))
-                                RoundedRectangle(cornerRadius: 7)
-                                    .strokeBorder(entry.tint.opacity(entry.id == selectedID ? 0.5 : 0.18),
-                                                  lineWidth: 1)
-                                RuntimeGlyph(entry: entry, size: 16)
-                            }
-                            .frame(width: 34, height: 34)
-                        }
-                        .buttonStyle(.plain)
-                        .help(entry.title)
-                        .accessibilityLabel(entry.title)
-                        .accessibilityValue(entry.id == selectedID ? "Selected" : "")
-                        .accessibilityAddTraits(entry.id == selectedID ? .isSelected : [])
-                    }
-                }
-                .padding(.vertical, 8)
-            }
-            .scrollIndicators(.hidden)
-            Spacer(minLength: 0)
-        }
-        .background(Theme.chrome)
-    }
-}
-
-private struct RuntimeInspector: View {
-    let entry: RuntimeEntry
-    let close: () -> Void
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 9) {
-                RuntimeGlyph(entry: entry, size: 13).frame(width: 18)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(entry.title)
-                        .font(Theme.uiFontMedium)
-                        .foregroundStyle(Theme.textPrimary)
-                        .lineLimit(1)
-                    HStack(spacing: 5) {
-                        if let model = entry.modelName, !model.isEmpty {
-                            Text(model).foregroundStyle(entry.tint)
-                        }
-                        Text(entry.detail).foregroundStyle(Theme.textTertiary)
-                    }
-                    .font(Theme.captionFont.monospacedDigit())
-                }
-                Spacer(minLength: 8)
-                Button(action: close) {
-                    OctetIcon("chevron.right", size: 12)
-                        .foregroundStyle(Theme.textSecondary)
-                        .frame(width: 26, height: 26)
-                }
-                .buttonStyle(.plain)
-                .help("Close details")
-                .accessibilityLabel("Close runtime details")
-            }
-            .padding(.horizontal, 12)
-            .frame(height: Theme.tabBarHeight + 8)
-            .overlay(alignment: .top) { Rectangle().fill(entry.tint).frame(height: 2) }
-            Rectangle().fill(Theme.divider).frame(height: 1)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    RuntimeInspectorSection(title: "Status", tint: entry.tint) {
-                        HStack(spacing: 7) {
-                            LoadingLine(width: 16, color: entry.tint)
-                            Text(entry.process ?? (entry.kind == .monitor ? "Watching" : "Active"))
-                                .font(Theme.uiFontMedium)
-                                .foregroundStyle(Theme.textPrimary)
-                        }
-                    }
-                    if let prompt = entry.prompt ?? entry.command, !prompt.isEmpty {
-                        RuntimeInspectorSection(title: entry.kind == .agent ? "Assigned prompt" : "Command",
-                                                tint: entry.tint) {
-                            Text(prompt)
-                                .font(entry.kind == .agent ? Theme.uiFont : Theme.monoFont)
-                                .foregroundStyle(Theme.textSecondary)
-                                .textSelection(.enabled)
-                        }
-                    }
-                    if let output = entry.output, !output.isEmpty {
-                        RuntimeInspectorSection(title: "Latest output", tint: entry.tint) {
-                            Text(output)
-                                .font(Theme.uiFont)
-                                .foregroundStyle(Theme.textSecondary)
-                                .textSelection(.enabled)
-                        }
-                    }
-                    RuntimeInspectorSection(title: "Context", tint: entry.tint) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            inspectorMetadata("Session", entry.location)
-                            inspectorMetadata("Runtime", String(entry.kind.title.dropLast()))
-                            if entry.kind == .agent { inspectorMetadata("Hierarchy", "Level \(entry.depth + 1)") }
-                        }
-                    }
-                }
-                .padding(14)
-            }
-            .scrollIndicators(.hidden)
-        }
-        .background(Theme.sidebar)
-        .overlay(alignment: .leading) { Rectangle().fill(Theme.divider).frame(width: 1) }
-    }
-
-    private func inspectorMetadata(_ label: String, _ value: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(label).foregroundStyle(Theme.textTertiary).frame(width: 68, alignment: .leading)
-            Text(value).foregroundStyle(Theme.textPrimary).textSelection(.enabled)
-        }
-        .font(Theme.captionFont)
-    }
-}
-
-private struct RuntimeInspectorSection<Content: View>: View {
-    let title: String
-    let tint: Color
-    let content: Content
-
-    init(title: String, tint: Color, @ViewBuilder content: () -> Content) {
-        self.title = title
-        self.tint = tint
-        self.content = content()
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text(title.uppercased())
-                .font(Theme.headerFont)
-                .kerning(0.35)
-                .foregroundStyle(tint)
-            content
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-}
-
-private struct RuntimeDetail: View {
-    let label: String
-    let text: String
-    let tint: Color
-    let monospaced: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label.uppercased())
-                .font(Theme.headerFont)
-                .foregroundStyle(tint)
-            Text(text)
-                .font(monospaced ? Theme.monoFont : Theme.captionFont)
-                .foregroundStyle(Theme.textSecondary)
-                .lineLimit(6)
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
-        }
-        .padding(.top, 4)
     }
 }

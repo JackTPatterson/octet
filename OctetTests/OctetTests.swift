@@ -182,6 +182,66 @@ final class SubagentTabTests: XCTestCase {
         XCTAssertFalse(plain.isSubagentViewer)
     }
 
+    func testViewerIsToldWhichPaneLaunchedIt() throws {
+        let request = try XCTUnwrap(SubagentHook.tabRequest(
+            payload: payload,
+            environment: [EngineProtocol.workspaceIdVariable: "w2", EngineProtocol.paneIdVariable: "w2:p3"],
+            cliPath: "x"))
+        let command = try XCTUnwrap((request["root"] as? [String: Any])?["command"] as? [String])
+        let flag = try XCTUnwrap(command.firstIndex(of: "--parent-pane"))
+        XCTAssertEqual(command[flag + 1], "w2:p3")
+    }
+
+    func testSubagentTabsResolveToTheirRootAgentsTab() throws {
+        func pane(_ id: String, tab: String) -> EnginePane {
+            EnginePane(paneId: id, tabId: tab, workspaceId: "w1", focused: false, cwd: nil,
+                       foregroundCwd: nil, agentStatus: .working, terminalTitle: nil)
+        }
+        func viewer(_ pane: String, tab: String, parent: String) -> EngineAgent {
+            var agent = EngineAgent(paneId: pane, tabId: tab, workspaceId: "w1", agent: "claude", name: nil,
+                                    displayAgent: nil, agentStatus: .working)
+            agent.tokens = [PaneAgentReporter.roleToken: PaneAgentReporter.subagentRole,
+                            PaneAgentReporter.parentPaneToken: parent]
+            return agent
+        }
+        let root = EngineAgent(paneId: "w1:p1", tabId: "w1:t1", workspaceId: "w1", agent: "claude", name: nil,
+                               displayAgent: nil, agentStatus: .working)
+        let snapshot = EngineSnapshot(
+            workspaces: [], tabs: [],
+            panes: [pane("w1:p1", tab: "w1:t1"), pane("w1:p2", tab: "w1:t2"), pane("w1:p3", tab: "w1:t3")],
+            agents: [root, viewer("w1:p2", tab: "w1:t2", parent: "w1:p1"), viewer("w1:p3", tab: "w1:t3", parent: "w1:p2")],
+            focusedWorkspaceId: nil, focusedTabId: nil, focusedPaneId: nil)
+        XCTAssertEqual(snapshot.rootTabId(ofTab: "w1:t1"), "w1:t1")
+        XCTAssertEqual(snapshot.rootTabId(ofTab: "w1:t2"), "w1:t1")
+        XCTAssertEqual(snapshot.rootTabId(ofTab: "w1:t3"), "w1:t1")
+    }
+
+    func testSubagentTabsAreKeptBesideTheirParent() {
+        let parents = ["s1": "a", "s2": "a", "s3": "s1"]
+        let parent = { (id: String) in parents[id] }
+        // Launched at the end: each joins its parent, after earlier siblings.
+        XCTAssertEqual(SubagentTabOrder.grouped(["a", "b", "s1", "s2", "s3"], parent: parent), ["a", "s1", "s3", "s2", "b"])
+        // The parent dragged right: its subagents follow.
+        XCTAssertEqual(SubagentTabOrder.grouped(["s1", "b", "a"], parent: parent), ["b", "a", "s1"])
+        // A parent that closed leaves its subagent where it is.
+        XCTAssertEqual(SubagentTabOrder.grouped(["b", "s1", "c"], parent: parent), ["b", "s1", "c"])
+        XCTAssertTrue(SubagentTabOrder.moves(["a", "s1", "b"], parent: parent).isEmpty)
+    }
+
+    func testSubagentTabMovesReplayToTheGroupedOrder() {
+        let parents = ["s1": "a", "s2": "a", "s3": "b"]
+        let current = ["s2", "b", "c", "a", "s3", "s1"]
+        var order = current
+        // The session server's insert_index: the gap before the tab now there.
+        for move in SubagentTabOrder.moves(current, parent: { parents[$0] }) {
+            let from = order.firstIndex(of: move.tabId)!
+            order.remove(at: from)
+            order.insert(move.tabId, at: move.gap > from ? move.gap - 1 : move.gap)
+        }
+        XCTAssertEqual(order, SubagentTabOrder.grouped(current, parent: { parents[$0] }))
+        XCTAssertEqual(order, ["b", "s3", "c", "a", "s2", "s1"])
+    }
+
     func testIgnoresOtherToolsAndNonEnginePanes() {
         var bash = payload
         bash["tool_name"] = "Bash"
@@ -407,6 +467,20 @@ final class WorkspaceActivityTests: XCTestCase {
         XCTAssertFalse(activity.isIdle(ws[0], snapshot: working, pinned: [], idleAfter: 60, now: t1.addingTimeInterval(9999)))
         XCTAssertFalse(activity.isIdle(ws[0], snapshot: changed, pinned: ["w1"], idleAfter: 60, now: t1.addingTimeInterval(9999)))
         XCTAssertTrue(activity.isIdle(ws[0], snapshot: changed, pinned: [], idleAfter: 60, now: t1.addingTimeInterval(9999)))
+    }
+
+    func testMovedToIdleStaysThereThoughBusyFocusedAndRecentlyUsed() {
+        let t0 = Date(timeIntervalSince1970: 3_000_000)
+        var activity = WorkspaceActivity()
+        let ws = [workspace("w1", status: .working)]
+        let busy = snapshot(ws, agents: [agent("w1", .working, seq: 1)], focused: "w1")
+        activity.observe(busy, viewedWorkspaceId: nil, now: t0)
+        // A title or state change right after restamps it, which alone would
+        // bring it straight back.
+        activity.observe(snapshot(ws, agents: [agent("w1", .working, seq: 2)], focused: "w1"), viewedWorkspaceId: nil, now: t0)
+        XCTAssertTrue(activity.isIdle(ws[0], snapshot: busy, pinned: [], parked: ["w1"], idleAfter: 3600, now: t0))
+        XCTAssertFalse(activity.isIdle(ws[0], snapshot: busy, pinned: ["w1"], parked: ["w1"], idleAfter: 3600, now: t0))
+        XCTAssertFalse(activity.isIdle(ws[0], snapshot: busy, pinned: [], parked: [], idleAfter: 3600, now: t0))
     }
 
     func testClosedWorkspacesArePrunedAndAgeLabels() {
@@ -3428,5 +3502,21 @@ final class CellWidthTests: XCTestCase {
         XCTAssertEqual(CellWidth.of("한"), 2)
         XCTAssertEqual(CellWidth.of("🙂"), 2)
         XCTAssertEqual(CellWidth.columns("echo 中文 ok", upTo: 7), 9)
+    }
+}
+
+final class UsageWindowMergeTests: XCTestCase {
+    func testAPartialReadingKeepsTheOtherRunningWindows() {
+        let now = Date(timeIntervalSince1970: 10_000_000)
+        let weekly = UsageWindow(name: "7d", used: 0.94, resetsAt: now.addingTimeInterval(86_400))
+        let oldSession = UsageWindow(name: "5h", used: 0.2, resetsAt: now.addingTimeInterval(3600))
+        let reset = UsageWindow(name: "7d Opus", used: 0.5, resetsAt: now.addingTimeInterval(-60))
+        let session = UsageWindow(name: "5h", used: 0.34, resetsAt: now.addingTimeInterval(3000))
+        let merged = AgentAccounts.mergeWindows(newer: [session], older: [oldSession, weekly, reset], now: now)
+        // The newer 5h wins, the weekly stays, and the window that reset goes.
+        XCTAssertEqual(merged, [session, weekly])
+        var account = AgentAccount(agent: "claude", kind: .subscription)
+        account.windows = merged
+        XCTAssertEqual(account.windows.max { $0.used < $1.used }, weekly)
     }
 }

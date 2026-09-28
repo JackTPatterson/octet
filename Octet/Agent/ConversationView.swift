@@ -94,10 +94,10 @@ struct ConversationView: View {
                 window.ui.runtimePanelVisible = true
                 if id == "monitor-detail" {
                     // Let the Runtime panel ingest the fixture entries before
-                    // selecting one; an early selection is correctly cleared
-                    // as stale while its list is still empty.
+                    // opening one; an early one is correctly dropped as
+                    // stale while its list is still empty.
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                        window.ui.runtimeInspectorEntryID = "agent-agent-debug-call"
+                        window.ui.runtimeExpandedEntryIDs.insert("agent-agent-debug-call")
                     }
                 }
                 return

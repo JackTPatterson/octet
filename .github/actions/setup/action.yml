@@ -1,0 +1,59 @@
+name: Set up the Octet build
+description: >
+  Selects Xcode, installs XcodeGen, and puts the two build inputs that
+  aren't committed in place: GhosttyKit (downloaded, checksum-pinned) and
+  the patched terminal engine (built from source with Rust). Both are
+  cached on the scripts that make them, so they're rebuilt only when those
+  change. Finishes by generating Octet.xcodeproj.
+runs:
+  using: composite
+  steps:
+    - name: Select Xcode
+      uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: latest-stable
+
+    - name: Install XcodeGen
+      shell: bash
+      run: brew install xcodegen
+
+    - name: Cache GhosttyKit
+      id: ghosttykit
+      uses: actions/cache@v4
+      with:
+        path: Vendor/GhosttyKit.xcframework
+        key: ghosttykit-${{ hashFiles('scripts/fetch-ghosttykit.sh') }}
+
+    - name: Fetch GhosttyKit
+      if: steps.ghosttykit.outputs.cache-hit != 'true'
+      shell: bash
+      run: scripts/fetch-ghosttykit.sh
+
+    - name: Cache the terminal engine
+      id: engine
+      uses: actions/cache@v4
+      with:
+        path: Vendor/engine
+        key: engine-${{ runner.arch }}-${{ hashFiles('scripts/build-engine.sh', 'scripts/fetch-engine.sh', 'scripts/engine-*.patch') }}
+
+    # The engine vendors libghostty-vt, which its build compiles with Zig.
+    - name: Install Zig
+      if: steps.engine.outputs.cache-hit != 'true'
+      uses: mlugg/setup-zig@v2
+      with:
+        version: 0.16.0
+
+    - name: Build the terminal engine
+      if: steps.engine.outputs.cache-hit != 'true'
+      shell: bash
+      run: scripts/build-engine.sh
+
+    - name: Cache Swift packages
+      uses: actions/cache@v4
+      with:
+        path: build/DerivedData/SourcePackages
+        key: spm-${{ hashFiles('project.yml') }}
+
+    - name: Generate the Xcode project
+      shell: bash
+      run: xcodegen generate

@@ -59,18 +59,20 @@ struct WorkspaceActivity: Equatable {
     }
 
     /// Splits workspaces into those kept in view and those gone idle. Never
-    /// idle: pinned, focused, or an agent that is working or needs input.
+    /// idle: pinned, focused, or an agent that is working or needs input,
+    /// unless moved to Idle by hand.
     func partition(
         _ workspaces: [EngineWorkspace],
         snapshot: EngineSnapshot,
         pinned: Set<String>,
+        parked: Set<String> = [],
         idleAfter: TimeInterval,
         now: Date = Date()
     ) -> (active: [EngineWorkspace], idle: [EngineWorkspace]) {
         var active: [EngineWorkspace] = []
         var idle: [EngineWorkspace] = []
         for workspace in workspaces {
-            if isIdle(workspace, snapshot: snapshot, pinned: pinned, idleAfter: idleAfter, now: now) {
+            if isIdle(workspace, snapshot: snapshot, pinned: pinned, parked: parked, idleAfter: idleAfter, now: now) {
                 idle.append(workspace)
             } else {
                 active.append(workspace)
@@ -84,11 +86,16 @@ struct WorkspaceActivity: Equatable {
         _ workspace: EngineWorkspace,
         snapshot: EngineSnapshot,
         pinned: Set<String>,
+        parked: Set<String> = [],
         idleAfter: TimeInterval,
         now: Date = Date()
     ) -> Bool {
         let id = workspace.workspaceId
-        if pinned.contains(id) || id == snapshot.focusedWorkspaceId { return false }
+        if pinned.contains(id) { return false }
+        // Moved to Idle by hand: it stays there whatever it is doing, until
+        // it is used again.
+        if parked.contains(id) { return true }
+        if id == snapshot.focusedWorkspaceId { return false }
         let busy = snapshot.agents(inWorkspace: id).contains { $0.agentStatus == .working || $0.agentStatus == .blocked }
         if busy || workspace.agentStatus == .working || workspace.agentStatus == .blocked { return false }
         guard let stamp = stamps[id] else { return false }
@@ -100,6 +107,11 @@ struct WorkspaceActivity: Equatable {
     /// Backdates a workspace so it reads as idle until it is used again.
     mutating func markIdle(_ workspaceId: String) {
         stamps[workspaceId] = .distantPast
+    }
+
+    /// Counts a workspace as used just now.
+    mutating func touch(_ workspaceId: String, now: Date = Date()) {
+        stamps[workspaceId] = now
     }
 
     /// Compact age like `45m`, `3h`, `2d`.

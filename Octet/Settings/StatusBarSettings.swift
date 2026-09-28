@@ -157,6 +157,8 @@ private struct StatusChipPreview: View {
             OctetIcon("doc", size: 10)
         case "builtin.pullRequest":
             OctetIcon("arrow.triangle.pull", size: 10)
+        case "builtin.ci":
+            Image(systemName: "gearshape.2").font(.system(size: 10, weight: .medium))
         default:
             StatusItemIcon(descriptor: descriptor)
         }
