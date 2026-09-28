@@ -14,6 +14,7 @@ struct StatusBar: View {
     /// Redraws the account chip when accounts change.
     @ObservedObject private var settings = SettingsStore.shared
     @Environment(\.openURL) private var openURL
+    @State private var ciShown = false
 
     static let height: CGFloat = 32
 
@@ -55,6 +56,7 @@ struct StatusBar: View {
         case "builtin.gitState": return model.repo.map { !$0.operation.isEmpty } ?? false
         case "builtin.changes": return model.repo?.changes.map { !$0.isEmpty } ?? false
         case "builtin.pullRequest": return model.repo?.pullRequest != nil
+        case "builtin.ci": return model.repo?.ci != nil
         default: return model.pluginOutputs[descriptor.id] != nil
         }
     }
@@ -188,11 +190,63 @@ struct StatusBar: View {
                 }
                 .buttonStyle(.plain)
             }
+        case "builtin.ci":
+            if let ci = model.repo?.ci {
+                ciChip(ci)
+            }
         default:
             if let output = model.pluginOutputs[descriptor.id] {
                 pluginChip(descriptor, output)
             }
         }
+    }
+
+    /// CI for this commit at a glance; a click shows each workflow, and
+    /// what to do about a failure.
+    private func ciChip(_ ci: CIStatus) -> some View {
+        let tone: StatusItemOutput.Tone = switch ci.overall {
+        case .failed: .danger
+        case .cancelled: .muted
+        case .running, .passed: .normal
+        }
+        return Button { ciShown.toggle() } label: {
+            StatusChip(tone: tone, help: ciHelp(ci)) {
+                Image(systemName: "gearshape.2").font(.system(size: 10, weight: .medium))
+                Text("CI")
+                switch ci.overall {
+                case .running:
+                    LoadingLine(width: 10, color: Theme.accent)
+                    Text("\(ci.finished)/\(ci.runs.count)")
+                case .passed:
+                    Text("✓").foregroundStyle(Color(hex: AgentStateColor.done))
+                case .failed:
+                    Text("✗ \(ci.failed.count)")
+                case .cancelled:
+                    Text("cancelled")
+                }
+            }
+            .opacity(ci.isHead ? 1 : 0.7)
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $ciShown, arrowEdge: .top) {
+            CIPopover(status: ci, branch: model.repo?.branch, hasAgent: agent.map { !$0.isSubagentViewer } ?? false,
+                      rerun: { model.rerunFailed(ci) },
+                      askAgent: {
+                          ciShown = false
+                          StatusBarModel.askAgentToFix(ci, branch: model.repo?.branch, pane: agent?.paneId)
+                      },
+                      refresh: { model.refreshCINow() })
+        }
+    }
+
+    private func ciHelp(_ ci: CIStatus) -> String {
+        let what: String = switch ci.overall {
+        case .running: "CI running: \(ci.finished) of \(ci.runs.count) workflows done"
+        case .passed: "CI passed"
+        case .failed: "CI failed: " + ci.failed.map(\.workflow).joined(separator: ", ")
+        case .cancelled: "CI cancelled"
+        }
+        return what + (ci.isHead ? "" : "\nFor \(ci.shortSha), the latest pushed commit; this one has no runs yet")
     }
 
     /// Remote Control is on for the agent in this pane: a light passes over
@@ -422,5 +476,107 @@ struct SSHConnectCard: View {
     private static func pulse(_ dot: Int, phase: Double) -> Double {
         let position = Double(dot) / 4
         return phase >= 1 ? 1 : max(0.2, 1 - abs(phase * 1.4 - position) * 3)
+    }
+}
+
+/// A commit's CI, workflow by workflow: what's running, what failed and
+/// where, with the failure one click from the agent.
+private struct CIPopover: View {
+    let status: CIStatus
+    let branch: String?
+    let hasAgent: Bool
+    let rerun: () -> Void
+    let askAgent: () -> Void
+    let refresh: () -> Void
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Text("CI").font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary)
+                if let branch {
+                    Text(branch).font(Theme.monoFont).foregroundStyle(Theme.textSecondary).lineLimit(1).truncationMode(.middle)
+                }
+                Text(status.shortSha).font(Theme.monoFont).foregroundStyle(Theme.textTertiary)
+                Spacer(minLength: 8)
+                Button(action: refresh) {
+                    OctetIcon("arrow.clockwise", size: 11).foregroundStyle(Theme.textSecondary)
+                }
+                .buttonStyle(.plain)
+                .help("Check now")
+            }
+            if !status.isHead {
+                Text("This commit has no runs yet (not pushed, or not started). These are for \(status.shortSha), the latest pushed.")
+                    .font(Theme.captionFont)
+                    .foregroundStyle(Theme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(status.runs) { run in CIRunRow(run: run) { if let url = run.url { openURL(url) } } }
+            }
+            if status.overall == .failed {
+                HStack(spacing: 6) {
+                    if hasAgent {
+                        OctetButton(title: "Ask Agent to Fix", icon: "sparkles", kind: .primary, compact: true, action: askAgent)
+                    }
+                    OctetButton(title: "Re-run Failed", icon: "arrow.clockwise", kind: .secondary, compact: true, action: rerun)
+                }
+            }
+        }
+        .padding(12)
+        .frame(width: 320, alignment: .leading)
+        .background(Theme.chrome)
+    }
+}
+
+private struct CIRunRow: View {
+    let run: CIRun
+    let open: () -> Void
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: open) {
+            HStack(alignment: .top, spacing: 8) {
+                glyph.frame(width: 14, height: 16)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(run.workflow).font(Theme.uiFont).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                        Spacer(minLength: 4)
+                        Text(when).font(Theme.captionFont.monospacedDigit()).foregroundStyle(Theme.textTertiary)
+                    }
+                    ForEach(run.failedJobs, id: \.self) { job in
+                        Text(job).font(Theme.captionFont).foregroundStyle(Theme.danger).lineLimit(2)
+                    }
+                }
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(RoundedRectangle(cornerRadius: Theme.rowRadius).fill(hovered ? Theme.hover : Color.clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
+        .help("Open this run on GitHub")
+    }
+
+    @ViewBuilder
+    private var glyph: some View {
+        switch run.state {
+        case .queued: Circle().strokeBorder(Theme.textTertiary, lineWidth: 1.2).frame(width: 8, height: 8)
+        case .running: LoadingLine(width: 12, color: Theme.accent)
+        case .passed: Text("✓").font(Theme.monoFont).foregroundStyle(Color(hex: AgentStateColor.done))
+        case .failed: Text("✗").font(Theme.monoFont).foregroundStyle(Theme.danger)
+        case .cancelled, .skipped: Text("–").font(Theme.monoFont).foregroundStyle(Theme.textTertiary)
+        }
+    }
+
+    /// How long a finished run took, or how long ago one in progress began.
+    private var when: String {
+        guard let start = run.createdAt else { return "" }
+        if run.isFinished, let end = run.updatedAt {
+            let seconds = Int(end.timeIntervalSince(start))
+            return seconds >= 60 ? "\(seconds / 60)m \(seconds % 60)s" : "\(seconds)s"
+        }
+        return UsageMeter.relative(start)
     }
 }

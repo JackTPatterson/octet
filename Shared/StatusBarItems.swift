@@ -89,6 +89,8 @@ enum StatusBarItems {
               sample: "3 • +10 -2", symbol: "doc", enabledByDefault: true),
         .init(id: "builtin.pullRequest", name: "Pull request", summary: "The branch's pull request and its checks, from the GitHub CLI",
               sample: "PR #123 ✓", enabledByDefault: true),
+        .init(id: "builtin.ci", name: "CI", summary: "GitHub Actions for this commit: running, passed or failed, with a hand-off to the agent when it fails (GitHub CLI)",
+              sample: "CI 3/4", enabledByDefault: true),
     ]
 
     /// The ids to show, in order. Until someone arranges the bar, it's every
