@@ -123,6 +123,20 @@ struct AgentAccount: Codable, Equatable {
     var tightest: UsageWindow? { live.max { $0.used < $1.used } }
 }
 
+extension AgentAccounts {
+    /// A newer reading's windows, plus the still-running windows an older one
+    /// had that the newer didn't mention. A stream event may carry only the
+    /// window that triggered it; taken alone it would erase, say, a weekly
+    /// window at 94% and leave a session window at 34% on show.
+    static func mergeWindows(newer: [UsageWindow], older: [UsageWindow], now: Date = Date()) -> [UsageWindow] {
+        let named = Set(newer.map(\.name))
+        // A window without a reset time can't vouch for itself once a newer
+        // reading has replaced the one that carried it.
+        let kept = older.filter { !named.contains($0.name) && ($0.resetsAt.map { $0 > now } ?? false) }
+        return (newer + kept).sorted { order($0.name) < order($1.name) }
+    }
+}
+
 enum AgentAccounts {
     /// `claude auth status` prints JSON: `authMethod` "claude.ai" is a
     /// subscription (`subscriptionType` names the plan); an API key, a

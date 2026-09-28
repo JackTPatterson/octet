@@ -3504,3 +3504,19 @@ final class CellWidthTests: XCTestCase {
         XCTAssertEqual(CellWidth.columns("echo 中文 ok", upTo: 7), 9)
     }
 }
+
+final class UsageWindowMergeTests: XCTestCase {
+    func testAPartialReadingKeepsTheOtherRunningWindows() {
+        let now = Date(timeIntervalSince1970: 10_000_000)
+        let weekly = UsageWindow(name: "7d", used: 0.94, resetsAt: now.addingTimeInterval(86_400))
+        let oldSession = UsageWindow(name: "5h", used: 0.2, resetsAt: now.addingTimeInterval(3600))
+        let reset = UsageWindow(name: "7d Opus", used: 0.5, resetsAt: now.addingTimeInterval(-60))
+        let session = UsageWindow(name: "5h", used: 0.34, resetsAt: now.addingTimeInterval(3000))
+        let merged = AgentAccounts.mergeWindows(newer: [session], older: [oldSession, weekly, reset], now: now)
+        // The newer 5h wins, the weekly stays, and the window that reset goes.
+        XCTAssertEqual(merged, [session, weekly])
+        var account = AgentAccount(agent: "claude", kind: .subscription)
+        account.windows = merged
+        XCTAssertEqual(account.windows.max { $0.used < $1.used }, weekly)
+    }
+}

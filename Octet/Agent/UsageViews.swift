@@ -28,7 +28,8 @@ struct UsageMeter: View {
         .accessibilityLabel(label)
     }
 
-    private var isStale: Bool { updatedAt.map { Date().timeIntervalSince($0) > 3600 } ?? false }
+    /// An hour old, or of unknown age (Claude Code's cache, undated).
+    private var isStale: Bool { updatedAt.map { Date().timeIntervalSince($0) > 3600 } ?? true }
 
     private var label: String {
         let used = windows.map { "\($0.name) \(Int(($0.used * 100).rounded())) percent" }.joined(separator: ", ")
@@ -63,8 +64,11 @@ struct AccountChips: View {
                 let account = store.accounts[agent.id] ?? AgentAccount(agent: agent.id, kind: .unknown)
                 chip(account)
                     .onHover { inside in
-                        if inside { hovered = account.agent }
-                        else if hovered == account.agent { hovered = nil }
+                        if inside {
+                            hovered = account.agent
+                            // Read afresh while the card is up.
+                            if account.agent == "claude" { store.refreshSoon() }
+                        } else if hovered == account.agent { hovered = nil }
                     }
                     .popover(isPresented: card(account.agent), arrowEdge: .bottom) {
                         AccountCard(account: account, isRunning: runningAgents.contains(account.agent))
@@ -140,8 +144,13 @@ struct AccountCard: View {
                     Text("As of \(UsageMeter.relative(updatedAt))")
                         .font(Theme.captionFont)
                         .foregroundStyle(Theme.textTertiary)
+                } else {
+                    Text("From Claude Code's cache, age unknown")
+                        .font(Theme.captionFont)
+                        .foregroundStyle(Theme.textTertiary)
                 }
             }
+            if account.agent == "claude", account.kind == .subscription { liveSource }
             if account.kind == .subscription {
                 UsageRateGraph(samples: store.history[account.agent] ?? [],
                                window: graphWindow,
@@ -198,6 +207,33 @@ struct AccountCard: View {
         return SettingsStore.shared.values.readClaudeAccountUsage
             ? "No allowance to show yet. Octet asks your Claude account, falls back to the usage Claude Code last cached, and takes live numbers from any conversation you run."
             : "No allowance to show yet. Octet reads the usage Claude Code last cached and live numbers from conversations you run here. For live numbers any time, turn on \u{201C}Read live usage from your Claude account\u{201D} in Settings."
+    }
+
+    /// Where Claude's numbers come from when they may be behind, and the
+    /// one click that makes them live.
+    @ViewBuilder
+    private var liveSource: some View {
+        let asking = SettingsStore.shared.values.readClaudeAccountUsage
+        if !asking, account.updatedAt.map({ Date().timeIntervalSince($0) > 15 * 60 }) ?? true {
+            VStack(alignment: .leading, spacing: 6) {
+                note("This is what Claude Code last cached, which only changes when Claude Code checks. Sessions in terminal tabs don't report their usage to Octet.")
+                OctetButton(title: "Read Live Usage", icon: "arrow.clockwise", kind: .secondary, compact: true) {
+                    store.enableAccountUsage()
+                }
+            }
+        } else if asking, let fallback = store.claudeFallback {
+            VStack(alignment: .leading, spacing: 6) {
+                switch fallback {
+                case .needsKeychain:
+                    note("macOS needs to ask again before Octet can read Claude Code's sign-in, so this may be behind.")
+                    OctetButton(title: "Allow Again", icon: "arrow.clockwise", kind: .secondary, compact: true) {
+                        store.accountUsageSettingChanged()
+                    }
+                case .problem(let reason):
+                    note("\(reason) Showing the last numbers Octet has.")
+                }
+            }
+        }
     }
 
     private func note(_ text: String) -> some View {
