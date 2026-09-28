@@ -105,6 +105,7 @@ enum SettingsSearchIndex {
               ["installed", "discover", "scan", "opencode", "gemini", "cursor", "deepseek", "version", "path"]),
         .init(.agents, "Prompt for agent updates", ["update", "upgrade", "version", "claude", "codex", "pi"]),
         .init(.agents, "Resume agents after a restart", ["resume", "restart", "recover", "reboot", "session"]),
+        .init(.agents, "Move agents to the project they work in", ["cd", "directory", "folder", "project", "repository", "wrong", "move", "relocate", "cwd"]),
         .init(.agents, "Offer to recover lost sessions", ["recover", "recovery", "crash", "lost", "session", "terminal", "shell"]),
         .init(.agents, "Remote Control for Claude conversations", ["remote", "control", "phone", "mobile", "claude.ai", "app"]),
         .init(.general, "Hotkey from any app", ["hotkey", "quake", "global", "shortcut", "summon", "dropdown"]),

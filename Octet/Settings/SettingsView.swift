@@ -710,6 +710,13 @@ private struct AgentSettings: View {
             }
             SettingsDivider()
             SettingsRow(
+                title: "Move agents to the project they work in",
+                detail: "When a Claude or Codex agent's last 3 commands all ran in another repository (cd ~/code/api && …), Octet restarts it there once its turn ends, in the same tab with its conversation resumed. For an agent started in the wrong folder."
+            ) {
+                Toggle("Move agents to the project they work in", isOn: $settings.values.relocateAgents).labelsHidden().toggleStyle(.switch)
+            }
+            SettingsDivider()
+            SettingsRow(
                 title: "Keep the Mac awake while agents work",
                 detail: "While any agent is working, the Mac doesn't go to sleep on its own, so long tasks finish. The display can still turn off, and closing the lid still sleeps. It lets go as soon as the last agent stops."
             ) {

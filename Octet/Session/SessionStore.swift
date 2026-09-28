@@ -538,6 +538,7 @@ final class SessionStore: ObservableObject {
         usageTracker.refreshIfDue()
         AgentOfferCenter.shared.observe(snapshot)
         AgentWorktreeWatcher.shared.observe(snapshot, store: self)
+        AgentRelocator.shared.observe(snapshot, store: self)
         PeerCenter.shared.observe(snapshot)
         refreshTip()
         if branches != self.branches { self.branches = branches }
