@@ -36,6 +36,13 @@ runs:
         path: Vendor/engine
         key: engine-${{ runner.arch }}-${{ hashFiles('scripts/build-engine.sh', 'scripts/fetch-engine.sh', 'scripts/engine-*.patch') }}
 
+    # The engine vendors libghostty-vt, which its build compiles with Zig.
+    - name: Install Zig
+      if: steps.engine.outputs.cache-hit != 'true'
+      uses: mlugg/setup-zig@v2
+      with:
+        version: 0.16.0
+
     - name: Build the terminal engine
       if: steps.engine.outputs.cache-hit != 'true'
       shell: bash

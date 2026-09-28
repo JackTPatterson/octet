@@ -149,7 +149,7 @@ Reinstall the hook after moving the app because its configuration stores the CLI
 - macOS 14 or newer on Apple Silicon
 - Xcode 26 or 27 with command-line tools
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen): `brew install xcodegen`
-- [Herdr](https://github.com/herdrdev/herdr): `brew install herdr` (or Rust, to build the patched engine yourself)
+- [Herdr](https://github.com/herdrdev/herdr): `brew install herdr` (or Rust and Zig 0.16, to build the patched engine yourself)
 
 Two build inputs are downloaded or built by script rather than committed: `Vendor/GhosttyKit.xcframework` (about 120 MB) and the session-server binary at `Vendor/engine/octet-engine`.
 
