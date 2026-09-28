@@ -263,6 +263,9 @@ private struct WorkspaceCard: View {
                         .help("Open in another window. Click to bring it forward.")
                         .accessibilityLabel("Open in another window")
                 }
+                if hovered && !renaming {
+                    WorkspaceCloseButton { store.closeWorkspace(workspace.workspaceId) }
+                }
             }
             // The folder only earns a line when the name doesn't already say it.
             if let directory, !Self.labelNamesFolder(workspace.label, directory) {
@@ -615,14 +618,7 @@ private struct IdleRow: View {
             }
             Spacer(minLength: 4)
             if hovered && !renaming {
-                Button {
-                    store.closeWorkspace(workspace.workspaceId)
-                } label: {
-                    OctetIcon("xmark", size: 15)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(Theme.textSecondary)
-                .help("Close workspace")
+                WorkspaceCloseButton { store.closeWorkspace(workspace.workspaceId) }
             } else {
                 Text(WorkspaceActivity.ageLabel(since: store.activity.lastActive(workspace.workspaceId)))
                     .font(.system(size: 10.5, design: .monospaced))
@@ -642,5 +638,26 @@ private struct IdleRow: View {
         }
         .contextMenu { WorkspaceOrganizeMenu(store: store, workspace: workspace) { renaming = true } }
         .help("\(workspace.label) · last used \(WorkspaceActivity.ageLabel(since: store.activity.lastActive(workspace.workspaceId))) ago")
+    }
+}
+
+/// An x that appears on a hovered workspace, closing it in one click.
+struct WorkspaceCloseButton: View {
+    let action: () -> Void
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: action) {
+            OctetIcon("xmark", size: 12)
+                .foregroundStyle(hovered ? Theme.textPrimary : Theme.textTertiary)
+                .frame(width: 18, height: 18)
+                .background(hovered ? Theme.cardSelected : Color.clear)
+                .clipShape(RoundedRectangle(cornerRadius: 3))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
+        .help("Close workspace")
+        .accessibilityLabel("Close workspace")
     }
 }
