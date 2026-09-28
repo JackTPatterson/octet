@@ -51,6 +51,8 @@ struct SidebarView: View {
         .animation(motion.animation(.sidebar), value: store.idleWorkspaces.isEmpty)
         .frame(width: width)
         .background(Theme.sidebar)
+        // Peeks come back once the pointer has left the sidebar.
+        .onHover { if !$0 { HoverIntent.navigating = false } }
     }
 
     private var controlBar: some View {
@@ -338,8 +340,10 @@ private struct WorkspaceCard: View {
         .contentShape(Rectangle())
         .onHover { hovering in
             hovered = hovering
-            // Not while renaming or dragging a tab over it.
-            peek.source(hovering && !renaming && TabDrag.shared.tabId == nil && TabDrag.shared.workspaceId == nil)
+            // Not for the workspace already showing, nor while renaming or
+            // dragging a tab over it.
+            peek.source(hovering && !isSelected && !renaming
+                        && TabDrag.shared.tabId == nil && TabDrag.shared.workspaceId == nil)
         }
         .popover(isPresented: $peek.isShown, arrowEdge: .trailing) {
             WorkspacePeek(store: store, workspace: workspace) { peek.close() }
@@ -348,6 +352,7 @@ private struct WorkspaceCard: View {
         }
         .onTapGesture {
             peek.close()
+            HoverIntent.navigating = true
             window.focusWorkspace(workspace.workspaceId)
         }
         .simultaneousGesture(TapGesture(count: 2).onEnded { renaming = true })
