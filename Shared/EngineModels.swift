@@ -122,6 +122,13 @@ struct EngineAgent: Codable, Equatable, Identifiable {
     /// A tab watching a Claude subagent, not a Claude session of its own.
     var isSubagentViewer: Bool { tokens?[PaneAgentReporter.roleToken] == PaneAgentReporter.subagentRole }
 
+    /// The pane of the agent that launched this subagent, when its viewer
+    /// was told.
+    var parentPaneId: String? {
+        guard let pane = tokens?[PaneAgentReporter.parentPaneToken] ?? nil, !pane.isEmpty else { return nil }
+        return pane
+    }
+
     /// The folder a subagent is working in, as its viewer read it from the
     /// transcript. The viewer's own process never leaves the folder the tab
     /// opened in, so this is the only trace of a `cd` or a worktree.
@@ -235,6 +242,19 @@ struct EngineSnapshot: Codable, Equatable {
 
     func agents(inWorkspace workspaceId: String) -> [EngineAgent] {
         agents.filter { $0.workspaceId == workspaceId }
+    }
+
+    /// The root agent's tab a subagent viewer tab was opened from, following
+    /// subagents of subagents up to the first tab that isn't a viewer.
+    func rootTabId(ofTab tabId: String) -> String {
+        var current = tabId
+        var seen: Set<String> = [tabId]
+        while let parentPane = agents(inTab: current).lazy.compactMap(\.parentPaneId).first,
+              let parent = panes.first(where: { $0.paneId == parentPane })?.tabId,
+              seen.insert(parent).inserted {
+            current = parent
+        }
+        return current
     }
 
     /// Where a pane's work is happening: a subagent's reported folder, else

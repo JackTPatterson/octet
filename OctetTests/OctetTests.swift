@@ -182,6 +182,40 @@ final class SubagentTabTests: XCTestCase {
         XCTAssertFalse(plain.isSubagentViewer)
     }
 
+    func testViewerIsToldWhichPaneLaunchedIt() throws {
+        let request = try XCTUnwrap(SubagentHook.tabRequest(
+            payload: payload,
+            environment: [EngineProtocol.workspaceIdVariable: "w2", EngineProtocol.paneIdVariable: "w2:p3"],
+            cliPath: "x"))
+        let command = try XCTUnwrap((request["root"] as? [String: Any])?["command"] as? [String])
+        let flag = try XCTUnwrap(command.firstIndex(of: "--parent-pane"))
+        XCTAssertEqual(command[flag + 1], "w2:p3")
+    }
+
+    func testSubagentTabsResolveToTheirRootAgentsTab() throws {
+        func pane(_ id: String, tab: String) -> EnginePane {
+            EnginePane(paneId: id, tabId: tab, workspaceId: "w1", focused: false, cwd: nil,
+                       foregroundCwd: nil, agentStatus: .working, terminalTitle: nil)
+        }
+        func viewer(_ pane: String, tab: String, parent: String) -> EngineAgent {
+            var agent = EngineAgent(paneId: pane, tabId: tab, workspaceId: "w1", agent: "claude", name: nil,
+                                    displayAgent: nil, agentStatus: .working)
+            agent.tokens = [PaneAgentReporter.roleToken: PaneAgentReporter.subagentRole,
+                            PaneAgentReporter.parentPaneToken: parent]
+            return agent
+        }
+        let root = EngineAgent(paneId: "w1:p1", tabId: "w1:t1", workspaceId: "w1", agent: "claude", name: nil,
+                               displayAgent: nil, agentStatus: .working)
+        let snapshot = EngineSnapshot(
+            workspaces: [], tabs: [],
+            panes: [pane("w1:p1", tab: "w1:t1"), pane("w1:p2", tab: "w1:t2"), pane("w1:p3", tab: "w1:t3")],
+            agents: [root, viewer("w1:p2", tab: "w1:t2", parent: "w1:p1"), viewer("w1:p3", tab: "w1:t3", parent: "w1:p2")],
+            focusedWorkspaceId: nil, focusedTabId: nil, focusedPaneId: nil)
+        XCTAssertEqual(snapshot.rootTabId(ofTab: "w1:t1"), "w1:t1")
+        XCTAssertEqual(snapshot.rootTabId(ofTab: "w1:t2"), "w1:t1")
+        XCTAssertEqual(snapshot.rootTabId(ofTab: "w1:t3"), "w1:t1")
+    }
+
     func testIgnoresOtherToolsAndNonEnginePanes() {
         var bash = payload
         bash["tool_name"] = "Bash"

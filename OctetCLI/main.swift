@@ -70,7 +70,7 @@ case "hook":
 case "agent-watch":
     let args = Array(arguments.dropFirst())
     guard let directory = option("--dir", in: args) else {
-        fail("usage: octet-cli agent-watch --dir <session>/subagents [--tool-use-id <id>] [--description <text>] [--title <text>]")
+        fail("usage: octet-cli agent-watch --dir <session>/subagents [--tool-use-id <id>] [--description <text>] [--title <text>] [--parent-pane <id>]")
     }
     SubagentWatch.run(
         directory: directory,
@@ -78,6 +78,7 @@ case "agent-watch":
         description: option("--description", in: args),
         since: option("--since", in: args).flatMap(TimeInterval.init) ?? 0,
         title: option("--title", in: args) ?? "Subagent",
+        parentPaneId: option("--parent-pane", in: args),
         environment: environment
     )
 

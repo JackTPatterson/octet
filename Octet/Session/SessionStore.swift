@@ -45,6 +45,9 @@ final class SessionStore: ObservableObject {
     @Published private(set) var idleWorkspaces: [EngineWorkspace] = []
     @Published private(set) var activity = WorkspaceActivity()
     @Published private(set) var pinnedWorkspaceIds: Set<String> = []
+    /// Colours picked by hand: a workspace's, and each tab's by workspace.
+    @Published private(set) var workspaceColors: [String: String] = [:]
+    @Published private(set) var tabColors: [String: [String: String]] = [:]
     @Published var idleAfter: TimeInterval = WorkspaceActivity.defaultIdleAfter {
         didSet {
             UserDefaults.standard.set(idleAfter, forKey: Self.idleAfterKey)
@@ -56,6 +59,8 @@ final class SessionStore: ObservableObject {
     private static let manualNamesKey = "octet.tabs.manualNames" + keySuffix
     private static let stampsKey = "octet.activity.stamps" + keySuffix
     private static let pinnedKey = "octet.activity.pinned" + keySuffix
+    private static let workspaceColorsKey = "octet.colors.workspaces" + keySuffix
+    private static let tabColorsKey = "octet.colors.tabs" + keySuffix
     private static let idleAfterKey = "octet.activity.idleAfter" + keySuffix
     private var lastStampSave = Date.distantPast
     /// Workspaces marked idle by hand: viewing them doesn't count as use
@@ -134,6 +139,8 @@ final class SessionStore: ObservableObject {
             activity = WorkspaceActivity(stamps: raw.mapValues { Date(timeIntervalSince1970: $0) })
         }
         pinnedWorkspaceIds = Set(defaults.stringArray(forKey: Self.pinnedKey) ?? [])
+        workspaceColors = defaults.dictionary(forKey: Self.workspaceColorsKey) as? [String: String] ?? [:]
+        tabColors = defaults.dictionary(forKey: Self.tabColorsKey) as? [String: [String: String]] ?? [:]
         manuallyNamedTabIds = Set(defaults.stringArray(forKey: Self.manualNamesKey) ?? [])
         seenTips = Set(defaults.stringArray(forKey: Self.seenTipsKey) ?? [])
         let storedIdleAfter = defaults.double(forKey: Self.idleAfterKey)
@@ -520,6 +527,7 @@ final class SessionStore: ObservableObject {
         settleOptimisticTabs(with: snapshot)
         observeActivity(snapshot)
         autoNameTabs(in: snapshot)
+        forgetClosedTabColors(in: snapshot)
         notifyAgentActivity(in: snapshot)
         usageTracker.refreshIfDue()
         AgentOfferCenter.shared.observe(snapshot)
@@ -777,6 +785,57 @@ final class SessionStore: ObservableObject {
     }
 
     func isPinned(_ workspaceId: String) -> Bool { pinnedWorkspaceIds.contains(workspaceId) }
+
+    // MARK: Colours
+
+    func workspaceColor(_ workspaceId: String) -> TabColor? {
+        workspaceColors[workspaceId].flatMap(TabColor.init(rawValue:))
+    }
+
+    /// The colour a tab picked for itself, not one it inherits.
+    func ownTabColor(_ tab: EngineTab) -> TabColor? {
+        tabColors[tab.workspaceId]?[tab.tabId].flatMap(TabColor.init(rawValue:))
+    }
+
+    /// The colour a tab shows: its own, else its root agent's tab's when it
+    /// is a subagent's, else its workspace's.
+    func tabColor(_ tab: EngineTab) -> TabColor? {
+        if let own = ownTabColor(tab) { return own }
+        let root = snapshot.rootTabId(ofTab: tab.tabId)
+        if root != tab.tabId, let color = tabColors[tab.workspaceId]?[root].flatMap(TabColor.init(rawValue:)) {
+            return color
+        }
+        return workspaceColor(tab.workspaceId)
+    }
+
+    func setWorkspaceColor(_ workspaceId: String, _ color: TabColor?) {
+        workspaceColors[workspaceId] = color?.rawValue
+        UserDefaults.standard.set(workspaceColors, forKey: Self.workspaceColorsKey)
+    }
+
+    /// Colours the tab; its subagents' tabs follow it unless they have their own.
+    func setTabColor(_ tab: EngineTab, _ color: TabColor?) {
+        tabColors[tab.workspaceId, default: [:]][tab.tabId] = color?.rawValue
+        if tabColors[tab.workspaceId]?.isEmpty == true { tabColors[tab.workspaceId] = nil }
+        UserDefaults.standard.set(tabColors, forKey: Self.tabColorsKey)
+    }
+
+    /// Drops the colours of tabs gone from workspaces still open, so a later
+    /// tab given the same id starts plain. Closed workspaces keep theirs, as
+    /// pins do, in case the session comes back.
+    private func forgetClosedTabColors(in snapshot: EngineSnapshot) {
+        guard !tabColors.isEmpty else { return }
+        let open = Set(snapshot.tabs.map(\.tabId))
+        let workspaces = Set(snapshot.workspaces.map(\.workspaceId))
+        var kept = tabColors
+        for (workspaceId, colors) in tabColors where workspaces.contains(workspaceId) {
+            let live = colors.filter { open.contains($0.key) }
+            kept[workspaceId] = live.isEmpty ? nil : live
+        }
+        guard kept != tabColors else { return }
+        tabColors = kept
+        UserDefaults.standard.set(tabColors, forKey: Self.tabColorsKey)
+    }
 
     func setPinned(_ workspaceId: String, _ pinned: Bool) {
         if pinned { pinnedWorkspaceIds.insert(workspaceId) } else { pinnedWorkspaceIds.remove(workspaceId) }
