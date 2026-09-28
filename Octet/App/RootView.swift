@@ -848,8 +848,13 @@ final class UIState: ObservableObject {
     }
     /// The right-hand panel shows one thing at a time: runtimes, todos or git.
     @Published var runtimePanelVisible = false {
-        didSet { if runtimePanelVisible { todoPanelVisible = false; gitPanelVisible = false } }
+        didSet {
+            if runtimePanelVisible { todoPanelVisible = false; gitPanelVisible = false } else { runtimePanelAutoOpened = false }
+        }
     }
+    /// The Runtime panel opened itself for a new runtime, and nobody has
+    /// pointed at it since: it closes again after a few seconds.
+    var runtimePanelAutoOpened = false
     @Published var todoPanelVisible = false {
         didSet { if todoPanelVisible { runtimePanelVisible = false; gitPanelVisible = false } }
     }
