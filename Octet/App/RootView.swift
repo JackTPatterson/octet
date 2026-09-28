@@ -35,7 +35,7 @@ struct RootView: View {
     /// Where the terminal starts across the window.
     private var sidebarInset: CGFloat { ui.sidebarVisible ? ui.sidebarWidth + 1 : 0 }
     private var windowHeight: CGFloat { NSApp.keyWindow?.contentView?.bounds.height ?? 800 }
-    private var runtimePanelWidth: CGFloat { ui.runtimeInspectorEntryID == nil ? 293 : 441 }
+    private let runtimePanelWidth: CGFloat = 293
     static let todoPanelWidth: CGFloat = 293
     static let gitPanelWidth: CGFloat = 321
     @Environment(\.openWindow) private var openWindow
@@ -224,7 +224,7 @@ struct RootView: View {
                 ZStack(alignment: .leading) {
                     Rectangle().fill(Theme.divider).frame(width: 1)
                         .frame(maxHeight: .infinity, alignment: .leading)
-                    RuntimePanel(store: store)
+                    RuntimePanel(store: store, ui: ui)
                         .frame(width: runtimePanelWidth - 1)
                         .padding(.leading, 1)
                         .offset(x: ui.runtimePanelVisible ? 0 : runtimePanelWidth)
@@ -862,9 +862,8 @@ final class UIState: ObservableObject {
     /// Whether the agent in front has any runtimes, set by the Runtime panel
     /// (which works them out); the tab bar hides its button when it has none.
     @Published var runtimeHasEntries = false
-    /// Selecting a runtime collapses the list to an icon rail and opens its
-    /// inspector immediately to the rail's left.
-    @Published var runtimeInspectorEntryID: String?
+    /// Runtimes opened in place in the list, to show their details.
+    @Published var runtimeExpandedEntryIDs: Set<String> = []
     @Published var paletteVisible = false
     /// Drag the sidebar's edge to resize it (200pt up to half the window).
     @Published var sidebarWidth: CGFloat = {
