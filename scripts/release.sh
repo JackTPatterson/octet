@@ -15,10 +15,22 @@
 # Usage: scripts/release.sh
 # OCTET_NOTARY_PROFILE picks another profile. OCTET_RELEASE_TAG overrides the
 # default prerelease tag inferred from the marketing version and build number.
+#
+# For CI (.github/workflows/release.yml), where nothing lives in a login
+# keychain: OCTET_NOTARY_KEYCHAIN is the keychain holding the notarization
+# profile, and OCTET_SPARKLE_KEY_FILE the EdDSA private key Sparkle signs
+# updates with (as `generate_keys -x` exports it).
 set -eu
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 profile="${OCTET_NOTARY_PROFILE:-octet-notary}"
+notary() {
+    if [ -n "${OCTET_NOTARY_KEYCHAIN:-}" ]; then
+        xcrun notarytool "$@" --keychain "$OCTET_NOTARY_KEYCHAIN"
+    else
+        xcrun notarytool "$@"
+    fi
+}
 out="$root/build/release"
 app="$out/DerivedData/Build/Products/Release/Octet.app"
 
@@ -27,7 +39,7 @@ if ! security find-identity -v -p codesigning | grep -q "Developer ID Applicatio
     echo "       Release builds are signed for distribution; see the top of this script." >&2
     exit 1
 fi
-if ! xcrun notarytool history --keychain-profile "$profile" >/dev/null 2>&1; then
+if ! notary history --keychain-profile "$profile" >/dev/null 2>&1; then
     echo "error: no notarization credentials under the profile '$profile'." >&2
     echo "       Save them with 'xcrun notarytool store-credentials $profile …'; see the top of this script." >&2
     exit 1
@@ -81,7 +93,7 @@ done
 
 echo "==> Notarizing (this waits on Apple, usually a few minutes)"
 ditto -c -k --keepParent "$app" "$out/Octet-notarize.zip"
-xcrun notarytool submit "$out/Octet-notarize.zip" --keychain-profile "$profile" --wait
+notary submit "$out/Octet-notarize.zip" --keychain-profile "$profile" --wait
 xcrun stapler staple "$app"
 
 echo "==> Checking Gatekeeper"
@@ -110,7 +122,7 @@ rm -f "$out/Octet-notarize.zip"
 # notarized and stapled itself so it opens cleanly on a Mac that is offline.
 "$root/scripts/make-dmg.sh" "$app" "$dmg"
 echo "==> Notarizing the disk image"
-xcrun notarytool submit "$dmg" --keychain-profile "$profile" --wait
+notary submit "$dmg" --keychain-profile "$profile" --wait
 xcrun stapler staple "$dmg"
 spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
 
@@ -120,7 +132,11 @@ mkdir -p "$updates"
 cp "$zip" "$updates/"
 cp "$root/appcast.xml" "$updates/appcast.xml"
 generate_appcast="$("$root/scripts/fetch-sparkle-tools.sh")"
-"$generate_appcast" \
+# The key comes from the keychain, where generate_keys put it, unless CI
+# hands it over as a file.
+set --
+[ -n "${OCTET_SPARKLE_KEY_FILE:-}" ] && set -- --ed-key-file "$OCTET_SPARKLE_KEY_FILE"
+"$generate_appcast" "$@" \
     --download-url-prefix "https://github.com/JackTPatterson/octet/releases/download/$release_tag/" \
     --link "https://github.com/JackTPatterson/octet" \
     "$updates"
