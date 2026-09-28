@@ -247,10 +247,14 @@ enum AgentGitHandoff: String, CaseIterable, Identifiable {
         return offered
     }
 
-    func prompt(checkout: AgentGit.Checkout) -> String {
+    /// `only` narrows a commit to those files.
+    func prompt(checkout: AgentGit.Checkout, only paths: [String]? = nil) -> String {
         let branch = checkout.branch.name ?? "the current commit"
         let base = checkout.base ?? "the default branch"
         switch self {
+        case .commit where paths?.isEmpty == false:
+            return "Commit only these files in \(checkout.top): \(paths!.joined(separator: ", ")). "
+                + "Leave every other change uncommitted. Write a clear message in this repository's style. Don't push."
         case .commit:
             return "Commit the uncommitted changes in \(checkout.top). Split unrelated changes into separate commits, "
                 + "each with a clear message in this repository's style. Don't push."

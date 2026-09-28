@@ -84,7 +84,7 @@ enum SubagentWatch {
         parentPaneId: String? = nil,
         environment: [String: String]
     ) -> Never {
-        let reporter = PaneAgentReporter(environment: environment, parentPaneId: parentPaneId)
+        let reporter = PaneAgentReporter(environment: environment, parentPaneId: parentPaneId, toolUseId: toolUseId)
         let renderer = SubagentTranscriptRenderer()
         renderer.printHeader(title: title)
         reporter.markSubagent()
@@ -185,9 +185,13 @@ struct PaneAgentReporter {
     let paneId: String?
     /// The agent's pane that launched this subagent, reported with the role.
     let parentPaneId: String?
+    /// The tool call that started the subagent, which its transcript's
+    /// metadata names too: how Octet knows whose edits are whose.
+    let toolUseId: String?
 
-    init(environment: [String: String], parentPaneId: String? = nil) {
+    init(environment: [String: String], parentPaneId: String? = nil, toolUseId: String? = nil) {
         self.parentPaneId = parentPaneId
+        self.toolUseId = toolUseId
         paneId = environment[EngineProtocol.paneIdVariable]
         client = environment[EngineProtocol.socketPathVariable].map(EngineClient.init(socketPath:))
     }
@@ -208,6 +212,7 @@ struct PaneAgentReporter {
     static let subagentRole = "subagent"
     static let cwdToken = "octet_cwd"
     static let parentPaneToken = "octet_parent_pane"
+    static let toolUseToken = "octet_tool_use"
 
     /// Tags the pane as a subagent viewer, so Octet can tell its tab apart
     /// from a Claude session, and says which folder the subagent is in.
@@ -217,6 +222,7 @@ struct PaneAgentReporter {
         var tokens = [Self.roleToken: Self.subagentRole]
         if let cwd { tokens[Self.cwdToken] = cwd }
         if let parentPaneId { tokens[Self.parentPaneToken] = parentPaneId }
+        if let toolUseId { tokens[Self.toolUseToken] = toolUseId }
         _ = try? client.call("pane.report_metadata", [
             "pane_id": paneId,
             "source": "octet:subagent",

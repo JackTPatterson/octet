@@ -129,6 +129,12 @@ struct EngineAgent: Codable, Equatable, Identifiable {
         return pane
     }
 
+    /// The tool call that started the subagent a viewer watches.
+    var subagentToolUseId: String? {
+        guard let id = tokens?[PaneAgentReporter.toolUseToken] ?? nil, !id.isEmpty else { return nil }
+        return id
+    }
+
     /// The folder a subagent is working in, as its viewer read it from the
     /// transcript. The viewer's own process never leaves the folder the tab
     /// opened in, so this is the only trace of a `cd` or a worktree.

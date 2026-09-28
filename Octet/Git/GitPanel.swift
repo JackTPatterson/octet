@@ -83,15 +83,28 @@ struct GitPanel: View {
 private struct CheckoutSection: View {
     @ObservedObject var model: GitPanelModel
     let group: GitPanelModel.Group
+    /// Whose edits the changes list shows: nil for everyone's.
+    @State private var filter: EditorFilter?
 
     private var checkout: AgentGit.Checkout { group.checkout }
+
+    /// The changes the filter lets through.
+    private var shownFiles: [AgentGit.FileChange] {
+        switch filter {
+        case nil: checkout.files
+        case .some(.worker(let id)): checkout.files.filter { group.editors[$0.path]?.contains { $0.paneId == id } == true }
+        case .some(.unattributed): checkout.files.filter { group.editors[$0.path] == nil }
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             summary
             let offered = AgentGitHandoff.offered(for: checkout)
             if !offered.isEmpty, group.workers.contains(where: \.takesPrompts) {
-                HandoffRow(handoffs: offered) { model.handoff($0, in: group) }
+                // Filtered to one agent's edits, Commit commits just those.
+                let only = filter == nil ? nil : shownFiles.map(\.path)
+                HandoffRow(handoffs: offered, scoped: only != nil) { model.handoff($0, in: group, only: only) }
             }
             if !checkout.files.isEmpty { changes }
             timeline
@@ -165,16 +178,20 @@ private struct CheckoutSection: View {
                     .foregroundStyle(Theme.accent)
                     .help("Open the changes review (⌘⇧R)")
             }
+            let editors = group.allEditors
+            if !editors.isEmpty {
+                EditorFilterRow(editors: editors, group: group, filter: $filter)
+            }
             VStack(spacing: 1) {
-                ForEach(checkout.files.prefix(200)) { file in
-                    FileRow(file: file,
+                ForEach(shownFiles.prefix(200)) { file in
+                    FileRow(file: file, editors: group.editors[file.path] ?? [],
                             open: { model.review(checkout.top, path: file.path) },
                             toggleStaged: { model.toggleStaged(file, in: checkout.top) },
                             discard: { model.discard(file, in: checkout.top) })
                 }
             }
-            if checkout.files.count > 200 {
-                Text("and \(checkout.files.count - 200) more")
+            if shownFiles.count > 200 {
+                Text("and \(shownFiles.count - 200) more")
                     .font(Theme.captionFont)
                     .foregroundStyle(Theme.textTertiary)
             }
@@ -240,12 +257,16 @@ private struct BaseStanding: View {
 
 private struct HandoffRow: View {
     let handoffs: [AgentGitHandoff]
+    /// The changes list is filtered, and Commit takes only what it shows.
+    var scoped = false
     let send: (AgentGitHandoff) -> Void
 
     var body: some View {
         HStack(spacing: 5) {
             ForEach(handoffs) { handoff in
-                HandoffChip(handoff: handoff) { send(handoff) }
+                HandoffChip(handoff: handoff, title: scoped && handoff == .commit ? "Commit These" : handoff.title) {
+                    send(handoff)
+                }
             }
             Spacer(minLength: 0)
         }
@@ -255,6 +276,7 @@ private struct HandoffRow: View {
 /// A chore sent to the agent as a prompt, shown as what you'd ask it.
 private struct HandoffChip: View {
     let handoff: AgentGitHandoff
+    let title: String
     let action: () -> Void
     @State private var hovered = false
 
@@ -262,7 +284,7 @@ private struct HandoffChip: View {
         Button(action: action) {
             HStack(spacing: 4) {
                 OctetIcon("sparkles", size: 10)
-                Text(handoff.title).font(Theme.captionFont.weight(.medium))
+                Text(title).font(Theme.captionFont.weight(.medium))
             }
             .foregroundStyle(handoff == .resolveConflicts ? Theme.danger : Theme.textPrimary)
             .padding(.horizontal, 7)
@@ -272,12 +294,15 @@ private struct HandoffChip: View {
         }
         .buttonStyle(.plain)
         .onHover { hovered = $0 }
-        .help("Ask the agent to \(handoff.title.lowercased())")
+        .help("Ask the agent to \(title.lowercased())")
     }
 }
 
 private struct FileRow: View {
     let file: AgentGit.FileChange
+    /// The agents whose edit tools changed it; none when it was changed
+    /// from a shell or by hand.
+    let editors: [GitPanelModel.Worker]
     let open: () -> Void
     let toggleStaged: () -> Void
     let discard: () -> Void
@@ -312,6 +337,10 @@ private struct FileRow: View {
             } else {
                 if file.staged {
                     OctetIcon("checkmark", size: 10).foregroundStyle(Theme.textTertiary).help("Staged")
+                }
+                if !editors.isEmpty {
+                    WorkerMarks(workers: editors, size: 10)
+                        .help("Edited by " + editors.map(\.name).joined(separator: ", "))
                 }
                 LineCounts(added: file.added, removed: file.removed)
             }
@@ -401,31 +430,98 @@ private struct SectionTitle: View {
 /// The agents' marks, overlapping; a click brings that agent's tab forward.
 private struct WorkerMarks: View {
     let workers: [GitPanelModel.Worker]
-    let show: (GitPanelModel.Worker) -> Void
+    var size: CGFloat = 12
+    /// Clicking a mark shows that worker's tab; without it the marks only label.
+    var show: ((GitPanelModel.Worker) -> Void)?
 
     var body: some View {
         HStack(spacing: -3) {
             ForEach(workers.prefix(4)) { worker in
-                Button { show(worker) } label: {
-                    Group {
-                        if let brand = AgentBrand.forAgent(worker.agent) {
-                            if worker.isSubagent {
-                                OctetIcon("tool.agent", size: 11)
-                                    .foregroundStyle(brand.hueHex.map { Color(hex: $0) } ?? Theme.textSecondary)
-                            } else {
-                                AgentLogo(brand: brand, size: 12)
-                            }
-                        } else {
-                            OctetIcon("terminal", size: 11).foregroundStyle(Theme.textTertiary)
-                        }
-                    }
-                    .frame(width: 16, height: 16)
-                    .background(Circle().fill(Theme.sidebar))
+                if let show {
+                    Button { show(worker) } label: { WorkerMark(worker: worker, size: size) }
+                        .buttonStyle(.plain)
+                        .help("\(worker.name) — show its tab")
+                } else {
+                    WorkerMark(worker: worker, size: size)
                 }
-                .buttonStyle(.plain)
-                .help("\(worker.name) — show its tab")
             }
         }
+    }
+}
+
+/// One agent's mark: its logo, or a subagent's icon in its vendor's colour.
+private struct WorkerMark: View {
+    let worker: GitPanelModel.Worker
+    var size: CGFloat = 12
+
+    var body: some View {
+        Group {
+            if let brand = AgentBrand.forAgent(worker.agent) {
+                if worker.isSubagent {
+                    OctetIcon("tool.agent", size: size - 1)
+                        .foregroundStyle(brand.hueHex.map { Color(hex: $0) } ?? Theme.textSecondary)
+                } else {
+                    AgentLogo(brand: brand, size: size)
+                }
+            } else {
+                OctetIcon("terminal", size: size - 1).foregroundStyle(Theme.textTertiary)
+            }
+        }
+        .frame(width: size + 4, height: size + 4)
+        .background(Circle().fill(Theme.sidebar))
+    }
+}
+
+private enum EditorFilter: Hashable {
+    case worker(String)
+    /// Changed outside any agent's edit tool: a shell command, or by hand.
+    case unattributed
+}
+
+/// Narrows the changes to one agent's edits, with how many each made.
+private struct EditorFilterRow: View {
+    let editors: [GitPanelModel.Worker]
+    let group: GitPanelModel.Group
+    @Binding var filter: EditorFilter?
+
+    var body: some View {
+        let files = group.checkout.files
+        let unattributed = files.filter { group.editors[$0.path] == nil }.count
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 4) {
+                chip(nil, count: files.count) { Text("All") }
+                ForEach(editors) { editor in
+                    let count = files.filter { group.editors[$0.path]?.contains { $0.paneId == editor.paneId } == true }.count
+                    chip(.worker(editor.paneId), count: count) {
+                        HStack(spacing: 4) {
+                            WorkerMark(worker: editor, size: 10)
+                            Text(editor.name).lineLimit(1)
+                        }
+                    }
+                    .help("Only the files \(editor.name) edited")
+                }
+                if unattributed > 0 {
+                    chip(.unattributed, count: unattributed) { Text("Other") }
+                        .help("Files no agent's edit tool changed: from a shell command, or by hand")
+                }
+            }
+        }
+    }
+
+    private func chip<Label: View>(_ value: EditorFilter?, count: Int, @ViewBuilder label: () -> Label) -> some View {
+        let selected = filter == value
+        return Button { filter = selected ? nil : value } label: {
+            HStack(spacing: 4) {
+                label()
+                Text("\(count)").monospacedDigit().foregroundStyle(Theme.textTertiary)
+            }
+            .font(Theme.captionFont.weight(selected ? .medium : .regular))
+            .foregroundStyle(selected ? Theme.textPrimary : Theme.textSecondary)
+            .padding(.horizontal, 6)
+            .frame(height: 18)
+            .background(Capsule().fill(selected ? Theme.cardSelected : Theme.card))
+        }
+        .buttonStyle(.plain)
     }
 }
 

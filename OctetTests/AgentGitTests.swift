@@ -119,3 +119,50 @@ final class AgentGitReadTests: XCTestCase {
         XCTAssertTrue(checkout.files.isEmpty)
     }
 }
+
+final class AgentEditsTests: XCTestCase {
+    private func json(_ object: Any) -> String {
+        String(decoding: try! JSONSerialization.data(withJSONObject: object, options: .withoutEscapingSlashes), as: UTF8.self)
+    }
+
+    func testClaudeEditToolsAreReadAndOtherToolsIgnored() {
+        let line = json(["type": "assistant", "message": ["content": [
+            ["type": "text", "text": "Editing"],
+            ["type": "tool_use", "name": "Edit", "input": ["file_path": "/repo/a.swift", "old_string": "a", "new_string": "b"]],
+            ["type": "tool_use", "name": "Write", "input": ["file_path": "/repo/new.swift", "content": "x"]],
+            ["type": "tool_use", "name": "NotebookEdit", "input": ["notebook_path": "/repo/n.ipynb"]],
+            ["type": "tool_use", "name": "Read", "input": ["file_path": "/repo/read-only.swift"]],
+        ]]])
+        XCTAssertEqual(AgentEdits.claudePaths(line: line), ["/repo/a.swift", "/repo/new.swift", "/repo/n.ipynb"])
+    }
+
+    func testCodexPatchesAreReadEitherWayTheyreLogged() {
+        let patch = "*** Begin Patch\n*** Update File: src/a.swift\n@@\n-a\n+b\n*** Add File: /abs/new.txt\n+x\n*** End Patch\n"
+        let custom = json(["type": "response_item", "payload": ["type": "custom_tool_call", "name": "apply_patch", "input": patch]])
+        let nested = json(["type": "response_item", "payload": ["type": "function_call", "name": "shell",
+                                                                "arguments": json(["command": ["apply_patch", patch]])]])
+        for line in [custom, nested] {
+            XCTAssertEqual(AgentEdits.codexPaths(line: line, cwd: "/repo"), ["/repo/src/a.swift", "/abs/new.txt"])
+        }
+    }
+
+    func testTheLogReadsOnlyWhatsNewAndWaitsForWholeLines() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("octet-edits-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: file) }
+        func edit(_ path: String) -> String {
+            json(["type": "assistant", "message": ["content": [["type": "tool_use", "name": "Edit", "input": ["file_path": path]]]]])
+        }
+        let log = AgentEditLog()
+        var parsed = 0
+        let parse: (String) -> [String] = { parsed += 1; return AgentEdits.claudePaths(line: $0) }
+        try (edit("/a") + "\n" + edit("/b")).write(to: file, atomically: true, encoding: .utf8)
+        // The second line has no newline yet: it's still being written.
+        XCTAssertEqual(log.paths(in: file.path, needles: ["\"file_path\""], parse: parse), ["/a"])
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data("\n".utf8))
+        try handle.close()
+        XCTAssertEqual(log.paths(in: file.path, needles: ["\"file_path\""], parse: parse), ["/a", "/b"])
+        XCTAssertEqual(parsed, 2, "each line is parsed once")
+    }
+}
