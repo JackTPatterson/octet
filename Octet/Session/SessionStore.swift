@@ -533,6 +533,7 @@ final class SessionStore: ObservableObject {
         observeActivity(snapshot)
         autoNameTabs(in: snapshot)
         forgetClosedTabColors(in: snapshot)
+        keepSubagentsBesideParents(in: snapshot)
         notifyAgentActivity(in: snapshot)
         usageTracker.refreshIfDue()
         AgentOfferCenter.shared.observe(snapshot)
@@ -792,6 +793,35 @@ final class SessionStore: ObservableObject {
     }
 
     func isPinned(_ workspaceId: String) -> Bool { pinnedWorkspaceIds.contains(workspaceId) }
+
+    // MARK: Subagent tabs
+
+    /// Moves in flight, so snapshots taken meanwhile don't send them again.
+    private var subagentMovesInFlight = false
+    /// The last moves sent and when, so a move the engine won't make isn't
+    /// sent on every snapshot.
+    private var lastSubagentMoves: (moves: [SubagentTabOrder.Move], at: Date)?
+
+    /// Puts subagents' tabs back beside the tab that launched them: after
+    /// the parent is dragged, they follow; dragged away, they return.
+    private func keepSubagentsBesideParents(in snapshot: EngineSnapshot) {
+        guard !subagentMovesInFlight else { return }
+        let moves = snapshot.workspaces.flatMap { snapshot.subagentTabMoves(inWorkspace: $0.workspaceId) }
+        guard !moves.isEmpty else { return }
+        if let last = lastSubagentMoves, last.moves == moves, Date().timeIntervalSince(last.at) < 5 { return }
+        lastSubagentMoves = (moves, Date())
+        subagentMovesInFlight = true
+        let client = self.client
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            for move in moves {
+                guard (try? client.call("tab.move", ["tab_id": move.tabId, "insert_index": move.gap])) != nil else { break }
+            }
+            DispatchQueue.main.async {
+                self?.subagentMovesInFlight = false
+                self?.refresh()
+            }
+        }
+    }
 
     // MARK: Colours
 

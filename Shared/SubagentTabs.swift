@@ -88,6 +88,7 @@ enum SubagentWatch {
         let renderer = SubagentTranscriptRenderer()
         renderer.printHeader(title: title)
         reporter.markSubagent()
+        reporter.placeBesideParent()
         reporter.report(state: "working", message: title)
         renderer.onDirectory = { cwd in reporter.markSubagent(cwd: cwd) }
         renderer.onFinished = {
@@ -221,6 +222,21 @@ struct PaneAgentReporter {
             "source": "octet:subagent",
             "tokens": tokens,
         ])
+    }
+
+    /// Moves this viewer's tab in beside the tab that launched it, after
+    /// that tab's earlier subagents. Octet keeps it there afterwards.
+    func placeBesideParent() {
+        guard let client, let paneId, let parentPaneId, let snapshot = try? client.snapshot(),
+              let own = snapshot.panes.first(where: { $0.paneId == paneId }),
+              let parent = snapshot.panes.first(where: { $0.paneId == parentPaneId })?.tabId,
+              parent != own.tabId else { return }
+        // The pane's own report may not show in the snapshot yet.
+        let tabs = snapshot.tabs(inWorkspace: own.workspaceId).map(\.tabId)
+        let moves = SubagentTabOrder.moves(tabs) { $0 == own.tabId ? parent : snapshot.parentTabId(ofTab: $0) }
+        for move in moves {
+            guard (try? client.call("tab.move", ["tab_id": move.tabId, "insert_index": move.gap])) != nil else { return }
+        }
     }
 
     func report(state: String, message: String) {

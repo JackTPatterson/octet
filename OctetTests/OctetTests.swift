@@ -216,6 +216,32 @@ final class SubagentTabTests: XCTestCase {
         XCTAssertEqual(snapshot.rootTabId(ofTab: "w1:t3"), "w1:t1")
     }
 
+    func testSubagentTabsAreKeptBesideTheirParent() {
+        let parents = ["s1": "a", "s2": "a", "s3": "s1"]
+        let parent = { (id: String) in parents[id] }
+        // Launched at the end: each joins its parent, after earlier siblings.
+        XCTAssertEqual(SubagentTabOrder.grouped(["a", "b", "s1", "s2", "s3"], parent: parent), ["a", "s1", "s3", "s2", "b"])
+        // The parent dragged right: its subagents follow.
+        XCTAssertEqual(SubagentTabOrder.grouped(["s1", "b", "a"], parent: parent), ["b", "a", "s1"])
+        // A parent that closed leaves its subagent where it is.
+        XCTAssertEqual(SubagentTabOrder.grouped(["b", "s1", "c"], parent: parent), ["b", "s1", "c"])
+        XCTAssertTrue(SubagentTabOrder.moves(["a", "s1", "b"], parent: parent).isEmpty)
+    }
+
+    func testSubagentTabMovesReplayToTheGroupedOrder() {
+        let parents = ["s1": "a", "s2": "a", "s3": "b"]
+        let current = ["s2", "b", "c", "a", "s3", "s1"]
+        var order = current
+        // The session server's insert_index: the gap before the tab now there.
+        for move in SubagentTabOrder.moves(current, parent: { parents[$0] }) {
+            let from = order.firstIndex(of: move.tabId)!
+            order.remove(at: from)
+            order.insert(move.tabId, at: move.gap > from ? move.gap - 1 : move.gap)
+        }
+        XCTAssertEqual(order, SubagentTabOrder.grouped(current, parent: { parents[$0] }))
+        XCTAssertEqual(order, ["b", "s3", "c", "a", "s2", "s1"])
+    }
+
     func testIgnoresOtherToolsAndNonEnginePanes() {
         var bash = payload
         bash["tool_name"] = "Bash"

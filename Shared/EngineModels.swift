@@ -249,9 +249,7 @@ struct EngineSnapshot: Codable, Equatable {
     func rootTabId(ofTab tabId: String) -> String {
         var current = tabId
         var seen: Set<String> = [tabId]
-        while let parentPane = agents(inTab: current).lazy.compactMap(\.parentPaneId).first,
-              let parent = panes.first(where: { $0.paneId == parentPane })?.tabId,
-              seen.insert(parent).inserted {
+        while let parent = parentTabId(ofTab: current), seen.insert(parent).inserted {
             current = parent
         }
         return current
