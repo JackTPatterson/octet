@@ -13,7 +13,7 @@ while :; do
 done
 [ -n "$wanted" ] || exit 0
 case "$wanted" in lts*|node|stable|latest) exit 0 ;; esac
-command -v node >/dev/null 2>&1 || { echo "wants v$wanted"; echo "tone: warning"; echo "help: node isn't on PATH"; exit 0; }
+command -v node >/dev/null 2>&1 || { echo "wants v$wanted · no node"; echo "tone: warning"; echo "help: node isn't on the PATH Octet's status chips run with"; exit 0; }
 have=$(node --version 2>/dev/null | tr -d 'v')
 case "$have" in "$wanted"|"$wanted".*) exit 0 ;; esac
 echo "wants v$wanted · has v$have"
