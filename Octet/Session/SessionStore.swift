@@ -59,13 +59,17 @@ final class SessionStore: ObservableObject {
     private static let manualNamesKey = "octet.tabs.manualNames" + keySuffix
     private static let stampsKey = "octet.activity.stamps" + keySuffix
     private static let pinnedKey = "octet.activity.pinned" + keySuffix
+    private static let parkedKey = "octet.activity.parked" + keySuffix
     private static let workspaceColorsKey = "octet.colors.workspaces" + keySuffix
     private static let tabColorsKey = "octet.colors.tabs" + keySuffix
     private static let idleAfterKey = "octet.activity.idleAfter" + keySuffix
     private var lastStampSave = Date.distantPast
     /// Workspaces marked idle by hand: viewing them doesn't count as use
     /// until the user focuses them again.
-    private var forcedIdle: Set<String> = []
+    /// Workspaces moved to Idle by hand. They stay there, however busy,
+    /// until they're focused, pinned, kept in view, or an agent in them
+    /// newly needs input.
+    private var parkedWorkspaceIds: Set<String> = []
     private var lastFocusedWorkspaceId: String?
     /// Tabs the user named, which auto-naming leaves alone.
     private var manuallyNamedTabIds: Set<String> = []
@@ -139,6 +143,7 @@ final class SessionStore: ObservableObject {
             activity = WorkspaceActivity(stamps: raw.mapValues { Date(timeIntervalSince1970: $0) })
         }
         pinnedWorkspaceIds = Set(defaults.stringArray(forKey: Self.pinnedKey) ?? [])
+        parkedWorkspaceIds = Set(defaults.stringArray(forKey: Self.parkedKey) ?? [])
         workspaceColors = defaults.dictionary(forKey: Self.workspaceColorsKey) as? [String: String] ?? [:]
         tabColors = defaults.dictionary(forKey: Self.tabColorsKey) as? [String: [String: String]] ?? [:]
         manuallyNamedTabIds = Set(defaults.stringArray(forKey: Self.manualNamesKey) ?? [])
@@ -752,10 +757,11 @@ final class SessionStore: ObservableObject {
         // is only whichever moved last.
         let focused = keyWindow?.focusedWorkspace?.workspaceId ?? snapshot.focusedWorkspaceId
         if let focused, focused != lastFocusedWorkspaceId, lastFocusedWorkspaceId != nil {
-            forcedIdle.remove(focused)
+            unpark(focused)
         }
         lastFocusedWorkspaceId = focused
-        let viewed = NSApp?.isActive == true && !forcedIdle.contains(focused ?? "") ? focused : nil
+        releaseParked(in: snapshot)
+        let viewed = NSApp?.isActive == true && !parkedWorkspaceIds.contains(focused ?? "") ? focused : nil
         updated.observe(snapshot, viewedWorkspaceId: viewed) { workspace in
             let claudeCwds = snapshot.agents(inWorkspace: workspace.workspaceId)
                 .filter { AgentBrand.forAgent($0.agent)?.id == "claude" }
@@ -773,7 +779,8 @@ final class SessionStore: ObservableObject {
 
     func repartition() {
         let split = activity.partition(
-            snapshot.workspaces, snapshot: snapshot, pinned: pinnedWorkspaceIds, idleAfter: idleAfter
+            snapshot.workspaces, snapshot: snapshot, pinned: pinnedWorkspaceIds,
+            parked: parkedWorkspaceIds, idleAfter: idleAfter
         )
         let idleIds = Set(split.idle.map(\.workspaceId))
         let active = groups.compactMap { group -> ProjectGroup? in
@@ -838,15 +845,17 @@ final class SessionStore: ObservableObject {
     }
 
     func setPinned(_ workspaceId: String, _ pinned: Bool) {
+        if pinned { unpark(workspaceId) }
         if pinned { pinnedWorkspaceIds.insert(workspaceId) } else { pinnedWorkspaceIds.remove(workspaceId) }
         UserDefaults.standard.set(Array(pinnedWorkspaceIds), forKey: Self.pinnedKey)
         repartition()
     }
 
-    /// Moves a workspace to Idle now (unless it is pinned, focused, or busy).
+    /// Moves a workspace to Idle now, and keeps it there until it's used.
     func markIdle(_ workspaceId: String) {
         setPinned(workspaceId, false)
-        forcedIdle.insert(workspaceId)
+        parkedWorkspaceIds.insert(workspaceId)
+        saveParked()
         let showing = keyWindow?.focusedWorkspace?.workspaceId ?? snapshot.focusedWorkspaceId
         let elsewhere = WindowRegistry.shared.shownWorkspaceIds()
         if workspaceId == showing,
@@ -858,6 +867,41 @@ final class SessionStore: ObservableObject {
         updated.markIdle(workspaceId)
         activity = updated
         repartition()
+    }
+
+    /// Brings a workspace back from Idle as though it had just been used.
+    func keepInView(_ workspaceId: String) {
+        unpark(workspaceId)
+        var updated = activity
+        updated.touch(workspaceId)
+        activity = updated
+        repartition()
+    }
+
+    private func unpark(_ workspaceId: String) {
+        guard parkedWorkspaceIds.remove(workspaceId) != nil else { return }
+        saveParked()
+    }
+
+    private func saveParked() {
+        UserDefaults.standard.set(Array(parkedWorkspaceIds), forKey: Self.parkedKey)
+    }
+
+    /// Lets go of parked workspaces that closed, and of those where an agent
+    /// has just started waiting on an answer, so the question isn't missed.
+    private func releaseParked(in snapshot: EngineSnapshot) {
+        guard !parkedWorkspaceIds.isEmpty else { return }
+        let wasBlocked = Set(self.snapshot.agents.filter { $0.agentStatus == .blocked }.map(\.paneId))
+        let present = Set(snapshot.workspaces.map(\.workspaceId))
+        var kept = parkedWorkspaceIds.filter { id in
+            !snapshot.agents(inWorkspace: id).contains { $0.agentStatus == .blocked && !wasBlocked.contains($0.paneId) }
+        }
+        // An empty snapshot is the engine not having answered yet, not every
+        // workspace closing.
+        if !present.isEmpty { kept.formIntersection(present) }
+        guard kept != parkedWorkspaceIds else { return }
+        parkedWorkspaceIds = kept
+        saveParked()
     }
 
     /// Project name for a workspace, for compact idle rows.

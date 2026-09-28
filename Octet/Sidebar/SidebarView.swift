@@ -468,7 +468,7 @@ struct WorkspaceOrganizeMenu: View {
         }
         if store.idleWorkspaces.contains(where: { $0.workspaceId == id }) {
             Button("Keep in View Now") {
-                store.setPinned(id, false)
+                store.keepInView(id)
                 window.focusWorkspace(id)
             }
         } else {

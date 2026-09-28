@@ -443,6 +443,20 @@ final class WorkspaceActivityTests: XCTestCase {
         XCTAssertTrue(activity.isIdle(ws[0], snapshot: changed, pinned: [], idleAfter: 60, now: t1.addingTimeInterval(9999)))
     }
 
+    func testMovedToIdleStaysThereThoughBusyFocusedAndRecentlyUsed() {
+        let t0 = Date(timeIntervalSince1970: 3_000_000)
+        var activity = WorkspaceActivity()
+        let ws = [workspace("w1", status: .working)]
+        let busy = snapshot(ws, agents: [agent("w1", .working, seq: 1)], focused: "w1")
+        activity.observe(busy, viewedWorkspaceId: nil, now: t0)
+        // A title or state change right after restamps it, which alone would
+        // bring it straight back.
+        activity.observe(snapshot(ws, agents: [agent("w1", .working, seq: 2)], focused: "w1"), viewedWorkspaceId: nil, now: t0)
+        XCTAssertTrue(activity.isIdle(ws[0], snapshot: busy, pinned: [], parked: ["w1"], idleAfter: 3600, now: t0))
+        XCTAssertFalse(activity.isIdle(ws[0], snapshot: busy, pinned: ["w1"], parked: ["w1"], idleAfter: 3600, now: t0))
+        XCTAssertFalse(activity.isIdle(ws[0], snapshot: busy, pinned: [], parked: [], idleAfter: 3600, now: t0))
+    }
+
     func testClosedWorkspacesArePrunedAndAgeLabels() {
         var activity = WorkspaceActivity(stamps: ["gone": Date()])
         activity.observe(snapshot([workspace("w1")]), viewedWorkspaceId: nil)
