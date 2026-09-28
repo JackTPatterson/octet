@@ -14,6 +14,11 @@ struct RuntimePanel: View {
     @ObservedObject private var codexAgents = CodexAgentsStore.shared
     @ObservedObject private var motion = MotionPreferences.shared
     @State private var flashingEntryIDs: Set<String> = []
+    @State private var hovered = false
+    /// Counts auto-close timers, so only the latest one closes the panel.
+    @State private var autoCloseGeneration = 0
+    /// How long a panel that opened itself stays open when not hovered.
+    private static let autoCloseAfter: TimeInterval = 3
     /// Held in state: a new timer on every redraw would restart the count,
     /// and a panel redrawn more often than every 4s would never refresh.
     @State private var refresh = Timer.publish(every: 4, on: .main, in: .common).autoconnect()
@@ -35,6 +40,11 @@ struct RuntimePanel: View {
 
     var body: some View {
         runtimeContent
+        .onHover { hovering in
+            hovered = hovering
+            // Pointed at: it's the person's panel now, and stays open.
+            if hovering { ui.runtimePanelAutoOpened = false }
+        }
         .onAppear {
             ui.seenRuntimeEntryIDs.formUnion(entries.map(\.id))
             reload()
@@ -181,10 +191,25 @@ struct RuntimePanel: View {
         ui.seenRuntimeEntryIDs.formUnion(current)
         flashingEntryIDs.formIntersection(current)
         guard !added.isEmpty else { return }
-        ui.runtimePanelVisible = true
+        if !ui.runtimePanelVisible {
+            ui.runtimePanelVisible = true
+            ui.runtimePanelAutoOpened = true
+        }
+        if ui.runtimePanelAutoOpened { scheduleAutoClose() }
         flashingEntryIDs.formUnion(added)
         DispatchQueue.main.asyncAfter(deadline: .now() + (motion.animates(.sidebar) ? 0.85 : 0.15)) {
             flashingEntryIDs.subtract(added)
+        }
+    }
+
+    /// Closes a panel that opened itself once it has sat unhovered for
+    /// `autoCloseAfter`; another new runtime starts the count again.
+    private func scheduleAutoClose() {
+        autoCloseGeneration += 1
+        let generation = autoCloseGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.autoCloseAfter) {
+            guard generation == autoCloseGeneration, ui.runtimePanelAutoOpened, !hovered else { return }
+            ui.runtimePanelVisible = false
         }
     }
 

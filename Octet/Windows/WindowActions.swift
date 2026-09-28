@@ -1,8 +1,9 @@
 import AppKit
 
 /// The window mechanics browsers, editors and terminals share, on Octet's
-/// engine: dragging a tab out makes a window, "Move Tab to New Window" does
-/// the same from the menu, and "Merge All Windows" folds them back.
+/// engine: dragging a tab or a workspace out makes a window, "Move Tab to New
+/// Window" and "Move Workspace to New Window" do the same from the menu, and
+/// "Merge All Windows" folds them back.
 ///
 /// An Octet window shows one workspace, so a tab gets a window of its own by
 /// moving into a workspace of its own, which the new window then shows. The
@@ -54,6 +55,32 @@ enum WindowActions {
             guard let workspace = created.workspaceId else { return }
             WindowOpener.open?(OctetWindowSpec(workspaceId: workspace, frame: frame))
         }
+    }
+
+    /// A workspace into a window of its own, at `frame` when it was dropped
+    /// somewhere, else cascaded from `window`. Nothing moves in the engine: the
+    /// new window shows the workspace, and the window that showed it moves to
+    /// its neighbour, since two windows never show the same workspace.
+    static func moveWorkspaceToNewWindow(_ workspaceId: String, from window: WindowContext, frame: CGRect? = nil) {
+        let registry = WindowRegistry.shared
+        // Already alone in a window: that's the one it has.
+        if let other = registry.window(showing: workspaceId), other !== window { return other.bringForward() }
+        let store = window.store
+        let showsIt = window.focusedWorkspace?.workspaceId == workspaceId
+        let shownElsewhere = registry.shownWorkspaceIds(except: window)
+        if showsIt, !store.snapshot.workspaces.contains(where: {
+            $0.workspaceId != workspaceId && !shownElsewhere.contains($0.workspaceId)
+        }) {
+            ToastCenter.shared.info("This window has no other workspace to show",
+                                    detail: "Open another workspace here first, or use New Window (⌥⌘N).")
+            return
+        }
+        WindowOpener.open?(OctetWindowSpec(workspaceId: workspaceId, frame: frame ?? cascaded(from: window)))
+    }
+
+    static func moveFocusedWorkspaceToNewWindow(from window: WindowContext) {
+        guard let workspace = window.focusedWorkspace?.workspaceId else { return }
+        moveWorkspaceToNewWindow(workspace, from: window)
     }
 
     static func moveFocusedTabToNewWindow(from window: WindowContext) {

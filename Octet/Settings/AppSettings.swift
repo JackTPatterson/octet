@@ -79,6 +79,9 @@ struct OctetSettings: Codable, Equatable {
     var notificationDelaySeconds: Double = 1
     var agentSounds = true
     var resumeAgentsOnRestore = true
+    /// Restart an agent in the repository its commands keep `cd`ing into,
+    /// with its conversation resumed. Off by default: it restarts agents.
+    var relocateAgents = false
     var paneHistory = false
     /// Read Claude's allowance from the account itself: the OAuth token Claude
     /// Code keeps in the login keychain, sent to the endpoint Claude Code's own
@@ -315,6 +318,7 @@ struct OctetSettings: Codable, Equatable {
         notificationDelaySeconds = value("notificationDelaySeconds", defaults.notificationDelaySeconds)
         agentSounds = value("agentSounds", defaults.agentSounds)
         resumeAgentsOnRestore = value("resumeAgentsOnRestore", defaults.resumeAgentsOnRestore)
+        relocateAgents = value("relocateAgents", defaults.relocateAgents)
         paneHistory = value("paneHistory", defaults.paneHistory)
         readClaudeAccountUsage = value("readClaudeAccountUsage", defaults.readClaudeAccountUsage)
         peersEnabled = value("peersEnabled", defaults.peersEnabled)

@@ -30,6 +30,9 @@ struct SpawnedRuntimeAgent: Equatable, Identifiable {
 final class SessionStore: ObservableObject {
     @Published private(set) var snapshot: EngineSnapshot = .empty
     @Published private(set) var groups: [ProjectGroup] = []
+    /// Workspaces that just changed project group, because the folder their
+    /// tab is in did: the group each came from, shown on its card a moment.
+    @Published private(set) var movedWorkspaces: [String: String] = [:]
     /// Git branch per workspace id, read from `.git/HEAD` on each snapshot.
     @Published private(set) var branches: [String: String] = [:]
     /// Where each subagent is working, by pane id, when it has left the
@@ -538,6 +541,7 @@ final class SessionStore: ObservableObject {
         usageTracker.refreshIfDue()
         AgentOfferCenter.shared.observe(snapshot)
         AgentWorktreeWatcher.shared.observe(snapshot, store: self)
+        AgentRelocator.shared.observe(snapshot, store: self)
         PeerCenter.shared.observe(snapshot)
         refreshTip()
         if branches != self.branches { self.branches = branches }
@@ -545,8 +549,30 @@ final class SessionStore: ObservableObject {
         guard snapshot != self.snapshot || groups.isEmpty else { return }
         self.snapshot = snapshot
         let groups = ProjectGrouping.groups(snapshot: snapshot, resolveRoot: resolver.root(for:))
-        if groups != self.groups { self.groups = groups }
+        if groups != self.groups {
+            noteMoves(from: self.groups, to: groups)
+            self.groups = groups
+        }
         repartition()
+    }
+
+    /// How long a card says which group it came from.
+    private static let movedNoticeSeconds: TimeInterval = 6
+
+    private func noteMoves(from old: [ProjectGroup], to new: [ProjectGroup]) {
+        let before = Dictionary(old.flatMap { group in group.workspaces.map { ($0.workspaceId, group) } },
+                                uniquingKeysWith: { first, _ in first })
+        for group in new {
+            for workspace in group.workspaces {
+                guard let previous = before[workspace.workspaceId], previous.id != group.id else { continue }
+                let id = workspace.workspaceId
+                movedWorkspaces[id] = previous.name
+                DispatchQueue.main.asyncAfter(deadline: .now() + Self.movedNoticeSeconds) { [weak self] in
+                    guard let self, self.movedWorkspaces[id] == previous.name else { return }
+                    self.movedWorkspaces[id] = nil
+                }
+            }
+        }
     }
 
     private nonisolated static func readBranches(_ snapshot: EngineSnapshot) -> [String: String] {

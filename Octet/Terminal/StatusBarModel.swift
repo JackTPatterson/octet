@@ -514,8 +514,7 @@ enum StatusCommand {
         guard !resolving else { return }
         resolving = true
         DispatchQueue.global(qos: .utility).async {
-            let result = LoginShell.run(["/usr/bin/printenv", "PATH"])
-            let path = result.status == 0 ? result.output.split(separator: "\n").last.map(String.init) : nil
+            let path = resolveLoginPath()
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     loginPath = (path?.isEmpty == false ? path! : fallbackPath)
@@ -529,4 +528,28 @@ enum StatusCommand {
     }
 
     private static let fallbackPath = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    private static let pathMarker = "__OCTET_PATH__"
+
+    /// The PATH a pane gets. Interactive as well as login, as the runtime
+    /// chip's shell is: version managers (nvm, fnm, pyenv) are set up in
+    /// ~/.zshrc, which a login shell alone never reads. The marker picks the
+    /// PATH out of whatever the rc files print on the way.
+    private static func resolveLoginPath() -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh")
+        process.arguments = ["-lic", "printf '\\n\(pathMarker)%s\\n' \"$PATH\""]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        process.standardInput = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return nil }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 10) {
+            if process.isRunning { process.terminate() }
+        }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        let line = String(decoding: data, as: UTF8.self)
+            .split(separator: "\n").last { $0.hasPrefix(pathMarker) }
+        return line.map { String($0.dropFirst(pathMarker.count)) }
+    }
 }

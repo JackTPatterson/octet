@@ -335,6 +335,7 @@ struct OctetCommands: Commands {
         CommandGroup(after: .windowArrangement) {
             Divider()
             Button("Move Tab to New Window") { KeyWindow.act { WindowActions.moveFocusedTabToNewWindow(from: $0) } }
+            Button("Move Workspace to New Window") { KeyWindow.act { WindowActions.moveFocusedWorkspaceToNewWindow(from: $0) } }
             Button("Merge All Windows") { WindowActions.mergeAllWindows() }
                 .disabled(false)
         }

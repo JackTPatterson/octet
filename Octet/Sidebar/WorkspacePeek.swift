@@ -210,8 +210,14 @@ final class HoverIntent: ObservableObject {
     private var overCard = false
     private var pending: DispatchWorkItem?
 
+    /// Set by a click on a workspace, cleared when the pointer leaves the
+    /// sidebar. While someone is clicking between workspaces a peek only gets
+    /// in the way: an open popover takes the next click just to close itself,
+    /// so the workspace clicked next doesn't switch.
+    static var navigating = false
+
     func source(_ hovering: Bool) {
-        overSource = hovering
+        overSource = hovering && !Self.navigating
         schedule(hovering && !isShown ? 0.5 : 0.2)
     }
 
