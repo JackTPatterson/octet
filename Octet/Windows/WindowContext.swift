@@ -30,6 +30,8 @@ final class WindowContext: ObservableObject, Identifiable {
     let ui = UIState()
     /// The plan of the agent in front, for the todo panel and its button.
     let todos = TodoModel()
+    /// The agents' git, for the git panel and its button.
+    let git = GitPanelModel()
     let terminalQuestions = TerminalQuestionWatcher()
     let editor = EditorWorkspace()
     private(set) lazy var twin = TwinSession(window: self)

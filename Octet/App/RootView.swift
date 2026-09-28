@@ -37,6 +37,7 @@ struct RootView: View {
     private var windowHeight: CGFloat { NSApp.keyWindow?.contentView?.bounds.height ?? 800 }
     private var runtimePanelWidth: CGFloat { ui.runtimeInspectorEntryID == nil ? 293 : 441 }
     static let todoPanelWidth: CGFloat = 293
+    static let gitPanelWidth: CGFloat = 321
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -211,6 +212,18 @@ struct RootView: View {
                 ZStack(alignment: .leading) {
                     Rectangle().fill(Theme.divider).frame(width: 1)
                         .frame(maxHeight: .infinity, alignment: .leading)
+                    GitPanel(model: window.git, ui: ui)
+                        .frame(width: Self.gitPanelWidth - 1)
+                        .padding(.leading, 1)
+                        .offset(x: ui.gitPanelVisible ? 0 : Self.gitPanelWidth)
+                }
+                .frame(width: ui.gitPanelVisible ? Self.gitPanelWidth : 0, alignment: .leading)
+                .clipped()
+                .allowsHitTesting(ui.gitPanelVisible)
+                .accessibilityHidden(!ui.gitPanelVisible)
+                ZStack(alignment: .leading) {
+                    Rectangle().fill(Theme.divider).frame(width: 1)
+                        .frame(maxHeight: .infinity, alignment: .leading)
                     RuntimePanel(store: store)
                         .frame(width: runtimePanelWidth - 1)
                         .padding(.leading, 1)
@@ -284,8 +297,10 @@ struct RootView: View {
         .animation(motion.animation(.sidebar), value: ui.sidebarVisible)
         .animation(motion.animation(.sidebar), value: ui.runtimePanelVisible)
         .animation(motion.animation(.sidebar), value: ui.todoPanelVisible)
+        .animation(motion.animation(.sidebar), value: ui.gitPanelVisible)
         .onAppear {
             window.todos.attach(window)
+            window.git.attach(window)
             window.terminalQuestions.attach(window)
         }
         .animation(motion.animation(.sidebar), value: boardHere)
@@ -831,12 +846,15 @@ final class UIState: ObservableObject {
     @Published var sidebarVisible = UserDefaults.standard.object(forKey: "octet.sidebarVisible") as? Bool ?? true {
         didSet { UserDefaults.standard.set(sidebarVisible, forKey: "octet.sidebarVisible") }
     }
-    /// The right-hand panel shows one thing at a time: runtimes or todos.
+    /// The right-hand panel shows one thing at a time: runtimes, todos or git.
     @Published var runtimePanelVisible = false {
-        didSet { if runtimePanelVisible { todoPanelVisible = false } }
+        didSet { if runtimePanelVisible { todoPanelVisible = false; gitPanelVisible = false } }
     }
     @Published var todoPanelVisible = false {
-        didSet { if todoPanelVisible { runtimePanelVisible = false } }
+        didSet { if todoPanelVisible { runtimePanelVisible = false; gitPanelVisible = false } }
+    }
+    @Published var gitPanelVisible = false {
+        didSet { if gitPanelVisible { runtimePanelVisible = false; todoPanelVisible = false } }
     }
     /// Runtime identities already announced in this window. Views are rebuilt
     /// during tab switches, but old processes must not look newly created.

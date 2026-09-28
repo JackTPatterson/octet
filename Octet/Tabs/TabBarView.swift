@@ -80,6 +80,7 @@ struct TabBarView: View {
             // or while its panel is open so it can still be closed.
             HStack(spacing: 2) {
                 TodoPanelButton(model: window.todos, isShowing: $ui.todoPanelVisible)
+                GitPanelButton(model: window.git, isShowing: $ui.gitPanelVisible)
                 if ui.runtimeHasEntries || ui.runtimePanelVisible {
                     RuntimePanelButton(isShowing: $ui.runtimePanelVisible)
                 }

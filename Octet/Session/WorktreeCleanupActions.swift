@@ -59,7 +59,7 @@ enum WorktreeCleanupActions {
         return items
     }
 
-    private static func confirm(_ worktrees: [WorktreeCleanup.Worktree], directory: String, window: WindowContext) {
+    static func confirm(_ worktrees: [WorktreeCleanup.Worktree], directory: String, window: WindowContext) {
         let bytes = worktrees.compactMap(\.bytes).reduce(0, +)
         ConfirmCenter.shared.ask(
             title: worktrees.count == 1 ? "Remove the \(worktrees[0].branch ?? "") worktree?" : "Remove \(worktrees.count) merged worktrees?",
