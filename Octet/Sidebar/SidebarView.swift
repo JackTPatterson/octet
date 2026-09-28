@@ -75,13 +75,15 @@ struct SidebarView: View {
                 }
             } label: {
                 HStack(spacing: 4) {
+                    OctetIcon(Self.isRepository(group) ? "arrow.triangle.branch" : "folder", size: 11)
+                        .foregroundStyle(Theme.textTertiary)
                     Text(group.name.uppercased())
                         .font(Theme.headerFont)
                         .kerning(0.4)
                         .foregroundStyle(Theme.textSecondary)
                         .lineLimit(1)
                     Spacer(minLength: 4)
-                    Text(group.workspaces.count == 1 ? "1 space" : "\(group.workspaces.count) spaces")
+                    Text(group.workspaces.count == 1 ? "1 workspace" : "\(group.workspaces.count) workspaces")
                         .font(Theme.captionFont)
                         .foregroundStyle(Theme.textTertiary)
                     OctetIcon("chevron.down", size: 12)
@@ -93,6 +95,7 @@ struct SidebarView: View {
             .buttonStyle(.plain)
             .padding(.horizontal, 12)
             .padding(.vertical, 4)
+            .help(Self.groupHelp(group))
 
             if !collapsed {
                 // Workspaces on the same branch stack together under one chip.
@@ -113,6 +116,23 @@ struct SidebarView: View {
                 }
             }
         }
+    }
+}
+
+extension SidebarView {
+    /// Whether a group is a git repository, rather than a plain folder.
+    static func isRepository(_ group: ProjectGroup) -> Bool {
+        group.id != ProjectGroup.otherId && FileManager.default.fileExists(atPath: group.id + "/.git")
+    }
+
+    /// What a group header stands for: workspaces are grouped by the project
+    /// their tab's folder is in, and move when that folder does.
+    static func groupHelp(_ group: ProjectGroup) -> String {
+        guard group.id != ProjectGroup.otherId else {
+            return "Workspaces whose folder isn't in a repository or project folder."
+        }
+        let kind = isRepository(group) ? "repository" : "project folder"
+        return "Workspaces in the \(kind) \(abbreviateHome(group.id)). A workspace joins the group of the folder its tab is in, and moves if you cd elsewhere."
     }
 }
 
@@ -144,7 +164,7 @@ private struct BranchChip: View {
                 Text("\(run.workspaces.count)")
                     .font(Theme.captionFont)
                     .foregroundStyle(Theme.textTertiary)
-                    .help("\(run.workspaces.count) spaces on this branch")
+                    .help("\(run.workspaces.count) workspaces on this branch")
             }
         }
         .padding(.horizontal, 9)
@@ -269,13 +289,24 @@ private struct WorkspaceCard: View {
                     WorkspaceCloseButton { store.closeWorkspace(workspace.workspaceId) }
                 }
             }
-            // The folder only earns a line when the name doesn't already say it.
-            if let directory, !Self.labelNamesFolder(workspace.label, directory) {
+            // Always shown: the folder is what decides the card's group.
+            if let directory {
                 Text(abbreviateHome(directory))
                     .font(Theme.monoFont)
                     .foregroundStyle(Theme.textTertiary)
                     .lineLimit(1)
                     .truncationMode(.middle)
+            }
+            if let from = store.movedWorkspaces[workspace.workspaceId] {
+                HStack(spacing: 4) {
+                    OctetIcon("arrow.right", size: 11)
+                    Text("Moved here from \(from)")
+                        .font(Theme.captionFont)
+                        .lineLimit(1)
+                }
+                .foregroundStyle(Theme.accent)
+                .help("Its tab's folder is now in this project, so the workspace moved with it.")
+                .transition(.opacity)
             }
             HStack(spacing: 5) {
                 if let brand {
@@ -370,13 +401,6 @@ private struct WorkspaceCard: View {
         .accessibilityAction { window.focusWorkspace(workspace.workspaceId) }
         .accessibilityAction(named: "Rename") { renaming = true }
         .accessibilityAction(named: "Close") { store.closeWorkspace(workspace.workspaceId) }
-    }
-
-    /// True when the label already is the folder ("~" for home, or its last
-    /// path component), so repeating the path adds nothing.
-    static func labelNamesFolder(_ label: String, _ directory: String) -> Bool {
-        let short = abbreviateHome(directory)
-        return label == short || label == (directory as NSString).lastPathComponent
     }
 
     private func cardBackground(isSelected: Bool, hue: String?) -> some View {
