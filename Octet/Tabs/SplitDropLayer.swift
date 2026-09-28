@@ -7,18 +7,24 @@ import SwiftUI
 ///
 /// Dragged outside every Octet window, a preview of the window it would make
 /// follows the cursor; let go there and the tab gets that window: how a
-/// browser tab is torn off.
+/// browser tab is torn off. A workspace card dragged out of the sidebar is
+/// torn off the same way, into a window showing that workspace.
 @MainActor
 final class TabDrag: ObservableObject {
     static let shared = TabDrag()
     @Published private(set) var tabId: String?
+    /// A workspace being dragged instead of a tab. Kept apart from `tabId` so
+    /// the tab bars and split zones don't offer to take it.
+    @Published private(set) var workspaceId: String?
     private weak var store: SessionStore?
+    private weak var source: WindowContext?
     /// A tab bar or a split zone took the drop.
     private var didLand = false
     private var watch: Timer?
 
     func begin(_ tabId: String, store: SessionStore) {
         self.tabId = tabId
+        workspaceId = nil
         self.store = store
         didLand = false
         // Only a tab that can move whole gets a window of its own.
@@ -29,6 +35,27 @@ final class TabDrag: ObservableObject {
             TearOffPreview.shared.prepare(title: TabAutoName.display(label: tab.label, number: tab.number),
                                           agent: agent, size: size)
         }
+        startWatching()
+    }
+
+    /// A workspace card dragged from `window`'s sidebar.
+    func begin(workspace workspaceId: String, from window: WindowContext) {
+        let store = window.store
+        tabId = nil
+        self.workspaceId = workspaceId
+        self.store = store
+        source = window
+        didLand = false
+        tearable = store.snapshot.workspaces.contains { $0.workspaceId == workspaceId }
+        if tearable, let workspace = store.snapshot.workspaces.first(where: { $0.workspaceId == workspaceId }) {
+            let agent = store.primaryAgent(in: store.snapshot.agents(inWorkspace: workspaceId))?.agent
+            let size = window.nsWindow?.frame.size ?? CGSize(width: 1280, height: 820)
+            TearOffPreview.shared.prepare(title: workspace.label, agent: agent, size: size)
+        }
+        startWatching()
+    }
+
+    private func startWatching() {
         watch?.invalidate()
         // Every frame, so the preview keeps up with the cursor.
         let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { _ in
@@ -59,6 +86,21 @@ final class TabDrag: ObservableObject {
         watch = nil
         let dragged = tabId
         let frame = TearOffPreview.shared.target
+        if let workspace = workspaceId {
+            return DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                let drag = TabDrag.shared
+                defer {
+                    drag.workspaceId = nil
+                    drag.source = nil
+                }
+                guard !drag.didLand, drag.tearable, let source = drag.source, !drag.overWindow(point) else {
+                    return TearOffPreview.shared.hide()
+                }
+                let landing = frame ?? WindowActions.tearOffFrame(at: point, size: source.nsWindow?.frame.size ?? CGSize(width: 1280, height: 820))
+                TearOffPreview.shared.land(in: landing)
+                WindowActions.moveWorkspaceToNewWindow(workspace, from: source, frame: landing)
+            }
+        }
         // A drop is handled on release too; let it land first.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             let drag = TabDrag.shared

@@ -257,9 +257,6 @@ private struct WorkspaceCard: View {
                         .help("Pinned: never moves to Idle")
                 }
                 Spacer(minLength: 0)
-                if hovered && !renaming {
-                    WorkspaceRenameButton { renaming = true }
-                }
                 if elsewhere {
                     OctetIcon("rectangle.on.rectangle", size: 12)
                         .foregroundStyle(Theme.textTertiary)
@@ -339,7 +336,7 @@ private struct WorkspaceCard: View {
         .onHover { hovering in
             hovered = hovering
             // Not while renaming or dragging a tab over it.
-            peek.source(hovering && !renaming && TabDrag.shared.tabId == nil)
+            peek.source(hovering && !renaming && TabDrag.shared.tabId == nil && TabDrag.shared.workspaceId == nil)
         }
         .popover(isPresented: $peek.isShown, arrowEdge: .trailing) {
             WorkspacePeek(store: store, workspace: workspace) { peek.close() }
@@ -351,6 +348,12 @@ private struct WorkspaceCard: View {
             window.focusWorkspace(workspace.workspaceId)
         }
         .simultaneousGesture(TapGesture(count: 2).onEnded { renaming = true })
+        // Dragged out of the window, the workspace gets a window of its own.
+        .onDrag {
+            peek.close()
+            TabDrag.shared.begin(workspace: workspace.workspaceId, from: window)
+            return NSItemProvider(object: workspace.workspaceId as NSString)
+        }
         .contextMenu {
             WorkspaceOrganizeMenu(store: store, workspace: workspace) { renaming = true }
         }
@@ -473,6 +476,12 @@ struct WorkspaceOrganizeMenu: View {
             }
         } else {
             Button("Move to Idle") { store.markIdle(id) }
+        }
+        Divider()
+        if let other = WindowRegistry.shared.window(showing: id), other !== window {
+            Button("Show Window") { other.bringForward() }
+        } else {
+            Button("Move Workspace to New Window") { WindowActions.moveWorkspaceToNewWindow(id, from: window) }
         }
         Divider()
         Button("Close Workspace") { store.closeWorkspace(id) }
@@ -606,7 +615,6 @@ private struct IdleRow: View {
             }
             Spacer(minLength: 4)
             if hovered && !renaming {
-                WorkspaceRenameButton { renaming = true }
                 Button {
                     store.closeWorkspace(workspace.workspaceId)
                 } label: {
@@ -628,29 +636,11 @@ private struct IdleRow: View {
         .onHover { hovered = $0 }
         .onTapGesture { window.focusWorkspace(workspace.workspaceId) }
         .simultaneousGesture(TapGesture(count: 2).onEnded { renaming = true })
+        .onDrag {
+            TabDrag.shared.begin(workspace: workspace.workspaceId, from: window)
+            return NSItemProvider(object: workspace.workspaceId as NSString)
+        }
         .contextMenu { WorkspaceOrganizeMenu(store: store, workspace: workspace) { renaming = true } }
         .help("\(workspace.label) · last used \(WorkspaceActivity.ageLabel(since: store.activity.lastActive(workspace.workspaceId))) ago")
-    }
-}
-
-/// A pencil that appears on a hovered workspace, so renaming is found
-/// without knowing to double-click.
-struct WorkspaceRenameButton: View {
-    let action: () -> Void
-    @State private var hovered = false
-
-    var body: some View {
-        Button(action: action) {
-            OctetIcon("pencil", size: 12)
-                .foregroundStyle(hovered ? Theme.textPrimary : Theme.textTertiary)
-                .frame(width: 18, height: 18)
-                .background(hovered ? Theme.cardSelected : Color.clear)
-                .clipShape(RoundedRectangle(cornerRadius: 3))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovered = $0 }
-        .help("Rename workspace")
-        .accessibilityLabel("Rename workspace")
     }
 }

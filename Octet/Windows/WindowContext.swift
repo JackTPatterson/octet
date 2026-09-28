@@ -776,7 +776,22 @@ final class WindowContext: ObservableObject, Identifiable {
         pendingWorkspace = nil
         // A restored window's workspace may be gone: it keeps what it shows.
         guard workspaces.contains(where: { $0.workspaceId == workspace }) else { return }
-        if steers { steer(toWorkspace: workspace, tab: nil) } else { store.focusWorkspace(workspace) }
+        guard steers else { return store.focusWorkspace(workspace) }
+        steer(toWorkspace: workspace, tab: nil)
+        // A workspace moved into this window leaves the one that showed it.
+        registry.windows.filter { $0 !== self }.forEach { $0.yield(workspace) }
+    }
+
+    /// Another window took `workspace`: if this one shows it, it moves to the
+    /// nearest workspace in sidebar order that no other window shows.
+    fileprivate func yield(_ workspace: String) {
+        guard workspaceId == workspace else { return }
+        let shown = registry.shownWorkspaceIds(except: self)
+        let ordered = store.activeGroups.flatMap(\.workspaces) + store.idleWorkspaces
+        guard let index = ordered.firstIndex(where: { $0.workspaceId == workspace }) else { return }
+        let candidates = Array(ordered[(index + 1)...]) + ordered[..<index].reversed()
+        guard let next = candidates.first(where: { !shown.contains($0.workspaceId) }) else { return }
+        steer(toWorkspace: next.workspaceId, tab: nil)
     }
 
     /// Checks this window against a new snapshot: a tab or workspace it shows

@@ -102,6 +102,8 @@ enum PaletteCatalog {
                    keywords: ["window", "open"]) { WindowActions.newWindow(store: store) },
             action("tabToWindow", "Move Tab to New Window", "rectangle.on.rectangle",
                    keywords: ["window", "tear", "detach", "pop out"]) { WindowActions.moveFocusedTabToNewWindow(from: window) },
+            action("workspaceToWindow", "Move Workspace to New Window", "rectangle.on.rectangle",
+                   keywords: ["window", "tear", "detach", "pop out", "split", "workspace"]) { WindowActions.moveFocusedWorkspaceToNewWindow(from: window) },
             action("mergeWindows", "Merge All Windows", "rectangle.on.rectangle",
                    keywords: ["window", "combine", "close"]) { WindowActions.mergeAllWindows() },
             action("paneToTab", "Move Pane to New Tab", "rectangle.on.rectangle",
