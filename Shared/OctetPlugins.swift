@@ -413,6 +413,7 @@ struct RuntimeMatcher {
     /// rule wants to refine by the project's packages.
     func match(commands: [String], dependencies: () -> Set<String> = { [] }) -> RuntimeBadge? {
         guard !commands.isEmpty else { return nil }
+        let commands = commands.map(Self.withoutPackageNames)
         let executables = commands.compactMap { $0.split(separator: " ").first.map { $0.lowercased() } }
         if executables.contains(where: ignored.contains) { return nil }
         for rule in rules {
@@ -431,6 +432,31 @@ struct RuntimeMatcher {
             return rule.badge
         }
         return nil
+    }
+
+    private static let packageManagers: Set<String> = [
+        "npm", "npm-cli.js", "pnpm", "pnpm.js", "pnpm.cjs", "yarn", "yarn.js", "yarn.cjs", "bun",
+        "pip", "uv", "poetry", "pipx", "pdm", "cargo", "go", "gem", "bundle", "composer", "brew",
+    ]
+    private static let packageVerbs: Set<String> = [
+        "install", "i", "in", "add", "ci", "remove", "rm", "uninstall", "un", "update", "up", "upgrade", "get",
+    ]
+
+    /// A package manager's command cut after its verb when it installs,
+    /// removes or updates packages, so `npm i -g vite` reads as npm rather
+    /// than as Vite running. Anything else, `npm run dev` included, is whole.
+    static func withoutPackageNames(_ command: String) -> String {
+        let words = command.split(separator: " ").map(String.init)
+        // `pip3.12` is pip.
+        let isManager = { (word: String) in
+            packageManagers.contains(String(word.reversed().drop { $0.isNumber || $0 == "." }.reversed()))
+        }
+        // The manager comes first, or after `node`, or after `python -m`.
+        guard let manager = words.prefix(3).firstIndex(where: isManager) else { return command }
+        // Its verb is among the next few words: `yarn global add`, `uv pip install`.
+        let rest = words[(manager + 1)...].enumerated().filter { !$0.element.hasPrefix("-") }.prefix(3)
+        guard let verb = rest.first(where: { packageVerbs.contains($0.element) }) else { return command }
+        return words[...(manager + 1 + verb.offset)].joined(separator: " ")
     }
 
     /// The packages the nearest `package.json` at or above `directory` lists.
