@@ -309,6 +309,10 @@ private struct WorkspaceCard: View {
                         .foregroundStyle(Theme.textPrimary)
                         .lineLimit(1)
                 }
+                let agentCount = session == nil ? agents.count : 1
+                if !renaming, agentCount > 1 {
+                    AgentCountBadge(count: agentCount)
+                }
                 if store.isPinned(workspace.workspaceId) {
                     OctetIcon("pin.fill", size: 11)
                         .foregroundStyle(Theme.textTertiary)
@@ -347,8 +351,7 @@ private struct WorkspaceCard: View {
             HStack(spacing: 5) {
                 if let brand {
                     AgentLogo(brand: brand, size: 11)
-                    Text(agentLine(status: status, brand: brand,
-                                   count: session == nil ? agents.count : 1))
+                    Text(agentLine(status: status, brand: brand))
                         .font(Theme.uiFont)
                         .foregroundStyle(Theme.textSecondary)
                         .lineLimit(1)
@@ -451,10 +454,8 @@ private struct WorkspaceCard: View {
         return session.conversation.isRunning ? .working : .idle
     }
 
-    private func agentLine(status: EngineAgentStatus, brand: AgentBrand, count: Int) -> String {
-        let status = stateLabel(status)
-        let extra = count > 1 ? " · \(count) agents" : ""
-        return "\(brand.displayName) \(status)\(extra)"
+    private func agentLine(status: EngineAgentStatus, brand: AgentBrand) -> String {
+        "\(brand.displayName) \(stateLabel(status))"
     }
 }
 
@@ -701,6 +702,23 @@ private struct IdleRow: View {
         }
         .contextMenu { WorkspaceOrganizeMenu(store: store, workspace: workspace) { renaming = true } }
         .help("\(workspace.label) · last used \(WorkspaceActivity.ageLabel(since: store.activity.lastActive(workspace.workspaceId))) ago")
+    }
+}
+
+/// How many agents a workspace has, as a small pill beside its name.
+private struct AgentCountBadge: View {
+    let count: Int
+
+    var body: some View {
+        Text("\(count)")
+            .font(Theme.captionFont.monospacedDigit())
+            .foregroundStyle(Theme.textSecondary)
+            .padding(.horizontal, 5)
+            .frame(minWidth: 16, minHeight: 15)
+            .background(Capsule().fill(Theme.cardSelected))
+            .overlay(Capsule().strokeBorder(Theme.border, lineWidth: 1))
+            .help("\(count) agents in this workspace")
+            .accessibilityLabel("\(count) agents")
     }
 }
 
