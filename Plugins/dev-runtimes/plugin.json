@@ -631,6 +631,33 @@
         ]
       },
       {
+        "id": "npm",
+        "name": "npm",
+        "icon": "icons/npm.svg",
+        "color": "CB3837",
+        "match": [
+          "^(node )?npm(-cli\\.js)?( |$)"
+        ]
+      },
+      {
+        "id": "pnpm",
+        "name": "pnpm",
+        "icon": "icons/pnpm.svg",
+        "color": "F69220",
+        "match": [
+          "^(node )?pnpm(\\.c?js)?( |$)"
+        ]
+      },
+      {
+        "id": "yarn",
+        "name": "Yarn",
+        "icon": "icons/yarn.svg",
+        "color": "2C8EBB",
+        "match": [
+          "^(node )?yarn(\\.c?js)?( |$)"
+        ]
+      },
+      {
         "id": "node",
         "name": "Node.js",
         "icon": "icons/nodedotjs.svg",

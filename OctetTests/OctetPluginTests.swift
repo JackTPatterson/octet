@@ -145,6 +145,19 @@ final class RuntimeIconTests: XCTestCase {
         XCTAssertNil(id(m, []))
     }
 
+    func testPackageManagersOutrankNodeButNotTheirScripts() throws {
+        let m = try matcher()
+        XCTAssertEqual(id(m, ["node /opt/homebrew/bin/npm i -g typescript"]), "npm")
+        XCTAssertEqual(id(m, ["npm install -g typescript"]), "npm")
+        XCTAssertEqual(id(m, ["node /Users/me/.nvm/versions/node/v22/lib/node_modules/npm/bin/npm-cli.js ci"]), "npm")
+        XCTAssertEqual(id(m, ["node /opt/homebrew/bin/pnpm add zod"]), "pnpm")
+        XCTAssertEqual(id(m, ["pnpm install"]), "pnpm")
+        XCTAssertEqual(id(m, ["node /usr/local/bin/yarn install"]), "yarn")
+        XCTAssertEqual(id(m, ["node /Users/me/.yarn/releases/yarn.cjs"]), "yarn")
+        XCTAssertEqual(id(m, ["node /opt/homebrew/bin/npx prettier --write ."]), "node")
+        XCTAssertEqual(id(m, ["npm run dev", "node /app/node_modules/.bin/vite"]), "vite")
+    }
+
     func testEditorsAndAgentsHideTheirHelpers() throws {
         let m = try matcher()
         XCTAssertNil(id(m, ["nvim main.py", "node /x/pyright-langserver --stdio"]))
