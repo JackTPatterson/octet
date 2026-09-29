@@ -245,8 +245,20 @@ private struct WorkspaceCard: View {
     private static let confirmFor: TimeInterval = 4
 
     var body: some View {
+        // Servers running here, e.g. each worktree's dev server.
+        let ports = portsWatcher.ports(inWorkspace: workspace.workspaceId, snapshot: store.snapshot)
         VStack(spacing: 4) {
             card
+            if !ports.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 4) {
+                        ForEach(ports, id: \.self) { port in
+                            PortButton(port: port, selected: confirmingPort == port) { confirmOpen(port) }
+                        }
+                    }
+                }
+                .transition(motion.animates(.sidebar) ? .opacity : .identity)
+            }
             if let port = confirmingPort {
                 PortOpenButton(port: port) {
                     confirmingPort = nil
@@ -257,6 +269,11 @@ private struct WorkspaceCard: View {
             }
         }
         .animation(motion.animation(.sidebar), value: confirmingPort)
+        .animation(motion.animation(.sidebar), value: ports)
+        .onChange(of: ports) { _, now in
+            // The server stopped: nothing left to open.
+            if let port = confirmingPort, !now.contains(port) { confirmingPort = nil }
+        }
     }
 
     /// Asks before opening `port`, and goes to the workspace as the click
@@ -367,24 +384,6 @@ private struct WorkspaceCard: View {
                     Text("\(workspace.tabCount) tabs")
                         .font(Theme.uiFont)
                         .foregroundStyle(Theme.textTertiary)
-                }
-            }
-            // Servers running here, e.g. each worktree's dev server.
-            let ports = portsWatcher.ports(inWorkspace: workspace.workspaceId, snapshot: store.snapshot)
-            if !ports.isEmpty {
-                HStack(spacing: 4) {
-                    Image(systemName: "network").font(.system(size: 9.5, weight: .medium))
-                        .foregroundStyle(Theme.textTertiary)
-                    ForEach(ports.prefix(4), id: \.self) { port in
-                        Button(":" + String(port)) { confirmOpen(port) }
-                        .buttonStyle(.plain)
-                        .font(Theme.monoFont)
-                        .foregroundStyle(confirmingPort == port ? Theme.textPrimary : Theme.textSecondary)
-                        .help("http://localhost:" + String(port) + " · click, then Open")
-                    }
-                    if ports.count > 4 {
-                        Text("+\(ports.count - 4)").font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
-                    }
                 }
             }
             // Subagents that left for a worktree, repo or folder of their own.
@@ -719,6 +718,38 @@ private struct AgentCountBadge: View {
             .overlay(Capsule().strokeBorder(Theme.border, lineWidth: 1))
             .help("\(count) agents in this workspace")
             .accessibilityLabel("\(count) agents")
+    }
+}
+
+/// A port a workspace's servers listen on, in the row under its card: a
+/// little taller than the branch chip below, so it's easy to hit on purpose.
+private struct PortButton: View {
+    let port: Int
+    /// Waiting on Open to confirm it.
+    let selected: Bool
+    let action: () -> Void
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: "network").font(.system(size: 9.5, weight: .medium))
+                    .foregroundStyle(Theme.textTertiary)
+                Text(":" + String(port))
+                    .font(Theme.monoFont)
+                    .foregroundStyle(selected || hovered ? Theme.textPrimary : Theme.textSecondary)
+            }
+            .padding(.horizontal, 9)
+            .frame(height: 25)
+            .background(selected ? Theme.cardSelected : (hovered ? Theme.hover : Theme.card.opacity(0.75)))
+            .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius)
+                .strokeBorder(selected ? Theme.textTertiary.opacity(0.55) : Theme.border.opacity(0.5), lineWidth: 1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
+        .help("http://localhost:" + String(port) + " · click, then Open")
     }
 }
 
