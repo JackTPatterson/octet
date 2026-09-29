@@ -235,9 +235,62 @@ private struct WorkspaceCard: View {
     @StateObject private var peek = HoverIntent()
     @ObservedObject private var conversations = AgentCenter.shared
     @ObservedObject private var portsWatcher = PortsWatcher.shared
+    @ObservedObject private var motion = MotionPreferences.shared
     @Environment(\.openURL) private var openURL
+    /// A port clicked on the card, waiting for Open to confirm it: a click
+    /// meant for the card that lands on a port doesn't send you to a browser.
+    @State private var confirmingPort: Int?
+    /// Counts reveals, so only the latest one's timeout hides the button.
+    @State private var confirmGeneration = 0
+    private static let confirmFor: TimeInterval = 4
 
     var body: some View {
+        // Servers running here, e.g. each worktree's dev server.
+        let ports = portsWatcher.ports(inWorkspace: workspace.workspaceId, snapshot: store.snapshot)
+        VStack(spacing: 4) {
+            card
+            if !ports.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 4) {
+                        ForEach(ports, id: \.self) { port in
+                            PortButton(port: port, selected: confirmingPort == port) { confirmOpen(port) }
+                        }
+                    }
+                }
+                .transition(motion.animates(.sidebar) ? .opacity : .identity)
+            }
+            if let port = confirmingPort {
+                PortOpenButton(port: port) {
+                    confirmingPort = nil
+                    if let url = URL(string: "http://localhost:" + String(port)) { openURL(url) }
+                }
+                .transition(motion.animates(.sidebar)
+                    ? .move(edge: .top).combined(with: .opacity) : .identity)
+            }
+        }
+        .animation(motion.animation(.sidebar), value: confirmingPort)
+        .animation(motion.animation(.sidebar), value: ports)
+        .onChange(of: ports) { _, now in
+            // The server stopped: nothing left to open.
+            if let port = confirmingPort, !now.contains(port) { confirmingPort = nil }
+        }
+    }
+
+    /// Asks before opening `port`, and goes to the workspace as the click
+    /// most likely meant. Clicking the same port again puts the question away.
+    private func confirmOpen(_ port: Int) {
+        peek.close()
+        window.focusWorkspace(workspace.workspaceId)
+        guard confirmingPort != port else { confirmingPort = nil; return }
+        confirmingPort = port
+        confirmGeneration += 1
+        let generation = confirmGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.confirmFor) {
+            if generation == confirmGeneration { confirmingPort = nil }
+        }
+    }
+
+    @ViewBuilder private var card: some View {
         let snapshot = store.snapshot
         let isSelected = workspace.workspaceId == window.focusedWorkspace?.workspaceId
         // Open in another window: a click brings that window forward.
@@ -272,6 +325,10 @@ private struct WorkspaceCard: View {
                         .font(Theme.uiFontMedium)
                         .foregroundStyle(Theme.textPrimary)
                         .lineLimit(1)
+                }
+                let agentCount = session == nil ? agents.count : 1
+                if !renaming, agentCount > 1 {
+                    AgentCountBadge(count: agentCount)
                 }
                 if store.isPinned(workspace.workspaceId) {
                     OctetIcon("pin.fill", size: 11)
@@ -311,8 +368,7 @@ private struct WorkspaceCard: View {
             HStack(spacing: 5) {
                 if let brand {
                     AgentLogo(brand: brand, size: 11)
-                    Text(agentLine(status: status, brand: brand,
-                                   count: session == nil ? agents.count : 1))
+                    Text(agentLine(status: status, brand: brand))
                         .font(Theme.uiFont)
                         .foregroundStyle(Theme.textSecondary)
                         .lineLimit(1)
@@ -328,26 +384,6 @@ private struct WorkspaceCard: View {
                     Text("\(workspace.tabCount) tabs")
                         .font(Theme.uiFont)
                         .foregroundStyle(Theme.textTertiary)
-                }
-            }
-            // Servers running here, e.g. each worktree's dev server.
-            let ports = portsWatcher.ports(inWorkspace: workspace.workspaceId, snapshot: store.snapshot)
-            if !ports.isEmpty {
-                HStack(spacing: 4) {
-                    Image(systemName: "network").font(.system(size: 9.5, weight: .medium))
-                        .foregroundStyle(Theme.textTertiary)
-                    ForEach(ports.prefix(4), id: \.self) { port in
-                        Button(":" + String(port)) {
-                            if let url = URL(string: "http://localhost:" + String(port)) { openURL(url) }
-                        }
-                        .buttonStyle(.plain)
-                        .font(Theme.monoFont)
-                        .foregroundStyle(Theme.textSecondary)
-                        .help("Open http://localhost:" + String(port))
-                    }
-                    if ports.count > 4 {
-                        Text("+\(ports.count - 4)").font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
-                    }
                 }
             }
             // Subagents that left for a worktree, repo or folder of their own.
@@ -417,10 +453,8 @@ private struct WorkspaceCard: View {
         return session.conversation.isRunning ? .working : .idle
     }
 
-    private func agentLine(status: EngineAgentStatus, brand: AgentBrand, count: Int) -> String {
-        let status = stateLabel(status)
-        let extra = count > 1 ? " · \(count) agents" : ""
-        return "\(brand.displayName) \(status)\(extra)"
+    private func agentLine(status: EngineAgentStatus, brand: AgentBrand) -> String {
+        "\(brand.displayName) \(stateLabel(status))"
     }
 }
 
@@ -667,6 +701,84 @@ private struct IdleRow: View {
         }
         .contextMenu { WorkspaceOrganizeMenu(store: store, workspace: workspace) { renaming = true } }
         .help("\(workspace.label) · last used \(WorkspaceActivity.ageLabel(since: store.activity.lastActive(workspace.workspaceId))) ago")
+    }
+}
+
+/// How many agents a workspace has, as a small pill beside its name.
+private struct AgentCountBadge: View {
+    let count: Int
+
+    var body: some View {
+        Text("\(count)")
+            .font(Theme.captionFont.monospacedDigit())
+            .foregroundStyle(Theme.textSecondary)
+            .padding(.horizontal, 5)
+            .frame(minWidth: 16, minHeight: 15)
+            .background(Capsule().fill(Theme.cardSelected))
+            .overlay(Capsule().strokeBorder(Theme.border, lineWidth: 1))
+            .help("\(count) agents in this workspace")
+            .accessibilityLabel("\(count) agents")
+    }
+}
+
+/// A port a workspace's servers listen on, in the row under its card: a
+/// little taller than the branch chip below, so it's easy to hit on purpose.
+private struct PortButton: View {
+    let port: Int
+    /// Waiting on Open to confirm it.
+    let selected: Bool
+    let action: () -> Void
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: "network").font(.system(size: 9.5, weight: .medium))
+                    .foregroundStyle(Theme.textTertiary)
+                Text(":" + String(port))
+                    .font(Theme.monoFont)
+                    .foregroundStyle(selected || hovered ? Theme.textPrimary : Theme.textSecondary)
+            }
+            .padding(.horizontal, 9)
+            .frame(height: 25)
+            .background(selected ? Theme.cardSelected : (hovered ? Theme.hover : Theme.card.opacity(0.75)))
+            .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius)
+                .strokeBorder(selected ? Theme.textTertiary.opacity(0.55) : Theme.border.opacity(0.5), lineWidth: 1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
+        .help("http://localhost:" + String(port) + " · click, then Open")
+    }
+}
+
+/// The confirm under a workspace card for a port clicked on it.
+private struct PortOpenButton: View {
+    let port: Int
+    let action: () -> Void
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                OctetIcon("safari", size: 12)
+                Text("Open localhost:" + String(port))
+                    .font(Theme.uiFontMedium)
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(Theme.textPrimary)
+            .padding(.horizontal, 10)
+            .frame(height: 24)
+            .frame(maxWidth: .infinity)
+            .background(hovered ? Theme.cardSelected : Theme.hover)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius).strokeBorder(Theme.border, lineWidth: 1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
+        .help("Open http://localhost:" + String(port) + " in your browser")
     }
 }
 
