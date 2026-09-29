@@ -273,7 +273,7 @@ private struct WorkspaceCard: View {
         }
     }
 
-    private var card: some View {
+    @ViewBuilder private var card: some View {
         let snapshot = store.snapshot
         let isSelected = workspace.workspaceId == window.focusedWorkspace?.workspaceId
         // Open in another window: a click brings that window forward.
