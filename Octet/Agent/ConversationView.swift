@@ -26,7 +26,7 @@ struct ConversationView: View {
             // instead of appearing as a detached card above it.
             VStack(spacing: 0) {
                 if !session.queuedMessages.isEmpty {
-                    QueuedMessagesPanel(items: session.queuedMessages)
+                    QueuedMessagesPanel(session: session, items: session.queuedMessages)
                 }
                 let suggestedCommands = AgentComposerSyntax.suggestedShellCommands(in: session.conversation.items)
                 if !session.conversation.isRunning, !suggestedCommands.isEmpty {
@@ -589,6 +589,7 @@ extension Transcript {
 }
 
 private struct QueuedMessagesPanel: View {
+    @ObservedObject var session: AgentSession
     let items: [AgentItem]
 
     var body: some View {
@@ -604,6 +605,17 @@ private struct QueuedMessagesPanel: View {
                                     .lineLimit(3).textSelection(.enabled)
                             }
                             Spacer(minLength: 0)
+                            if session.canCancelQueued(item) {
+                                Button { session.cancelQueued(item) } label: {
+                                    OctetIcon("xmark", size: 11)
+                                        .foregroundStyle(Theme.textTertiary)
+                                        .frame(width: 18, height: 18)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .help("Don't send this")
+                                .accessibilityLabel("Remove queued message")
+                            }
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 9)

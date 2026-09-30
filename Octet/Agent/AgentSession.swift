@@ -303,9 +303,8 @@ final class AgentSession: ObservableObject, Identifiable {
     /// beside questions and approvals instead of burying them in transcript.
     var queuedMessages: [AgentItem] { conversation.items.filter(\.queued) }
 
-    /// The model a conversation starts on until one is picked.
-    /// What a new conversation runs: the model Claude Code recommends, once
-    /// it has said.
+    /// The model a conversation starts on until one is picked: the one
+    /// Claude Code recommends, once it has said.
     static var defaultModel: String { catalog.first?.id ?? "claude-sonnet-5" }
 
     init(workspaceId: String, cwd: String, engine: Engine = .claude, model: String = AgentSession.defaultModel,
@@ -580,7 +579,10 @@ final class AgentSession: ObservableObject, Identifiable {
         if needsRestart || process?.isRunning != true { restart() }
         guard stdin != nil else { return }
         if !conversation.isRunning { turnStartedAt = Date() }
-        conversation.appendUser(trimmed, images: attachments.map(\.data), queued: wasRunning)
+        // The item shares the message's uuid, so a queued one can be
+        // taken back from Claude Code by it.
+        let messageId = UUID().uuidString.lowercased()
+        conversation.appendUser(trimmed, images: attachments.map(\.data), queued: wasRunning, id: messageId)
         if trimmed == "/compact" {
             conversation.items.append(AgentItem(id: UUID().uuidString,
                                                 kind: .notice("Compacting the conversation to free context…")))
@@ -589,7 +591,7 @@ final class AgentSession: ObservableObject, Identifiable {
         switch engine {
         case .claude, .qwen:
             let message: [String: Any] = [
-                "type": "user",
+                "type": "user", "uuid": messageId,
                 "message": ["role": "user", "content": Self.content(trimmed, attachments)],
                 "parent_tool_use_id": NSNull(),
             ]
@@ -690,7 +692,8 @@ final class AgentSession: ObservableObject, Identifiable {
         guard let process, process.isRunning, conversation.isRunning else { return }
         switch engine {
         case .claude:
-            process.interrupt()
+            // Stops the turn and keeps the process; queued messages stay.
+            write(["type": "control_request", "request_id": UUID().uuidString, "request": ["subtype": "interrupt"]])
         case .qwen:
             // A signal ends Qwen's whole session; this stops only the turn.
             write(["type": "control_request", "request_id": UUID().uuidString, "request": ["subtype": "interrupt"]])
@@ -702,6 +705,27 @@ final class AgentSession: ObservableObject, Identifiable {
         case .pi:
             write(["type": "abort"])
         }
+    }
+
+    /// Whether a message waiting behind the running turn can be taken back:
+    /// Claude Code holds it by id, and Codex's wait in Octet.
+    func canCancelQueued(_ item: AgentItem) -> Bool {
+        item.queued && (engine == .claude || engine == .codex)
+    }
+
+    /// Takes a queued message back before the agent gets to it.
+    func cancelQueued(_ item: AgentItem) {
+        guard canCancelQueued(item), case .user(let text) = item.kind else { return }
+        switch engine {
+        case .claude:
+            write(["type": "control_request", "request_id": UUID().uuidString,
+                   "request": ["subtype": "cancel_async_message", "message_uuid": item.id]])
+        case .codex:
+            if let index = queuedTurns.firstIndex(of: text) { queuedTurns.remove(at: index) }
+        default:
+            return
+        }
+        conversation.items.removeAll { $0.id == item.id }
     }
 
     /// Starts the process ahead of the first message, so its startup

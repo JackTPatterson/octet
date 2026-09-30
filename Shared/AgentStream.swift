@@ -89,8 +89,8 @@ struct AgentConversation: Equatable {
     private var currentMessageId: String?
     private var currentParent: String?
 
-    mutating func appendUser(_ text: String, images: [Data] = [], queued: Bool = false) {
-        items.append(AgentItem(id: UUID().uuidString, kind: .user(text), images: images, queued: queued))
+    mutating func appendUser(_ text: String, images: [Data] = [], queued: Bool = false, id: String = UUID().uuidString) {
+        items.append(AgentItem(id: id, kind: .user(text), images: images, queued: queued))
         isRunning = true
         lastError = nil
     }
