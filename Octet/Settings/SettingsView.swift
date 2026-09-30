@@ -844,6 +844,13 @@ private struct AgentSettings: View {
             }
             SettingsDivider()
             SettingsRow(
+                title: "Name workspaces after their work",
+                detail: "A workspace takes the task its agents report, else what its conversation is about, else its branch. A workspace you rename yourself keeps its name."
+            ) {
+                Toggle("Name workspaces after their work", isOn: $settings.values.autoNameWorkspaces).labelsHidden().toggleStyle(.switch)
+            }
+            SettingsDivider()
+            SettingsRow(
                 title: "Restore recent terminal output",
                 detail: "Saves pane contents so they reappear after a restart. Output can include secrets."
             ) {

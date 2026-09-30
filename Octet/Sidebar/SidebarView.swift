@@ -500,6 +500,9 @@ struct WorkspaceOrganizeMenu: View {
     var body: some View {
         let id = workspace.workspaceId
         Button("Rename Workspace…", action: rename)
+        if store.isWorkspaceManuallyNamed(id), SettingsStore.shared.values.autoNameWorkspaces {
+            Button("Name After Its Work") { store.resumeWorkspaceAutoNaming(id) }
+        }
         Divider()
         TabColorPicker(title: "Workspace Color", selection: Binding(
             get: { store.workspaceColor(id) },

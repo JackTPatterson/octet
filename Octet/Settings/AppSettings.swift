@@ -132,6 +132,8 @@ struct OctetSettings: Codable, Equatable {
     var suggestionAcceptKey: SuggestionAcceptKey = .right
     var pasteImagesAsFiles = true
     var autoNameTabs = true
+    /// Workspaces take the name of the work in them until renamed by hand.
+    var autoNameWorkspaces = true
     var visualTwin = true
     // Native agent opening is controlled separately; terminal sessions stay in
     // their own interface unless the user explicitly enables the twin.
@@ -349,6 +351,7 @@ struct OctetSettings: Codable, Equatable {
         suggestionAcceptKey = value("suggestionAcceptKey", defaults.suggestionAcceptKey)
         pasteImagesAsFiles = value("pasteImagesAsFiles", defaults.pasteImagesAsFiles)
         autoNameTabs = value("autoNameTabs", defaults.autoNameTabs)
+        autoNameWorkspaces = value("autoNameWorkspaces", defaults.autoNameWorkspaces)
         visualTwin = value("visualTwin", defaults.visualTwin)
         twinByDefault = value("twinByDefault", defaults.twinByDefault)
         showTips = value("showTips", defaults.showTips)

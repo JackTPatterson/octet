@@ -60,6 +60,8 @@ final class SessionStore: ObservableObject {
     // Isolated sessions (OCTET_SESSION) keep their own activity state.
     private static let keySuffix = EngineSession.name == "octet" ? "" : ".\(EngineSession.name)"
     private static let manualNamesKey = "octet.tabs.manualNames" + keySuffix
+    private static let manualWorkspaceNamesKey = "octet.workspaces.manualNames" + keySuffix
+    private static let autoWorkspaceNamesKey = "octet.workspaces.autoNames" + keySuffix
     private static let stampsKey = "octet.activity.stamps" + keySuffix
     private static let pinnedKey = "octet.activity.pinned" + keySuffix
     private static let parkedKey = "octet.activity.parked" + keySuffix
@@ -77,6 +79,11 @@ final class SessionStore: ObservableObject {
     /// Tabs the user named, which auto-naming leaves alone.
     private var manuallyNamedTabIds: Set<String> = []
     private var pendingTabNames: [String: TabAutoName.Candidate] = [:]
+    /// Workspaces the user named, which auto-naming leaves alone.
+    private var manuallyNamedWorkspaceIds: Set<String> = []
+    /// The name Octet last gave each workspace, so it may change it again.
+    private var autoWorkspaceNames: [String: String] = [:]
+    private var pendingWorkspaceNames: [String: WorkspaceAutoName.Candidate] = [:]
     private var clockTimer: Timer?
     /// What the focused pane is running, for the prompt editor: nil until
     /// the first look.
@@ -150,6 +157,8 @@ final class SessionStore: ObservableObject {
         workspaceColors = defaults.dictionary(forKey: Self.workspaceColorsKey) as? [String: String] ?? [:]
         tabColors = defaults.dictionary(forKey: Self.tabColorsKey) as? [String: [String: String]] ?? [:]
         manuallyNamedTabIds = Set(defaults.stringArray(forKey: Self.manualNamesKey) ?? [])
+        manuallyNamedWorkspaceIds = Set(defaults.stringArray(forKey: Self.manualWorkspaceNamesKey) ?? [])
+        autoWorkspaceNames = defaults.dictionary(forKey: Self.autoWorkspaceNamesKey) as? [String: String] ?? [:]
         seenTips = Set(defaults.stringArray(forKey: Self.seenTipsKey) ?? [])
         let storedIdleAfter = defaults.double(forKey: Self.idleAfterKey)
         if storedIdleAfter > 0 { idleAfter = storedIdleAfter }
@@ -535,6 +544,7 @@ final class SessionStore: ObservableObject {
         settleOptimisticTabs(with: snapshot)
         observeActivity(snapshot)
         autoNameTabs(in: snapshot)
+        autoNameWorkspaces(in: snapshot, branches: branches)
         forgetClosedTabColors(in: snapshot)
         keepSubagentsBesideParents(in: snapshot)
         notifyAgentActivity(in: snapshot)
@@ -757,6 +767,63 @@ final class SessionStore: ObservableObject {
             perform("tab.rename", ["tab_id": rename.tabId, "label": rename.label])
         }
     }
+
+    /// Renames workspaces to the work in them: their agents' task, their
+    /// conversation's topic, else their branch.
+    private func autoNameWorkspaces(in snapshot: EngineSnapshot, branches: [String: String]) {
+        guard SettingsStore.shared.values.autoNameWorkspaces else {
+            pendingWorkspaceNames.removeAll()
+            return
+        }
+        let present = Set(snapshot.workspaces.map(\.workspaceId))
+        if manuallyNamedWorkspaceIds.contains(where: { !present.contains($0) })
+            || autoWorkspaceNames.keys.contains(where: { !present.contains($0) }) {
+            manuallyNamedWorkspaceIds.formIntersection(present)
+            autoWorkspaceNames = autoWorkspaceNames.filter { present.contains($0.key) }
+            saveWorkspaceNaming()
+        }
+        let center = AgentCenter.shared
+        let subjects = snapshot.workspaces.map { workspace in
+            let id = workspace.workspaceId
+            let rank: [EngineAgentStatus: Int] = [.blocked: 0, .working: 1, .done: 2, .idle: 3, .unknown: 4]
+            let agents = snapshot.agents(inWorkspace: id)
+                .filter { !$0.isSubagentViewer }
+                .sorted { (rank[$0.agentStatus] ?? 9) < (rank[$1.agentStatus] ?? 9) }
+            let titles = agents.compactMap { agent -> String? in
+                let pane = snapshot.panes.first { $0.paneId == agent.paneId }
+                return TabAutoName.label(from: pane?.terminalTitle, cwd: pane?.effectiveCwd)
+            }
+            let chat = center.active(in: id) ?? center.sessions(in: id).first
+            let chatTitle = chat.flatMap { $0.title == $0.engine.displayName ? nil : $0.title }
+            return WorkspaceAutoName.Subject(
+                workspaceId: id, label: workspace.label, folder: snapshot.directory(ofWorkspace: id),
+                signals: .init(agentTitles: titles, chatTitle: chatTitle, branch: branches[id] ?? workspace.worktree?.branch))
+        }
+        let renames = WorkspaceAutoName.renames(subjects, manual: manuallyNamedWorkspaceIds,
+                                                named: autoWorkspaceNames, pending: &pendingWorkspaceNames)
+        guard !renames.isEmpty else { return }
+        for rename in renames {
+            autoWorkspaceNames[rename.workspaceId] = rename.label
+            perform("workspace.rename", ["workspace_id": rename.workspaceId, "label": rename.label])
+        }
+        saveWorkspaceNaming()
+    }
+
+    private func saveWorkspaceNaming() {
+        UserDefaults.standard.set(Array(manuallyNamedWorkspaceIds), forKey: Self.manualWorkspaceNamesKey)
+        UserDefaults.standard.set(autoWorkspaceNames, forKey: Self.autoWorkspaceNamesKey)
+    }
+
+    /// Lets a workspace the user named follow its work again.
+    func resumeWorkspaceAutoNaming(_ id: String) {
+        guard manuallyNamedWorkspaceIds.remove(id) != nil else { return }
+        // Its current name is now Octet's to replace.
+        autoWorkspaceNames[id] = snapshot.workspaces.first { $0.workspaceId == id }?.label
+        saveWorkspaceNaming()
+        scheduleRefresh()
+    }
+
+    func isWorkspaceManuallyNamed(_ id: String) -> Bool { manuallyNamedWorkspaceIds.contains(id) }
 
     /// Stops auto-naming a tab the user named themselves.
     private func markManuallyNamed(_ tabId: String) {
@@ -1320,6 +1387,11 @@ final class SessionStore: ObservableObject {
     func renameWorkspace(_ id: String, to label: String?, from current: String) {
         guard let label = label?.trimmingCharacters(in: .whitespacesAndNewlines),
               !label.isEmpty, label != current else { return }
+        // Named by hand: auto-naming leaves it alone from now on.
+        if manuallyNamedWorkspaceIds.insert(id).inserted {
+            pendingWorkspaceNames[id] = nil
+            saveWorkspaceNaming()
+        }
         renameWorkspace(id, to: label)
     }
 
