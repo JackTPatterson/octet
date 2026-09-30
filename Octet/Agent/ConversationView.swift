@@ -1685,6 +1685,8 @@ private struct Composer: View {
                     OpenCodeControls(session: session, dropdowns: dropdowns)
                 } else if session.engine == .pi {
                     PiControls(session: session, dropdowns: dropdowns)
+                } else if session.engine == .qwen {
+                    QwenControls(session: session, dropdowns: dropdowns)
                 } else if let brand = AgentBrand.forAgent(session.engine.agent) {
                     HStack(spacing: 5) {
                         AgentLogo(brand: brand, size: 12)
@@ -2238,6 +2240,68 @@ private struct PiControls: View {
             .accessibilityLabel("Thinking level")
             .accessibilityValue(session.effort ?? "off")
         }
+    }
+}
+
+/// Qwen's model (what its providers offer), effort and approval mode, all
+/// taken live by its control channel.
+private struct QwenControls: View {
+    @ObservedObject var session: AgentSession
+    @ObservedObject var dropdowns: OctetDropdownState
+
+    var body: some View {
+        let models = session.qwenModels
+        OctetDropdown(spec: OctetDropdownSpec(
+            id: "model",
+            options: models.map { OctetDropdownOption(id: $0.id, title: $0.label, detail: $0.label == $0.id ? nil : $0.id) },
+            selected: models.contains(where: { $0.id == session.model }) ? session.model : "",
+            select: { session.model = $0 },
+            searchPlaceholder: "Search models…"
+        ), label: "Model", state: dropdowns)
+        .disabled(models.isEmpty)
+        .help(models.isEmpty ? "Qwen lists its models once it has started." : "Models from Qwen's providers. Applies at once.")
+
+        let effortSpec = OctetDropdownSpec(
+            id: "effort", options: [], selected: session.effort ?? "", select: { _ in },
+            panel: { close in
+                AnyView(EffortSliderPanel(initial: session.effort, implicit: nil, levels: AgentSession.qwenEfforts,
+                                          apply: { session.effort = $0 }, close: close))
+            }
+        )
+        OctetDropdownAnchor(spec: effortSpec, state: dropdowns) { open in
+            EffortChip(level: session.effort, implicit: nil, open: open)
+        }
+        .help("How hard Qwen reasons. Applies at once.")
+        .accessibilityLabel("Effort")
+        .accessibilityValue(session.effort ?? "default")
+
+        OctetDropdownAnchor(spec: OctetDropdownSpec(
+            id: "mode",
+            options: AgentSession.PermissionMode.allCases.map {
+                OctetDropdownOption(id: $0.rawValue, title: $0.title, detail: Composer.modeDetail[$0],
+                                   dangerous: $0 == .bypassPermissions,
+                                   tint: $0 == .default ? nil : ModeStyle.color($0), glyph: ModeStyle.glyph($0))
+            },
+            selected: session.permissionMode.rawValue,
+            select: { choice in
+                let mode = AgentSession.PermissionMode(rawValue: choice) ?? .default
+                guard mode == .bypassPermissions, session.permissionMode != mode else {
+                    session.permissionMode = mode
+                    return
+                }
+                ConfirmCenter.shared.ask(
+                    title: "Run Qwen in YOLO mode?",
+                    message: "Qwen will run commands, edit and delete files, and use every tool without asking you first, for the rest of this conversation. Use it only in a folder you can afford to lose changes in.",
+                    confirmTitle: "Use YOLO Mode",
+                    destructive: true
+                ) { _ in session.permissionMode = .bypassPermissions }
+            }
+        ), state: dropdowns) { open in
+            ModeChip(mode: session.permissionMode, open: open)
+        }
+        .accessibilityLabel("Approval mode")
+        .accessibilityValue(session.permissionMode.title)
+        .help("How Qwen asks before using tools (its approval mode). Applies at once.")
     }
 }
 

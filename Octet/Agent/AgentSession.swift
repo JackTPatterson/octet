@@ -168,7 +168,7 @@ final class AgentSession: ObservableObject, Identifiable {
         case .pi:
             updatePiSettings()
         case .qwen:
-            needsRestart = true
+            if process?.isRunning == true { updateQwenSettings() } else { needsRestart = true }
         }
         AgentCenter.shared.save()
     }
@@ -213,6 +213,17 @@ final class AgentSession: ObservableObject, Identifiable {
             applied.mode = permissionMode
         }
         claudeApplied = applied
+    }
+
+    /// Qwen takes model, effort and approval mode live, as control requests.
+    private func updateQwenSettings() {
+        if qwenModels.contains(where: { $0.id == model }) {
+            sendClaudeSetting(["subtype": "set_model", "model": model])
+        }
+        if let effort, Self.qwenEfforts.contains(effort) {
+            sendClaudeSetting(["subtype": "set_effort", "effort": effort])
+        }
+        sendClaudeSetting(["subtype": "set_permission_mode", "mode": Self.qwenMode(permissionMode)])
     }
 
     private func sendClaudeSetting(_ request: [String: Any]) {
@@ -265,6 +276,21 @@ final class AgentSession: ObservableObject, Identifiable {
     /// They reflect configured credentials, so an unauthenticated install
     /// intentionally produces an empty model list.
     @Published private(set) var piModels: [PiModel] = []
+    /// Qwen: the models its configured providers offer (`get_available_models`).
+    @Published private(set) var qwenModels: [(id: String, label: String)] = []
+    static let qwenModelsRequest = "octet-qwen-models"
+    /// Qwen's names for Octet's permission modes: `auto-edit` for accept
+    /// edits, `yolo` for bypass.
+    static func qwenMode(_ mode: PermissionMode) -> String {
+        switch mode {
+        case .default: "default"
+        case .acceptEdits: "auto-edit"
+        case .plan: "plan"
+        case .auto: "auto"
+        case .bypassPermissions: "yolo"
+        }
+    }
+    nonisolated static let qwenEfforts = ["low", "medium", "high", "xhigh", "max"]
     @Published private(set) var piThinkingLevels: [String] = ["off"]
     @Published private(set) var piStatusText: String?
     @Published private(set) var piWidgets: [PiWidget] = []
@@ -494,7 +520,10 @@ final class AgentSession: ObservableObject, Identifiable {
         case .pi:
             commands = agentCommands + SlashCommands.piOctetCommands
         case .qwen:
-            commands = agentCommands
+            // Qwen lists what works headless in its init event.
+            commands = agentCommands.isEmpty
+                ? conversation.slashCommands.map { SlashCommand(name: $0, summary: "", handling: .agent) }
+                : agentCommands
         }
         return commands.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
@@ -594,9 +623,21 @@ final class AgentSession: ObservableObject, Identifiable {
         if title == engine.displayName, !trimmed.hasPrefix("/") { title = String(trimmed.prefix(40)) }
         switch engine {
         case .claude, .qwen:
+            var text = trimmed
+            var attachments = attachments
+            if engine == .qwen {
+                // Qwen's command for it is /compress.
+                if trimmed == "/compact" { text = "/compress" }
+                // Qwen turns every non-text block into JSON text for the
+                // model: an image would arrive as base64, unseen and costly.
+                if !attachments.isEmpty {
+                    attachments = []
+                    notice("Qwen conversations don't take images yet; the text was sent.")
+                }
+            }
             let message: [String: Any] = [
                 "type": "user", "uuid": messageId,
-                "message": ["role": "user", "content": Self.content(trimmed, attachments)],
+                "message": ["role": "user", "content": Self.content(text, attachments)],
                 "parent_tool_use_id": NSNull(),
             ]
             if write(message) { hasTurns = true }
@@ -1339,12 +1380,16 @@ final class AgentSession: ObservableObject, Identifiable {
     /// Qwen's headless SDK transport uses the same stream-json event shapes
     /// as Claude Code, including partial message events.
     private func startQwen() {
-        var args = ["qwen", "--input-format", "stream-json", "--output-format", "stream-json", "--include-partial-messages"]
+        var args = ["qwen", "--input-format", "stream-json", "--output-format", "stream-json", "--include-partial-messages",
+                    "--approval-mode", Self.qwenMode(permissionMode)]
         if hasTurns, let threadId { args += ["--resume", threadId] }
         guard let process = spawn(command: "exec \(shellQuote(executable("qwen"))) \"$@\"", arguments: args) else { return }
         self.process = process
         qwenPermissionIds = [:]
         write(Self.qwenInitialize)
+        write(["type": "control_request", "request_id": Self.qwenModelsRequest, "request": ["subtype": "get_available_models"]])
+        // Model and effort picked before it started go as it comes up.
+        if qwenModels.contains(where: { $0.id == model }) || effort != nil { updateQwenSettings() }
     }
 
     /// What Octet calls itself to the agents it drives.
@@ -1575,6 +1620,18 @@ final class AgentSession: ObservableObject, Identifiable {
             }
             return true
         case "control_response":
+            let response = event["response"] as? [String: Any] ?? [:]
+            if response["request_id"] as? String == Self.qwenModelsRequest,
+               let models = (response["response"] as? [String: Any])?["models"] as? [[String: Any]] {
+                qwenModels = models.compactMap { model in
+                    guard let id = model["id"] as? String else { return nil }
+                    return (id, model["label"] as? String ?? id)
+                }
+            } else if (response["request_id"] as? String)?.hasPrefix(Self.settingsRequestPrefix) == true,
+                      response["subtype"] as? String == "error" {
+                let message = response["error"] as? String ?? (response["error"] as? [String: Any])?["message"] as? String ?? ""
+                notice("Qwen didn't take that setting\(message.isEmpty ? "" : ": \(message)").")
+            }
             return true
         default:
             return false
