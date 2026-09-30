@@ -516,6 +516,15 @@ struct WorkspaceOrganizeMenu: View {
         } else {
             Button("Move to Idle") { store.markIdle(id) }
         }
+        if AgentDiscoveryStore.shared.agents.contains(where: { $0.id == "claude" && $0.executablePath != nil }) {
+            Button("New Cloud Session Here…") {
+                // In the window showing it, which the session will open in.
+                let target = WindowRegistry.shared.window(showing: id) ?? window
+                target.focusWorkspace(id)
+                target.ui.paletteStart = [PaletteCatalog.claudeCloudItemId]
+                target.ui.paletteVisible = true
+            }
+        }
         Divider()
         if let other = WindowRegistry.shared.window(showing: id), other !== window {
             Button("Show Window") { other.bringForward() }
