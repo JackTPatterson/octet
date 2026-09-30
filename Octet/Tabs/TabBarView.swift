@@ -80,6 +80,7 @@ struct TabBarView: View {
             // Each panel's button shows only when it has something to show,
             // or while its panel is open so it can still be closed.
             HStack(spacing: 2) {
+                PluginPanelButtons(model: window.pluginPanels)
                 TodoPanelButton(model: window.todos, isShowing: $ui.todoPanelVisible)
                 GitPanelButton(model: window.git, isShowing: $ui.gitPanelVisible)
                 if ui.runtimeHasEntries || ui.runtimePanelVisible {

@@ -341,28 +341,87 @@ final class OctetPluginHost: ObservableObject {
     /// Runs a menu item's command in `directory`, then opens what it
     /// printed in a new tab of `workspaceId`.
     func perform(_ entry: MenuItem, directory: String, workspaceId: String?, in window: WindowContext) {
-        let environment = ["OCTET_PLUGIN_DIR": entry.plugin.directory, "OCTET_CWD": directory,
-                           "OCTET_REPO_ROOT": Self.repositoryRoot(of: directory) ?? directory]
         let timeout = min(max(entry.item.timeoutSeconds ?? 10, 1), 30)
-        StatusCommand.run(entry.item.run, in: directory, environment: environment, timeout: timeout) { [weak window] output in
+        StatusCommand.run(entry.item.run, in: directory, environment: Self.environment(entry.plugin, directory: directory),
+                          timeout: timeout) { [weak window] output in
             guard let window else { return }
             let result = PluginMenuOutput.parse(output)
-            guard let command = result.command else {
+            if result.command == nil {
                 ToastCenter.shared.info(entry.item.title, detail: result.message ?? "Nothing to start here")
-                return
             }
-            let label = result.label ?? entry.item.title
-            let cwd = result.cwd.map { $0.hasPrefix("/") ? $0 : directory + "/" + $0 } ?? directory
-            let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-            var layout: [String: Any] = [
-                "tab_label": label,
-                // The shell stays when the command ends, so its output can be read.
-                "root": ["type": "pane", "label": label, "cwd": cwd,
-                         "command": [shell, "-lic", "\(command); exec \(shell) -l"]] as [String: Any],
-            ]
-            if let workspaceId { layout["workspace_id"] = workspaceId }
-            window.applyLayout(layout, failure: "Couldn't start \(label)")
+            Self.open(result, title: entry.item.title, directory: directory, workspaceId: workspaceId, in: window)
         }
+    }
+
+    /// What every plugin command sees.
+    static func environment(_ plugin: OctetPlugin, directory: String) -> [String: String] {
+        ["OCTET_PLUGIN_DIR": plugin.directory, "OCTET_CWD": directory,
+         "OCTET_REPO_ROOT": repositoryRoot(of: directory) ?? directory]
+    }
+
+    /// Opens the command a plugin printed in a new tab of `workspaceId`;
+    /// nothing when it printed none.
+    private static func open(_ result: PluginMenuOutput, title: String, directory: String,
+                             workspaceId: String?, in window: WindowContext) {
+        guard let command = result.command else { return }
+        let label = result.label ?? title
+        let cwd = result.cwd.map { $0.hasPrefix("/") ? $0 : directory + "/" + $0 } ?? directory
+        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+        var layout: [String: Any] = [
+            "tab_label": label,
+            // The shell stays when the command ends, so its output can be read.
+            "root": ["type": "pane", "label": label, "cwd": cwd,
+                     "command": [shell, "-lic", "\(command); exec \(shell) -l"]] as [String: Any],
+        ]
+        if let workspaceId { layout["workspace_id"] = workspaceId }
+        window.applyLayout(layout, failure: "Couldn't start \(label)")
+    }
+
+    // MARK: - Panels
+
+    typealias Panel = (panel: OctetPluginManifest.PanelContribution, plugin: OctetPlugin)
+
+    /// Enabled plugins' tab bar panels for `directory`: the ones with a
+    /// command here whose files are present.
+    func panels(directory: String) -> [Panel] {
+        let root = Self.repositoryRoot(of: directory)
+        return plugins.filter(isEnabled).flatMap { plugin in
+            plugin.manifest.contributes.panels
+                .filter { !$0.run.isEmpty && StatusBarItems.hasMarker($0.whenFiles ?? [], from: directory, root: root) }
+                .map { ($0, plugin) }
+        }
+    }
+
+    /// Reads a panel in `directory`; nil hides its button.
+    func read(_ entry: Panel, directory: String, completion: @escaping @MainActor (PluginPanel?) -> Void) {
+        let timeout = min(max(entry.panel.timeoutSeconds ?? 8, 1), 30)
+        StatusCommand.run(entry.panel.run, in: directory, environment: Self.environment(entry.plugin, directory: directory),
+                          timeout: timeout) { completion(PluginPanel.parse($0)) }
+    }
+
+    /// Runs one of a panel's actions, asking first when it says to. A
+    /// command it prints opens in a new tab and a message is shown; `done`
+    /// follows either way, to read the panel again.
+    func act(_ action: PluginPanel.Action, item: String?, entry: Panel, directory: String, workspaceId: String?,
+             in window: WindowContext, done: @escaping () -> Void) {
+        guard !entry.panel.act.isEmpty else { return }
+        let run = { [weak window] in
+            var environment = Self.environment(entry.plugin, directory: directory)
+            environment["OCTET_ACTION"] = action.id
+            if let item { environment["OCTET_ITEM"] = item }
+            let timeout = min(max(entry.panel.timeoutSeconds ?? 8, 1) * 4, 120)
+            StatusCommand.run(entry.panel.act, in: directory, environment: environment, timeout: timeout) { output in
+                let result = PluginMenuOutput.parse(output)
+                if let message = result.message { ToastCenter.shared.info(action.title, detail: message) }
+                if let window {
+                    Self.open(result, title: action.title, directory: directory, workspaceId: workspaceId, in: window)
+                }
+                done()
+            }
+        }
+        guard let question = action.confirm else { return run() }
+        ConfirmCenter.shared.ask(ConfirmCenter.Request(title: question, confirmTitle: action.title, destructive: true,
+                                                       onConfirm: { _ in run() }, onCancel: { done() }))
     }
 
     /// The repository `directory` is in, found by its `.git`.

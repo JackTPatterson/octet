@@ -32,6 +32,8 @@ final class WindowContext: ObservableObject, Identifiable {
     let todos = TodoModel()
     /// The agents' git, for the git panel and its button.
     let git = GitPanelModel()
+    /// Plugins' panels for the folder in front, for their tab bar buttons.
+    let pluginPanels = PluginPanelModel()
     let terminalQuestions = TerminalQuestionWatcher()
     let editor = EditorWorkspace()
     private(set) lazy var twin = TwinSession(window: self)
