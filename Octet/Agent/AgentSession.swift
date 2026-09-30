@@ -599,6 +599,11 @@ final class AgentSession: ObservableObject, Identifiable {
             let name = trimmed.dropFirst("/rename ".count).trimmingCharacters(in: .whitespaces)
             if !name.isEmpty { title = name }
         }
+        if engine == .opencode, ["/undo", "/redo"].contains(trimmed), attachments.isEmpty {
+            // Carried out on the session, not sent to the model.
+            if trimmed == "/undo" { undoOpenCode() } else { redoOpenCode() }
+            return
+        }
         if engine == .opencode {
             if !conversation.isRunning { turnStartedAt = Date() }
             conversation.appendUser(trimmed, images: attachments.map(\.data), queued: wasRunning)
