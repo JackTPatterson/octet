@@ -355,6 +355,33 @@ final class SubagentTranscriptTests: XCTestCase {
         XCTAssertNotNil(renderer.finishedAt)
     }
 
+    func testAFinishedSubagentStaysFinishedUntilItHasNewWork() {
+        let renderer = SubagentTranscriptRenderer()
+        var resumed = 0
+        renderer.onResumed = { resumed += 1 }
+        renderer.render(line: Data(#"{"type":"assistant","message":{"stop_reason":"tool_use","content":[{"type":"tool_use","id":"h1","name":"SubagentHandback","input":{"report":"Done."}}]}}"#.utf8))
+        renderer.render(line: Data(#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"h1","content":"Report delivered to your caller."}]}}"#.utf8))
+        XCTAssertNotNil(renderer.finishedAt)
+        // What a subagent writes after handing back doesn't undo it.
+        renderer.render(line: Data(#"{"type":"assistant","message":{"stop_reason":"end_turn","content":[]}}"#.utf8))
+        renderer.render(line: Data(#"{"type":"assistant","message":{"stop_reason":"end_turn","content":[{"type":"thinking","thinking":"…"}]}}"#.utf8))
+        renderer.render(line: Data(#"{"type":"user","message":{"role":"user","content":"<system-reminder>idle</system-reminder>"}}"#.utf8))
+        XCTAssertNotNil(renderer.finishedAt)
+        XCTAssertEqual(resumed, 0)
+        // A new prompt does.
+        renderer.render(line: Data(#"{"type":"user","message":{"role":"user","content":"Now check the tests."}}"#.utf8))
+        XCTAssertNil(renderer.finishedAt)
+        XCTAssertEqual(resumed, 1)
+    }
+
+    func testAToolCallAfterAFinishIsMoreWork() {
+        let renderer = SubagentTranscriptRenderer()
+        renderer.render(line: Data(#"{"type":"assistant","message":{"stop_reason":"end_turn","content":[{"type":"text","text":"Done."}]}}"#.utf8))
+        XCTAssertNotNil(renderer.finishedAt)
+        renderer.render(line: Data(#"{"type":"assistant","message":{"stop_reason":"tool_use","content":[{"type":"tool_use","id":"t9","name":"Read","input":{}}]}}"#.utf8))
+        XCTAssertNil(renderer.finishedAt)
+    }
+
     func testAFailedHandbackDoesntFinish() {
         let renderer = SubagentTranscriptRenderer()
         var finishedCount = 0

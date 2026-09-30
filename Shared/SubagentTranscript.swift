@@ -37,6 +37,8 @@ struct SubagentTranscriptLocator {
 final class SubagentTranscriptRenderer {
     /// Called when the transcript reports the subagent finished its turn.
     var onFinished: (() -> Void)?
+    /// Called when a finished subagent is given more work.
+    var onResumed: (() -> Void)?
     /// Called on every pass of the tail loop, for work that waits on time.
     var onTick: (() -> Void)?
     /// Called with the subagent's folder when it first shows and on each change.
@@ -93,11 +95,16 @@ final class SubagentTranscriptRenderer {
         if let cwd = entry["cwd"] as? String, !cwd.isEmpty, cwd != self.cwd {
             moved(to: cwd)
         }
-        // Anything after a finish means the subagent is working again.
-        finishedAt = nil
         switch entry["type"] as? String {
         case "assistant":
             let blocks = message["content"] as? [[String: Any]] ?? []
+            // Calling a tool means it's working again. Anything else after a
+            // finish doesn't: a subagent that has handed its report back can
+            // still close with a line of its own (empty, or only thinking),
+            // and that left the tab running forever.
+            if blocks.contains(where: { $0["type"] as? String == "tool_use" && $0["name"] as? String != Self.handbackTool }) {
+                resume()
+            }
             for block in blocks {
                 switch block["type"] as? String {
                 case "text":
@@ -123,6 +130,9 @@ final class SubagentTranscriptRenderer {
                 let visiblePrompt = prompt.components(separatedBy: "<system-reminder>").first ?? prompt
                 let preview = visiblePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
                     .split(separator: "\n").prefix(3).joined(separator: "\n")
+                // A new prompt is new work; reminders alone are not.
+                guard !preview.isEmpty else { return }
+                resume()
                 print(dim(Self.truncate(preview, 300)))
                 print("")
                 return
@@ -142,6 +152,13 @@ final class SubagentTranscriptRenderer {
         default:
             break
         }
+    }
+
+    /// Working again after a finish.
+    private func resume() {
+        guard finishedAt != nil else { return }
+        finishedAt = nil
+        onResumed?()
     }
 
     private func finish() {
