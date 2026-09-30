@@ -47,6 +47,37 @@ extension AgentConversation {
             items.append(AgentItem(id: UUID().uuidString, kind: .notice(text)))
         case "turn/completed":
             isRunning = activateNextQueuedMessage()
+            // How it ended is on the turn: a provider error or a full
+            // context window ends it as `failed`, with nothing else said.
+            let turn = params["turn"] as? [String: Any]
+            switch turn?["status"] as? String {
+            case "failed":
+                let message = ((turn?["error"] as? [String: Any])?["message"] as? String) ?? "The turn failed."
+                lastError = message
+                appendCodexNotice(message)
+            case "interrupted":
+                appendCodexNotice("Stopped")
+            default:
+                break
+            }
+        case "error":
+            // Sent as it happens; a transient one Codex retries by itself.
+            guard let error = params["error"] as? [String: Any], let message = error["message"] as? String else { return }
+            if params["willRetry"] as? Bool == true {
+                appendCodexNotice("Retrying: \(message)")
+            } else {
+                lastError = message
+                appendCodexNotice(message)
+            }
+        case "warning":
+            if let message = params["message"] as? String, !message.isEmpty { appendCodexNotice(message) }
+        case "configWarning":
+            guard let summary = params["summary"] as? String else { return }
+            appendCodexNotice([summary, params["details"] as? String].compactMap { $0 }.joined(separator: ": "))
+        case "model/rerouted":
+            guard let from = params["fromModel"] as? String, let to = params["toModel"] as? String else { return }
+            appendCodexNotice("Codex moved this turn from \(from) to \(to).")
+        // Octet's own, for a turn Codex refused or a write that failed.
         case "turn/failed", "turn/aborted":
             isRunning = activateNextQueuedMessage()
             let message = ((params["error"] as? [String: Any])?["message"] as? String)
@@ -56,6 +87,13 @@ extension AgentConversation {
         default:
             break
         }
+    }
+
+    /// A notice in the transcript, once: the `error` notification and the
+    /// failed turn it ends carry the same message.
+    private mutating func appendCodexNotice(_ text: String) {
+        if case .notice(let last) = items.last?.kind, last == text { return }
+        items.append(AgentItem(id: UUID().uuidString, kind: .notice(text)))
     }
 
     private mutating func applyCodexItem(_ item: [String: Any]) {

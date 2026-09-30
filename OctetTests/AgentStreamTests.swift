@@ -389,6 +389,40 @@ final class AgentAccountTests: XCTestCase {
         XCTAssertEqual(conversation.items.map(\.kind), [.notice("Out of credits")])
     }
 
+    func testCodexTurnThatEndsFailedIsReportedOnce() {
+        var conversation = AgentConversation()
+        conversation.applyCodex(["method": "turn/started", "params": [:]])
+        // The error arrives first, then the turn it ended says the same.
+        conversation.applyCodex(["method": "error", "params": [
+            "error": ["message": "Context window exceeded"], "willRetry": false, "threadId": "t", "turnId": "1",
+        ]])
+        conversation.applyCodex(["method": "turn/completed", "params": ["threadId": "t", "turn": [
+            "id": "1", "status": "failed", "error": ["message": "Context window exceeded"],
+        ]]])
+        XCTAssertFalse(conversation.isRunning)
+        XCTAssertEqual(conversation.lastError, "Context window exceeded")
+        XCTAssertEqual(conversation.items.map(\.kind), [.notice("Context window exceeded")])
+    }
+
+    func testCodexRetriesWarningsAndReroutesAreNoticed() {
+        var conversation = AgentConversation()
+        conversation.applyCodex(["method": "turn/started", "params": [:]])
+        conversation.applyCodex(["method": "error", "params": [
+            "error": ["message": "Rate limited"], "willRetry": true, "threadId": "t", "turnId": "1",
+        ]])
+        XCTAssertTrue(conversation.isRunning)
+        XCTAssertNil(conversation.lastError)
+        conversation.applyCodex(["method": "warning", "params": ["message": "Slow network"]])
+        conversation.applyCodex(["method": "model/rerouted", "params": [
+            "threadId": "t", "turnId": "1", "fromModel": "a", "toModel": "b", "reason": "highRiskCyberActivity",
+        ]])
+        conversation.applyCodex(["method": "turn/completed", "params": ["turn": ["id": "1", "status": "interrupted"]]])
+        XCTAssertEqual(conversation.items.map(\.kind), [
+            .notice("Retrying: Rate limited"), .notice("Slow network"),
+            .notice("Codex moved this turn from a to b."), .notice("Stopped"),
+        ])
+    }
+
     func testCodexAppServerRateLimits() {
         // The app server answers in camel case, with a null second window.
         let limits: [String: Any] = [

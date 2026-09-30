@@ -109,8 +109,8 @@ final class AgentSession: ObservableObject, Identifiable {
             AgentCenter.shared.save()
         }
     }
-    // Claude Code takes these as flags, so changing one restarts it against
-    // the same session. Codex's app server takes them live.
+    // Claude Code starts on these as flags and takes changes live over its
+    // control channel; Codex's app server takes them live too.
     @Published var model: String { didSet { if model != oldValue { settingsChanged() } } }
     @Published var effort: String? { didSet { if effort != oldValue { settingsChanged() } } }
     @Published var permissionMode: PermissionMode {
@@ -127,7 +127,7 @@ final class AgentSession: ObservableObject, Identifiable {
     private func settingsChanged() {
         switch engine {
         case .claude:
-            needsRestart = true
+            if process?.isRunning == true, claudeApplied != nil { updateClaudeSettings() } else { needsRestart = true }
         case .codex:
             if let threadId, process?.isRunning == true { updateCodexSettings(threadId: threadId) }
         case .opencode:
@@ -154,6 +154,39 @@ final class AgentSession: ObservableObject, Identifiable {
         didSet { if hasTurns != oldValue { AgentCenter.shared.save() } }
     }
     private var needsRestart = false
+    /// What the running Claude Code was started on or last told, so a
+    /// change sends only what differs.
+    private var claudeApplied: (model: String, effort: String?, mode: PermissionMode)?
+    static let settingsRequestPrefix = "octet-settings-"
+
+    /// Moves a running Claude Code onto the picked model, effort and mode
+    /// with control requests, instead of restarting it (seconds, and the
+    /// conversation reloaded). One it refuses falls back to a restart.
+    private func updateClaudeSettings() {
+        guard var applied = claudeApplied else { needsRestart = true; return }
+        if model != applied.model {
+            sendClaudeSetting(["subtype": "set_model", "model": model])
+            applied.model = model
+        }
+        if effort != applied.effort {
+            if let effort, Self.supportsEffort(model: model) {
+                sendClaudeSetting(["subtype": "apply_flag_settings", "settings": ["effortLevel": effort]])
+            } else {
+                // No control clears it back to the model's default.
+                needsRestart = true
+            }
+            applied.effort = effort
+        }
+        if permissionMode != applied.mode {
+            sendClaudeSetting(["subtype": "set_permission_mode", "mode": permissionMode.rawValue])
+            applied.mode = permissionMode
+        }
+        claudeApplied = applied
+    }
+
+    private func sendClaudeSetting(_ request: [String: Any]) {
+        write(["type": "control_request", "request_id": Self.settingsRequestPrefix + UUID().uuidString, "request": request])
+    }
     private var process: Process?
     /// The live CLI process behind this conversation. Runtime inspection uses
     /// it as the root so unrelated shells and agents never leak into the panel.
@@ -583,7 +616,11 @@ final class AgentSession: ObservableObject, Identifiable {
     }
 
     private func startTurn(_ text: String, threadId: String) {
-        let sent = call("turn/start", ["threadId": threadId, "input": [["type": "text", "text": text]]], as: .turn)
+        var params: [String: Any] = ["threadId": threadId, "input": [["type": "text", "text": text]]]
+        // Every turn carries the effort picked, so it holds even if a
+        // settings update mid-conversation wasn't taken.
+        if let effort { params["effort"] = effort }
+        let sent = call("turn/start", params, as: .turn)
         if sent { hasTurns = true }
     }
 
@@ -619,8 +656,11 @@ final class AgentSession: ObservableObject, Identifiable {
         }
         guard let process, process.isRunning, conversation.isRunning else { return }
         switch engine {
-        case .claude, .qwen:
+        case .claude:
             process.interrupt()
+        case .qwen:
+            // A signal ends Qwen's whole session; this stops only the turn.
+            write(["type": "control_request", "request_id": UUID().uuidString, "request": ["subtype": "interrupt"]])
         case .codex:
             guard let threadId else { return }
             call("turn/interrupt", ["threadId": threadId], as: .interrupt)
@@ -1136,6 +1176,7 @@ final class AgentSession: ObservableObject, Identifiable {
         ]
         if let effort, Self.supportsEffort(model: model) { args += ["--effort", effort] }
         args += hasTurns ? ["--resume", sessionId] : ["--session-id", sessionId]
+        claudeApplied = (model, effort, permissionMode)
 
         // Through the login shell, so the agent sees the same PATH and
         // environment it gets in a terminal. GUI login shells do not always
@@ -1227,6 +1268,8 @@ final class AgentSession: ObservableObject, Identifiable {
         if hasTurns, let threadId { args += ["--resume", threadId] }
         guard let process = spawn(command: "exec \(shellQuote(executable("qwen"))) \"$@\"", arguments: args) else { return }
         self.process = process
+        qwenPermissionIds = [:]
+        write(Self.qwenInitialize)
     }
 
     /// What Octet calls itself to the agents it drives.
@@ -1256,7 +1299,8 @@ final class AgentSession: ObservableObject, Identifiable {
         // A new thread starts on the settings the pickers show; an existing
         // one keeps its own, and `thread/settings/update` moves it.
         if let codexModel { params["model"] = codexModel }
-        if let effort { params["reasoningEffort"] = effort }
+        // thread/start has no effort field; it takes it as a config override.
+        if let effort { params["config"] = ["model_reasoning_effort": effort] }
         if let permissionProfile { params["permissions"] = permissionProfile }
         #if DEBUG
         // Verification hook: OCTET_CODEX_APPROVAL=untrusted makes Codex ask
@@ -1278,7 +1322,7 @@ final class AgentSession: ObservableObject, Identifiable {
     private func updateCodexSettings(threadId: String) {
         var params: [String: Any] = ["threadId": threadId]
         if let codexModel { params["model"] = codexModel }
-        if let effort { params["reasoningEffort"] = effort }
+        if let effort { params["effort"] = effort }
         if let permissionProfile { params["permissions"] = permissionProfile }
         guard params.count > 1 else { return }
         call("thread/settings/update", params, as: .settings)
@@ -1389,6 +1433,21 @@ final class AgentSession: ObservableObject, Identifiable {
                     remoteControlAnswered(response)
                     continue
                 }
+                if event["type"] as? String == "control_response",
+                   let response = event["response"] as? [String: Any],
+                   (response["request_id"] as? String)?.hasPrefix(Self.settingsRequestPrefix) == true {
+                    // Refused live: the next message restarts it on the flags.
+                    if response["subtype"] as? String == "error" { needsRestart = true }
+                    continue
+                }
+                // The mode changed in Claude Code itself (a plan approved,
+                // Remote Control): the picker follows, with nothing to send.
+                if event["type"] as? String == "system", event["subtype"] as? String == "status",
+                   let raw = event["permissionMode"] as? String, let mode = PermissionMode(rawValue: raw),
+                   mode != permissionMode {
+                    claudeApplied?.mode = mode
+                    permissionMode = mode
+                }
                 conversation.apply(event)
                 // A turn started from elsewhere (Remote Control) runs the clock too.
                 if conversation.isRunning, turnStartedAt == nil { turnStartedAt = Date() }
@@ -1402,6 +1461,7 @@ final class AgentSession: ObservableObject, Identifiable {
             case .pi:
                 receivePi(event)
             case .qwen:
+                if receiveQwenControl(event) { continue }
                 conversation.apply(event)
                 if let id = conversation.sessionId, threadId != id {
                     threadId = id
@@ -1411,6 +1471,50 @@ final class AgentSession: ObservableObject, Identifiable {
             if !conversation.isRunning { turnStartedAt = nil }
         }
     }
+
+    /// Qwen's control channel. Before a tool runs it asks the host
+    /// (`can_use_tool`), which Octet answers with the same card as Claude's;
+    /// it withdraws a question it stopped waiting for; and it answers
+    /// Octet's own requests. True when `event` was one of these.
+    private func receiveQwenControl(_ event: [String: Any]) -> Bool {
+        switch event["type"] as? String {
+        case "control_request":
+            guard let id = event["request_id"] as? String, let request = event["request"] as? [String: Any] else { return true }
+            guard request["subtype"] as? String == "can_use_tool" else {
+                write(["type": "control_response", "response": [
+                    "subtype": "error", "request_id": id,
+                    "error": "Octet doesn't handle \(request["subtype"] as? String ?? "this") requests.",
+                ]])
+                return true
+            }
+            if let toolUse = request["tool_use_id"] as? String { qwenPermissionIds[id] = toolUse }
+            receivePermission(request) { [weak self] decision in
+                self?.qwenPermissionIds[id] = nil
+                self?.write(["type": "control_response", "response": ["subtype": "success", "request_id": id, "response": decision]])
+            }
+            return true
+        case "control_cancel_request":
+            if let id = event["request_id"] as? String, let toolUse = qwenPermissionIds.removeValue(forKey: id) {
+                dropPermission(id: toolUse)
+            }
+            return true
+        case "control_response":
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Qwen's control requests Octet is waiting on an answer for, by
+    /// request id: the tool call each asks about.
+    private var qwenPermissionIds: [String: String] = [:]
+
+    /// Qwen's handshake: the host answers tool approvals, and gets the
+    /// longest Qwen allows to, since a person is the one answering.
+    static let qwenInitialize: [String: Any] = [
+        "type": "control_request", "request_id": "octet-init",
+        "request": ["subtype": "initialize", "timeout": ["canUseTool": 600_000]],
+    ]
 
     private func receivePi(_ event: [String: Any]) {
         if let question = PiExtensionUI.question(event, sessionId: sessionId) {
@@ -1434,6 +1538,10 @@ final class AgentSession: ObservableObject, Identifiable {
            let command = event["command"] as? String {
             let data = event["data"] as? [String: Any] ?? [:]
             switch command {
+            case "prompt" where data["disposition"] as? String == "handled":
+                // An extension command took the prompt: no run starts, so
+                // nothing else would end the one Octet began showing.
+                conversation.isRunning = conversation.activateNextQueuedMessage()
             case "get_state":
                 if let path = data["sessionFile"] as? String, threadId != path {
                     threadId = path
