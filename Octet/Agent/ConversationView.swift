@@ -425,6 +425,62 @@ private struct ContextMeter: View {
     }
 }
 
+// MARK: - Message actions
+
+/// What a message's right-click menu offers: copying it, and for your own
+/// messages, going back to before it.
+private struct MessageMenu: View {
+    @ObservedObject var session: AgentSession
+    let item: AgentItem
+
+    var body: some View {
+        if let text = copyableText {
+            Button("Copy") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(text, forType: .string)
+            }
+        }
+        if case .user = item.kind, session.canRewind(to: item) || (session.engine == .claude && session.canFork) {
+            Divider()
+            if session.canRewind(to: item) {
+                Button("Rewind to Here…") { askToRewind() }
+            }
+            if session.engine == .claude, session.canFork {
+                Button("Fork From Here") { session.fork(from: item) }
+                    .help("A new conversation with what came before this message, which you can edit and send")
+            }
+        }
+    }
+
+    private var copyableText: String? {
+        switch item.kind {
+        case .user(let text), .text(let text): text.isEmpty ? nil : text
+        default: nil
+        }
+    }
+
+    /// Shows what a rewind would undo, from Claude Code's checkpoint, and
+    /// rewinds when confirmed.
+    private func askToRewind() {
+        session.previewRewind(to: item) { preview in
+            let files = preview.filesChanged.map { ($0 as NSString).lastPathComponent }
+            let message: String
+            if preview.canRestoreFiles, !files.isEmpty {
+                message = "Undoes \(files.count == 1 ? "1 file's" : "\(files.count) files'") changes since then (+\(preview.insertions) −\(preview.deletions)) and goes back to before this message. It comes back in the box below to edit."
+            } else if preview.canRestoreFiles {
+                message = "No files changed since then. The conversation goes back to before this message, which comes back in the box below to edit."
+            } else {
+                message = "The conversation goes back to before this message, which comes back in the box below to edit. Files stay as they are: \(preview.reason ?? "there's no checkpoint for them")."
+            }
+            ConfirmCenter.shared.ask(title: "Rewind to before this message?", message: message, items: Array(files.prefix(8)),
+                                     detail: "\(session.engine.displayName) keeps the conversation as it was in its history.",
+                                     confirmTitle: "Rewind", destructive: true) { _ in
+                session.rewind(to: item, restoreFiles: preview.canRestoreFiles)
+            }
+        }
+    }
+}
+
 // MARK: - Transcript
 
 private struct Transcript: View {
@@ -446,6 +502,7 @@ private struct Transcript: View {
                         ForEach(items.filter(Self.isShown)) { item in
                             ItemRow(item: item, running: session.conversation.isRunning)
                                 .equatable()
+                                .contextMenu { MessageMenu(session: session, item: item) }
                                 .padding(.leading, item.parent == nil ? 0 : 18)
                                 .overlay(alignment: .leading) {
                                     if item.parent != nil {
@@ -1625,8 +1682,8 @@ private struct Composer: View {
                         refreshSuggestions()
                         refreshReferences()
                     }
-                    .onChange(of: session.piEditorRequest?.id) { _, _ in
-                        guard let request = session.piEditorRequest else { return }
+                    .onChange(of: session.editorRequest?.id) { _, _ in
+                        guard let request = session.editorRequest else { return }
                         text = request.text
                         focused = true
                     }
@@ -1698,6 +1755,7 @@ private struct Composer: View {
                 OctetButton(title: "", icon: "paperclip", kind: .ghost, compact: true) { pickImages() }
                     .help("Attach images (or paste or drop them here)")
                     .accessibilityLabel("Attach images")
+                MCPProblemChip(session: session)
                 Spacer()
                 let empty = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty
                 if running {

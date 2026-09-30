@@ -706,6 +706,8 @@ private struct ConversationTab: View {
             AgentCenter.shared.activeId = session.id
         }
         .contextMenu {
+            ConversationActionsMenu(session: session)
+            Divider()
             Button("Close Conversation") { AgentCenter.shared.close(session) }
         }
         .help(session.title)
