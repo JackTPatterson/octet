@@ -867,7 +867,7 @@ final class AgentSession: ObservableObject, Identifiable {
             let old = self.sessionId
             self.sessionId = UUID().uuidString.lowercased()
             if let anchor, self.hasTurns {
-                self.forkFrom = (old, anchor)
+                self.forkFrom = (session: old, at: Optional(anchor))
             } else {
                 // The first message: nothing before it to keep.
                 self.hasTurns = false

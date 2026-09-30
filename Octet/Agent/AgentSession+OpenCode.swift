@@ -402,6 +402,29 @@ extension AgentSession {
                      "command": [shell, "-lic", "opencode auth login; exec \(shell) -l"]] as [String: Any],
         ], failure: "Couldn't open OpenCode's sign-in")
     }
+
+    /// Shares the session through OpenCode's own sharing, which answers
+    /// with a public link to it.
+    func shareOpenCode(then: @escaping (Result<URL, Error>) -> Void) {
+        guard let id = openCode.sessionId ?? threadId else {
+            return then(.failure(NSError(domain: "OpenCode", code: 0,
+                                        userInfo: [NSLocalizedDescriptionKey: "Send a message first, so there's a session to share."])))
+        }
+        OpenCodeServer.shared.request("POST", "session/\(id)/share", directory: cwd) { result in
+            switch result {
+            case .success(let json):
+                let link = ((json as? [String: Any])?["share"] as? [String: Any])?["url"] as? String
+                if let link, let url = URL(string: link) {
+                    then(.success(url))
+                } else {
+                    then(.failure(NSError(domain: "OpenCode", code: 1,
+                                          userInfo: [NSLocalizedDescriptionKey: "OpenCode didn't give a link."])))
+                }
+            case .failure(let failure):
+                then(.failure(NSError(domain: "OpenCode", code: 2, userInfo: [NSLocalizedDescriptionKey: "\(failure)"])))
+            }
+        }
+    }
 }
 
 /// OpenCode's commands (its own, the project's, and skills), per folder,
@@ -431,28 +454,5 @@ final class OpenCodeCommandStore {
             }
         }
         return commands[cwd] ?? []
-    }
-
-    /// Shares the session through OpenCode's own sharing, which answers
-    /// with a public link to it.
-    func shareOpenCode(then: @escaping (Result<URL, Error>) -> Void) {
-        guard let id = openCode.sessionId ?? threadId else {
-            return then(.failure(NSError(domain: "OpenCode", code: 0,
-                                        userInfo: [NSLocalizedDescriptionKey: "Send a message first, so there's a session to share."])))
-        }
-        OpenCodeServer.shared.request("POST", "session/\(id)/share", directory: cwd) { result in
-            switch result {
-            case .success(let json):
-                let link = ((json as? [String: Any])?["share"] as? [String: Any])?["url"] as? String
-                if let link, let url = URL(string: link) {
-                    then(.success(url))
-                } else {
-                    then(.failure(NSError(domain: "OpenCode", code: 1,
-                                          userInfo: [NSLocalizedDescriptionKey: "OpenCode didn't give a link."])))
-                }
-            case .failure(let failure):
-                then(.failure(NSError(domain: "OpenCode", code: 2, userInfo: [NSLocalizedDescriptionKey: "\(failure)"])))
-            }
-        }
     }
 }
