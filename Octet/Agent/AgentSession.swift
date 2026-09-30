@@ -337,12 +337,14 @@ final class AgentSession: ObservableObject, Identifiable {
     /// Claude Code recommends, once it has said.
     static var defaultModel: String { catalog.first?.id ?? "claude-sonnet-5" }
 
-    init(workspaceId: String, cwd: String, engine: Engine = .claude, model: String = AgentSession.defaultModel,
+    /// `model` nil starts on `defaultModel`, read here rather than as a
+    /// default argument, which is evaluated off the main actor.
+    init(workspaceId: String, cwd: String, engine: Engine = .claude, model: String? = nil,
          permissionMode: PermissionMode = .auto, sessionId: String = UUID().uuidString, threadId: String? = nil) {
         self.workspaceId = workspaceId
         self.cwd = cwd
         self.engine = engine
-        self.model = model
+        self.model = model ?? Self.defaultModel
         self.permissionMode = permissionMode
         self.sessionId = sessionId
         self.threadId = threadId
