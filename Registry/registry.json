@@ -468,18 +468,29 @@
     {
       "id": "dev-server",
       "name": "Dev Server",
-      "description": "Start Dev Server in a tab's or workspace's right-click menu: finds how the project runs (its package.json dev script with the right package manager, Rails, Django, Phoenix, Laravel, Go, Cargo, Hugo, Jekyll or Docker Compose) and starts it in a new tab of that workspace.",
+      "description": "Start Dev Server in a tab's or workspace's right-click menu: finds how the project runs and starts it in a new tab of that workspace. Knows package.json scripts (with the right package manager) and frameworks without one: Next.js, SvelteKit, Nuxt, Astro, Remix, SolidStart, Qwik, Angular, Expo, Gatsby, Eleventy, Create React App, Vue CLI and Vite. Also Deno tasks, Rails, Django, FastAPI, Flask, Streamlit, Phoenix, Laravel, Hugo, Jekyll, Go, Cargo and Docker Compose.",
       "author": "Octet",
       "version": "1.0.0",
       "keywords": [
+        "angular",
+        "astro",
+        "deno",
         "dev server",
-        "npm run dev",
-        "start",
-        "server",
-        "vite",
+        "django",
+        "expo",
+        "fastapi",
+        "flask",
         "next",
+        "nextjs",
+        "npm run dev",
+        "nuxt",
         "rails",
-        "django"
+        "remix",
+        "server",
+        "start",
+        "svelte",
+        "sveltekit",
+        "vite"
       ],
       "platforms": [
         "macos",
@@ -491,11 +502,11 @@
       "files": [
         {
           "path": "detect.sh",
-          "sha256": "fac172a42dbae51f511d180bc668fb5de5f8028b57e06c88a25e2bf45b5d04fe"
+          "sha256": "c9ecb642be9dcb062fe12739d5d3b0ba74e8ff331497e04ebe37cdfdea37f7c3"
         },
         {
           "path": "plugin.json",
-          "sha256": "13887a48317b5788364ef91b64d5b8936166d8ba395371ee8619d42e19dc592b"
+          "sha256": "155815ac72c36b4338ac9fc816821206d772f53e2c348db07aa8be4b2d1d9c5b"
         }
       ]
     },
