@@ -1435,6 +1435,36 @@ private struct PlanApprovalCard: View {
     }
 }
 
+// MARK: - Listening
+
+/// Over the message box while Space is held: what's been heard so far.
+private struct ListeningIndicator: View {
+    let heard: String
+    @State private var pulse = false
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Circle()
+                .fill(Color(hex: AgentStateColor.blocked))
+                .frame(width: 7, height: 7)
+                .opacity(pulse ? 1 : 0.35)
+                .animation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true), value: pulse)
+                .onAppear { pulse = true }
+            Text(heard.isEmpty ? "Listening… let go of Space to type it" : heard)
+                .font(.system(size: 13))
+                .foregroundStyle(heard.isEmpty ? Theme.textTertiary : Theme.textPrimary)
+                .lineLimit(4)
+        }
+        .padding(.horizontal, 5)
+        .padding(.vertical, 1)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.card)
+        .allowsHitTesting(false)
+        .accessibilityLabel("Listening")
+        .accessibilityValue(heard)
+    }
+}
+
 // MARK: - Composer
 
 private struct Composer: View {
@@ -1442,6 +1472,8 @@ private struct Composer: View {
     @ObservedObject var dropdowns: OctetDropdownState
     @EnvironmentObject private var window: WindowContext
     @State private var text = ""
+    @State private var spaceHold = SpaceHold()
+    @ObservedObject private var voice = VoiceInput.shared
     @FocusState private var focused: Bool
     @State private var highlighted = 0
     @State private var dismissedFor: String?
@@ -1452,6 +1484,33 @@ private struct Composer: View {
     /// The commands on show, changed inside an animation so the list, the
     /// composer card around it and the transcript above all move together.
     @State private var shownSuggestions: [SlashCommand] = []
+
+    /// Hold Space to talk: a tap types, a hold listens until let go.
+    private func holdSpace(_ press: KeyPress) -> KeyPress.Result {
+        guard SettingsStore.shared.values.holdSpaceToTalk, press.modifiers.isEmpty || spaceHold.listening else { return .ignored }
+        let action: SpaceHold.Action
+        switch press.phase {
+        case .down: action = spaceHold.down(at: Date(), text: text)
+        case .repeat: action = spaceHold.repeated(at: Date())
+        default: action = spaceHold.up()
+        }
+        switch action {
+        case .type:
+            return .ignored
+        case .swallow:
+            return .handled
+        case .startListening(let restore):
+            text = restore
+            voice.start { problem in
+                spaceHold.cancel()
+                ToastCenter.shared.fail(nil, "Can't listen", detail: problem)
+            }
+            return .handled
+        case .stopListening:
+            voice.stop { said in text = SpaceHold.inserting(said, into: text) }
+            return .handled
+        }
+    }
 
     private func attach(_ images: [NSImage]) {
         attachments += images.compactMap(AgentSession.Attachment.init(image:))
@@ -1607,6 +1666,18 @@ private struct Composer: View {
                     .focused($focused)
                     .frame(minHeight: 22, maxHeight: 160)
                     .fixedSize(horizontal: false, vertical: true)
+                    .overlay(alignment: .topLeading) {
+                        if spaceHold.listening { ListeningIndicator(heard: voice.partial) }
+                    }
+                    .onKeyPress(.space, phases: [.down, .repeat, .up]) { press in
+                        holdSpace(press)
+                    }
+                    .onChange(of: focused) { _, isFocused in
+                        // Space's release goes elsewhere once focus does.
+                        guard !isFocused, spaceHold.listening else { return }
+                        _ = spaceHold.up()
+                        voice.stop { said in text = SpaceHold.inserting(said, into: text) }
+                    }
                     .onKeyPress(.tab) {
                         // Tab cycles OpenCode's agents, as in its own interface.
                         guard session.engine == .opencode, suggestions.isEmpty else { return .ignored }

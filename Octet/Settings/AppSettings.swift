@@ -134,6 +134,8 @@ struct OctetSettings: Codable, Equatable {
     var autoNameTabs = true
     /// Workspaces take the name of the work in them until renamed by hand.
     var autoNameWorkspaces = true
+    /// Holding Space in a conversation's message box talks instead of typing.
+    var holdSpaceToTalk = true
     var visualTwin = true
     // Native agent opening is controlled separately; terminal sessions stay in
     // their own interface unless the user explicitly enables the twin.
@@ -352,6 +354,7 @@ struct OctetSettings: Codable, Equatable {
         pasteImagesAsFiles = value("pasteImagesAsFiles", defaults.pasteImagesAsFiles)
         autoNameTabs = value("autoNameTabs", defaults.autoNameTabs)
         autoNameWorkspaces = value("autoNameWorkspaces", defaults.autoNameWorkspaces)
+        holdSpaceToTalk = value("holdSpaceToTalk", defaults.holdSpaceToTalk)
         visualTwin = value("visualTwin", defaults.visualTwin)
         twinByDefault = value("twinByDefault", defaults.twinByDefault)
         showTips = value("showTips", defaults.showTips)

@@ -851,6 +851,13 @@ private struct AgentSettings: View {
             }
             SettingsDivider()
             SettingsRow(
+                title: "Hold Space to talk",
+                detail: "In a conversation's message box, hold Space and speak; let go and what you said is typed in. A tap still types a space. Speech is recognized on this Mac where the language allows."
+            ) {
+                Toggle("Hold Space to talk", isOn: $settings.values.holdSpaceToTalk).labelsHidden().toggleStyle(.switch)
+            }
+            SettingsDivider()
+            SettingsRow(
                 title: "Restore recent terminal output",
                 detail: "Saves pane contents so they reappear after a restart. Output can include secrets."
             ) {
