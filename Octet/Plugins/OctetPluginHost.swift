@@ -133,6 +133,7 @@ final class OctetPluginHost: ObservableObject {
     private static func isFeatureOn(_ feature: String) -> Bool {
         switch feature {
         case "peers": SettingsStore.shared.values.peersEnabled
+        case "delegation": SettingsStore.shared.values.delegationEnabled
         default: false
         }
     }
@@ -140,6 +141,7 @@ final class OctetPluginHost: ObservableObject {
     private static func setFeature(_ feature: String, _ on: Bool, in values: inout OctetSettings) {
         switch feature {
         case "peers": values.peersEnabled = on
+        case "delegation": values.delegationEnabled = on
         default: break
         }
     }
