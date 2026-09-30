@@ -1122,8 +1122,9 @@ final class SessionStore: ObservableObject {
     /// which agent it is, so anything discovery found can open one: the CLI
     /// runs by its resolved path, and the shell takes over when it exits, so
     /// the tab stays useful rather than closing under you.
-    func newTab(running agent: DiscoveredAgent) {
-        guard var params = agentTabParams(agent, workspaceId: focusedWorkspace?.workspaceId) else { return }
+    func newTab(running agent: DiscoveredAgent, arguments: [String] = [], label: String? = nil) {
+        guard var params = agentTabParams(agent, workspaceId: focusedWorkspace?.workspaceId,
+                                          arguments: arguments, label: label) else { return }
         params["focus"] = true
         let client = self.client
         DispatchQueue.global(qos: .userInitiated).async {
@@ -1139,14 +1140,19 @@ final class SessionStore: ObservableObject {
     }
 
     /// The `layout.apply` for a tab running `agent` in `workspaceId`.
-    func agentTabParams(_ agent: DiscoveredAgent, workspaceId: String?) -> [String: Any]? {
+    /// A tab running `agent`, with `arguments` after its executable (a cloud
+    /// session's `--cloud <task>`) and `label` naming the tab.
+    func agentTabParams(_ agent: DiscoveredAgent, workspaceId: String?,
+                        arguments: [String] = [], label: String? = nil) -> [String: Any]? {
         guard let path = agent.executablePath else { return nil }
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
         let cwd = workspaceId.flatMap { snapshot.directory(ofWorkspace: $0) } ?? NSHomeDirectory()
+        let command = ([path] + arguments).map(shellQuote).joined(separator: " ")
+        let label = label ?? agent.displayName
         var params: [String: Any] = [
-            "tab_label": agent.displayName,
-            "root": ["type": "pane", "label": agent.displayName, "cwd": cwd,
-                     "command": [shell, "-lic", "\(shellQuote(path)); exec \(shell) -l"]] as [String: Any],
+            "tab_label": label,
+            "root": ["type": "pane", "label": label, "cwd": cwd,
+                     "command": [shell, "-lic", "\(command); exec \(shell) -l"]] as [String: Any],
         ]
         if let workspaceId { params["workspace_id"] = workspaceId }
         return params

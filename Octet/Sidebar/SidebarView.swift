@@ -311,9 +311,13 @@ private struct WorkspaceCard: View {
                         .help("Open in another window. Click to bring it forward.")
                         .accessibilityLabel("Open in another window")
                 }
-                if hovered && !renaming {
-                    WorkspaceCloseButton { store.closeWorkspace(workspace.workspaceId) }
-                }
+                // Always laid out, only shown on hover: appearing would make
+                // the line taller and push the name aside.
+                let showsClose = hovered && !renaming
+                WorkspaceCloseButton { store.closeWorkspace(workspace.workspaceId) }
+                    .opacity(showsClose ? 1 : 0)
+                    .allowsHitTesting(showsClose)
+                    .accessibilityHidden(!showsClose)
             }
             // Always shown: the folder is what decides the card's group.
             if let directory {
@@ -511,6 +515,15 @@ struct WorkspaceOrganizeMenu: View {
             }
         } else {
             Button("Move to Idle") { store.markIdle(id) }
+        }
+        if AgentDiscoveryStore.shared.agents.contains(where: { $0.id == "claude" && $0.executablePath != nil }) {
+            Button("New Cloud Session Here…") {
+                // In the window showing it, which the session will open in.
+                let target = WindowRegistry.shared.window(showing: id) ?? window
+                target.focusWorkspace(id)
+                target.ui.paletteStart = [PaletteCatalog.claudeCloudItemId]
+                target.ui.paletteVisible = true
+            }
         }
         Divider()
         if let other = WindowRegistry.shared.window(showing: id), other !== window {

@@ -263,11 +263,26 @@ final class WindowContext: ObservableObject, Identifiable {
         create("tab.create", params, failure: "Couldn't open a tab")
     }
 
-    func newTab(running agent: DiscoveredAgent) {
+    func newTab(running agent: DiscoveredAgent, arguments: [String] = [], label: String? = nil) {
         editor.dismiss()
-        guard steers else { return store.newTab(running: agent) }
-        guard let params = store.agentTabParams(agent, workspaceId: workspaceId) else { return }
+        guard steers else { return store.newTab(running: agent, arguments: arguments, label: label) }
+        guard let params = store.agentTabParams(agent, workspaceId: workspaceId,
+                                                arguments: arguments, label: label) else { return }
         create("layout.apply", params, failure: "Couldn't open \(agent.displayName) in a tab")
+    }
+
+    /// A cloud session for `agent` in a new tab here, which the CLI streams
+    /// into: `task` is what it's asked to do, when the agent takes one.
+    func newCloudTab(_ agent: DiscoveredAgent, task: String?) {
+        guard let arguments = CloudAgents.arguments(for: agent.id, task: task) else { return }
+        newTab(running: agent, arguments: arguments,
+               label: CloudAgents.tabLabel(agentName: agent.displayName, task: task))
+    }
+
+    /// `claude --teleport` in a new tab here: Claude lists its cloud
+    /// sessions, and the one picked continues in this folder.
+    func teleportCloudSession(_ agent: DiscoveredAgent) {
+        newTab(running: agent, arguments: CloudAgents.teleportArguments, label: "\(agent.displayName) Teleport")
     }
 
     func newWorkspace(cwd: String? = nil) {
