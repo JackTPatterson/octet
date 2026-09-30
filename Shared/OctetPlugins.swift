@@ -221,6 +221,18 @@ struct OctetPluginManifest: Codable, Equatable {
     }
 }
 
+extension OctetPluginManifest.StatusItemContribution {
+    /// A chip whose command is `sh`, for macOS and Linux.
+    init(id: String, name: String, summary: String? = nil, sample: String? = nil, symbol: String? = nil,
+         icon: String? = nil, color: String? = nil, run: String, refreshSeconds: Double? = nil,
+         timeoutSeconds: Double? = nil, whenFiles: [String]? = nil,
+         scope: StatusItemDescriptor.Scope? = nil, enabledByDefault: Bool? = nil) {
+        self.init(id: id, name: name, summary: summary, sample: sample, symbol: symbol, icon: icon, color: color,
+                  runs: PluginCommand(run), refreshSeconds: refreshSeconds, timeoutSeconds: timeoutSeconds,
+                  whenFiles: whenFiles, scope: scope, enabledByDefault: enabledByDefault)
+    }
+}
+
 /// A plugin found on disk.
 struct OctetPlugin: Identifiable, Equatable {
     let manifest: OctetPluginManifest
