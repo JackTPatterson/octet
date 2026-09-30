@@ -808,9 +808,8 @@ private struct AgentsButton: View {
         let waiting = agents.needsInput.count
         let showing = center.board(in: window.focusedWorkspace?.workspaceId) == .claude
         Button { center.setBoard(showing ? nil : .claude, in: window.focusedWorkspace?.workspaceId) } label: {
-            HStack(spacing: 4) {
-                if let brand = AgentBrand.forAgent("claude") { AgentLogo(brand: brand, size: 12) }
-                OctetIcon("tool.agent", size: 14)
+            HStack(spacing: 5) {
+                Text("Agents").font(Theme.uiFontMedium)
                 if waiting > 0 {
                     Text("\(waiting)")
                         .font(.system(size: 10, weight: .bold).monospacedDigit())

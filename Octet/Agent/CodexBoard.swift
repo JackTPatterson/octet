@@ -224,9 +224,8 @@ struct CodexAgentsButton: View {
         let workspace = window.focusedWorkspace?.workspaceId
         let open = center.board(in: workspace) == .codex
         Button { center.setBoard(open ? nil : .codex, in: workspace) } label: {
-            HStack(spacing: 4) {
-                if let brand = AgentBrand.forAgent("codex") { AgentLogo(brand: brand, size: 12) }
-                OctetIcon("tool.agent", size: 14)
+            HStack(spacing: 5) {
+                Text("Agents").font(Theme.uiFontMedium)
                 if waiting > 0 {
                     Text("\(waiting)")
                         .font(.system(size: 10, weight: .bold).monospacedDigit())
