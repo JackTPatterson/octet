@@ -22,19 +22,45 @@ final class AgentSession: ObservableObject, Identifiable {
         }
     }
 
-    /// A model Claude Code can run, pinned by its full id so the version is
-    /// explicit. There's no way to list what a subscription allows without
-    /// an API key, so this is curated; a model the plan can't use comes back
-    /// as an error in the conversation.
+    /// A model Claude Code can run. The list is the one Claude Code gives
+    /// in its `initialize` answer, kept for next launch; until it has run
+    /// once, a curated list stands in.
     struct Model: Identifiable {
         let id: String
         let family: String
         let version: String
         let detail: String
-        var title: String { "\(family) \(version)" }
+        /// The name Claude Code gives it, when it came from Claude Code.
+        var name: String? = nil
+        /// Its effort levels, when Claude Code said; nil falls back to the
+        /// curated rules.
+        var efforts: [String]? = nil
+        var title: String { name ?? "\(family) \(version)" }
     }
 
-    static let models: [Model] = [
+    static var models: [Model] {
+        guard !catalog.isEmpty else { return curatedModels }
+        return catalog.map { Model(id: $0.id, family: "Claude Code", version: "", detail: $0.detail,
+                                   name: $0.name, efforts: $0.efforts) }
+    }
+
+    private static let catalogKey = "octet.claude.models.v1"
+    /// What Claude Code last said it offers.
+    private(set) static var catalog: [ClaudeModelCatalog.Entry] = {
+        guard let data = UserDefaults.standard.data(forKey: catalogKey) else { return [] }
+        return (try? JSONDecoder().decode([ClaudeModelCatalog.Entry].self, from: data)) ?? []
+    }()
+
+    /// Keeps the list from an `initialize` answer, and redraws the pickers.
+    static func updateCatalog(fromInitialize initialize: [String: Any]) {
+        let entries = ClaudeModelCatalog.entries(fromInitialize: initialize)
+        guard !entries.isEmpty, entries != catalog else { return }
+        catalog = entries
+        if let data = try? JSONEncoder().encode(entries) { UserDefaults.standard.set(data, forKey: catalogKey) }
+        AgentCenter.shared.objectWillChange.send()
+    }
+
+    private static let curatedModels: [Model] = [
         Model(id: "claude-fable-5-1", family: "Fable", version: "5.1", detail: "Most capable · 1M context · $10/$50"),
         Model(id: "claude-fable-5", family: "Fable", version: "5", detail: "1M context · $10/$50"),
         Model(id: "claude-opus-5", family: "Opus", version: "5", detail: "1M context · $5/$25"),
@@ -50,8 +76,13 @@ final class AgentSession: ObservableObject, Identifiable {
 
     /// The effort Claude Code uses when none is set: xhigh where the model
     /// has it, high on the 4.6 models, and none on Haiku 4.5, which has no
-    /// effort setting at all.
+    /// effort setting at all. Claude Code's own list says which have one.
     static func defaultEffort(model: String) -> String? {
+        if let levels = Self.model(model)?.efforts {
+            guard !levels.isEmpty else { return nil }
+            if model.hasSuffix("4-6") { return levels.contains("high") ? "high" : levels.last }
+            return levels.contains("xhigh") ? "xhigh" : levels.last
+        }
         if model.contains("haiku") { return nil }
         if model.hasSuffix("4-6") { return "high" }
         return "xhigh"
@@ -273,7 +304,9 @@ final class AgentSession: ObservableObject, Identifiable {
     var queuedMessages: [AgentItem] { conversation.items.filter(\.queued) }
 
     /// The model a conversation starts on until one is picked.
-    static let defaultModel = "claude-sonnet-5"
+    /// What a new conversation runs: the model Claude Code recommends, once
+    /// it has said.
+    static var defaultModel: String { catalog.first?.id ?? "claude-sonnet-5" }
 
     init(workspaceId: String, cwd: String, engine: Engine = .claude, model: String = AgentSession.defaultModel,
          permissionMode: PermissionMode = .auto, sessionId: String = UUID().uuidString, threadId: String? = nil) {
@@ -1425,6 +1458,7 @@ final class AgentSession: ObservableObject, Identifiable {
                    let response = event["response"] as? [String: Any], response["request_id"] as? String == Self.commandsRequest {
                     let initialize = response["response"] as? [String: Any] ?? [:]
                     agentCommands = SlashCommands.claudePublished(initialize["commands"] as? [[String: Any]] ?? [])
+                    Self.updateCatalog(fromInitialize: initialize)
                     remoteControlInitialized(initialize)
                     continue
                 }

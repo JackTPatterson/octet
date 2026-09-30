@@ -1232,7 +1232,9 @@ private struct PermissionCard: View {
     @State private var showInput = false
 
     var body: some View {
-        if let request = session.pendingPermission {
+        if let request = session.pendingPermission, request.toolName == "ExitPlanMode" {
+            PlanApprovalCard(session: session, request: request)
+        } else if let request = session.pendingPermission {
             OctetPalettePanel {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 8) {
@@ -1296,6 +1298,68 @@ private struct PermissionCard: View {
                 AccessibilityNotification.Announcement("\(session.engine.displayName) asks to use \(request.toolName)").post()
             }
         }
+    }
+}
+
+/// Claude's plan, asking to start work: the plan itself, and the choices
+/// Claude Code's own interface gives. Approving picks how edits are then
+/// handled; keeping on planning sends what should change.
+private struct PlanApprovalCard: View {
+    @ObservedObject var session: AgentSession
+    let request: AgentPermissionRequest
+    @State private var feedback = ""
+
+    var body: some View {
+        let plan = request.inputObject["plan"] as? String ?? ""
+        OctetPalettePanel {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    OctetIcon("tool.todo", size: 15).foregroundStyle(Theme.accent)
+                    Text("Ready to code?")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    Spacer()
+                }
+                if plan.isEmpty {
+                    Text("Claude has finished planning.").font(Theme.uiFont).foregroundStyle(Theme.textSecondary)
+                } else {
+                    ScrollView {
+                        MarkdownView(text: plan)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 320)
+                }
+                HStack(spacing: 8) {
+                    OctetTextField(placeholder: "What should change in the plan?", text: $feedback) {
+                        keepPlanning()
+                    }
+                    OctetButton(title: "Keep Planning", kind: .secondary) { keepPlanning() }
+                        .keyboardShortcut(.cancelAction)
+                        .help("Stay in plan mode and tell Claude what to change")
+                    OctetButton(title: "Approve", kind: .secondary) { approve(.default) }
+                        .help("Start work, asking before each edit")
+                    OctetButton(title: "Approve & Auto-Accept Edits", kind: .primary) { approve(.acceptEdits) }
+                        .keyboardShortcut(.defaultAction)
+                        .help("Start work, accepting file edits without asking")
+                }
+            }
+            .padding(12)
+        }
+        .onAppear {
+            AccessibilityNotification.Announcement("Claude's plan is ready for review").post()
+        }
+    }
+
+    private func approve(_ mode: AgentSession.PermissionMode) {
+        session.answerPermission(allow: true)
+        // Out of plan mode, into the one picked; sent live.
+        session.permissionMode = mode
+    }
+
+    private func keepPlanning() {
+        let note = feedback.trimmingCharacters(in: .whitespacesAndNewlines)
+        session.answerPermission(allow: false, note: note.isEmpty ? "Keep planning. The plan isn't approved yet." : note)
+        feedback = ""
     }
 }
 
@@ -1414,7 +1478,9 @@ private struct Composer: View {
         let needle = name.lowercased()
         switch session.engine {
         case .claude:
-            return AgentSession.models.first { $0.id.lowercased() == needle || $0.family.lowercased() == needle }?.id
+            return AgentSession.models.first {
+                $0.id.lowercased() == needle || $0.family.lowercased() == needle || $0.title.lowercased() == needle
+            }?.id
         case .codex:
             return CodexCatalogStore.shared.models.first { $0.id.lowercased() == needle }?.id
         case .pi:
@@ -2169,8 +2235,10 @@ private struct EffortControl: View {
         let spec = OctetDropdownSpec(
             id: "effort", options: [], selected: session.effort ?? "", select: { _ in },
             panel: { close in
-                AnyView(EffortSliderPanel(initial: session.effort, implicit: AgentSession.defaultEffort(model: session.model),
-                                          apply: { session.effort = $0 }, close: close))
+                let levels = AgentSession.model(session.model)?.efforts.flatMap { $0.isEmpty ? nil : $0 }
+                return AnyView(EffortSliderPanel(initial: session.effort, implicit: AgentSession.defaultEffort(model: session.model),
+                                                 levels: levels ?? AgentSession.efforts,
+                                                 apply: { session.effort = $0 }, close: close))
             }
         )
         let supported = AgentSession.supportsEffort(model: session.model)
@@ -2180,7 +2248,7 @@ private struct EffortControl: View {
         }
         .disabled(!supported)
         .opacity(supported ? 1 : 0.5)
-        .help(supported ? "How hard Claude thinks. Applies from the next message." : "This model has no effort setting.")
+        .help(supported ? "How hard Claude thinks. Applies at once." : "This model has no effort setting.")
         .accessibilityLabel("Effort")
         .accessibilityValue(session.effort ?? "default")
     }

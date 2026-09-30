@@ -117,7 +117,7 @@ struct AgentsBoard: View {
         let text = task.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         let cwd = window.focusedWorkspace.flatMap { store.snapshot.directory(ofWorkspace: $0.workspaceId) } ?? NSHomeDirectory()
-        AgentsStore.shared.dispatch(task: text, cwd: cwd, model: "claude-sonnet-5", effort: nil,
+        AgentsStore.shared.dispatch(task: text, cwd: cwd, model: AgentSession.defaultModel, effort: nil,
                                     mode: AgentSession.PermissionMode.auto.rawValue)
         task = ""
     }
