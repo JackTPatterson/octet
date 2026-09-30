@@ -4,6 +4,16 @@
         <title>Octet</title>
         <item>
             <title>0.1.0</title>
+            <pubDate>Wed, 30 Sep 2026 14:47:44 -0400</pubDate>
+            <link>https://github.com/JackTPatterson/octet</link>
+            <sparkle:version>9</sparkle:version>
+            <sparkle:shortVersionString>0.1.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/JackTPatterson/octet/releases/download/v0.1.0-beta.9/Octet-0.1.0-beta.9-arm64.zip" length="23932672" type="application/octet-stream" sparkle:edSignature="7sy8w2dspvVDMD/0OHieBKWLCbN5z6uuDWsnz4CtU45lx3XpQDJCWcc+Rk7vLeMspQSXZ2YtnDBv6fNC1ls2Cg=="/>
+        </item>
+        <item>
+            <title>0.1.0</title>
             <pubDate>Tue, 29 Sep 2026 16:27:38 -0400</pubDate>
             <link>https://github.com/JackTPatterson/octet</link>
             <sparkle:version>7</sparkle:version>
@@ -21,16 +31,6 @@
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
             <enclosure url="https://github.com/JackTPatterson/octet/releases/download/v0.1.0-beta.6/Octet-0.1.0-beta.6-arm64.zip" length="23322985" type="application/octet-stream" sparkle:edSignature="+ulFh7fJSbD54+9qyXd2wACN+0BQa+YpjOsVaVNBrt//pVM4pnUgM1CMBtTNtf4e0ik4l6O+M+UwYwKDaRybCA=="/>
-        </item>
-        <item>
-            <title>0.1.0</title>
-            <pubDate>Fri, 25 Sep 2026 12:36:35 -0400</pubDate>
-            <link>https://github.com/JackTPatterson/octet</link>
-            <sparkle:version>5</sparkle:version>
-            <sparkle:shortVersionString>0.1.0</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/JackTPatterson/octet/releases/download/v0.1.0-alpha.5/Octet-0.1.0-alpha.5-arm64.zip" length="22508820" type="application/octet-stream" sparkle:edSignature="weoS3X9tXK5NnWGxgA6BVtIzwEHQuTBmD19xG8TmzXqpJxikD+lJmXNiOKFKpxqjCLPHUFF/Kudu6+kZekIZCw=="/>
         </item>
     </channel>
 </rss>
