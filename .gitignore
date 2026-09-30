@@ -9,3 +9,4 @@ Vendor/herdr-radar/
 Spikes/TerminalSpike/*.xcodeproj/
 Vendor/engine/
 .firecrawl/
+octet-plugins/

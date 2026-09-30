@@ -36,8 +36,7 @@ final class PluginMenuTests: XCTestCase {
     }
 
     func testTheDevServerPluginLoads() throws {
-        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Registry/plugins").path
+        let root = try TestPlugins.pluginsPath()
         let found = OctetPlugins.discover(bundled: root, user: "/nonexistent")
         XCTAssertEqual(found.problems, [])
         let plugin = try XCTUnwrap(found.plugins.first { $0.id == "dev-server" })

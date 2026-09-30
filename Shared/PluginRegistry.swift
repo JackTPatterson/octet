@@ -6,9 +6,9 @@ import Foundation
 /// live; Octet downloads exactly those files and checks each one.
 struct PluginRegistry: Codable, Equatable {
     static let formatVersion = 1
-    /// The official index. A plugin's own files may live in any public
-    /// GitHub repository the entry names.
-    static let defaultURL = URL(string: "https://raw.githubusercontent.com/JackTPatterson/octet/master/Registry/registry.json")!
+    /// The official index, in JackTPatterson/octet-plugins. A plugin's own
+    /// files may live in any public GitHub repository the entry names.
+    static let defaultURL = URL(string: "https://raw.githubusercontent.com/JackTPatterson/octet-plugins/main/registry.json")!
 
     var version: Int = formatVersion
     var plugins: [Entry] = []

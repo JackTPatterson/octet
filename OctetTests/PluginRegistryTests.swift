@@ -44,22 +44,20 @@ final class PluginRegistryTests: XCTestCase {
         XCTAssertFalse(PluginRegistry.isNewer("0.9.0", than: "1.0.0"))
     }
 
-    /// The published index matches the plugin files beside it: rebuild it
-    /// with scripts/build-plugin-registry.py after changing a plugin.
-    func testThePublishedIndexIsCurrent() throws {
-        let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-        let index = repo.appendingPathComponent("Registry/registry.json")
-        guard let data = try? Data(contentsOf: index) else { throw XCTSkip("No registry beside the tests") }
-        let registry = try PluginRegistry.parse(data)
+    /// Octet reads the plugins repository's index, every entry passes the
+    /// installer's checks, and each checksum matches its file.
+    func testThePluginsIndexIsOneOctetInstalls() throws {
+        let repo = try TestPlugins.repository()
+        let registry = try PluginRegistry.parse(Data(contentsOf: repo.appendingPathComponent("registry.json")))
         XCTAssertFalse(registry.plugins.isEmpty)
         for entry in registry.plugins {
             XCTAssertNil(entry.problem, entry.id)
-            guard entry.repo == "JackTPatterson/octet" else { continue }
+            guard entry.repo == "JackTPatterson/octet-plugins" else { continue }
             let folder = repo.appendingPathComponent(entry.path)
             for file in entry.files {
                 let bytes = try Data(contentsOf: folder.appendingPathComponent(file.path))
                 let digest = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
-                XCTAssertEqual(digest, file.sha256, "\(entry.id)/\(file.path) changed; rebuild the registry")
+                XCTAssertEqual(digest, file.sha256, "\(entry.id)/\(file.path) changed; rebuild the index")
             }
         }
     }

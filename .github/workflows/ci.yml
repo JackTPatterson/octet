@@ -23,6 +23,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The plugins, for the tests that load them.
+      - name: Check out the plugins
+        uses: actions/checkout@v4
+        with:
+          repository: JackTPatterson/octet-plugins
+          path: octet-plugins
+
       - uses: ./.github/actions/setup
 
       - name: Build and test

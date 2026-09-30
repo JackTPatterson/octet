@@ -3,8 +3,7 @@ import XCTest
 final class OctetPluginTests: XCTestCase {
     /// The GitHub plugin as it ships, read from the repository.
     private func bundledGitHubPlugin() throws -> OctetPlugin {
-        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Registry/plugins").path
+        let root = try TestPlugins.pluginsPath()
         let found = OctetPlugins.discover(bundled: root, user: "/nonexistent")
         XCTAssertEqual(found.problems, [])
         return try XCTUnwrap(found.plugins.first { $0.id == "github-repos" })
@@ -86,8 +85,7 @@ final class OctetPluginTests: XCTestCase {
 
 final class RuntimeIconTests: XCTestCase {
     private func matcher() throws -> RuntimeMatcher {
-        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Registry/plugins").path
+        let root = try TestPlugins.pluginsPath()
         let found = OctetPlugins.discover(bundled: root, user: "/nonexistent")
         XCTAssertEqual(found.problems, [])
         let plugin = try XCTUnwrap(found.plugins.first { $0.id == "dev-runtimes" })
@@ -251,8 +249,7 @@ final class GitCloneMenuTests: XCTestCase {
 
 final class GitCloneEdgeCaseTests: XCTestCase {
     private func cloneSpec() throws -> CompletionSpec {
-        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Registry/plugins").path
+        let root = try TestPlugins.pluginsPath()
         let plugin = try XCTUnwrap(OctetPlugins.discover(bundled: root, user: "/nonexistent").plugins.first { $0.id == "github-repos" })
         return try XCTUnwrap(OctetPlugins.applying(plugin.manifest.contributes.completions.map { ($0, plugin) },
                                                   to: CompletionSpecs.git, command: "git"))
