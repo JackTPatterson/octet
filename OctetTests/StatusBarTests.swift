@@ -66,8 +66,7 @@ final class GitOperationTests: XCTestCase {
 
 final class StatusChipsPluginTests: XCTestCase {
     func testTheBundledPluginLoadsWithEveryIconAndScript() throws {
-        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Plugins").path
+        let root = try TestPlugins.pluginsPath()
         let found = OctetPlugins.discover(bundled: root, user: "/nonexistent")
         XCTAssertEqual(found.problems, [])
         let plugin = try XCTUnwrap(found.plugins.first { $0.id == "status-chips" })

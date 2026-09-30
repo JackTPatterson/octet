@@ -61,10 +61,16 @@ enum WindowActions {
     /// somewhere, else cascaded from `window`. Nothing moves in the engine: the
     /// new window shows the workspace, and the window that showed it moves to
     /// its neighbour, since two windows never show the same workspace.
-    static func moveWorkspaceToNewWindow(_ workspaceId: String, from window: WindowContext, frame: CGRect? = nil) {
+    /// Whether a window now shows it apart from `window`.
+    @discardableResult
+    static func moveWorkspaceToNewWindow(_ workspaceId: String, from window: WindowContext, frame: CGRect? = nil) -> Bool {
         let registry = WindowRegistry.shared
         // Already alone in a window: that's the one it has.
-        if let other = registry.window(showing: workspaceId), other !== window { return other.bringForward() }
+        if let other = registry.window(showing: workspaceId), other !== window {
+            if let frame { other.nsWindow?.setFrame(frame, display: true, animate: true) }
+            other.bringForward()
+            return true
+        }
         let store = window.store
         let showsIt = window.focusedWorkspace?.workspaceId == workspaceId
         let shownElsewhere = registry.shownWorkspaceIds(except: window)
@@ -73,9 +79,28 @@ enum WindowActions {
         }) {
             ToastCenter.shared.info("This window has no other workspace to show",
                                     detail: "Open another workspace here first, or use New Window (⌥⌘N).")
-            return
+            return false
         }
         WindowOpener.open?(OctetWindowSpec(workspaceId: workspaceId, frame: frame ?? cascaded(from: window)))
+        return true
+    }
+
+    /// A workspace card dropped by an edge of `window`: the window splits in
+    /// two, the workspace in a window on that side, the way a tab dropped by
+    /// a pane's edge splits the pane.
+    static func openBeside(_ workspaceId: String, from window: WindowContext, edge: SplitEdge) {
+        guard let nsWindow = window.nsWindow else {
+            moveWorkspaceToNewWindow(workspaceId, from: window)
+            return
+        }
+        // A full-screen window can't share its space; the new one cascades.
+        if nsWindow.styleMask.contains(.fullScreen) {
+            moveWorkspaceToNewWindow(workspaceId, from: window)
+            return
+        }
+        let halves = WorkspaceDropTarget.split(nsWindow.frame, at: edge)
+        guard moveWorkspaceToNewWindow(workspaceId, from: window, frame: halves.new) else { return }
+        nsWindow.setFrame(halves.kept, display: true, animate: true)
     }
 
     static func moveFocusedWorkspaceToNewWindow(from window: WindowContext) {

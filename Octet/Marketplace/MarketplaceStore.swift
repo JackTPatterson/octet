@@ -33,6 +33,20 @@ final class MarketplaceStore: ObservableObject {
         didSet { if section != oldValue { query = "" } }
     }
     @Published var query = ""
+    /// Plugins for agents and for the terminal share one list.
+    @Published var pluginFilter: PluginFilter = .all
+
+    enum PluginFilter: String, CaseIterable, Identifiable {
+        case all, agents, terminal
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .all: "All"
+            case .agents: "Agents"
+            case .terminal: "Terminal"
+            }
+        }
+    }
     @Published private(set) var hosts: [AgentHost] = []
     @Published private(set) var plugins: [MarketplaceEntry] = []
     @Published private(set) var servers: [MarketplaceEntry] = []
@@ -127,6 +141,8 @@ final class MarketplaceStore: ObservableObject {
         loadLibrary()
         loadServers()
         loadPlugins(force: force)
+        OctetPluginHost.shared.reload()
+        OctetPluginHost.shared.loadRegistry(force: force)
     }
 
     func loadLibrary() {
@@ -439,6 +455,37 @@ final class MarketplaceStore: ObservableObject {
 
     func filteredPlugins() -> [MarketplaceEntry] {
         MarketplaceCatalog.sorted(filter(plugins) { [$0.name, $0.summary, $0.marketplace] })
+    }
+
+    /// One of Octet's own plugins: built in, installed, or in the registry.
+    struct TerminalPlugin: Identifiable {
+        let id: String
+        let name: String
+        let summary: String
+        let author: String
+        let version: String
+        let keywords: [String]
+        /// On disk, when it's built in or installed.
+        let installed: OctetPlugin?
+        /// In the registry, when it's listed there.
+        let entry: PluginRegistry.Entry?
+    }
+
+    /// Octet's plugins that match the search: built-in and installed ones
+    /// first, then what the registry offers.
+    func filteredTerminalPlugins() -> [TerminalPlugin] {
+        let host = OctetPluginHost.shared
+        let installedIds = Set(host.plugins.map(\.id))
+        let local = host.plugins.map { plugin in
+            TerminalPlugin(id: plugin.id, name: plugin.manifest.name, summary: plugin.manifest.description ?? "",
+                           author: plugin.isBundled ? "Octet" : plugin.manifest.author ?? "", version: plugin.manifest.version,
+                           keywords: [], installed: plugin, entry: host.registry.first { $0.id == plugin.id })
+        }
+        let available = host.registry.filter { !installedIds.contains($0.id) }.map { entry in
+            TerminalPlugin(id: entry.id, name: entry.name, summary: entry.description, author: entry.author,
+                           version: entry.version, keywords: entry.keywords, installed: nil, entry: entry)
+        }
+        return filter(local + available) { [$0.name, $0.summary, $0.id] + $0.keywords }
     }
 
     func filteredLibrary(_ kind: AgentLibrary.Kind) -> [AgentLibrary.Item] {

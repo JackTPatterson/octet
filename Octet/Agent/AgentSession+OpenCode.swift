@@ -27,7 +27,11 @@ extension AgentSession: OpenCodeServer.Listener {
         var body: [String: Any] = [:]
         let rules = OpenCodePermission.ruleset(permissionProfile)
         if !rules.isEmpty { body["permission"] = rules }
-        OpenCodeServer.shared.request("POST", "session", directory: cwd, body: body) { [weak self] result in
+        // A fork is a new session carrying the parent's messages.
+        let path = forkFrom.map { "session/\($0.session)/fork" } ?? "session"
+        if forkFrom != nil { body = [:] }
+        forkFrom = nil
+        OpenCodeServer.shared.request("POST", path, directory: cwd, body: body) { [weak self] result in
             guard let self else { return }
             self.openCodeCreating = false
             switch result {
@@ -82,7 +86,15 @@ extension AgentSession: OpenCodeServer.Listener {
         let images = (openCodeModel?.images ?? true) ? attachments : []
         let body: [String: Any]
         let path: String
-        if let command = openCodeCommand(text) {
+        if text.hasPrefix("!"), text.count > 1, images.isEmpty {
+            // `!cmd` runs in the session's shell, as in OpenCode's own
+            // interface; its output comes back as a bash call.
+            path = "shell"
+            var request: [String: Any] = ["agent": agentName ?? "build",
+                                          "command": String(text.dropFirst()).trimmingCharacters(in: .whitespaces)]
+            if let model = openCodeModel { request["model"] = ["providerID": model.providerID, "modelID": model.modelID] }
+            body = request
+        } else if let command = openCodeCommand(text) {
             // A command the server runs (its own, a project's, or a skill),
             // with the rest of the line as its arguments.
             path = "command"
@@ -98,6 +110,8 @@ extension AgentSession: OpenCodeServer.Listener {
                  "url": "data:\($0.mediaType);base64,\($0.data.base64EncodedString())"]
             }
             if !text.isEmpty { parts.insert(["type": "text", "text": text], at: 0) }
+            // `@path` mentions attach the file itself, not just its name.
+            parts += OpenCodeMentions.fileParts(in: text, cwd: cwd)
             var request: [String: Any] = ["parts": parts]
             if let model = openCodeModel { request["model"] = ["providerID": model.providerID, "modelID": model.modelID] }
             if let agentName { request["agent"] = agentName }
@@ -153,6 +167,41 @@ extension AgentSession: OpenCodeServer.Listener {
         }
     }
 
+    /// `/undo`: takes back the latest turn and the file changes it made,
+    /// as OpenCode's own /undo does. Again goes one turn further back.
+    func undoOpenCode() {
+        guard let id = threadId, !conversation.isRunning else { return }
+        OpenCodeServer.shared.request("GET", "session/\(id)/message", directory: cwd) { [weak self] result in
+            guard let self, case .success(let json) = result, let messages = json as? [[String: Any]] else { return }
+            let ids = messages.compactMap { message -> String? in
+                let info = message["info"] as? [String: Any]
+                return info?["role"] as? String == "user" ? info?["id"] as? String : nil
+            }
+            // Before the point already undone to, if any.
+            let before = self.openCodeRevertMessage.flatMap { ids.firstIndex(of: $0) } ?? ids.count
+            guard before > 0 else { return self.notice("Nothing to undo.") }
+            let target = ids[before - 1]
+            OpenCodeServer.shared.request("POST", "session/\(id)/revert", directory: self.cwd,
+                                          body: ["messageID": target]) { [weak self] result in
+                guard let self else { return }
+                if case .failure(let failure) = result { return self.notice("Couldn't undo: \(failure)") }
+                self.openCodeRevertMessage = target
+                self.restoreOpenCodeTranscript(force: true)
+            }
+        }
+    }
+
+    /// `/redo`: brings back everything undone, and its file changes.
+    func redoOpenCode() {
+        guard let id = threadId, openCodeRevertMessage != nil else { return notice("Nothing to redo.") }
+        OpenCodeServer.shared.request("POST", "session/\(id)/unrevert", directory: cwd) { [weak self] result in
+            guard let self else { return }
+            if case .failure(let failure) = result { return self.notice("Couldn't redo: \(failure)") }
+            self.openCodeRevertMessage = nil
+            self.restoreOpenCodeTranscript(force: true)
+        }
+    }
+
     func interruptOpenCode() {
         guard let id = threadId else { return }
         OpenCodeServer.shared.request("POST", "session/\(id)/abort", directory: cwd) { _ in }
@@ -176,7 +225,10 @@ extension AgentSession: OpenCodeServer.Listener {
     /// and skills, as its ACP server advertises them), by name. Its other
     /// built-ins live only in its terminal interface.
     var openCodeSlashCommands: [SlashCommand] {
-        openCodeCommands.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        (openCodeCommands + [
+            SlashCommand(name: "undo", summary: "Take back the last turn and its file changes", handling: .octet),
+            SlashCommand(name: "redo", summary: "Bring back what was undone", handling: .octet),
+        ]).sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     // MARK: - Permissions
@@ -349,6 +401,29 @@ extension AgentSession {
             "root": ["type": "pane", "label": "OpenCode sign-in", "cwd": cwd,
                      "command": [shell, "-lic", "opencode auth login; exec \(shell) -l"]] as [String: Any],
         ], failure: "Couldn't open OpenCode's sign-in")
+    }
+
+    /// Shares the session through OpenCode's own sharing, which answers
+    /// with a public link to it.
+    func shareOpenCode(then: @escaping (Result<URL, Error>) -> Void) {
+        guard let id = openCode.sessionId ?? threadId else {
+            return then(.failure(NSError(domain: "OpenCode", code: 0,
+                                        userInfo: [NSLocalizedDescriptionKey: "Send a message first, so there's a session to share."])))
+        }
+        OpenCodeServer.shared.request("POST", "session/\(id)/share", directory: cwd) { result in
+            switch result {
+            case .success(let json):
+                let link = ((json as? [String: Any])?["share"] as? [String: Any])?["url"] as? String
+                if let link, let url = URL(string: link) {
+                    then(.success(url))
+                } else {
+                    then(.failure(NSError(domain: "OpenCode", code: 1,
+                                          userInfo: [NSLocalizedDescriptionKey: "OpenCode didn't give a link."])))
+                }
+            case .failure(let failure):
+                then(.failure(NSError(domain: "OpenCode", code: 2, userInfo: [NSLocalizedDescriptionKey: "\(failure)"])))
+            }
+        }
     }
 }
 

@@ -33,6 +33,10 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Hold Space in a conversation to talk: Octet listens while it's held and types what you said.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Hold Space in a conversation to talk: speech recognition turns what you say into the message.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Octet finds and talks to Octet on your other Macs, so agents on each can message the other's and hand them tasks. Only when Settings › Other Macs is on.</string>
 	<key>NSBonjourServices</key>

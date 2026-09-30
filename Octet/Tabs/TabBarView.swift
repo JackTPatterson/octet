@@ -75,9 +75,8 @@ struct TabBarView: View {
                 }
             }
             Spacer(minLength: 0)
-            // The agents boards sit at the far right, for the tab in front.
-            if showsAgentsButton { AgentsButton().padding(.trailing, 8) }
-            if showsCodexButton { CodexAgentsButton().padding(.trailing, 8) }
+            // Every agent, from any tab: at the far right.
+            AgentsHubButton(store: store).padding(.trailing, 8)
             // Each panel's button shows only when it has something to show,
             // or while its panel is open so it can still be closed.
             HStack(spacing: 2) {
@@ -100,29 +99,6 @@ struct TabBarView: View {
         }
         .background(Theme.chrome)
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.divider).frame(height: 1) }
-    }
-
-    /// The Claude agents button belongs to Claude tabs: a native Claude
-    /// conversation, or a terminal tab running Claude Code (or the board).
-    private var showsAgentsButton: Bool { showsBoardButton(.claude) }
-
-    /// The Codex board's button belongs to Codex tabs (or the open board).
-    private var showsCodexButton: Bool { showsBoardButton(.codex) }
-
-    /// A board button belongs to whichever vendor is in front: the open
-    /// board, else the conversation showing, else the focused tab's agent.
-    private func showsBoardButton(_ engine: AgentSession.Engine) -> Bool {
-        let workspaceId = window.focusedWorkspace?.workspaceId
-        if let board = agents.board(in: workspaceId) { return board == (engine == .codex ? .codex : .claude) }
-        if let conversation = agents.active(in: workspaceId) {
-            return conversation.engine == engine
-        }
-        return focusedTabAgent == engine.agent
-    }
-
-    private var focusedTabAgent: String? {
-        guard let tabId = window.displayedFocusedTabId else { return nil }
-        return AgentBrand.forAgent(store.primaryAgent(in: store.snapshot.agents(inTab: tabId))?.agent)?.id
     }
 
     @ViewBuilder
@@ -348,6 +324,10 @@ private struct TabItem: View {
                 WindowActions.tearOff(tabId: tab.tabId, store: store, frame: WindowActions.cascaded(from: window))
             }
             .disabled(store.onlyPane(ofTab: tab.tabId) == nil)
+            PluginMenuItems(place: .tab,
+                            directory: store.snapshot.panes.first { $0.tabId == tab.tabId && $0.focused }?.effectiveCwd
+                                ?? store.snapshot.panes.first { $0.tabId == tab.tabId }?.effectiveCwd,
+                            workspaceId: tab.workspaceId)
             Divider()
             Button("Close Tab") { window.closeTab(tab.tabId) }
             Button("Close Other Tabs") {
@@ -726,6 +706,8 @@ private struct ConversationTab: View {
             AgentCenter.shared.activeId = session.id
         }
         .contextMenu {
+            ConversationActionsMenu(session: session)
+            Divider()
             Button("Close Conversation") { AgentCenter.shared.close(session) }
         }
         .help(session.title)
@@ -793,42 +775,5 @@ private struct EditorOuterTab: View {
         .accessibilityLabel("Editor")
         .accessibilityAddTraits(isActive ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { window.showEditor() }
-    }
-}
-
-
-/// Opens the Claude agents board; a count shows sessions waiting on you.
-private struct AgentsButton: View {
-    @EnvironmentObject private var window: WindowContext
-    @ObservedObject private var agents = AgentsStore.shared
-    @ObservedObject private var center = AgentCenter.shared
-    @State private var hovered = false
-
-    var body: some View {
-        let waiting = agents.needsInput.count
-        let showing = center.board(in: window.focusedWorkspace?.workspaceId) == .claude
-        Button { center.setBoard(showing ? nil : .claude, in: window.focusedWorkspace?.workspaceId) } label: {
-            HStack(spacing: 4) {
-                if let brand = AgentBrand.forAgent("claude") { AgentLogo(brand: brand, size: 12) }
-                OctetIcon("tool.agent", size: 14)
-                if waiting > 0 {
-                    Text("\(waiting)")
-                        .font(.system(size: 10, weight: .bold).monospacedDigit())
-                        .foregroundStyle(Theme.terminalBackground)
-                        .padding(.horizontal, 5)
-                        .frame(height: 15)
-                        .background(Capsule().fill(Color(hex: "FFC107")))
-                }
-            }
-            .foregroundStyle(showing ? Theme.textPrimary : Theme.textSecondary)
-            .padding(.horizontal, 7)
-            .frame(height: 24)
-            .background(showing ? Theme.cardSelected : hovered ? Theme.hover : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
-        }
-        .buttonStyle(.plain)
-        .onHover { hovered = $0 }
-        .help("Claude agents (⌘⇧A)" + (waiting > 0 ? ": \(waiting) waiting on you" : ""))
-        .accessibilityLabel("Claude agents" + (waiting > 0 ? ", \(waiting) need input" : ""))
     }
 }

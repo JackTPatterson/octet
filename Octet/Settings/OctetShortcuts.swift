@@ -49,7 +49,7 @@ extension OctetShortcut {
     // File
     static let newTab = OctetShortcut(title: "New Tab", key: "t")
     static let newConversation = OctetShortcut(title: "New Claude Conversation", key: "n", modifiers: [.command, .shift])
-    static let agents = OctetShortcut(title: "Agents Board", key: "a", modifiers: [.command, .shift])
+    static let agents = OctetShortcut(title: "Agents", key: "a", modifiers: [.command, .shift])
     static let newWorkspace = OctetShortcut(title: "New Workspace", key: "n")
     static let newWindow = OctetShortcut(title: "New Window", key: "n", modifiers: [.command, .option])
     static let openFile = OctetShortcut(title: "Open File…", key: "o")

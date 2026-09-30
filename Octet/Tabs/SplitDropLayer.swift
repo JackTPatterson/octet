@@ -194,3 +194,84 @@ private struct SplitDropDelegate: DropDelegate {
         return true
     }
 }
+
+/// Drop zones over a window's content while a workspace card is dragged: by
+/// an edge, the window splits in two with the workspace in a window on that
+/// side; in the middle, this window shows it. Present for every workspace
+/// drag, so the card's id never lands in the terminal as text.
+struct WorkspaceDropLayer: View {
+    let workspaceId: String
+    let window: WindowContext
+    let animation: Animation?
+    @State private var target: WorkspaceDropTarget?
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .topLeading) {
+                Color.clear.contentShape(Rectangle())
+                if let target {
+                    zone(target, in: proxy.size)
+                        .transition(.opacity)
+                }
+            }
+            .animation(animation, value: target)
+            .onDrop(of: [.text], delegate: WorkspaceDropDelegate(size: proxy.size, showsIt: showsIt, target: $target) { target in
+                switch target {
+                case .here: window.focusWorkspace(workspaceId)
+                case .beside(let edge): WindowActions.openBeside(workspaceId, from: window, edge: edge)
+                }
+            })
+        }
+    }
+
+    /// Dropped on the window already showing it, the middle has nothing to do.
+    private var showsIt: Bool { window.focusedWorkspace?.workspaceId == workspaceId }
+
+    private func zone(_ target: WorkspaceDropTarget, in size: CGSize) -> some View {
+        let inset: CGFloat = 6
+        let rect = target.highlight(in: size)
+        return RoundedRectangle(cornerRadius: 8)
+            .fill(Theme.accent.opacity(0.14))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.accent.opacity(0.7), lineWidth: 1.5))
+            .overlay {
+                Text(target.title)
+                    .font(Theme.uiFontMedium)
+                    .foregroundStyle(Theme.textPrimary)
+                    .padding(.horizontal, 10)
+                    .frame(height: 26)
+                    .background(Theme.chrome)
+                    .clipShape(Capsule())
+                    .overlay(Capsule().strokeBorder(Theme.border, lineWidth: 1))
+            }
+            .frame(width: max(0, rect.width - inset * 2), height: max(0, rect.height - inset * 2))
+            .offset(x: rect.minX + inset, y: rect.minY + inset)
+            .allowsHitTesting(false)
+            .accessibilityLabel(target.title)
+    }
+}
+
+private struct WorkspaceDropDelegate: DropDelegate {
+    let size: CGSize
+    let showsIt: Bool
+    @Binding var target: WorkspaceDropTarget?
+    let drop: (WorkspaceDropTarget) -> Void
+
+    func validateDrop(info: DropInfo) -> Bool { true }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        let found = WorkspaceDropTarget.at(info.location, in: size)
+        target = showsIt && found == .here ? nil : found
+        return DropProposal(operation: target == nil ? .forbidden : .move)
+    }
+
+    func dropExited(info: DropInfo) { target = nil }
+
+    func performDrop(info: DropInfo) -> Bool {
+        // Taken either way: the card's id is never text for the terminal.
+        TabDrag.shared.landed()
+        guard let target else { return true }
+        self.target = nil
+        drop(target)
+        return true
+    }
+}

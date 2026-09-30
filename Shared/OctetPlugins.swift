@@ -37,6 +37,17 @@ struct OctetPluginManifest: Codable, Equatable {
     /// The manifest format the plugin was written for.
     var octet: Int = 1
     var contributes: Contributions = .init()
+    /// A native feature the plugin switches on, e.g. `peers`. Honoured only
+    /// for plugins that ship with Octet: a downloaded one can't claim it.
+    var feature: String?
+    /// Whether a built-in plugin starts on; installed ones start on when
+    /// installed from the Marketplace.
+    var enabledByDefault: Bool?
+    /// Where it runs: `macos`, `linux`, `windows`. Unset means macOS and
+    /// Linux, as its plain-string commands are `sh`.
+    var platforms: [PluginPlatform]?
+
+    var supportedPlatforms: [PluginPlatform] { platforms ?? PluginPlatform.unixDefault }
 
     struct Contributions: Codable, Equatable {
         var completions: [CompletionContribution] = []
@@ -47,13 +58,17 @@ struct OctetPluginManifest: Codable, Equatable {
         var runtimeIgnore: [String] = []
         /// Chips for the status bar under the terminal.
         var statusItems: [StatusItemContribution] = []
+        /// Items in a tab's or workspace's right-click menu.
+        var menuItems: [MenuItemContribution] = []
 
         init(completions: [CompletionContribution] = [], runtimes: [RuntimeContribution] = [],
-             runtimeIgnore: [String] = [], statusItems: [StatusItemContribution] = []) {
+             runtimeIgnore: [String] = [], statusItems: [StatusItemContribution] = [],
+             menuItems: [MenuItemContribution] = []) {
             self.completions = completions
             self.runtimes = runtimes
             self.runtimeIgnore = runtimeIgnore
             self.statusItems = statusItems
+            self.menuItems = menuItems
         }
 
         init(from decoder: Decoder) throws {
@@ -62,6 +77,35 @@ struct OctetPluginManifest: Codable, Equatable {
             runtimes = try container.decodeIfPresent([RuntimeContribution].self, forKey: .runtimes) ?? []
             runtimeIgnore = try container.decodeIfPresent([String].self, forKey: .runtimeIgnore) ?? []
             statusItems = try container.decodeIfPresent([StatusItemContribution].self, forKey: .statusItems) ?? []
+            menuItems = try container.decodeIfPresent([MenuItemContribution].self, forKey: .menuItems) ?? []
+        }
+    }
+
+    /// An item in a tab's or workspace's right-click menu. `run` works out
+    /// what to start, in the tab's or workspace's folder: its first line of
+    /// output is a command Octet runs in a new tab of that workspace, and
+    /// later lines can set `label: …` (the tab's name) and `cwd: …` (where
+    /// it runs, else the folder). Printing nothing means there's nothing to
+    /// start there, and `message: …` alone says why.
+    struct MenuItemContribution: Codable, Equatable {
+        enum Place: String, Codable { case tab, workspace }
+
+        let id: String
+        let title: String
+        /// Which menus it's in; both unless it says.
+        var places: [Place]?
+        /// Shown only when one of these files is in the folder or one above
+        /// it, up to the repository's root.
+        var whenFiles: [String]?
+        /// Per platform; see `PluginCommand`.
+        let runs: PluginCommand
+        var timeoutSeconds: Double?
+
+        var run: String { runs.command() ?? "" }
+        func isIn(_ place: Place) -> Bool { (places ?? [.tab, .workspace]).contains(place) }
+
+        enum CodingKeys: String, CodingKey {
+            case id, title, places = "in", whenFiles, runs = "run", timeoutSeconds
         }
     }
 
@@ -80,7 +124,8 @@ struct OctetPluginManifest: Codable, Equatable {
         var symbol: String?
         var icon: String?
         var color: String?
-        let run: String
+        /// Per platform; see `PluginCommand`.
+        let runs: PluginCommand
         var refreshSeconds: Double?
         var timeoutSeconds: Double?
         /// Run only when one of these files is in the pane's folder or a
@@ -89,6 +134,15 @@ struct OctetPluginManifest: Codable, Equatable {
         /// `local` (default), `remote` (only over SSH) or `any`.
         var scope: StatusItemDescriptor.Scope?
         var enabledByDefault: Bool?
+
+        /// The command for the platform Octet is running on; empty when
+        /// the chip has none here.
+        var run: String { runs.command() ?? "" }
+
+        enum CodingKeys: String, CodingKey {
+            case id, name, summary, sample, symbol, icon, color, runs = "run", refreshSeconds, timeoutSeconds
+            case whenFiles, scope, enabledByDefault
+        }
     }
 
     /// A runtime, framework or language a pane can be running. `match` is
@@ -118,7 +172,8 @@ struct OctetPluginManifest: Codable, Equatable {
         var path: [String] = []
         /// Shown beside the subcommand when the plugin adds it.
         var summary: String?
-        let run: String
+        /// Per platform; see `PluginCommand`.
+        let runs: PluginCommand
         /// How rows are drawn: repository, branch, file, directory, command.
         var kind: String?
         var cacheSeconds: Double?
@@ -139,7 +194,7 @@ struct OctetPluginManifest: Codable, Equatable {
             self.command = command
             self.path = path
             self.summary = summary
-            self.run = run
+            self.runs = PluginCommand(run)
             self.kind = kind
             self.cacheSeconds = cacheSeconds
             self.timeoutSeconds = timeoutSeconds
@@ -153,7 +208,7 @@ struct OctetPluginManifest: Codable, Equatable {
             command = try container.decode(String.self, forKey: .command)
             path = try container.decodeIfPresent([String].self, forKey: .path) ?? []
             summary = try container.decodeIfPresent(String.self, forKey: .summary)
-            run = try container.decode(String.self, forKey: .run)
+            runs = try container.decode(PluginCommand.self, forKey: .runs)
             kind = try container.decodeIfPresent(String.self, forKey: .kind)
             cacheSeconds = try container.decodeIfPresent(Double.self, forKey: .cacheSeconds)
             timeoutSeconds = try container.decodeIfPresent(Double.self, forKey: .timeoutSeconds)
@@ -161,6 +216,15 @@ struct OctetPluginManifest: Codable, Equatable {
             opensMenu = try container.decodeIfPresent(Bool.self, forKey: .opensMenu)
             prefetchWhenTyping = try container.decodeIfPresent(String.self, forKey: .prefetchWhenTyping)
             firstArgumentOnly = try container.decodeIfPresent(Bool.self, forKey: .firstArgumentOnly)
+        }
+
+        /// The command for the platform Octet is running on; empty when
+        /// it has none here.
+        var run: String { runs.command() ?? "" }
+
+        enum CodingKeys: String, CodingKey {
+            case command, path, summary, runs = "run", kind, cacheSeconds, timeoutSeconds, perFolder
+            case opensMenu, prefetchWhenTyping, firstArgumentOnly
         }
     }
 
@@ -184,6 +248,49 @@ struct OctetPluginManifest: Codable, Equatable {
         author = try container.decodeIfPresent(String.self, forKey: .author)
         octet = try container.decodeIfPresent(Int.self, forKey: .octet) ?? 1
         contributes = try container.decodeIfPresent(Contributions.self, forKey: .contributes) ?? .init()
+        feature = try container.decodeIfPresent(String.self, forKey: .feature)
+        enabledByDefault = try container.decodeIfPresent(Bool.self, forKey: .enabledByDefault)
+        platforms = try container.decodeIfPresent([PluginPlatform].self, forKey: .platforms)
+    }
+}
+
+extension OctetPluginManifest.StatusItemContribution {
+    /// A chip whose command is `sh`, for macOS and Linux.
+    init(id: String, name: String, summary: String? = nil, sample: String? = nil, symbol: String? = nil,
+         icon: String? = nil, color: String? = nil, run: String, refreshSeconds: Double? = nil,
+         timeoutSeconds: Double? = nil, whenFiles: [String]? = nil,
+         scope: StatusItemDescriptor.Scope? = nil, enabledByDefault: Bool? = nil) {
+        self.init(id: id, name: name, summary: summary, sample: sample, symbol: symbol, icon: icon, color: color,
+                  runs: PluginCommand(run), refreshSeconds: refreshSeconds, timeoutSeconds: timeoutSeconds,
+                  whenFiles: whenFiles, scope: scope, enabledByDefault: enabledByDefault)
+    }
+}
+
+/// What a menu item's command printed: the command to start, and how.
+struct PluginMenuOutput: Equatable {
+    var command: String?
+    var label: String?
+    var cwd: String?
+    /// Why there's nothing to start, when there isn't.
+    var message: String?
+
+    static func parse(_ output: String) -> PluginMenuOutput {
+        var result = PluginMenuOutput()
+        let lines = output.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        for (index, line) in lines.enumerated() {
+            if let colon = line.firstIndex(of: ":") {
+                let key = line[..<colon].lowercased()
+                let value = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+                switch key {
+                case "label": result.label = value; continue
+                case "cwd": result.cwd = value; continue
+                case "message": result.message = value; continue
+                default: break
+                }
+            }
+            if index == 0 { result.command = line }
+        }
+        return result
     }
 }
 
@@ -193,6 +300,8 @@ struct OctetPlugin: Identifiable, Equatable {
     let directory: String
     /// Shipped inside Octet, rather than installed by the person.
     let isBundled: Bool
+    /// Set when it was installed from the registry.
+    var receipt: PluginInstallReceipt? = nil
 
     var id: String { manifest.id }
 }
@@ -220,7 +329,9 @@ enum OctetPlugins {
                     if let problem = validate(manifest) {
                         problems.append("\(name): \(problem)")
                     } else {
-                        found[manifest.id] = OctetPlugin(manifest: manifest, directory: directory, isBundled: isBundled)
+                        let receipt = isBundled ? nil : (try? Data(contentsOf: URL(fileURLWithPath: directory + "/" + PluginInstallReceipt.fileName)))
+                            .flatMap { try? PluginInstallReceipt.decoder.decode(PluginInstallReceipt.self, from: $0) }
+                        found[manifest.id] = OctetPlugin(manifest: manifest, directory: directory, isBundled: isBundled, receipt: receipt)
                     }
                 case .failure(let error):
                     problems.append("\(name): \(error.localizedDescription)")
@@ -236,6 +347,15 @@ enum OctetPlugins {
             let data = try Data(contentsOf: URL(fileURLWithPath: path))
             return try JSONDecoder().decode(OctetPluginManifest.self, from: data)
         }
+    }
+
+    /// Why a command can't be used: it runs nowhere, or names a platform
+    /// Octet doesn't know.
+    private static func problem(_ command: PluginCommand) -> String? {
+        if let unknown = command.commands.keys.first(where: { !PluginCommand.keys.contains($0) }) {
+            return "names an unknown platform: \(unknown)"
+        }
+        return command.platforms.isEmpty ? "has nothing to run" : nil
     }
 
     /// Why a manifest can't be used, or nil when it can.
@@ -262,15 +382,22 @@ enum OctetPlugins {
                 return "status item ids must be lowercase letters, digits, dots, dashes or underscores"
             }
             if !statusIds.insert(item.id).inserted { return "status item \(item.id) appears twice" }
-            if item.run.trimmingCharacters(in: .whitespaces).isEmpty { return "status item \(item.id) has nothing to run" }
+            if let problem = problem(item.runs) { return "status item \(item.id) \(problem)" }
+        }
+        var menuIds: Set<String> = []
+        for item in manifest.contributes.menuItems {
+            if item.id.range(of: "^[a-z0-9][a-z0-9._-]*$", options: .regularExpression) == nil {
+                return "menu item ids must be lowercase letters, digits, dots, dashes or underscores"
+            }
+            if !menuIds.insert(item.id).inserted { return "menu item \(item.id) appears twice" }
+            if item.title.trimmingCharacters(in: .whitespaces).isEmpty { return "menu item \(item.id) has no title" }
+            if let problem = problem(item.runs) { return "menu item \(item.id) \(problem)" }
         }
         for completion in manifest.contributes.completions {
             if completion.command.isEmpty || completion.command.contains(where: \.isWhitespace) {
                 return "a completion names no single command"
             }
-            if completion.run.trimmingCharacters(in: .whitespaces).isEmpty {
-                return "a completion for \(completion.command) has nothing to run"
-            }
+            if let problem = problem(completion.runs) { return "a completion for \(completion.command) \(problem)" }
         }
         return nil
     }
@@ -282,7 +409,7 @@ enum OctetPlugins {
         let index = plugin.manifest.contributes.completions.firstIndex(of: contribution) ?? 0
         return CompletionSpec.Generator(
             id: "plugin.\(plugin.id).\(index)",
-            command: "OCTET_PLUGIN_DIR=\(shellQuoted(plugin.directory)); export OCTET_PLUGIN_DIR\n" + contribution.run,
+            command: PluginPlatform.current.settingEnvironment("OCTET_PLUGIN_DIR", to: plugin.directory, before: contribution.run),
             cacheSeconds: contribution.cacheSeconds ?? 10,
             kind: kind(contribution.kind),
             perFolder: contribution.perFolder ?? true,
@@ -348,10 +475,6 @@ enum OctetPlugins {
         guard textBeforeCaret.last?.isWhitespace == true else { return false }
         let words = textBeforeCaret.split(whereSeparator: \.isWhitespace).map(String.init)
         return contributions.contains { $0.opensMenu == true && words == [$0.command] + $0.path }
-    }
-
-    private static func shellQuoted(_ value: String) -> String {
-        "'" + value.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
     }
 }
 

@@ -22,19 +22,45 @@ final class AgentSession: ObservableObject, Identifiable {
         }
     }
 
-    /// A model Claude Code can run, pinned by its full id so the version is
-    /// explicit. There's no way to list what a subscription allows without
-    /// an API key, so this is curated; a model the plan can't use comes back
-    /// as an error in the conversation.
+    /// A model Claude Code can run. The list is the one Claude Code gives
+    /// in its `initialize` answer, kept for next launch; until it has run
+    /// once, a curated list stands in.
     struct Model: Identifiable {
         let id: String
         let family: String
         let version: String
         let detail: String
-        var title: String { "\(family) \(version)" }
+        /// The name Claude Code gives it, when it came from Claude Code.
+        var name: String? = nil
+        /// Its effort levels, when Claude Code said; nil falls back to the
+        /// curated rules.
+        var efforts: [String]? = nil
+        var title: String { name ?? "\(family) \(version)" }
     }
 
-    static let models: [Model] = [
+    static var models: [Model] {
+        guard !catalog.isEmpty else { return curatedModels }
+        return catalog.map { Model(id: $0.id, family: "Claude Code", version: "", detail: $0.detail,
+                                   name: $0.name, efforts: $0.efforts) }
+    }
+
+    private static let catalogKey = "octet.claude.models.v1"
+    /// What Claude Code last said it offers.
+    private(set) static var catalog: [ClaudeModelCatalog.Entry] = {
+        guard let data = UserDefaults.standard.data(forKey: catalogKey) else { return [] }
+        return (try? JSONDecoder().decode([ClaudeModelCatalog.Entry].self, from: data)) ?? []
+    }()
+
+    /// Keeps the list from an `initialize` answer, and redraws the pickers.
+    static func updateCatalog(fromInitialize initialize: [String: Any]) {
+        let entries = ClaudeModelCatalog.entries(fromInitialize: initialize)
+        guard !entries.isEmpty, entries != catalog else { return }
+        catalog = entries
+        if let data = try? JSONEncoder().encode(entries) { UserDefaults.standard.set(data, forKey: catalogKey) }
+        AgentCenter.shared.objectWillChange.send()
+    }
+
+    private static let curatedModels: [Model] = [
         Model(id: "claude-fable-5-1", family: "Fable", version: "5.1", detail: "Most capable · 1M context · $10/$50"),
         Model(id: "claude-fable-5", family: "Fable", version: "5", detail: "1M context · $10/$50"),
         Model(id: "claude-opus-5", family: "Opus", version: "5", detail: "1M context · $5/$25"),
@@ -50,8 +76,13 @@ final class AgentSession: ObservableObject, Identifiable {
 
     /// The effort Claude Code uses when none is set: xhigh where the model
     /// has it, high on the 4.6 models, and none on Haiku 4.5, which has no
-    /// effort setting at all.
+    /// effort setting at all. Claude Code's own list says which have one.
     static func defaultEffort(model: String) -> String? {
+        if let levels = Self.model(model)?.efforts {
+            guard !levels.isEmpty else { return nil }
+            if model.hasSuffix("4-6") { return levels.contains("high") ? "high" : levels.last }
+            return levels.contains("xhigh") ? "xhigh" : levels.last
+        }
         if model.contains("haiku") { return nil }
         if model.hasSuffix("4-6") { return "high" }
         return "xhigh"
@@ -109,8 +140,8 @@ final class AgentSession: ObservableObject, Identifiable {
             AgentCenter.shared.save()
         }
     }
-    // Claude Code takes these as flags, so changing one restarts it against
-    // the same session. Codex's app server takes them live.
+    // Claude Code starts on these as flags and takes changes live over its
+    // control channel; Codex's app server takes them live too.
     @Published var model: String { didSet { if model != oldValue { settingsChanged() } } }
     @Published var effort: String? { didSet { if effort != oldValue { settingsChanged() } } }
     @Published var permissionMode: PermissionMode {
@@ -127,7 +158,7 @@ final class AgentSession: ObservableObject, Identifiable {
     private func settingsChanged() {
         switch engine {
         case .claude:
-            needsRestart = true
+            if process?.isRunning == true, claudeApplied != nil { updateClaudeSettings() } else { needsRestart = true }
         case .codex:
             if let threadId, process?.isRunning == true { updateCodexSettings(threadId: threadId) }
         case .opencode:
@@ -137,7 +168,7 @@ final class AgentSession: ObservableObject, Identifiable {
         case .pi:
             updatePiSettings()
         case .qwen:
-            needsRestart = true
+            if process?.isRunning == true { updateQwenSettings() } else { needsRestart = true }
         }
         AgentCenter.shared.save()
     }
@@ -149,11 +180,65 @@ final class AgentSession: ObservableObject, Identifiable {
     @Published var startupError: String?
 
     /// Assigned up front so the session can be resumed or opened in a pane.
-    let sessionId: String
+    /// Claude Code's session. A rewind moves the conversation onto a fork
+    /// of it, leaving the original in Claude Code's history.
+    private(set) var sessionId: String
+    /// The session the next start forks from: Claude Code's session, or
+    /// Codex's thread, Pi's session file or OpenCode's session; and for
+    /// Claude Code, the assistant message it resumes at (nil: all of it).
+    /// Claude Code keeps it until a message goes, since its fork is only
+    /// written then; the others fork as they start.
+    var forkFrom: (session: String, at: String?)?
+    /// Control requests waiting on their answer, by request id.
+    private var controlReplies: [String: ([String: Any]) -> Void] = [:]
     var hasTurns = false {
         didSet { if hasTurns != oldValue { AgentCenter.shared.save() } }
     }
     private var needsRestart = false
+    /// What the running Claude Code was started on or last told, so a
+    /// change sends only what differs.
+    private var claudeApplied: (model: String, effort: String?, mode: PermissionMode)?
+    static let settingsRequestPrefix = "octet-settings-"
+
+    /// Moves a running Claude Code onto the picked model, effort and mode
+    /// with control requests, instead of restarting it (seconds, and the
+    /// conversation reloaded). One it refuses falls back to a restart.
+    private func updateClaudeSettings() {
+        guard var applied = claudeApplied else { needsRestart = true; return }
+        if model != applied.model {
+            sendClaudeSetting(["subtype": "set_model", "model": model])
+            applied.model = model
+        }
+        if effort != applied.effort {
+            if let effort, Self.supportsEffort(model: model) {
+                sendClaudeSetting(["subtype": "apply_flag_settings", "settings": ["effortLevel": effort]])
+            } else {
+                // No control clears it back to the model's default.
+                needsRestart = true
+            }
+            applied.effort = effort
+        }
+        if permissionMode != applied.mode {
+            sendClaudeSetting(["subtype": "set_permission_mode", "mode": permissionMode.rawValue])
+            applied.mode = permissionMode
+        }
+        claudeApplied = applied
+    }
+
+    /// Qwen takes model, effort and approval mode live, as control requests.
+    private func updateQwenSettings() {
+        if qwenModels.contains(where: { $0.id == model }) {
+            sendClaudeSetting(["subtype": "set_model", "model": model])
+        }
+        if let effort, Self.qwenEfforts.contains(effort) {
+            sendClaudeSetting(["subtype": "set_effort", "effort": effort])
+        }
+        sendClaudeSetting(["subtype": "set_permission_mode", "mode": Self.qwenMode(permissionMode)])
+    }
+
+    private func sendClaudeSetting(_ request: [String: Any]) {
+        write(["type": "control_request", "request_id": Self.settingsRequestPrefix + UUID().uuidString, "request": request])
+    }
     private var process: Process?
     /// The live CLI process behind this conversation. Runtime inspection uses
     /// it as the root so unrelated shells and agents never leak into the panel.
@@ -201,10 +286,25 @@ final class AgentSession: ObservableObject, Identifiable {
     /// They reflect configured credentials, so an unauthenticated install
     /// intentionally produces an empty model list.
     @Published private(set) var piModels: [PiModel] = []
+    /// Qwen: the models its configured providers offer (`get_available_models`).
+    @Published private(set) var qwenModels: [(id: String, label: String)] = []
+    static let qwenModelsRequest = "octet-qwen-models"
+    /// Qwen's names for Octet's permission modes: `auto-edit` for accept
+    /// edits, `yolo` for bypass.
+    static func qwenMode(_ mode: PermissionMode) -> String {
+        switch mode {
+        case .default: "default"
+        case .acceptEdits: "auto-edit"
+        case .plan: "plan"
+        case .auto: "auto"
+        case .bypassPermissions: "yolo"
+        }
+    }
+    nonisolated static let qwenEfforts = ["low", "medium", "high", "xhigh", "max"]
     @Published private(set) var piThinkingLevels: [String] = ["off"]
     @Published private(set) var piStatusText: String?
     @Published private(set) var piWidgets: [PiWidget] = []
-    @Published private(set) var piEditorRequest: PiEditorRequest?
+    @Published private(set) var editorRequest: EditorRequest?
     private var piStatuses: [String: String] = [:]
     private var piApplyingState = false
     private var piAppliedModel: String?
@@ -216,7 +316,7 @@ final class AgentSession: ObservableObject, Identifiable {
         let placement: String
     }
 
-    struct PiEditorRequest: Identifiable, Equatable {
+    struct EditorRequest: Identifiable, Equatable {
         let id: String
         let text: String
     }
@@ -229,25 +329,32 @@ final class AgentSession: ObservableObject, Identifiable {
     var threadId: String?
     /// What each call Octet has made to the app server was for, by id, so an
     /// answer (or an error) lands where it belongs.
-    private enum CodexCall { case handshake, thread, turn, settings, interrupt, command(String) }
+    private enum CodexCall { case handshake, thread, turn, settings, interrupt, command(String), steer(String, [[String: Any]]), mcpStatus }
     private var codexCalls: [Int: CodexCall] = [:]
     private var nextRequestId = 0
     /// Messages sent before the thread was open, in order.
     private var queuedTurns: [String] = []
+    /// What each waiting message sends, with its images.
+    private var queuedInputs: [String: [[String: Any]]] = [:]
+    /// The Codex turn running now, which a message sent mid-turn steers.
+    private var codexTurnId: String?
 
     /// Follow-ups waiting behind the current turn. The composer draws these
     /// beside questions and approvals instead of burying them in transcript.
     var queuedMessages: [AgentItem] { conversation.items.filter(\.queued) }
 
-    /// The model a conversation starts on until one is picked.
-    static let defaultModel = "claude-sonnet-5"
+    /// The model a conversation starts on until one is picked: the one
+    /// Claude Code recommends, once it has said.
+    static var defaultModel: String { catalog.first?.id ?? "claude-sonnet-5" }
 
-    init(workspaceId: String, cwd: String, engine: Engine = .claude, model: String = AgentSession.defaultModel,
+    /// `model` nil starts on `defaultModel`, read here rather than as a
+    /// default argument, which is evaluated off the main actor.
+    init(workspaceId: String, cwd: String, engine: Engine = .claude, model: String? = nil,
          permissionMode: PermissionMode = .auto, sessionId: String = UUID().uuidString, threadId: String? = nil) {
         self.workspaceId = workspaceId
         self.cwd = cwd
         self.engine = engine
-        self.model = model
+        self.model = model ?? Self.defaultModel
         self.permissionMode = permissionMode
         self.sessionId = sessionId
         self.threadId = threadId
@@ -275,12 +382,18 @@ final class AgentSession: ObservableObject, Identifiable {
         var permissionProfile: String?
         /// OpenCode only: the agent messages go to.
         var agent: String?
+        /// A fork not yet made, made when it next starts.
+        var forkFrom: String?
+        var forkAt: String?
+        /// The working tree as the conversation started, for its changes.
+        var baseline: String?
     }
 
     var saved: Saved {
         Saved(sessionId: sessionId, cwd: cwd, title: title, model: model, effort: effort,
               permissionMode: permissionMode.rawValue, hasTurns: hasTurns, engine: engine, threadId: threadId,
-              permissionProfile: permissionProfile, agent: agentName)
+              permissionProfile: permissionProfile, agent: agentName,
+              forkFrom: forkFrom?.session, forkAt: forkFrom?.at, baseline: baselineCommit)
     }
 
     static func restore(_ saved: Saved, workspaceId: String, start: Bool = true) -> AgentSession {
@@ -293,6 +406,8 @@ final class AgentSession: ObservableObject, Identifiable {
         session.agentName = saved.agent
         session.title = saved.title
         session.hasTurns = saved.hasTurns
+        session.forkFrom = saved.forkFrom.map { ($0, saved.forkAt) }
+        session.baselineCommit = saved.baseline
         session.needsRestart = false
         switch engine {
         case .claude:
@@ -425,7 +540,10 @@ final class AgentSession: ObservableObject, Identifiable {
         case .pi:
             commands = agentCommands + SlashCommands.piOctetCommands
         case .qwen:
-            commands = agentCommands
+            // Qwen lists what works headless in its init event.
+            commands = agentCommands.isEmpty
+                ? conversation.slashCommands.map { SlashCommand(name: $0, summary: "", handling: .agent) }
+                : agentCommands
         }
         return commands.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
@@ -489,6 +607,7 @@ final class AgentSession: ObservableObject, Identifiable {
     func send(_ text: String, attachments: [Attachment] = []) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !attachments.isEmpty else { return }
+        takeBaselineIfNeeded()
         let wasRunning = conversation.isRunning
         // Typed in full rather than picked from the menu, /remote-control
         // (and Claude Code's /rc) still switches it here.
@@ -500,6 +619,11 @@ final class AgentSession: ObservableObject, Identifiable {
         if trimmed.hasPrefix("/rename ") {
             let name = trimmed.dropFirst("/rename ".count).trimmingCharacters(in: .whitespaces)
             if !name.isEmpty { title = name }
+        }
+        if engine == .opencode, ["/undo", "/redo"].contains(trimmed), attachments.isEmpty {
+            // Carried out on the session, not sent to the model.
+            if trimmed == "/undo" { undoOpenCode() } else { redoOpenCode() }
+            return
         }
         if engine == .opencode {
             if !conversation.isRunning { turnStartedAt = Date() }
@@ -514,7 +638,10 @@ final class AgentSession: ObservableObject, Identifiable {
         if needsRestart || process?.isRunning != true { restart() }
         guard stdin != nil else { return }
         if !conversation.isRunning { turnStartedAt = Date() }
-        conversation.appendUser(trimmed, images: attachments.map(\.data), queued: wasRunning)
+        // The item shares the message's uuid, so a queued one can be
+        // taken back from Claude Code by it.
+        let messageId = UUID().uuidString.lowercased()
+        conversation.appendUser(trimmed, images: attachments.map(\.data), queued: wasRunning, id: messageId)
         if trimmed == "/compact" {
             conversation.items.append(AgentItem(id: UUID().uuidString,
                                                 kind: .notice("Compacting the conversation to free context…")))
@@ -522,21 +649,50 @@ final class AgentSession: ObservableObject, Identifiable {
         if title == engine.displayName, !trimmed.hasPrefix("/") { title = String(trimmed.prefix(40)) }
         switch engine {
         case .claude, .qwen:
+            var text = trimmed
+            var attachments = attachments
+            if engine == .qwen {
+                // Qwen's command for it is /compress.
+                if trimmed == "/compact" { text = "/compress" }
+                // Qwen turns every non-text block into JSON text for the
+                // model, so images go as files it reads by `@path` instead.
+                if !attachments.isEmpty {
+                    var environment = ProcessInfo.processInfo.environment
+                    environment.merge(Self.accountEnvironment(cwd: cwd)) { $1 }
+                    let images = attachments.map { (data: $0.data, fileExtension: $0.mediaType == "image/png" ? "png" : "jpg") }
+                    if let paths = QwenImages.save(images, in: QwenImages.directory(environment: environment)) {
+                        text = QwenImages.message(text, images: paths)
+                    } else {
+                        notice("Couldn't hand the images to Qwen; the text was sent.")
+                    }
+                    attachments = []
+                }
+            }
             let message: [String: Any] = [
-                "type": "user",
-                "message": ["role": "user", "content": Self.content(trimmed, attachments)],
+                "type": "user", "uuid": messageId,
+                "message": ["role": "user", "content": Self.content(text, attachments)],
                 "parent_tool_use_id": NSNull(),
             ]
-            if write(message) { hasTurns = true }
-        case .codex:
-            if !attachments.isEmpty {
-                conversation.items.append(AgentItem(id: UUID().uuidString,
-                                                    kind: .notice("Codex conversations don't take images yet; the text was sent.")))
+            if write(message) {
+                hasTurns = true
+                if forkFrom != nil {
+                    forkFrom = nil
+                    AgentCenter.shared.save()
+                }
             }
+        case .codex:
+            let input = Self.codexInput(trimmed, attachments)
             // The thread may still be opening, and a turn needs its id.
-            guard let threadId else { queuedTurns.append(trimmed); return }
-            if wasRunning { queuedTurns.append(trimmed); return }
-            startTurn(trimmed, threadId: threadId)
+            guard let threadId else { queuedTurns.append(trimmed); queuedInputs[trimmed] = input; return }
+            // Mid-turn, it goes into the running turn, as Codex's own
+            // composer does; a message sent between turns waits.
+            if wasRunning, let turnId = codexTurnId {
+                call("turn/steer", ["threadId": threadId, "input": input, "expectedTurnId": turnId], as: .steer(trimmed, input))
+                if let index = conversation.items.firstIndex(where: { $0.id == messageId }) { conversation.items[index].queued = false }
+                return
+            }
+            if wasRunning { queuedTurns.append(trimmed); queuedInputs[trimmed] = input; return }
+            startTurn(trimmed, threadId: threadId, input: input)
         case .opencode:
             break
         case .pi:
@@ -582,8 +738,21 @@ final class AgentSession: ObservableObject, Identifiable {
         }
     }
 
-    private func startTurn(_ text: String, threadId: String) {
-        let sent = call("turn/start", ["threadId": threadId, "input": [["type": "text", "text": text]]], as: .turn)
+    /// A Codex turn's input: images as data URLs, then the text.
+    static func codexInput(_ text: String, _ attachments: [Attachment]) -> [[String: Any]] {
+        let images: [[String: Any]] = attachments.map {
+            ["type": "image", "url": "data:\($0.mediaType);base64,\($0.data.base64EncodedString())"]
+        }
+        return images + (text.isEmpty ? [] : [["type": "text", "text": text]])
+    }
+
+    private func startTurn(_ text: String, threadId: String, input: [[String: Any]]? = nil) {
+        let input = input ?? queuedInputs.removeValue(forKey: text) ?? [["type": "text", "text": text]]
+        var params: [String: Any] = ["threadId": threadId, "input": input]
+        // Every turn carries the effort picked, so it holds even if a
+        // settings update mid-conversation wasn't taken.
+        if let effort { params["effort"] = effort }
+        let sent = call("turn/start", params, as: .turn)
         if sent { hasTurns = true }
     }
 
@@ -619,8 +788,12 @@ final class AgentSession: ObservableObject, Identifiable {
         }
         guard let process, process.isRunning, conversation.isRunning else { return }
         switch engine {
-        case .claude, .qwen:
-            process.interrupt()
+        case .claude:
+            // Stops the turn and keeps the process; queued messages stay.
+            write(["type": "control_request", "request_id": UUID().uuidString, "request": ["subtype": "interrupt"]])
+        case .qwen:
+            // A signal ends Qwen's whole session; this stops only the turn.
+            write(["type": "control_request", "request_id": UUID().uuidString, "request": ["subtype": "interrupt"]])
         case .codex:
             guard let threadId else { return }
             call("turn/interrupt", ["threadId": threadId], as: .interrupt)
@@ -629,6 +802,286 @@ final class AgentSession: ObservableObject, Identifiable {
         case .pi:
             write(["type": "abort"])
         }
+    }
+
+    /// Whether a message waiting behind the running turn can be taken back:
+    /// Claude Code holds it by id, and Codex's wait in Octet.
+    // MARK: - Rewind
+
+    /// What rewinding to a message would do, from Claude Code's checkpoint.
+    struct RewindPreview {
+        /// Its file edits can be undone; else only the conversation rewinds.
+        let canRestoreFiles: Bool
+        let filesChanged: [String]
+        let insertions: Int
+        let deletions: Int
+        /// Why files can't be restored, when they can't.
+        let reason: String?
+    }
+
+    /// Whether the conversation can go back to before user message `item`.
+    func canRewind(to item: AgentItem) -> Bool {
+        guard !conversation.isRunning, !item.queued, case .user = item.kind else { return false }
+        switch engine {
+        case .claude: return process?.isRunning == true || hasTurns
+        // Pi forks from an earlier message on the branch it's on.
+        case .pi: return process?.isRunning == true && threadId != nil
+        default: return false
+        }
+    }
+
+    /// Asks Claude Code what rewinding to before `item` would change, without
+    /// changing anything.
+    func previewRewind(to item: AgentItem, then: @escaping (RewindPreview) -> Void) {
+        if engine == .pi {
+            return then(RewindPreview(canRestoreFiles: false, filesChanged: [], insertions: 0, deletions: 0,
+                                      reason: "Pi doesn't keep checkpoints of files"))
+        }
+        guard process?.isRunning == true else {
+            return then(RewindPreview(canRestoreFiles: false, filesChanged: [], insertions: 0, deletions: 0,
+                                      reason: "Claude Code isn't running, so its file checkpoints aren't loaded."))
+        }
+        controlRequest(["subtype": "rewind_files", "user_message_id": item.id.lowercased(), "dry_run": true]) { response in
+            let answer = response["response"] as? [String: Any] ?? [:]
+            let can = answer["canRewind"] as? Bool == true
+            then(RewindPreview(canRestoreFiles: can,
+                               filesChanged: answer["filesChanged"] as? [String] ?? [],
+                               insertions: answer["insertions"] as? Int ?? 0,
+                               deletions: answer["deletions"] as? Int ?? 0,
+                               reason: can ? nil : (answer["error"] as? String ?? response["error"] as? String)))
+        }
+    }
+
+    /// Goes back to before user message `item`: its and later file edits
+    /// undone when `restoreFiles`, and the conversation resumed from just
+    /// before it on a fork of the session, with the message back in the
+    /// composer to edit and send again.
+    func rewind(to item: AgentItem, restoreFiles: Bool) {
+        guard canRewind(to: item), case .user(let text) = item.kind else { return }
+        if engine == .pi { return rewindPi(to: item, text: text) }
+        let finish = { [weak self] in
+            guard let self else { return }
+            let anchor = self.conversation.resumeAnchor(before: item.id)
+            self.conversation.truncate(from: item.id)
+            self.stopProcess()
+            let old = self.sessionId
+            self.sessionId = UUID().uuidString.lowercased()
+            if let anchor, self.hasTurns {
+                self.forkFrom = (session: old, at: Optional(anchor))
+            } else {
+                // The first message: nothing before it to keep.
+                self.hasTurns = false
+            }
+            self.needsRestart = true
+            AgentCenter.shared.save()
+            self.editorRequest = EditorRequest(id: UUID().uuidString, text: text)
+        }
+        guard restoreFiles, process?.isRunning == true else { return finish() }
+        controlRequest(["subtype": "rewind_files", "user_message_id": item.id.lowercased()]) { response in
+            if response["subtype"] as? String == "error" || (response["response"] as? [String: Any])?["canRewind"] as? Bool == false {
+                let reason = (response["response"] as? [String: Any])?["error"] as? String ?? response["error"] as? String
+                ToastCenter.shared.fail(nil, "Couldn't restore the files", detail: reason)
+                return
+            }
+            finish()
+        }
+    }
+
+    // MARK: - MCP servers
+
+    /// What was last checked, else what the agent said as it started.
+    @Published private(set) var checkedMCPServers: [MCPServerState]?
+    var mcpServers: [MCPServerState]? { checkedMCPServers ?? conversation.mcpServers }
+    private var mcpWaiters: [() -> Void] = []
+
+    /// Whether the agent has MCP servers Octet can ask about.
+    var hasMCP: Bool { engine != .pi }
+
+    /// Asks the agent how its MCP servers are doing; `then` runs with the
+    /// answer in `mcpServers`.
+    func checkMCPServers(then: (() -> Void)? = nil) {
+        if let then { mcpWaiters.append(then) }
+        switch engine {
+        case .claude where process?.isRunning == true:
+            controlRequest(["subtype": "mcp_status"]) { [weak self] response in
+                let servers = (response["response"] as? [String: Any])?["mcpServers"] as? [[String: Any]]
+                self?.finishMCPCheck(servers.map(MCPServerState.list))
+            }
+        case .codex where process?.isRunning == true:
+            if !call("mcpServerStatus/list", [:], as: .mcpStatus) { finishMCPCheck(nil) }
+        case .opencode:
+            OpenCodeServer.shared.request("GET", "mcp", directory: cwd) { [weak self] result in
+                guard let self else { return }
+                if case .success(let json) = result, let servers = json as? [String: Any] {
+                    self.finishMCPCheck(MCPServerState.openCode(servers))
+                } else {
+                    self.finishMCPCheck(nil)
+                }
+            }
+        default:
+            // Qwen Code reports its servers only as it starts; nothing to ask.
+            finishMCPCheck(nil)
+        }
+    }
+
+    private func finishMCPCheck(_ servers: [MCPServerState]?) {
+        if let servers { checkedMCPServers = servers }
+        let waiters = mcpWaiters
+        mcpWaiters = []
+        waiters.forEach { $0() }
+    }
+
+    // MARK: - Session changes
+
+    /// The working tree as it was when the conversation's first message
+    /// went, kept as a checkpoint commit: what it changed since is the diff
+    /// against it, new files included.
+    @Published private(set) var baselineCommit: String?
+    private var takingBaseline = false
+
+    private func takeBaselineIfNeeded() {
+        guard baselineCommit == nil, !takingBaseline else { return }
+        takingBaseline = true
+        let directory = cwd
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let commit = Checkpoints.create(in: directory, label: "Octet: conversation start", force: true)?.commit
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.takingBaseline = false
+                    guard let commit else { return }  // Not a repository.
+                    self.baselineCommit = commit
+                    AgentCenter.shared.save()
+                }
+            }
+        }
+    }
+
+    // MARK: - Fork
+
+    /// Whether this conversation can go on in a second one: every agent but
+    /// Qwen Code, once it has a session to fork.
+    var canFork: Bool {
+        guard hasTurns, !conversation.isRunning else { return false }
+        switch engine {
+        case .claude: return true
+        case .codex, .pi, .opencode: return threadId != nil
+        case .qwen: return false
+        }
+    }
+
+    /// A new conversation in this workspace carrying this one's history, to
+    /// try something else without losing this one. From `item` (Claude
+    /// Code): only what came before that message, which is put in the new
+    /// composer to edit.
+    @discardableResult
+    func fork(from item: AgentItem? = nil) -> AgentSession? {
+        guard canFork else { return nil }
+        let parent = engine == .claude ? sessionId : threadId ?? ""
+        var transcript = conversation
+        var anchor: String?
+        var refill: String?
+        if let item {
+            guard engine == .claude, case .user(let text) = item.kind else { return nil }
+            anchor = conversation.resumeAnchor(before: item.id)
+            transcript.truncate(from: item.id)
+            refill = text
+        }
+        let copy = AgentSession(workspaceId: workspaceId, cwd: cwd, engine: engine, model: model,
+                                permissionMode: permissionMode, sessionId: UUID().uuidString.lowercased())
+        copy.effort = effort
+        copy.permissionProfile = permissionProfile
+        copy.agentName = agentName
+        copy.title = title.hasSuffix(" (fork)") ? title : title + " (fork)"
+        copy.baselineCommit = baselineCommit
+        transcript.isRunning = false
+        copy.conversation = transcript
+        if item != nil, anchor == nil {
+            // Forked before the first message: a fresh session.
+            copy.hasTurns = false
+        } else {
+            copy.hasTurns = true
+            copy.forkFrom = (parent, anchor)
+        }
+        AgentCenter.shared.adopt(copy)
+        copy.prewarm()
+        if let refill { copy.editorRequest = EditorRequest(id: UUID().uuidString, text: refill) }
+        return copy
+    }
+
+    /// Pi: forks the session from `item`, which Pi does by starting a new
+    /// session file from the message before it; the original is kept.
+    private func rewindPi(to item: AgentItem, text: String) {
+        // Which of the branch's prompts it is, counted, since Octet's ids
+        // for Pi's messages aren't Pi's.
+        let prompts = conversation.items.filter { if case .user = $0.kind { return !$0.queued }; return false }
+        let position = prompts.firstIndex { $0.id == item.id }
+        piRequest(["type": "get_fork_messages"]) { [weak self] response in
+            guard let self else { return }
+            let messages = (response["data"] as? [String: Any])?["messages"] as? [[String: Any]] ?? []
+            let entry = position.flatMap { messages.indices.contains($0) && (messages[$0]["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) == text.trimmingCharacters(in: .whitespacesAndNewlines) ? messages[$0] : nil }
+                ?? messages.last { ($0["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) == text.trimmingCharacters(in: .whitespacesAndNewlines) }
+            guard let id = entry?["entryId"] as? String else {
+                return ToastCenter.shared.fail(nil, "Couldn't rewind", detail: "Pi didn't find that message on this branch.")
+            }
+            self.piRequest(["type": "fork", "entryId": id]) { [weak self] response in
+                guard let self else { return }
+                let data = response["data"] as? [String: Any] ?? [:]
+                guard response["success"] as? Bool == true, data["cancelled"] as? Bool != true else {
+                    return ToastCenter.shared.fail(nil, "Couldn't rewind",
+                                                   detail: response["error"] as? String ?? "An extension stopped the fork.")
+                }
+                self.editorRequest = EditorRequest(id: UUID().uuidString, text: data["text"] as? String ?? text)
+                // The new session's messages, and its file, which get_state names.
+                self.refreshPiState(includeMessages: true)
+            }
+        }
+    }
+
+    /// Pi's session as a tree of the prompts in it, every branch included.
+    func piSessionTree(then: @escaping ([PiSessionTree.Line]) -> Void) {
+        guard engine == .pi, process?.isRunning == true else { return then([]) }
+        piRequest(["type": "get_tree"]) { response in
+            let data = response["data"] as? [String: Any] ?? [:]
+            then(PiSessionTree.outline(data["tree"] as? [[String: Any]] ?? [], leafId: data["leafId"] as? String))
+        }
+    }
+
+    /// Sends a Pi command with an id and hands its response to `reply`.
+    private func piRequest(_ command: [String: Any], reply: @escaping ([String: Any]) -> Void) {
+        let id = "octet-reply-" + UUID().uuidString
+        controlReplies[id] = reply
+        var command = command
+        command["id"] = id
+        write(command)
+    }
+
+    /// Sends a control request to Claude Code or Qwen Code and hands its
+    /// answer to `reply`.
+    func controlRequest(_ request: [String: Any], reply: @escaping ([String: Any]) -> Void) {
+        let id = "octet-reply-" + UUID().uuidString
+        controlReplies[id] = reply
+        write(["type": "control_request", "request_id": id, "request": request])
+    }
+
+    func canCancelQueued(_ item: AgentItem) -> Bool {
+        item.queued && (engine == .claude || engine == .codex)
+    }
+
+    /// Takes a queued message back before the agent gets to it.
+    func cancelQueued(_ item: AgentItem) {
+        guard canCancelQueued(item), case .user(let text) = item.kind else { return }
+        switch engine {
+        case .claude:
+            write(["type": "control_request", "request_id": UUID().uuidString,
+                   "request": ["subtype": "cancel_async_message", "message_uuid": item.id]])
+        case .codex:
+            if let index = queuedTurns.firstIndex(of: text) { queuedTurns.remove(at: index) }
+            if !queuedTurns.contains(text) { queuedInputs[text] = nil }
+        default:
+            return
+        }
+        conversation.items.removeAll { $0.id == item.id }
     }
 
     /// Starts the process ahead of the first message, so its startup
@@ -1135,7 +1588,15 @@ final class AgentSession: ObservableObject, Identifiable {
             "--replay-user-messages",
         ]
         if let effort, Self.supportsEffort(model: model) { args += ["--effort", effort] }
-        args += hasTurns ? ["--resume", sessionId] : ["--session-id", sessionId]
+        if let fork = forkFrom {
+            // A new session under our id, carrying the old one's messages
+            // up to the rewind point; the original stays as it was.
+            args += ["--resume", fork.session, "--fork-session", "--session-id", sessionId]
+            if let at = fork.at { args += ["--resume-session-at", at] }
+        } else {
+            args += hasTurns ? ["--resume", sessionId] : ["--session-id", sessionId]
+        }
+        claudeApplied = (model, effort, permissionMode)
 
         // Through the login shell, so the agent sees the same PATH and
         // environment it gets in a terminal. GUI login shells do not always
@@ -1147,7 +1608,10 @@ final class AgentSession: ObservableObject, Identifiable {
         process.executableURL = URL(fileURLWithPath: shell)
         process.arguments = ["-l", "-c", "exec \(shellQuote(claude)) \"$@\"", "claude"] + args
         process.currentDirectoryURL = URL(fileURLWithPath: cwd)
-        process.environment = Self.accountEnvironment(cwd: cwd)
+        var environment = Self.accountEnvironment(cwd: cwd)
+        // Checkpoints each message's file edits, so a rewind can undo them.
+        environment["CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING"] = "true"
+        process.environment = environment
         let input = Pipe(), output = Pipe(), errors = Pipe()
         process.standardInput = input
         process.standardOutput = output
@@ -1186,11 +1650,18 @@ final class AgentSession: ObservableObject, Identifiable {
     /// Pi's documented RPC mode stays alive for the conversation and emits
     /// one JSON event per line. Its session file is retained for reopening.
     private func startPi() {
-        guard let process = spawn(command: "exec \(shellQuote(executable("pi"))) --mode rpc") else { return }
+        var command = "exec \(shellQuote(executable("pi"))) --mode rpc"
+        let fork = forkFrom
+        // A new session file carrying the parent's; get_state names it.
+        if let fork { command += " --fork \(shellQuote(fork.session))" }
+        guard let process = spawn(command: command) else { return }
         self.process = process
+        forkFrom = nil
         write(["type": "get_available_models"])
         write(["type": "get_commands"])
-        if let threadId {
+        if fork != nil {
+            refreshPiState(includeMessages: true)
+        } else if let threadId {
             write(["type": "switch_session", "sessionPath": threadId])
         } else {
             refreshPiState(includeMessages: false)
@@ -1223,10 +1694,16 @@ final class AgentSession: ObservableObject, Identifiable {
     /// Qwen's headless SDK transport uses the same stream-json event shapes
     /// as Claude Code, including partial message events.
     private func startQwen() {
-        var args = ["qwen", "--input-format", "stream-json", "--output-format", "stream-json", "--include-partial-messages"]
+        var args = ["qwen", "--input-format", "stream-json", "--output-format", "stream-json", "--include-partial-messages",
+                    "--approval-mode", Self.qwenMode(permissionMode)]
         if hasTurns, let threadId { args += ["--resume", threadId] }
         guard let process = spawn(command: "exec \(shellQuote(executable("qwen"))) \"$@\"", arguments: args) else { return }
         self.process = process
+        qwenPermissionIds = [:]
+        write(Self.qwenInitialize)
+        write(["type": "control_request", "request_id": Self.qwenModelsRequest, "request": ["subtype": "get_available_models"]])
+        // Model and effort picked before it started go as it comes up.
+        if qwenModels.contains(where: { $0.id == model }) || effort != nil { updateQwenSettings() }
     }
 
     /// What Octet calls itself to the agents it drives.
@@ -1248,6 +1725,12 @@ final class AgentSession: ObservableObject, Identifiable {
         for message in CodexRPC.handshake(requestId: handshakeId) { write(message) }
         CodexCatalogStore.shared.load()
 
+        if let fork = forkFrom {
+            // Its history carried into a thread of its own.
+            forkFrom = nil
+            call("thread/fork", ["threadId": fork.session], as: .thread)
+            return
+        }
         if let threadId {
             call("thread/resume", ["threadId": threadId], as: .thread)
             return
@@ -1256,7 +1739,8 @@ final class AgentSession: ObservableObject, Identifiable {
         // A new thread starts on the settings the pickers show; an existing
         // one keeps its own, and `thread/settings/update` moves it.
         if let codexModel { params["model"] = codexModel }
-        if let effort { params["reasoningEffort"] = effort }
+        // thread/start has no effort field; it takes it as a config override.
+        if let effort { params["config"] = ["model_reasoning_effort": effort] }
         if let permissionProfile { params["permissions"] = permissionProfile }
         #if DEBUG
         // Verification hook: OCTET_CODEX_APPROVAL=untrusted makes Codex ask
@@ -1278,7 +1762,7 @@ final class AgentSession: ObservableObject, Identifiable {
     private func updateCodexSettings(threadId: String) {
         var params: [String: Any] = ["threadId": threadId]
         if let codexModel { params["model"] = codexModel }
-        if let effort { params["reasoningEffort"] = effort }
+        if let effort { params["effort"] = effort }
         if let permissionProfile { params["permissions"] = permissionProfile }
         guard params.count > 1 else { return }
         call("thread/settings/update", params, as: .settings)
@@ -1375,12 +1859,19 @@ final class AgentSession: ObservableObject, Identifiable {
             let line = lineBuffer[lineBuffer.startIndex..<newline]
             lineBuffer.removeSubrange(lineBuffer.startIndex...newline)
             guard let event = (try? JSONSerialization.jsonObject(with: Data(line))) as? [String: Any] else { continue }
+            if event["type"] as? String == "control_response",
+               let response = event["response"] as? [String: Any],
+               let id = response["request_id"] as? String, let reply = controlReplies.removeValue(forKey: id) {
+                reply(response)
+                continue
+            }
             switch engine {
             case .claude:
                 if event["type"] as? String == "control_response",
                    let response = event["response"] as? [String: Any], response["request_id"] as? String == Self.commandsRequest {
                     let initialize = response["response"] as? [String: Any] ?? [:]
                     agentCommands = SlashCommands.claudePublished(initialize["commands"] as? [[String: Any]] ?? [])
+                    Self.updateCatalog(fromInitialize: initialize)
                     remoteControlInitialized(initialize)
                     continue
                 }
@@ -1388,6 +1879,21 @@ final class AgentSession: ObservableObject, Identifiable {
                    let response = event["response"] as? [String: Any], response["request_id"] as? String == Self.remoteControlRequest {
                     remoteControlAnswered(response)
                     continue
+                }
+                if event["type"] as? String == "control_response",
+                   let response = event["response"] as? [String: Any],
+                   (response["request_id"] as? String)?.hasPrefix(Self.settingsRequestPrefix) == true {
+                    // Refused live: the next message restarts it on the flags.
+                    if response["subtype"] as? String == "error" { needsRestart = true }
+                    continue
+                }
+                // The mode changed in Claude Code itself (a plan approved,
+                // Remote Control): the picker follows, with nothing to send.
+                if event["type"] as? String == "system", event["subtype"] as? String == "status",
+                   let raw = event["permissionMode"] as? String, let mode = PermissionMode(rawValue: raw),
+                   mode != permissionMode {
+                    claudeApplied?.mode = mode
+                    permissionMode = mode
                 }
                 conversation.apply(event)
                 // A turn started from elsewhere (Remote Control) runs the clock too.
@@ -1402,6 +1908,7 @@ final class AgentSession: ObservableObject, Identifiable {
             case .pi:
                 receivePi(event)
             case .qwen:
+                if receiveQwenControl(event) { continue }
                 conversation.apply(event)
                 if let id = conversation.sessionId, threadId != id {
                     threadId = id
@@ -1412,7 +1919,68 @@ final class AgentSession: ObservableObject, Identifiable {
         }
     }
 
+    /// Qwen's control channel. Before a tool runs it asks the host
+    /// (`can_use_tool`), which Octet answers with the same card as Claude's;
+    /// it withdraws a question it stopped waiting for; and it answers
+    /// Octet's own requests. True when `event` was one of these.
+    private func receiveQwenControl(_ event: [String: Any]) -> Bool {
+        switch event["type"] as? String {
+        case "control_request":
+            guard let id = event["request_id"] as? String, let request = event["request"] as? [String: Any] else { return true }
+            guard request["subtype"] as? String == "can_use_tool" else {
+                write(["type": "control_response", "response": [
+                    "subtype": "error", "request_id": id,
+                    "error": "Octet doesn't handle \(request["subtype"] as? String ?? "this") requests.",
+                ]])
+                return true
+            }
+            if let toolUse = request["tool_use_id"] as? String { qwenPermissionIds[id] = toolUse }
+            receivePermission(request) { [weak self] decision in
+                self?.qwenPermissionIds[id] = nil
+                self?.write(["type": "control_response", "response": ["subtype": "success", "request_id": id, "response": decision]])
+            }
+            return true
+        case "control_cancel_request":
+            if let id = event["request_id"] as? String, let toolUse = qwenPermissionIds.removeValue(forKey: id) {
+                dropPermission(id: toolUse)
+            }
+            return true
+        case "control_response":
+            let response = event["response"] as? [String: Any] ?? [:]
+            if response["request_id"] as? String == Self.qwenModelsRequest,
+               let models = (response["response"] as? [String: Any])?["models"] as? [[String: Any]] {
+                qwenModels = models.compactMap { model in
+                    guard let id = model["id"] as? String else { return nil }
+                    return (id, model["label"] as? String ?? id)
+                }
+            } else if (response["request_id"] as? String)?.hasPrefix(Self.settingsRequestPrefix) == true,
+                      response["subtype"] as? String == "error" {
+                let message = response["error"] as? String ?? (response["error"] as? [String: Any])?["message"] as? String ?? ""
+                notice("Qwen didn't take that setting\(message.isEmpty ? "" : ": \(message)").")
+            }
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Qwen's control requests Octet is waiting on an answer for, by
+    /// request id: the tool call each asks about.
+    private var qwenPermissionIds: [String: String] = [:]
+
+    /// Qwen's handshake: the host answers tool approvals, and gets the
+    /// longest Qwen allows to, since a person is the one answering.
+    static let qwenInitialize: [String: Any] = [
+        "type": "control_request", "request_id": "octet-init",
+        "request": ["subtype": "initialize", "timeout": ["canUseTool": 600_000]],
+    ]
+
     private func receivePi(_ event: [String: Any]) {
+        if event["type"] as? String == "response", let id = event["id"] as? String,
+           let reply = controlReplies.removeValue(forKey: id) {
+            reply(event)
+            return
+        }
         if let question = PiExtensionUI.question(event, sessionId: sessionId) {
             enqueueQuestion(question, answer: { [weak self] answers in
                 self?.write(PiExtensionUI.response(event, answers: answers))
@@ -1434,6 +2002,10 @@ final class AgentSession: ObservableObject, Identifiable {
            let command = event["command"] as? String {
             let data = event["data"] as? [String: Any] ?? [:]
             switch command {
+            case "prompt" where data["disposition"] as? String == "handled":
+                // An extension command took the prompt: no run starts, so
+                // nothing else would end the one Octet began showing.
+                conversation.isRunning = conversation.activateNextQueuedMessage()
             case "get_state":
                 if let path = data["sessionFile"] as? String, threadId != path {
                     threadId = path
@@ -1527,7 +2099,7 @@ final class AgentSession: ObservableObject, Identifiable {
         case "setTitle":
             if let value = event["title"] as? String, !value.isEmpty { title = value }
         case "set_editor_text":
-            piEditorRequest = PiEditorRequest(id: event["id"] as? String ?? UUID().uuidString,
+            editorRequest = EditorRequest(id: event["id"] as? String ?? UUID().uuidString,
                                               text: event["text"] as? String ?? "")
         default:
             break
@@ -1547,6 +2119,11 @@ final class AgentSession: ObservableObject, Identifiable {
         if method == nil, let id = message["id"] as? Int, let kind = codexCalls.removeValue(forKey: id) {
             receiveCodexAnswer(kind, message)
             return
+        }
+        if method == "turn/started" {
+            codexTurnId = ((message["params"] as? [String: Any])?["turn"] as? [String: Any])?["id"] as? String
+        } else if method == "turn/completed" {
+            codexTurnId = nil
         }
         conversation.applyCodex(message)
         if ["turn/completed", "turn/failed", "turn/aborted"].contains(method),
@@ -1581,6 +2158,16 @@ final class AgentSession: ObservableObject, Identifiable {
             // A turn Codex refuses never starts, so nothing else would end it
             // and the composer would say "working" forever.
             if let error { conversation.applyCodex(["method": "turn/failed", "params": ["error": ["message": error]]]) }
+        case .steer(let text, let input):
+            // The turn ended first, or Codex wouldn't take it: it goes as
+            // the next turn instead.
+            guard error != nil else { return }
+            if let threadId, !conversation.isRunning {
+                startTurn(text, threadId: threadId, input: input)
+            } else {
+                queuedTurns.append(text)
+                queuedInputs[text] = input
+            }
         case .settings:
             // Changing a running thread rides on Codex's experimental API,
             // which a newer Codex may change; say so rather than pretend.
@@ -1591,6 +2178,9 @@ final class AgentSession: ObservableObject, Identifiable {
             break
         case .command(let name):
             if let error { notice("Codex couldn't run /\(name): \(error)") }
+        case .mcpStatus:
+            let result = message["result"] as? [String: Any] ?? [:]
+            finishMCPCheck(error == nil ? MCPServerState.codex(result) : nil)
         }
     }
 
@@ -1779,7 +2369,9 @@ final class AgentCenter: ObservableObject {
     static let shared = AgentCenter()
 
     @Published private(set) var sessions: [AgentSession] = []
-    enum Board { case claude, codex }
+    /// What takes the terminal's place: the agents hub. (Claude and Codex
+    /// had boards of their own; the hub shows both.)
+    enum Board { case all }
 
     /// What each workspace shows in place of its terminal: a conversation,
     /// or an agents board. A workspace is in one window at a time, so this is
@@ -1787,8 +2379,9 @@ final class AgentCenter: ObservableObject {
     @Published private var activeIds: [String: String] = [:]
     @Published private var boards: [String: Board] = [:] {
         didSet {
-            AgentsStore.shared.watching = boards.values.contains(.claude)
-            CodexAgentsStore.shared.watching = boards.values.contains(.codex)
+            let open = !boards.isEmpty
+            AgentsStore.shared.watching = open
+            CodexAgentsStore.shared.watching = open
         }
     }
 
@@ -1831,10 +2424,10 @@ final class AgentCenter: ObservableObject {
         set { setBoard(newValue, in: frontWorkspace) }
     }
 
-    /// The Claude board, kept as a flag for the places that toggle it.
+    /// The agents hub, kept as a flag for the places that toggle it.
     var showingBoard: Bool {
-        get { board == .claude }
-        set { board = newValue ? .claude : (board == .claude ? nil : board) }
+        get { board != nil }
+        set { board = newValue ? .all : nil }
     }
 
     /// Takes in a session made elsewhere (brought back from the background).

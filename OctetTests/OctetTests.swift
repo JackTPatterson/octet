@@ -1694,6 +1694,15 @@ final class ImagePasteTests: XCTestCase {
 }
 
 final class TerminalThemeImportTests: XCTestCase {
+    func testANamedCursorColourIsTheAccent() throws {
+        // Ghostty takes colour names; "white" used to fall back to palette blue.
+        let theme = try XCTUnwrap(TerminalThemeImport.parse("background = #101010\nforeground = #eeeeee\ncursor-color = white\npalette = 4=#0000ee", name: "T"))
+        XCTAssertEqual(theme.accent, "ffffff")
+        let follows = try XCTUnwrap(TerminalThemeImport.parse("cursor-color = cell-foreground\nbackground = #101010\nforeground = #eeeeee", name: "T"))
+        XCTAssertEqual(follows.accent, "eeeeee")
+        XCTAssertEqual(TerminalThemeImport.hex("Cornflower Blue"), "6495ed")
+    }
+
     func testAGhosttyStyleConfigBecomesATheme() throws {
         let theme = try XCTUnwrap(TerminalThemeImport.parse("""
         # my terminal

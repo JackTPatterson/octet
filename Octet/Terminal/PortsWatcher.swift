@@ -7,6 +7,8 @@ final class PortsWatcher: ObservableObject {
     static let shared = PortsWatcher()
 
     @Published private(set) var byPane: [String: [Int]] = [:]
+    /// What serves each port, as a `LanguageLogo` service slug.
+    @Published private(set) var services: [Int: String] = [:]
     private var timer: Timer?
     private var reading = false
     private var ticks = 0
@@ -32,6 +34,11 @@ final class PortsWatcher: ObservableObject {
         return Array(Set(panes.flatMap { byPane[$0] ?? [] })).sorted()
     }
 
+    /// The logo of the first port in a workspace that has one.
+    func service(inWorkspace workspaceId: String, snapshot: EngineSnapshot) -> String? {
+        ports(inWorkspace: workspaceId, snapshot: snapshot).lazy.compactMap { self.services[$0] }.first
+    }
+
     private func read() {
         guard !reading, let store else { return }
         reading = true
@@ -45,12 +52,20 @@ final class PortsWatcher: ObservableObject {
                 }
             }
             let listeners = ListeningPorts.parseLsof(Self.output("/usr/sbin/lsof", ["-nP", "-iTCP", "-sTCP:LISTEN", "-Fpcn"]))
-            let parents = ListeningPorts.parseParents(Self.output("/bin/ps", ["-axo", "pid=,ppid="]))
+            let table = Self.output("/bin/ps", ["-axww", "-o", "pid=,ppid=,args="])
+            let parents = ListeningPorts.parseParents(table)
+            let processes = ServiceKind.parseArguments(table)
             let found = ListeningPorts.byPane(listeners, parents: parents, shells: shells)
+            var services: [Int: String] = [:]
+            for listener in listeners where services[listener.port] == nil {
+                services[listener.port] = ServiceKind.detect(pid: listener.pid, command: listener.command,
+                                                            processes: processes, parents: parents)
+            }
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     self.reading = false
                     if found != self.byPane { self.byPane = found }
+                    if services != self.services { self.services = services }
                 }
             }
         }

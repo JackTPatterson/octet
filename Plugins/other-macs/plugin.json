@@ -1,0 +1,10 @@
+{
+  "id": "other-macs",
+  "name": "Other Macs",
+  "version": "1.0.0",
+  "description": "Pair with Octet on your other Macs over your network, so agents on each can message the other's agents and hand them tasks. The Macs talk directly, encrypted; nothing leaves your network. Its settings are in Settings › Plugins once it's on.",
+  "author": "Octet",
+  "octet": 1,
+  "feature": "peers",
+  "enabledByDefault": false
+}

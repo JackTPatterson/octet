@@ -132,6 +132,10 @@ struct OctetSettings: Codable, Equatable {
     var suggestionAcceptKey: SuggestionAcceptKey = .right
     var pasteImagesAsFiles = true
     var autoNameTabs = true
+    /// Workspaces take the name of the work in them until renamed by hand.
+    var autoNameWorkspaces = true
+    /// Holding Space in a conversation's message box talks instead of typing.
+    var holdSpaceToTalk = true
     var visualTwin = true
     // Native agent opening is controlled separately; terminal sessions stay in
     // their own interface unless the user explicitly enables the twin.
@@ -349,6 +353,8 @@ struct OctetSettings: Codable, Equatable {
         suggestionAcceptKey = value("suggestionAcceptKey", defaults.suggestionAcceptKey)
         pasteImagesAsFiles = value("pasteImagesAsFiles", defaults.pasteImagesAsFiles)
         autoNameTabs = value("autoNameTabs", defaults.autoNameTabs)
+        autoNameWorkspaces = value("autoNameWorkspaces", defaults.autoNameWorkspaces)
+        holdSpaceToTalk = value("holdSpaceToTalk", defaults.holdSpaceToTalk)
         visualTwin = value("visualTwin", defaults.visualTwin)
         twinByDefault = value("twinByDefault", defaults.twinByDefault)
         showTips = value("showTips", defaults.showTips)
@@ -618,7 +624,23 @@ final class SettingsStore: ObservableObject {
                 forName: Notification.Name("AppleInterfaceThemeChangedNotification"), object: nil, queue: .main, using: refresh),
             NSWorkspace.shared.notificationCenter.addObserver(
                 forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil, queue: .main, using: refresh),
+            // Back from editing the terminal config: follow what changed.
+            NotificationCenter.default.addObserver(
+                forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+                DispatchQueue.main.async { self?.refreshImportedTheme() }
+            },
         ]
+        refreshImportedTheme()
+    }
+
+    /// An imported theme follows its terminal config: re-read on launch and
+    /// whenever Octet comes back to the front, so an edit there (a new
+    /// cursor colour, a different theme) shows without re-importing.
+    private func refreshImportedTheme() {
+        guard let current = values.importedTheme,
+              let fresh = TerminalThemeImport.importFromConfig(),
+              fresh.name == current.name, fresh != current else { return }
+        values.importedTheme = fresh
     }
 
     private func systemAppearanceChanged() {
