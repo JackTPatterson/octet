@@ -43,6 +43,11 @@ struct OctetPluginManifest: Codable, Equatable {
     /// Whether a built-in plugin starts on; installed ones start on when
     /// installed from the Marketplace.
     var enabledByDefault: Bool?
+    /// Where it runs: `macos`, `linux`, `windows`. Unset means macOS and
+    /// Linux, as its plain-string commands are `sh`.
+    var platforms: [PluginPlatform]?
+
+    var supportedPlatforms: [PluginPlatform] { platforms ?? PluginPlatform.unixDefault }
 
     struct Contributions: Codable, Equatable {
         var completions: [CompletionContribution] = []
@@ -86,7 +91,8 @@ struct OctetPluginManifest: Codable, Equatable {
         var symbol: String?
         var icon: String?
         var color: String?
-        let run: String
+        /// Per platform; see `PluginCommand`.
+        let runs: PluginCommand
         var refreshSeconds: Double?
         var timeoutSeconds: Double?
         /// Run only when one of these files is in the pane's folder or a
@@ -95,6 +101,15 @@ struct OctetPluginManifest: Codable, Equatable {
         /// `local` (default), `remote` (only over SSH) or `any`.
         var scope: StatusItemDescriptor.Scope?
         var enabledByDefault: Bool?
+
+        /// The command for the platform Octet is running on; empty when
+        /// the chip has none here.
+        var run: String { runs.command() ?? "" }
+
+        enum CodingKeys: String, CodingKey {
+            case id, name, summary, sample, symbol, icon, color, runs = "run", refreshSeconds, timeoutSeconds
+            case whenFiles, scope, enabledByDefault
+        }
     }
 
     /// A runtime, framework or language a pane can be running. `match` is
@@ -124,7 +139,8 @@ struct OctetPluginManifest: Codable, Equatable {
         var path: [String] = []
         /// Shown beside the subcommand when the plugin adds it.
         var summary: String?
-        let run: String
+        /// Per platform; see `PluginCommand`.
+        let runs: PluginCommand
         /// How rows are drawn: repository, branch, file, directory, command.
         var kind: String?
         var cacheSeconds: Double?
@@ -145,7 +161,7 @@ struct OctetPluginManifest: Codable, Equatable {
             self.command = command
             self.path = path
             self.summary = summary
-            self.run = run
+            self.runs = PluginCommand(run)
             self.kind = kind
             self.cacheSeconds = cacheSeconds
             self.timeoutSeconds = timeoutSeconds
@@ -159,7 +175,7 @@ struct OctetPluginManifest: Codable, Equatable {
             command = try container.decode(String.self, forKey: .command)
             path = try container.decodeIfPresent([String].self, forKey: .path) ?? []
             summary = try container.decodeIfPresent(String.self, forKey: .summary)
-            run = try container.decode(String.self, forKey: .run)
+            runs = try container.decode(PluginCommand.self, forKey: .runs)
             kind = try container.decodeIfPresent(String.self, forKey: .kind)
             cacheSeconds = try container.decodeIfPresent(Double.self, forKey: .cacheSeconds)
             timeoutSeconds = try container.decodeIfPresent(Double.self, forKey: .timeoutSeconds)
@@ -167,6 +183,15 @@ struct OctetPluginManifest: Codable, Equatable {
             opensMenu = try container.decodeIfPresent(Bool.self, forKey: .opensMenu)
             prefetchWhenTyping = try container.decodeIfPresent(String.self, forKey: .prefetchWhenTyping)
             firstArgumentOnly = try container.decodeIfPresent(Bool.self, forKey: .firstArgumentOnly)
+        }
+
+        /// The command for the platform Octet is running on; empty when
+        /// it has none here.
+        var run: String { runs.command() ?? "" }
+
+        enum CodingKeys: String, CodingKey {
+            case command, path, summary, runs = "run", kind, cacheSeconds, timeoutSeconds, perFolder
+            case opensMenu, prefetchWhenTyping, firstArgumentOnly
         }
     }
 
@@ -192,6 +217,7 @@ struct OctetPluginManifest: Codable, Equatable {
         contributes = try container.decodeIfPresent(Contributions.self, forKey: .contributes) ?? .init()
         feature = try container.decodeIfPresent(String.self, forKey: .feature)
         enabledByDefault = try container.decodeIfPresent(Bool.self, forKey: .enabledByDefault)
+        platforms = try container.decodeIfPresent([PluginPlatform].self, forKey: .platforms)
     }
 }
 
@@ -250,6 +276,15 @@ enum OctetPlugins {
         }
     }
 
+    /// Why a command can't be used: it runs nowhere, or names a platform
+    /// Octet doesn't know.
+    private static func problem(_ command: PluginCommand) -> String? {
+        if let unknown = command.commands.keys.first(where: { !PluginCommand.keys.contains($0) }) {
+            return "names an unknown platform: \(unknown)"
+        }
+        return command.platforms.isEmpty ? "has nothing to run" : nil
+    }
+
     /// Why a manifest can't be used, or nil when it can.
     static func validate(_ manifest: OctetPluginManifest) -> String? {
         if manifest.id.range(of: "^[a-z0-9][a-z0-9._-]*$", options: .regularExpression) == nil {
@@ -274,15 +309,13 @@ enum OctetPlugins {
                 return "status item ids must be lowercase letters, digits, dots, dashes or underscores"
             }
             if !statusIds.insert(item.id).inserted { return "status item \(item.id) appears twice" }
-            if item.run.trimmingCharacters(in: .whitespaces).isEmpty { return "status item \(item.id) has nothing to run" }
+            if let problem = problem(item.runs) { return "status item \(item.id) \(problem)" }
         }
         for completion in manifest.contributes.completions {
             if completion.command.isEmpty || completion.command.contains(where: \.isWhitespace) {
                 return "a completion names no single command"
             }
-            if completion.run.trimmingCharacters(in: .whitespaces).isEmpty {
-                return "a completion for \(completion.command) has nothing to run"
-            }
+            if let problem = problem(completion.runs) { return "a completion for \(completion.command) \(problem)" }
         }
         return nil
     }
@@ -294,7 +327,7 @@ enum OctetPlugins {
         let index = plugin.manifest.contributes.completions.firstIndex(of: contribution) ?? 0
         return CompletionSpec.Generator(
             id: "plugin.\(plugin.id).\(index)",
-            command: "OCTET_PLUGIN_DIR=\(shellQuoted(plugin.directory)); export OCTET_PLUGIN_DIR\n" + contribution.run,
+            command: PluginPlatform.current.settingEnvironment("OCTET_PLUGIN_DIR", to: plugin.directory, before: contribution.run),
             cacheSeconds: contribution.cacheSeconds ?? 10,
             kind: kind(contribution.kind),
             perFolder: contribution.perFolder ?? true,
@@ -360,10 +393,6 @@ enum OctetPlugins {
         guard textBeforeCaret.last?.isWhitespace == true else { return false }
         let words = textBeforeCaret.split(whereSeparator: \.isWhitespace).map(String.init)
         return contributions.contains { $0.opensMenu == true && words == [$0.command] + $0.path }
-    }
-
-    private static func shellQuoted(_ value: String) -> String {
-        "'" + value.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
     }
 }
 

@@ -36,6 +36,7 @@ final class OctetPluginHost: ObservableObject {
     /// plugin with runtime rules is on.
     func attach(_ store: SessionStore) {
         self.store = store
+        installFormerlyBuiltIn()
         runtimeTimer?.invalidate()
         runtimeTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.refreshRuntimes() }
@@ -55,7 +56,7 @@ final class OctetPluginHost: ObservableObject {
     var statusItems: [String: (item: OctetPluginManifest.StatusItemContribution, plugin: OctetPlugin)] {
         var items: [String: (OctetPluginManifest.StatusItemContribution, OctetPlugin)] = [:]
         for plugin in plugins where isEnabled(plugin) {
-            for item in plugin.manifest.contributes.statusItems {
+            for item in plugin.manifest.contributes.statusItems where !item.run.isEmpty {
                 items[OctetPlugins.statusItemId(plugin: plugin.id, item: item.id)] = (item, plugin)
             }
         }
@@ -65,7 +66,7 @@ final class OctetPluginHost: ObservableObject {
     /// Every chip the bar can show: Octet's own, then enabled plugins'.
     var statusDescriptors: [StatusItemDescriptor] {
         StatusBarItems.builtIns + plugins.filter(isEnabled).flatMap { plugin in
-            plugin.manifest.contributes.statusItems.map { OctetPlugins.descriptor($0, of: plugin) }
+            plugin.manifest.contributes.statusItems.filter { !$0.run.isEmpty }.map { OctetPlugins.descriptor($0, of: plugin) }
         }
     }
 
@@ -164,8 +165,13 @@ final class OctetPluginHost: ObservableObject {
             ?? PluginRegistry.defaultURL
     }
 
-    func loadRegistry(force: Bool = false) {
-        guard !registryLoading, force || !registryLoaded else { return }
+    private var registryWaiters: [() -> Void] = []
+
+    /// Fetches the index; `then` runs once it's in, or once it failed.
+    func loadRegistry(force: Bool = false, then: (() -> Void)? = nil) {
+        if let then { registryWaiters.append(then) }
+        guard !registryLoading else { return }
+        guard force || !registryLoaded else { return finishRegistryLoad() }
         registryLoading = true
         var request = URLRequest(url: registryURL)
         request.cachePolicy = force ? .reloadIgnoringLocalCacheData : .useProtocolCachePolicy
@@ -185,15 +191,62 @@ final class OctetPluginHost: ObservableObject {
                     host.registryLoading = false
                     switch result {
                     case .success(let registry):
-                        host.registry = registry.plugins.filter { $0.problem == nil }
+                        host.registry = registry.plugins.filter { $0.problem == nil && $0.runsHere }
                         host.registryError = nil
                         host.registryLoaded = true
                     case .failure(let error):
                         host.registryError = error.localizedDescription
                     }
+                    host.finishRegistryLoad()
                 }
             }
         }.resume()
+    }
+
+    private func finishRegistryLoad() {
+        let waiters = registryWaiters
+        registryWaiters = []
+        waiters.forEach { $0() }
+    }
+
+    // MARK: - Plugins that used to be built in
+
+    /// Plugins that shipped inside Octet before the registry. Each is
+    /// installed from it once, so nobody loses the chips or icons they had;
+    /// one removed afterwards stays removed, and one turned off before
+    /// isn't installed.
+    static let formerlyBuiltIn = ["status-chips", "dev-runtimes", "github-repos"]
+    private static let formerlyBuiltInKey = "octet.plugins.formerlyBuiltInInstalled"
+
+    func installFormerlyBuiltIn() {
+        let defaults = UserDefaults.standard
+        var done = Set(defaults.stringArray(forKey: Self.formerlyBuiltInKey) ?? [])
+        let disabled = Set(SettingsStore.shared.values.disabledPlugins)
+        for id in Self.formerlyBuiltIn where !done.contains(id) && (disabled.contains(id) || plugins.contains { $0.id == id }) {
+            done.insert(id)
+        }
+        defaults.set(Array(done), forKey: Self.formerlyBuiltInKey)
+        let wanted = Self.formerlyBuiltIn.filter { !done.contains($0) }
+        guard !wanted.isEmpty else { return }
+        loadRegistry { [weak self] in
+            guard let self, self.registryLoaded else { return }  // Offline: next launch.
+            for id in wanted {
+                guard let entry = self.registry.first(where: { $0.id == id }) else {
+                    // Not for this platform, or gone from the registry.
+                    self.markFormerlyBuiltIn(id)
+                    continue
+                }
+                self.install(entry, quietly: true) { installed in
+                    if installed { self.markFormerlyBuiltIn(id) }
+                }
+            }
+        }
+    }
+
+    private func markFormerlyBuiltIn(_ id: String) {
+        let defaults = UserDefaults.standard
+        let done = Set(defaults.stringArray(forKey: Self.formerlyBuiltInKey) ?? []).union([id])
+        defaults.set(Array(done), forKey: Self.formerlyBuiltInKey)
     }
 
     /// The registry's newer version of an installed plugin, if there is one.
@@ -205,7 +258,7 @@ final class OctetPluginHost: ObservableObject {
 
     /// Installs (or updates) a registry plugin and turns it on: choosing it
     /// in the Marketplace is the consent a folder dropped in doesn't give.
-    func install(_ entry: PluginRegistry.Entry) {
+    func install(_ entry: PluginRegistry.Entry, quietly: Bool = false, then: ((Bool) -> Void)? = nil) {
         guard installing.insert(entry.id).inserted else { return }
         let root = userDirectory, registry = registryURL
         Task { @MainActor in
@@ -216,9 +269,11 @@ final class OctetPluginHost: ObservableObject {
                 if let plugin = plugins.first(where: { $0.id == entry.id }), !isEnabled(plugin) {
                     setEnabled(plugin, true)
                 }
-                ToastCenter.shared.info("Installed \(entry.name)", detail: "Version \(entry.version)")
+                if !quietly { ToastCenter.shared.info("Installed \(entry.name)", detail: "Version \(entry.version)") }
+                then?(true)
             } catch {
-                ToastCenter.shared.fail(nil, "Couldn't install \(entry.name)", detail: error.localizedDescription)
+                if !quietly { ToastCenter.shared.fail(nil, "Couldn't install \(entry.name)", detail: error.localizedDescription) }
+                then?(false)
             }
         }
     }
@@ -241,7 +296,8 @@ final class OctetPluginHost: ObservableObject {
 
     private var completionContributions: [(OctetPluginManifest.CompletionContribution, OctetPlugin)] {
         plugins.filter(isEnabled).flatMap { plugin in
-            plugin.manifest.contributes.completions.map { ($0, plugin) }
+            // Only what has a command on this platform.
+            plugin.manifest.contributes.completions.filter { !$0.run.isEmpty }.map { ($0, plugin) }
         }
     }
 

@@ -22,4 +22,20 @@ Keep the plugin in your own public GitHub repository, then open a pull request a
 
 Pin `ref` to a tag or commit. `scripts/build-plugin-registry.py --fetch` fills in the checksums, so a later change to the repository can't reach anyone without a new entry.
 
-Plugins run shell commands as the person who installs them; the registry is reviewed, and each plugin is off until someone installs it from the Marketplace. A plugin can contribute terminal completions, status bar chips and runtime icons; see any plugin here, or the built-in ones in `Plugins/`, for the manifest format.
+Plugins run shell commands as the person who installs them; the registry is reviewed, and each plugin is off until someone installs it from the Marketplace. A plugin can contribute terminal completions, status bar chips and runtime icons; see any plugin here for the manifest format. (`Plugins/` in the app holds only what stands for native features, like Other Macs.)
+
+## macOS, Linux and Windows
+
+One plugin, one registry, every platform Octet runs on. Manifests, the index and checksums are plain JSON; only the commands differ.
+
+- A `run` that is a string is a POSIX `sh` command, for macOS and Linux.
+- A `run` can instead name a command per platform: `unix` (macOS and Linux), `macos`, `linux`, or `windows`, a PowerShell command. A contribution with no command for the platform Octet is running on is left out there; the rest of the plugin still works.
+
+  ```json
+  "run": { "unix": "sh \"$OCTET_PLUGIN_DIR/chip.sh\"",
+           "windows": "& \"$env:OCTET_PLUGIN_DIR\\chip.ps1\"" }
+  ```
+
+- `platforms` in `plugin.json` says where it runs (default `["macos", "linux"]`); the index carries it, and the Marketplace lists only what runs where it's open. Runtime icons run nothing, so a plugin of only those can list all three.
+- Every command sees the same environment everywhere: `OCTET_PLUGIN_DIR`, and for chips `OCTET_CWD`, `OCTET_REPO_ROOT`, `OCTET_SHELL_PID`, `OCTET_SSH_HOST`, `OCTET_SSH_USER`. Output is the same text on every platform.
+- Prefer tools every platform has (`git`, `gh`, `curl`). Where one isn't (`osascript`, the Keychain), check with `command -v` and fall back, as `issues/scripts/jira-lib.sh` does with Node and `secret-tool` on Linux. `github-repos` has a `list-repos.ps1` beside its `list-repos.sh` as the example for Windows.

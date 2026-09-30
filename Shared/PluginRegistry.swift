@@ -27,6 +27,8 @@ struct PluginRegistry: Codable, Equatable {
         /// The plugin's folder in the repository; empty for its root.
         var path: String = ""
         var homepage: String?
+        /// Where it runs; the Marketplace lists only what runs here.
+        var platforms: [PluginPlatform] = PluginPlatform.unixDefault
         let files: [File]
 
         struct File: Codable, Equatable {
@@ -36,7 +38,7 @@ struct PluginRegistry: Codable, Equatable {
 
         init(id: String, name: String, description: String = "", author: String = "", version: String = "0.0.0",
              keywords: [String] = [], repo: String, ref: String = "main", path: String = "",
-             homepage: String? = nil, files: [File]) {
+             homepage: String? = nil, platforms: [PluginPlatform] = PluginPlatform.unixDefault, files: [File]) {
             self.id = id
             self.name = name
             self.description = description
@@ -47,6 +49,7 @@ struct PluginRegistry: Codable, Equatable {
             self.ref = ref
             self.path = path
             self.homepage = homepage
+            self.platforms = platforms
             self.files = files
         }
 
@@ -62,8 +65,13 @@ struct PluginRegistry: Codable, Equatable {
             ref = try c.decodeIfPresent(String.self, forKey: .ref) ?? "main"
             path = try c.decodeIfPresent(String.self, forKey: .path) ?? ""
             homepage = try c.decodeIfPresent(String.self, forKey: .homepage)
+            // Unknown platforms (a newer registry's) are skipped, not fatal.
+            platforms = (try c.decodeIfPresent([String].self, forKey: .platforms))?
+                .compactMap(PluginPlatform.init(rawValue:)) ?? PluginPlatform.unixDefault
             files = try c.decode([File].self, forKey: .files)
         }
+
+        var runsHere: Bool { platforms.contains(.current) }
 
         /// Where one of its files downloads from.
         func url(of file: File) -> URL? {

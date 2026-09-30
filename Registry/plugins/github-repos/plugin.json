@@ -13,7 +13,10 @@
           "clone"
         ],
         "summary": "Copy a repository",
-        "run": "/bin/sh \"$OCTET_PLUGIN_DIR/list-repos.sh\"",
+        "run": {
+          "unix": "/bin/sh \"$OCTET_PLUGIN_DIR/list-repos.sh\"",
+          "windows": "& \"$env:OCTET_PLUGIN_DIR\\list-repos.ps1\""
+        },
         "kind": "repository",
         "cacheSeconds": 300,
         "timeoutSeconds": 10,
@@ -23,5 +26,16 @@
         "firstArgumentOnly": true
       }
     ]
-  }
+  },
+  "platforms": [
+    "macos",
+    "linux",
+    "windows"
+  ],
+  "keywords": [
+    "github",
+    "git",
+    "clone",
+    "repositories"
+  ]
 }

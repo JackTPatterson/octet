@@ -76,7 +76,7 @@ struct StatusBarSettings: View {
                         }
                     }
                 }
-                Text("Plugins can add chips of their own. Status Chips, in Settings › Plugins, has Kubernetes, cloud, Docker, ports and more.")
+                Text("Plugins can add chips of their own. Status Chips, in the Marketplace's plugins, has Kubernetes, cloud, Docker, ports and more.")
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)

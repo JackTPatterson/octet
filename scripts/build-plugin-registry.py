@@ -41,6 +41,8 @@ def local_entry(folder):
         "author": manifest.get("author", ""),
         "version": manifest.get("version", "0.0.0"),
         "keywords": manifest.get("keywords", []),
+        # Plain-string commands are sh: macOS and Linux unless it says.
+        "platforms": manifest.get("platforms", ["macos", "linux"]),
         "repo": REPO,
         "ref": REF,
         "path": f"Registry/plugins/{folder}",

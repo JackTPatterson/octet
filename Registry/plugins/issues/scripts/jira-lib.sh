@@ -5,8 +5,10 @@
 #                          JIRA_EMAIL=you@acme.com        (Jira Cloud)
 #                          JIRA_API_TOKEN=...             (or leave out, below)
 #   jira-cli's ~/.config/.jira/.config.yml, for the server and login
-#   The token in the Keychain:
+#   The token in the Keychain (macOS):
 #     security add-generic-password -s octet-jira -a you@acme.com -w
+#   or the secret service (Linux):
+#     secret-tool store --label "Octet Jira" service octet-jira
 #   Jira Server / Data Center: leave JIRA_EMAIL empty and set a personal
 #   access token; it goes as a bearer token.
 PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"
@@ -21,9 +23,13 @@ jira_config() {
     [ -n "$JIRA_EMAIL" ] || JIRA_EMAIL=$(sed -n 's/^login:[[:space:]]*//p' "$cli" | head -n 1 | tr -d "\"'")
   fi
   if [ -z "$JIRA_API_TOKEN" ]; then
-    JIRA_API_TOKEN=$(security find-generic-password -s octet-jira -w 2>/dev/null)
+    if command -v security >/dev/null 2>&1; then
+      JIRA_API_TOKEN=$(security find-generic-password -s octet-jira -w 2>/dev/null)
+    elif command -v secret-tool >/dev/null 2>&1; then
+      JIRA_API_TOKEN=$(secret-tool lookup service octet-jira 2>/dev/null)
+    fi
   fi
-  if [ -z "$JIRA_API_TOKEN" ] && [ -n "$JIRA_EMAIL" ]; then
+  if [ -z "$JIRA_API_TOKEN" ] && [ -n "$JIRA_EMAIL" ] && command -v security >/dev/null 2>&1; then
     JIRA_API_TOKEN=$(security find-generic-password -s jira-cli -a "$JIRA_EMAIL" -w 2>/dev/null)
   fi
   JIRA_URL=${JIRA_URL%/}
@@ -50,9 +56,14 @@ jira_search() {
 }
 
 # Runs a JavaScript expression over JSON: `d` is the parsed first argument,
-# `a` all of them. Every Mac has osascript; not every Mac has jq.
+# `a` all of them. Every Mac has osascript (not every Mac has jq); on Linux
+# it takes Node.
 json() {
   expression=$1
   shift
-  osascript -l JavaScript -e "function run(a){var d=JSON.parse(a[0]);return String($expression)}" "$@" 2>/dev/null
+  if command -v osascript >/dev/null 2>&1; then
+    osascript -l JavaScript -e "function run(a){var d=JSON.parse(a[0]);return String($expression)}" "$@" 2>/dev/null
+  elif command -v node >/dev/null 2>&1; then
+    node -e "var a=process.argv.slice(1);var d=JSON.parse(a[0]);console.log(String($expression))" "$@" 2>/dev/null
+  fi
 }

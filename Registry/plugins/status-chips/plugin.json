@@ -52,7 +52,10 @@
         "sample": "wants v20 · has v25",
         "symbol": "exclamationmark.triangle",
         "run": "sh \"$OCTET_PLUGIN_DIR/scripts/node-version.sh\"",
-        "whenFiles": [".nvmrc", ".node-version"],
+        "whenFiles": [
+          ".nvmrc",
+          ".node-version"
+        ],
         "refreshSeconds": 30,
         "timeoutSeconds": 8,
         "enabledByDefault": true
@@ -65,7 +68,17 @@
         "icon": "icons/python.svg",
         "color": "3776AB",
         "run": "sh \"$OCTET_PLUGIN_DIR/scripts/python-env.sh\"",
-        "whenFiles": [".venv", "venv", "env", "pyproject.toml", "requirements.txt", "environment.yml", ".python-version", "Pipfile", "setup.py"],
+        "whenFiles": [
+          ".venv",
+          "venv",
+          "env",
+          "pyproject.toml",
+          "requirements.txt",
+          "environment.yml",
+          ".python-version",
+          "Pipfile",
+          "setup.py"
+        ],
         "refreshSeconds": 30,
         "enabledByDefault": true
       },
@@ -131,7 +144,9 @@
         "icon": "icons/terraform.svg",
         "color": "844FBA",
         "run": "sh \"$OCTET_PLUGIN_DIR/scripts/terraform.sh\"",
-        "whenFiles": [".terraform"],
+        "whenFiles": [
+          ".terraform"
+        ],
         "refreshSeconds": 20,
         "enabledByDefault": true
       },
@@ -143,7 +158,11 @@
         "symbol": "key",
         "color": "ECD53F",
         "run": "sh \"$OCTET_PLUGIN_DIR/scripts/dotenv.sh\"",
-        "whenFiles": [".env", ".env.local", ".env.development"],
+        "whenFiles": [
+          ".env",
+          ".env.local",
+          ".env.development"
+        ],
         "refreshSeconds": 30
       },
       {
@@ -190,5 +209,17 @@
         "enabledByDefault": true
       }
     ]
-  }
+  },
+  "platforms": [
+    "macos",
+    "linux"
+  ],
+  "keywords": [
+    "status bar",
+    "git",
+    "docker",
+    "kubernetes",
+    "aws",
+    "ports"
+  ]
 }

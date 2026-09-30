@@ -178,5 +178,9 @@
         "firstArgumentOnly": true
       }
     ]
-  }
+  },
+  "platforms": [
+    "macos",
+    "linux"
+  ]
 }
