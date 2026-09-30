@@ -21,6 +21,16 @@ final class ListeningPortsTests: XCTestCase {
                        ["w1:p1": [3000, 9229], "w2:p1": [5173]])
     }
 
+    func testOnlyAPanesOwnServersCanBeStopped() {
+        // Shell 100 → node 300 on :3000; launchd's 900 also on :3000 (another address).
+        let parents = ListeningPorts.parseParents("  100     1\n  300   100\n  900     1\n")
+        let listeners: [ListeningPorts.Listener] = [.init(pid: 300, command: "node", port: 3000),
+                                                    .init(pid: 900, command: "rapportd", port: 3000)]
+        let owned = ListeningPorts.owned(listeners, parents: parents, shells: ["w1:p1": 100])
+        XCTAssertEqual(owned.map(\.0.pid), [300])
+        XCTAssertEqual(owned.map(\.1), ["w1:p1"])
+    }
+
     func testALoopInTheParentsCantHangIt() {
         XCTAssertEqual(ListeningPorts.byPane([.init(pid: 5, command: "x", port: 1)], parents: [5: 6, 6: 5], shells: [:]), [:])
     }

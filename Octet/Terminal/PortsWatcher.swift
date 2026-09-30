@@ -9,6 +9,8 @@ final class PortsWatcher: ObservableObject {
     @Published private(set) var byPane: [String: [Int]] = [:]
     /// What serves each port, as a `LanguageLogo` service slug.
     @Published private(set) var services: [Int: String] = [:]
+    /// The processes listening on each port shown, for stopping them.
+    @Published private(set) var listeners: [Int: [ListeningPorts.Listener]] = [:]
     private var timer: Timer?
     private var reading = false
     private var ticks = 0
@@ -57,6 +59,8 @@ final class PortsWatcher: ObservableObject {
             let processes = ServiceKind.parseArguments(table)
             let found = ListeningPorts.byPane(listeners, parents: parents, shells: shells)
             var services: [Int: String] = [:]
+            let owners = Dictionary(grouping: ListeningPorts.owned(listeners, parents: parents, shells: shells).map(\.0),
+                                    by: \.port)
             for listener in listeners where services[listener.port] == nil {
                 services[listener.port] = ServiceKind.detect(pid: listener.pid, command: listener.command,
                                                             processes: processes, parents: parents)
@@ -66,8 +70,33 @@ final class PortsWatcher: ObservableObject {
                     self.reading = false
                     if found != self.byPane { self.byPane = found }
                     if services != self.services { self.services = services }
+                    if owners != self.listeners { self.listeners = owners }
                 }
             }
+        }
+    }
+
+    /// Stops what listens on `port`: asks it to quit, or with `force`
+    /// ends it at once. Only processes found under a pane's shell are ever
+    /// signalled, the ones whose port the sidebar shows.
+    func stop(port: Int, force: Bool = false) {
+        let owners = listeners[port] ?? []
+        guard !owners.isEmpty else {
+            ToastCenter.shared.info("Nothing is listening on :\(port) now")
+            read()
+            return
+        }
+        var refused: [String] = []
+        for owner in owners where Darwin.kill(pid_t(owner.pid), force ? SIGKILL : SIGTERM) != 0 && errno != ESRCH {
+            refused.append("\(owner.command) (\(owner.pid))")
+        }
+        if !refused.isEmpty {
+            ToastCenter.shared.fail(nil, "Couldn't stop :\(port)", detail: refused.joined(separator: ", ") + " didn't allow it.")
+        }
+        // Read again once it has had a moment to go, and later for one that
+        // takes its time shutting down.
+        for delay in [0.8, 3.0] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.read() }
         }
     }
 

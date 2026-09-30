@@ -867,6 +867,7 @@ extension AgentToolCall {
         case "Monitor": return "eye"
         case "Task", "Agent": return "tool.agent"
         case "Skill", "skill": return "sparkles"
+        case "Artifact", "ArtifactComments", "ArtifactData": return "safari"
         case "TodoWrite", "TaskCreate", "TaskUpdate": return "tool.todo"
         case "NotebookEdit", "NotebookRead": return "tool.notebook"
         default: return "tool.other"
