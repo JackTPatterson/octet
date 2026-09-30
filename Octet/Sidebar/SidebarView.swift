@@ -247,7 +247,8 @@ private struct WorkspaceCard: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 4) {
                         ForEach(ports, id: \.self) { port in
-                            PortButton(port: port, service: portsWatcher.services[port]) {
+                            PortButton(port: port, service: portsWatcher.services[port],
+                                       owners: portsWatcher.listeners[port] ?? []) {
                                 if let url = URL(string: "http://localhost:" + String(port)) { openURL(url) }
                             }
                         }
@@ -733,8 +734,18 @@ private struct PortButton: View {
     let port: Int
     /// What serves it, for its logo; a network glyph when unknown.
     let service: String?
+    /// What listens on it, for stopping from its menu.
+    let owners: [ListeningPorts.Listener]
     let action: () -> Void
     @State private var hovered = false
+
+    private var url: String { "http://localhost:" + String(port) }
+
+    /// "node (4312)", or the pids when several processes share it.
+    private var ownerName: String {
+        guard let first = owners.first else { return "server" }
+        return owners.count == 1 ? "\(first.command) (\(first.pid))" : "\(first.command) and \(owners.count - 1) more"
+    }
 
     var body: some View {
         Button(action: action) {
@@ -760,6 +771,18 @@ private struct PortButton: View {
         .buttonStyle(.plain)
         .onHover { hovered = $0 }
         .help("Open http://localhost:" + String(port) + (service.map { " (\(ServiceKind.name($0)))" } ?? ""))
+        .contextMenu {
+            Button("Open in Browser", action: action)
+            Button("Copy URL") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(url, forType: .string)
+            }
+            Divider()
+            Button("Stop \(ownerName)") { PortsWatcher.shared.stop(port: port) }
+                .disabled(owners.isEmpty)
+            Button("Force Quit \(ownerName)") { PortsWatcher.shared.stop(port: port, force: true) }
+                .disabled(owners.isEmpty)
+        }
     }
 }
 
