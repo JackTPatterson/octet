@@ -158,6 +158,24 @@ final class RuntimeIconTests: XCTestCase {
         XCTAssertEqual(id(m, ["npm run dev", "node /app/node_modules/.bin/vite"]), "vite")
     }
 
+    func testInstallingAPackageIsNotRunningIt() throws {
+        let m = try matcher()
+        XCTAssertEqual(id(m, ["node /opt/homebrew/bin/npm i -g vite"]), "npm")
+        XCTAssertEqual(id(m, ["npm install --save-dev jest webpack"]), "npm")
+        XCTAssertEqual(id(m, ["node /opt/homebrew/bin/pnpm add -D vitest"]), "pnpm")
+        XCTAssertEqual(id(m, ["yarn global add nodemon"]), "yarn")
+        XCTAssertEqual(id(m, ["bun add vite"]), "bun")
+        XCTAssertEqual(id(m, ["pip3.12 install gunicorn"]), "python")
+        XCTAssertEqual(id(m, ["python3 -m pip install uvicorn"]), "python")
+        XCTAssertEqual(id(m, ["uv pip install jupyter"]), "python")
+        XCTAssertEqual(id(m, ["cargo install bacon"]), "rust")
+        // Running, not installing, still shows what runs.
+        XCTAssertEqual(id(m, ["npx vite"]), "vite")
+        XCTAssertEqual(id(m, ["npm exec jest"]), "jest")
+        XCTAssertEqual(id(m, ["bundle exec rails server"]), "rails")
+        XCTAssertEqual(id(m, ["npm run dev", "node /app/node_modules/.bin/vite"]), "vite")
+    }
+
     func testEditorsAndAgentsHideTheirHelpers() throws {
         let m = try matcher()
         XCTAssertNil(id(m, ["nvim main.py", "node /x/pyright-langserver --stdio"]))

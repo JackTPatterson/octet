@@ -64,7 +64,9 @@ struct TabBarView: View {
                         }
                         NewTabButton(newTab: { window.newTab() },
                                      newConversation: { window.newConversation(engine: $0) },
-                                     newAgentTab: { window.newTab(running: $0) })
+                                     newAgentTab: { window.newTab(running: $0) },
+                                     newCloudTab: { window.newCloudTab($0, task: $1) },
+                                     teleport: { window.teleportCloudSession($0) })
                     }
                 }
                 .onChange(of: focusedId) { _, id in
@@ -390,9 +392,17 @@ private struct NewTabButton: View {
     let newTab: () -> Void
     let newConversation: (AgentSession.Engine) -> Void
     let newAgentTab: (DiscoveredAgent) -> Void
+    /// A cloud session for the agent, with the task typed for it.
+    let newCloudTab: (DiscoveredAgent, String?) -> Void
+    /// `claude --teleport`: a cloud session brought into this folder.
+    let teleport: (DiscoveredAgent) -> Void
     @ObservedObject private var discovery = AgentDiscoveryStore.shared
     @State private var hovered = false
     @State private var menuOpen = false
+    /// The agent whose Cloud button was pressed, while its task is typed.
+    @State private var cloudAgentId: String?
+    @State private var cloudTask = ""
+    @FocusState private var cloudTaskFocused: Bool
 
     var body: some View {
         HStack(spacing: 0) {
@@ -417,6 +427,12 @@ private struct NewTabButton: View {
             // A menu of Octet's own, so each agent is named by its mark
             // rather than by a word in a system font.
             .popover(isPresented: $menuOpen, arrowEdge: .bottom) { menu }
+            .onChange(of: menuOpen) { _, open in
+                if !open {
+                    cloudAgentId = nil
+                    cloudTask = ""
+                }
+            }
         }
         .background(hovered || menuOpen ? Theme.hover : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
@@ -434,15 +450,67 @@ private struct NewTabButton: View {
                 AgentMenuRow(
                     entry: entry,
                     chat: entry.engine.map { engine in { choose { newConversation(engine) } } },
-                    terminal: entry.agent.map { agent in { choose { newAgentTab(agent) } } }
+                    terminal: entry.agent.map { agent in { choose { newAgentTab(agent) } } },
+                    cloud: cloudAction(for: entry),
+                    cloudSelected: cloudAgentId == entry.id
                 )
+                if cloudAgentId == entry.id, let agent = entry.agent {
+                    cloudTaskField(agent)
+                }
+            }
+            if let claude = entries.first(where: { $0.id == "claude" })?.agent {
+                Rectangle().fill(Theme.divider).frame(height: 1).padding(.vertical, 4)
+                NewMenuRow(mark: .icon("cloud"), title: "Bring a Cloud Session Here") { choose { teleport(claude) } }
+                    .help("claude --teleport: pick one of your Claude Code cloud sessions to carry on in this folder")
             }
         }
         // Enough inset that a row's highlight clears the popover's own
         // rounded corner; any less and the corner clips it square.
         .padding(8)
-        .frame(width: 320)
+        .frame(width: 360)
         .background(Theme.chrome)
+    }
+
+    /// The Cloud button: asks for the task first when the agent takes one,
+    /// else opens the agent's own list of cloud tasks.
+    private func cloudAction(for entry: AgentMenuEntry) -> (() -> Void)? {
+        guard let agent = entry.agent, let start = CloudAgents.start(for: entry.id) else { return nil }
+        switch start {
+        case .withTask:
+            return {
+                cloudAgentId = cloudAgentId == entry.id ? nil : entry.id
+                cloudTask = ""
+                if cloudAgentId != nil {
+                    DispatchQueue.main.async { cloudTaskFocused = true }
+                }
+            }
+        case .browser:
+            return { choose { newCloudTab(agent, nil) } }
+        }
+    }
+
+    /// Where the task for a cloud session is typed, under the agent's row.
+    private func cloudTaskField(_ agent: DiscoveredAgent) -> some View {
+        HStack(spacing: 6) {
+            OctetIcon("cloud", size: 12).foregroundStyle(Theme.textTertiary)
+            TextField("What should it do in the cloud?", text: $cloudTask)
+                .textFieldStyle(.plain)
+                .font(Theme.uiFont)
+                .focused($cloudTaskFocused)
+                .onSubmit {
+                    let task = cloudTask
+                    guard !task.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+                    choose { newCloudTab(agent, task) }
+                }
+            Keycap(text: "↩")
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 30)
+        .background(RoundedRectangle(cornerRadius: Theme.rowRadius).fill(Theme.terminalBackground.opacity(0.6)))
+        .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius).strokeBorder(Theme.accent.opacity(0.5), lineWidth: 1))
+        .padding(.leading, 24)
+        .padding(.vertical, 2)
+        .help("Starts a cloud session with this task, streamed into a new tab (claude --cloud)")
     }
 
     /// Native conversation agents first, then every
@@ -482,6 +550,10 @@ private struct AgentMenuRow: View {
     let entry: AgentMenuEntry
     let chat: (() -> Void)?
     let terminal: (() -> Void)?
+    /// Runs the agent in its vendor's cloud, when it can.
+    var cloud: (() -> Void)?
+    /// Its task field is open.
+    var cloudSelected = false
     @State private var hovered = false
 
     var body: some View {
@@ -505,6 +577,13 @@ private struct AgentMenuRow: View {
                 OpenChip(icon: "terminal", title: "Terminal",
                          help: "New tab running \(entry.name)", action: terminal)
             }
+            if let cloud {
+                OpenChip(icon: "cloud", title: "Cloud",
+                         help: entry.id == "claude"
+                            ? "New Claude Code cloud session, streamed into a tab"
+                            : "Open \(entry.name)'s cloud tasks in a tab",
+                         selected: cloudSelected, action: cloud)
+            }
         }
         .padding(.leading, 8)
         .padding(.trailing, 4)
@@ -524,22 +603,25 @@ private struct OpenChip: View {
     let icon: String
     let title: String
     let help: String
+    /// Pressed and waiting on something, like the Cloud button's task.
+    var selected = false
     let action: () -> Void
     @State private var hovered = false
 
     var body: some View {
+        let lit = hovered || selected
         Button(action: action) {
             HStack(spacing: 4) {
                 OctetIcon(icon, size: 11)
                 Text(title).font(Theme.uiFont)
             }
-            .foregroundStyle(hovered ? Theme.textPrimary : Theme.textSecondary)
+            .foregroundStyle(lit ? Theme.textPrimary : Theme.textSecondary)
             .padding(.horizontal, 7)
             .frame(height: 22)
             .background(RoundedRectangle(cornerRadius: Theme.rowRadius)
-                .fill(hovered ? Theme.accent.opacity(0.22) : Theme.terminalBackground.opacity(0.6)))
+                .fill(lit ? Theme.accent.opacity(0.22) : Theme.terminalBackground.opacity(0.6)))
             .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius)
-                .strokeBorder(hovered ? Theme.accent.opacity(0.6) : Theme.border, lineWidth: 1))
+                .strokeBorder(lit ? Theme.accent.opacity(0.6) : Theme.border, lineWidth: 1))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

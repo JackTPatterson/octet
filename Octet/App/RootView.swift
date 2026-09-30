@@ -57,7 +57,11 @@ struct RootView: View {
                         _ = palette.activate(item)
                     } else {
                         ui.paletteVisible = false
-                        ToastCenter.shared.info("Nothing to broadcast to", detail: "Start an agent, or split the tab into panes.")
+                        if start.first?.hasPrefix("action.broadcast") == true {
+                            ToastCenter.shared.info("Nothing to broadcast to", detail: "Start an agent, or split the tab into panes.")
+                        } else {
+                            ToastCenter.shared.info("That isn't available here")
+                        }
                     }
                 }
             } else {
@@ -742,6 +746,10 @@ struct RootView: View {
                     },
                     .init(title: "New Codex Conversation", agent: "codex") {
                         window.newConversation(engine: .codex, replacingStarterTab: window.displayedFocusedTabId)
+                    },
+                    .init(title: "New Claude Cloud Session", agent: "claude") {
+                        ui.paletteStart = [PaletteCatalog.claudeCloudItemId]
+                        ui.paletteVisible = true
                     },
                     .init(title: "New Pi Conversation", agent: "pi") {
                         window.newConversation(engine: .pi, replacingStarterTab: window.displayedFocusedTabId)

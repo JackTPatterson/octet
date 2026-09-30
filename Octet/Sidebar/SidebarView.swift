@@ -235,9 +235,31 @@ private struct WorkspaceCard: View {
     @StateObject private var peek = HoverIntent()
     @ObservedObject private var conversations = AgentCenter.shared
     @ObservedObject private var portsWatcher = PortsWatcher.shared
+    @ObservedObject private var motion = MotionPreferences.shared
     @Environment(\.openURL) private var openURL
 
     var body: some View {
+        // Servers running here, e.g. each worktree's dev server.
+        let ports = portsWatcher.ports(inWorkspace: workspace.workspaceId, snapshot: store.snapshot)
+        VStack(spacing: 4) {
+            card
+            if !ports.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 4) {
+                        ForEach(ports, id: \.self) { port in
+                            PortButton(port: port) {
+                                if let url = URL(string: "http://localhost:" + String(port)) { openURL(url) }
+                            }
+                        }
+                    }
+                }
+                .transition(motion.animates(.sidebar) ? .opacity : .identity)
+            }
+        }
+        .animation(motion.animation(.sidebar), value: ports)
+    }
+
+    @ViewBuilder private var card: some View {
         let snapshot = store.snapshot
         let isSelected = workspace.workspaceId == window.focusedWorkspace?.workspaceId
         // Open in another window: a click brings that window forward.
@@ -273,6 +295,10 @@ private struct WorkspaceCard: View {
                         .foregroundStyle(Theme.textPrimary)
                         .lineLimit(1)
                 }
+                let agentCount = session == nil ? agents.count : 1
+                if !renaming, agentCount > 1 {
+                    AgentCountBadge(count: agentCount)
+                }
                 if store.isPinned(workspace.workspaceId) {
                     OctetIcon("pin.fill", size: 11)
                         .foregroundStyle(Theme.textTertiary)
@@ -285,9 +311,13 @@ private struct WorkspaceCard: View {
                         .help("Open in another window. Click to bring it forward.")
                         .accessibilityLabel("Open in another window")
                 }
-                if hovered && !renaming {
-                    WorkspaceCloseButton { store.closeWorkspace(workspace.workspaceId) }
-                }
+                // Always laid out, only shown on hover: appearing would make
+                // the line taller and push the name aside.
+                let showsClose = hovered && !renaming
+                WorkspaceCloseButton { store.closeWorkspace(workspace.workspaceId) }
+                    .opacity(showsClose ? 1 : 0)
+                    .allowsHitTesting(showsClose)
+                    .accessibilityHidden(!showsClose)
             }
             // Always shown: the folder is what decides the card's group.
             if let directory {
@@ -311,8 +341,7 @@ private struct WorkspaceCard: View {
             HStack(spacing: 5) {
                 if let brand {
                     AgentLogo(brand: brand, size: 11)
-                    Text(agentLine(status: status, brand: brand,
-                                   count: session == nil ? agents.count : 1))
+                    Text(agentLine(status: status, brand: brand))
                         .font(Theme.uiFont)
                         .foregroundStyle(Theme.textSecondary)
                         .lineLimit(1)
@@ -328,26 +357,6 @@ private struct WorkspaceCard: View {
                     Text("\(workspace.tabCount) tabs")
                         .font(Theme.uiFont)
                         .foregroundStyle(Theme.textTertiary)
-                }
-            }
-            // Servers running here, e.g. each worktree's dev server.
-            let ports = portsWatcher.ports(inWorkspace: workspace.workspaceId, snapshot: store.snapshot)
-            if !ports.isEmpty {
-                HStack(spacing: 4) {
-                    Image(systemName: "network").font(.system(size: 9.5, weight: .medium))
-                        .foregroundStyle(Theme.textTertiary)
-                    ForEach(ports.prefix(4), id: \.self) { port in
-                        Button(":" + String(port)) {
-                            if let url = URL(string: "http://localhost:" + String(port)) { openURL(url) }
-                        }
-                        .buttonStyle(.plain)
-                        .font(Theme.monoFont)
-                        .foregroundStyle(Theme.textSecondary)
-                        .help("Open http://localhost:" + String(port))
-                    }
-                    if ports.count > 4 {
-                        Text("+\(ports.count - 4)").font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
-                    }
                 }
             }
             // Subagents that left for a worktree, repo or folder of their own.
@@ -417,10 +426,8 @@ private struct WorkspaceCard: View {
         return session.conversation.isRunning ? .working : .idle
     }
 
-    private func agentLine(status: EngineAgentStatus, brand: AgentBrand, count: Int) -> String {
-        let status = stateLabel(status)
-        let extra = count > 1 ? " · \(count) agents" : ""
-        return "\(brand.displayName) \(status)\(extra)"
+    private func agentLine(status: EngineAgentStatus, brand: AgentBrand) -> String {
+        "\(brand.displayName) \(stateLabel(status))"
     }
 }
 
@@ -508,6 +515,15 @@ struct WorkspaceOrganizeMenu: View {
             }
         } else {
             Button("Move to Idle") { store.markIdle(id) }
+        }
+        if AgentDiscoveryStore.shared.agents.contains(where: { $0.id == "claude" && $0.executablePath != nil }) {
+            Button("New Cloud Session Here…") {
+                // In the window showing it, which the session will open in.
+                let target = WindowRegistry.shared.window(showing: id) ?? window
+                target.focusWorkspace(id)
+                target.ui.paletteStart = [PaletteCatalog.claudeCloudItemId]
+                target.ui.paletteVisible = true
+            }
         }
         Divider()
         if let other = WindowRegistry.shared.window(showing: id), other !== window {
@@ -667,6 +683,53 @@ private struct IdleRow: View {
         }
         .contextMenu { WorkspaceOrganizeMenu(store: store, workspace: workspace) { renaming = true } }
         .help("\(workspace.label) · last used \(WorkspaceActivity.ageLabel(since: store.activity.lastActive(workspace.workspaceId))) ago")
+    }
+}
+
+/// How many agents a workspace has, as a small pill beside its name.
+private struct AgentCountBadge: View {
+    let count: Int
+
+    var body: some View {
+        Text("\(count)")
+            .font(Theme.captionFont.monospacedDigit())
+            .foregroundStyle(Theme.textSecondary)
+            .padding(.horizontal, 5)
+            .frame(minWidth: 16, minHeight: 15)
+            .background(Capsule().fill(Theme.cardSelected))
+            .overlay(Capsule().strokeBorder(Theme.border, lineWidth: 1))
+            .help("\(count) agents in this workspace")
+            .accessibilityLabel("\(count) agents")
+    }
+}
+
+/// A port a workspace's servers listen on, in the row under its card: a
+/// little taller than the branch chip below, so it's easy to hit on purpose.
+private struct PortButton: View {
+    let port: Int
+    let action: () -> Void
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: "network").font(.system(size: 9.5, weight: .medium))
+                    .foregroundStyle(Theme.textTertiary)
+                Text(":" + String(port))
+                    .font(Theme.monoFont)
+                    .foregroundStyle(hovered ? Theme.textPrimary : Theme.textSecondary)
+            }
+            .padding(.horizontal, 9)
+            .frame(height: 25)
+            .background(hovered ? Theme.hover : Theme.card.opacity(0.75))
+            .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius)
+                .strokeBorder(Theme.border.opacity(hovered ? 1 : 0.5), lineWidth: 1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
+        .help("Open http://localhost:" + String(port))
     }
 }
 

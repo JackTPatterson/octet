@@ -51,18 +51,59 @@ enum PaletteCatalog {
     /// already running it. The terminal is agent-agnostic, so this works for
     /// agents Octet has no driver for.
     static func discoveredAgents(window: WindowContext) -> [PaletteItem] {
-        AgentDiscoveryStore.shared.agents.compactMap { agent in
-            guard agent.executablePath != nil else { return nil }
+        AgentDiscoveryStore.shared.agents.flatMap { agent -> [PaletteItem] in
+            guard agent.executablePath != nil else { return [] }
             let brand = AgentBrand.forAgent(agent.id)
-            return PaletteItem(
+            let icon: PaletteItem.Icon = brand.map { .agent($0) } ?? .symbol("terminal")
+            let tab = PaletteItem(
                 id: "agent.tab.\(agent.id)",
                 kind: .action,
                 title: "New \(agent.displayName) Tab",
                 subtitle: agent.version ?? agent.command,
                 keywords: ["run", "terminal", "agent", agent.command],
-                icon: brand.map { .agent($0) } ?? .symbol("terminal"),
+                icon: icon,
                 effect: .run { window.newTab(running: agent) }
             )
+            return [tab] + cloudItems(agent, icon: icon, window: window)
+        }
+    }
+
+    /// The agent run in its vendor's cloud, streamed into a tab: a new
+    /// session (asking for its task), and for Claude a session brought here.
+    static let claudeCloudItemId = "agent.cloud.claude"
+
+    private static func cloudItems(_ agent: DiscoveredAgent, icon: PaletteItem.Icon, window: WindowContext) -> [PaletteItem] {
+        let keywords = ["cloud", "remote", "web", "background", "async", agent.command]
+        switch CloudAgents.start(for: agent.id) {
+        case .withTask:
+            return [
+                PaletteItem(
+                    id: "agent.cloud.\(agent.id)", kind: .action,
+                    title: "New \(agent.displayName) Cloud Session…",
+                    subtitle: "Runs in the cloud, streamed into a new tab",
+                    keywords: keywords + ["claude.ai", "task"], icon: icon,
+                    effect: .prompt(title: "\(agent.displayName) cloud session", placeholder: "What should it do?", initial: "") { task in
+                        window.newCloudTab(agent, task: task)
+                    }
+                ),
+                PaletteItem(
+                    id: "agent.teleport.\(agent.id)", kind: .action,
+                    title: "Bring a \(agent.displayName) Cloud Session Here",
+                    subtitle: "Pick one of your cloud sessions to carry on in this folder",
+                    keywords: keywords + ["teleport", "pull", "local", "continue", "resume"], icon: icon,
+                    effect: .run { window.teleportCloudSession(agent) }
+                ),
+            ]
+        case .browser:
+            return [PaletteItem(
+                id: "agent.cloud.\(agent.id)", kind: .action,
+                title: "Open \(agent.displayName) Cloud Tasks",
+                subtitle: "Start, follow and apply its cloud tasks in a new tab",
+                keywords: keywords + ["tasks", "apply"], icon: icon,
+                effect: .run { window.newCloudTab(agent, task: nil) }
+            )]
+        case nil:
+            return []
         }
     }
 
@@ -113,6 +154,8 @@ enum PaletteCatalog {
             action("focusUp", "Focus Pane Up", "arrow.up", shortcut: "⌘⌥↑") { window.focusPane(.up) },
             action("focusDown", "Focus Pane Down", "arrow.down", shortcut: "⌘⌥↓") { window.focusPane(.down) },
             action("toggleSidebar", "Toggle Sidebar", "sidebar.left", shortcut: "⌘B") { ui.sidebarVisible.toggle() },
+            action("todos", "Show Todos", "tool.todo.done",
+                   keywords: ["todo", "todos", "TODO.md", "tasks", "plan", "checklist", "project"]) { ui.todoPanelVisible.toggle() },
             action("reloadConfig", "Reload Terminal Config", "arrow.clockwise", keywords: ["settings"]) { store.reloadSessionConfig() },
             action("installHook", "Install Subagent Tabs Hook", "sparkles",
                    keywords: ["claude", "codex", "agent", "setup"]) { SubagentHookMenu.install() },

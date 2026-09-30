@@ -60,7 +60,24 @@ final class StatusBarModel: ObservableObject {
     private var ciFailedJobs: [Int: [String]] = [:]
     /// When each plugin chip last ran, keyed by its id and where it ran.
     private var pluginRanAt: [String: Date] = [:]
+    /// Chip runs in flight, by id and folder: one still running for a folder
+    /// left behind doesn't hold up the same chip for the folder in front.
     private var pluginRunning: Set<String> = []
+
+    /// What the bar last showed for each folder (and SSH host), so coming
+    /// back to a tab shows its chips at once while they refresh behind.
+    private struct Remembered {
+        var repo: Repo?
+        var runtime: ProjectRuntime?
+        var version: String?
+        var pluginOutputs: [String: StatusItemOutput]
+    }
+    private var remembered: [String: Remembered] = [:]
+    /// Oldest first, to keep `remembered` to `rememberLimit` folders.
+    private var rememberedOrder: [String] = []
+    private static let rememberLimit = 40
+    /// Each pane's last finished command, shown again on returning to it.
+    private var lastCommands: [String: PromptMark] = [:]
 
     /// Versions by runtime and repo root. A version manager can pick a
     /// different one per project, so a root is the smallest safe key.
@@ -70,20 +87,23 @@ final class StatusBarModel: ObservableObject {
     func show(pane: String?, directory: String?, ssh: SSHTarget?, client: EngineClient) {
         let paneChanged = pane != self.pane
         guard paneChanged || directory != self.directory || ssh != self.ssh else { return }
+        // Kept under where it was shown, before any of that changes.
+        rememberCurrent()
         self.pane = pane
         self.ssh = ssh
         self.client = client
         if paneChanged {
             shellPid = nil
-            lastCommand = nil
+            lastCommand = pane.flatMap { lastCommands[$0] }
             if let pane { lookUpShell(pane, client: client) }
             refreshLastCommand()
         }
         if directory != self.directory {
             self.directory = directory
-            pluginOutputs = [:]
+            let restored = directory.flatMap { remembered[Self.rememberKey($0, ssh)] }
+            pluginOutputs = restored?.pluginOutputs ?? [:]
             pluginRanAt = [:]
-            loadRepo()
+            loadRepo(restoring: restored)
         } else {
             // Over SSH or back: remote chips run, local ones stop.
             pluginRanAt = [:]
@@ -94,6 +114,19 @@ final class StatusBarModel: ObservableObject {
                 MainActor.assumeIsolated { self?.tick() }
             }
         }
+    }
+
+    private static func rememberKey(_ directory: String, _ ssh: SSHTarget?) -> String {
+        (ssh?.display ?? "") + "\u{0}" + directory
+    }
+
+    private func rememberCurrent() {
+        guard let directory else { return }
+        let key = Self.rememberKey(directory, ssh)
+        remembered[key] = Remembered(repo: repo, runtime: runtime, version: version, pluginOutputs: pluginOutputs)
+        rememberedOrder.removeAll { $0 == key }
+        rememberedOrder.append(key)
+        if rememberedOrder.count > Self.rememberLimit { remembered[rememberedOrder.removeFirst()] = nil }
     }
 
     /// Re-runs plugin chips now, as after Settings turns one on.
@@ -123,6 +156,9 @@ final class StatusBarModel: ObservableObject {
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.pane == pane else { return }
                 let last = marks?.lastFinished
+                // Panes come and go; a closed one's entry isn't worth keeping.
+                if self.lastCommands.count > 200 { self.lastCommands = [:] }
+                self.lastCommands[pane] = last
                 if last != self.lastCommand { self.lastCommand = last }
             }
         }
@@ -192,7 +228,10 @@ final class StatusBarModel: ObservableObject {
 
     // MARK: - Repository
 
-    private func loadRepo() {
+    /// Reads the folder's repository. What it showed last time, when there
+    /// was a last time, stays up until each part has been read again: the
+    /// pull request and CI come from `gh`, which takes seconds.
+    private func loadRepo(restoring restored: Remembered? = nil) {
         guard let directory, let location = GitBranch.location(for: directory) else {
             repo = nil
             runtime = nil
@@ -202,7 +241,11 @@ final class StatusBarModel: ObservableObject {
         let detected = ProjectRuntime.detect(from: directory, root: location.root)
         runtime = detected
         version = detected.flatMap { Self.versions[Self.key($0, location.root)] }
-        repo = Repo(root: location.root, gitDir: location.gitDir, linkedWorktree: location.isLinkedWorktree)
+        if let cached = restored?.repo, cached.root == location.root, cached.gitDir == location.gitDir {
+            repo = cached
+        } else {
+            repo = Repo(root: location.root, gitDir: location.gitDir, linkedWorktree: location.isLinkedWorktree)
+        }
         pullRequestBranch = nil
         ciBranch = nil
         refreshGit()
@@ -444,7 +487,8 @@ final class StatusBarModel: ObservableObject {
     }
 
     private func run(_ id: String, _ item: OctetPluginManifest.StatusItemContribution, of plugin: OctetPlugin, in directory: String) {
-        guard pluginRunning.insert(id).inserted else { return }
+        let running = id + "\u{0}" + directory
+        guard pluginRunning.insert(running).inserted else { return }
         pluginRanAt[id] = Date()
         var environment = [
             "OCTET_PLUGIN_DIR": plugin.directory,
@@ -460,7 +504,7 @@ final class StatusBarModel: ObservableObject {
         let pane = self.pane
         StatusCommand.run(item.run, in: directory, environment: environment, timeout: timeout) { [weak self] output in
             guard let self else { return }
-            self.pluginRunning.remove(id)
+            self.pluginRunning.remove(running)
             guard self.pane == pane, self.directory == directory else { return }
             let parsed = StatusItemOutput.parse(output)
             if self.pluginOutputs[id] != parsed { self.pluginOutputs[id] = parsed }
