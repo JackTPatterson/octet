@@ -45,21 +45,27 @@ enum ListeningPorts {
     /// Ports by pane: a listener belongs to the pane whose shell it descends
     /// from. Sorted, without repeats.
     static func byPane(_ listeners: [Listener], parents: [Int: Int], shells: [String: Int]) -> [String: [Int]] {
-        let paneOfShell = Dictionary(shells.map { ($0.value, $0.key) }, uniquingKeysWith: { first, _ in first })
         var result: [String: Set<Int>] = [:]
-        for listener in listeners {
+        for (listener, pane) in owned(listeners, parents: parents, shells: shells) {
+            result[pane, default: []].insert(listener.port)
+        }
+        return result.mapValues { $0.sorted() }
+    }
+
+    /// The listeners that descend from a pane's shell, with that pane. Only
+    /// these are ever stopped from the sidebar.
+    static func owned(_ listeners: [Listener], parents: [Int: Int], shells: [String: Int]) -> [(Listener, String)] {
+        let paneOfShell = Dictionary(shells.map { ($0.value, $0.key) }, uniquingKeysWith: { first, _ in first })
+        return listeners.compactMap { listener in
             var pid = listener.pid
             var steps = 0
             while pid > 1, steps < 64 {
-                if let pane = paneOfShell[pid] {
-                    result[pane, default: []].insert(listener.port)
-                    break
-                }
-                guard let parent = parents[pid], parent != pid else { break }
+                if let pane = paneOfShell[pid] { return (listener, pane) }
+                guard let parent = parents[pid], parent != pid else { return nil }
                 pid = parent
                 steps += 1
             }
+            return nil
         }
-        return result.mapValues { $0.sorted() }
     }
 }

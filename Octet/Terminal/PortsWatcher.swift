@@ -59,8 +59,8 @@ final class PortsWatcher: ObservableObject {
             let processes = ServiceKind.parseArguments(table)
             let found = ListeningPorts.byPane(listeners, parents: parents, shells: shells)
             var services: [Int: String] = [:]
-            let shown = Set(found.values.joined())
-            let owners = Dictionary(grouping: listeners.filter { shown.contains($0.port) }, by: \.port)
+            let owners = Dictionary(grouping: ListeningPorts.owned(listeners, parents: parents, shells: shells).map(\.0),
+                                    by: \.port)
             for listener in listeners where services[listener.port] == nil {
                 services[listener.port] = ServiceKind.detect(pid: listener.pid, command: listener.command,
                                                             processes: processes, parents: parents)
