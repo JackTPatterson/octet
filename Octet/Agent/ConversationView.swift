@@ -1026,6 +1026,47 @@ private struct ErrorNotice: View {
     }
 }
 
+/// A published artifact: its title and description, and buttons to open
+/// the page, copy its link, or preview the local file it came from.
+private struct ArtifactPanel: View {
+    let artifact: ArtifactCall
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let title = artifact.title {
+                Text(title).font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary)
+            }
+            if let detail = artifact.detail {
+                Text(detail).font(Theme.uiFont).foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let url = artifact.url {
+                Text(url.absoluteString)
+                    .font(Theme.monoFont).foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1).truncationMode(.middle)
+                    .textSelection(.enabled)
+            }
+            HStack(spacing: 6) {
+                if let url = artifact.url {
+                    OctetButton(title: "Open", icon: "safari", kind: .primary, compact: true) {
+                        NSWorkspace.shared.open(url)
+                    }
+                    OctetButton(title: "Copy Link", kind: .secondary, compact: true) {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(url.absoluteString, forType: .string)
+                        ToastCenter.shared.info("Copied the artifact's link")
+                    }
+                }
+                if let path = artifact.filePath, FileManager.default.fileExists(atPath: path) {
+                    OctetButton(title: "Preview File", kind: .ghost, compact: true) {
+                        NSWorkspace.shared.open(URL(fileURLWithPath: path))
+                    }
+                }
+            }
+        }
+    }
+}
+
 private struct ToolCard: View {
     let call: AgentToolCall
     let running: Bool
@@ -1035,12 +1076,19 @@ private struct ToolCard: View {
         let diff = call.diff
         // Edits show their diff straight away; other calls stay one line.
         let todos = call.todos
-        let subtitle = todos.map { list in "\(list.filter { $0.state == .completed }.count) of \(list.count) done" } ?? call.summary
+        let artifact = call.artifact
+        let subtitle = todos.map { list in "\(list.filter { $0.state == .completed }.count) of \(list.count) done" }
+            ?? artifact?.summary ?? call.summary
         Disclosure(title: call.displayName, subtitle: subtitle, tint: call.isError ? Theme.danger : Theme.textSecondary,
-                   icon: call.iconName, logo: LanguageLogo(path: call.filePath),
+                   icon: call.iconName, logo: artifact == nil ? LanguageLogo(path: call.filePath) : nil,
                    highlightsShell: call.name.caseInsensitiveCompare("Monitor") == .orderedSame,
-                   initiallyOpen: diff != nil || todos != nil || !call.resultImages.isEmpty, trailing: { status(diff) }) {
+                   initiallyOpen: diff != nil || todos != nil || !call.resultImages.isEmpty
+                       || (artifact?.url != nil && !call.isError),
+                   trailing: { status(diff) }) {
             VStack(alignment: .leading, spacing: 8) {
+                if let artifact, !call.isError, artifact.url != nil || artifact.filePath != nil {
+                    ArtifactPanel(artifact: artifact)
+                }
                 if let todos {
                     TodoList(todos: todos)
                 } else if let diff {
