@@ -54,6 +54,8 @@ struct OctetIcon: View {
         "tool.todo.active": .init("timer-start"),
         "pencil": .init("edit"),
         "safari": .init("global"),
+        // iconsax's "cloud" isn't imported yet; the globe stands in.
+        "cloud": .init("global"),
         "remote": .init("global"),
         "xmark.rectangle": .init("close-square"),
         "xmark.square": .init("close-square"),
