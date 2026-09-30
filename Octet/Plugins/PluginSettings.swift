@@ -40,5 +40,8 @@ struct PluginSettings: View {
         if settings.values.peersEnabled {
             PeersSettingsGroup(settings: settings)
         }
+        if settings.values.delegationEnabled {
+            DelegationSettingsGroup(settings: settings)
+        }
     }
 }

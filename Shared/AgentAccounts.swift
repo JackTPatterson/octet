@@ -89,7 +89,7 @@ struct AgentAccount: Codable, Equatable {
 
     let agent: String
     var kind: Kind
-    /// "Max", "Pro", "ChatGPT", … for subscriptions.
+    /// "Max", "Pro", … for Claude subscriptions; Codex's is always "Codex".
     var plan: String?
     var windows: [UsageWindow] = []
     /// When the windows were last reported.
@@ -129,11 +129,20 @@ extension AgentAccounts {
     /// window that triggered it; taken alone it would erase, say, a weekly
     /// window at 94% and leave a session window at 34% on show.
     static func mergeWindows(newer: [UsageWindow], older: [UsageWindow], now: Date = Date()) -> [UsageWindow] {
-        let named = Set(newer.map(\.name))
+        // A window in the newer reading that has since reset says nothing
+        // about the one running now, so it can't displace an older reading
+        // that already describes the new one.
+        // (Kept otherwise, so the card can still say when the window reset.)
+        let running = { (window: UsageWindow) in window.resetsAt.map { $0 > now } ?? false }
+        let current = newer.filter { window in
+            window.resetsAt.map { $0 > now } ?? true
+                || !older.contains { $0.name == window.name && running($0) }
+        }
+        let named = Set(current.map(\.name))
         // A window without a reset time can't vouch for itself once a newer
         // reading has replaced the one that carried it.
-        let kept = older.filter { !named.contains($0.name) && ($0.resetsAt.map { $0 > now } ?? false) }
-        return (newer + kept).sorted { order($0.name) < order($1.name) }
+        let kept = older.filter { !named.contains($0.name) && running($0) }
+        return (current + kept).sorted { order($0.name) < order($1.name) }
     }
 }
 
@@ -156,11 +165,12 @@ enum AgentAccounts {
     }
 
     /// `codex login status` prints a sentence: "Logged in using ChatGPT" or
-    /// "Logged in using an API key".
+    /// "Logged in using an API key". A ChatGPT sign-in is shown as Codex: it
+    /// is Codex's allowance, whatever account pays for it.
     static func codex(loginStatus text: String) -> AgentAccount {
         let lower = text.lowercased()
         if lower.contains("not logged in") { return AgentAccount(agent: "codex", kind: .signedOut) }
-        if lower.contains("chatgpt") { return AgentAccount(agent: "codex", kind: .subscription, plan: "ChatGPT") }
+        if lower.contains("chatgpt") { return AgentAccount(agent: "codex", kind: .subscription, plan: "Codex") }
         if lower.contains("api key") { return AgentAccount(agent: "codex", kind: .apiKey) }
         return AgentAccount(agent: "codex", kind: .unknown)
     }
@@ -176,8 +186,18 @@ enum AgentAccounts {
             }
             .sorted { order($0.name) < order($1.name) }
         }
-        // Older CLIs report only the window that triggered the event.
-        guard let type = info["rateLimitType"] as? String, let used = info["utilization"] as? Double else { return [] }
+        // Otherwise the event describes one window. Claude Code includes its
+        // utilization only once a warning threshold is crossed; a rejected
+        // request means that window is spent, whether or not it says so.
+        guard let type = info["rateLimitType"] as? String, type != "overage" else { return [] }
+        let used: Double
+        if let utilization = info["utilization"] as? Double {
+            used = utilization
+        } else if info["status"] as? String == "rejected" {
+            used = 1
+        } else {
+            return []
+        }
         return [UsageWindow(name: name(claudeWindow: type), used: used,
                             resetsAt: (info["resetsAt"] as? Double).map(Date.init(timeIntervalSince1970:)))]
     }

@@ -2,9 +2,10 @@ import AppKit
 
 /// How Claude and Codex are signed in, and how much of a subscription's
 /// allowance is used. Subscriptions show allowance; API-key accounts show
-/// cost. How each is signed in is checked every few minutes through its CLI;
-/// Claude's allowance is read every minute, when Octet comes forward, and
-/// when its chip is hovered, and live from conversations' rate-limit events.
+/// cost. How each is signed in is checked every few minutes through its CLI.
+/// Both allowances are read every minute or two, when Octet comes forward,
+/// when a chip is hovered and when a conversation's turn ends, and live from
+/// conversations' rate-limit events.
 @MainActor
 final class AccountStore: ObservableObject {
     static let shared = AccountStore()
@@ -19,11 +20,14 @@ final class AccountStore: ObservableObject {
     private var lastRefresh = Date.distantPast
     private var lastSignInCheck = Date.distantPast
     private var lastAccountAsk = Date.distantPast
+    private var lastCodexRead = Date.distantPast
     /// How often each part runs: the sign-in checks start a login shell each;
     /// the cache read is a file; the account is one request.
     private static let tick: TimeInterval = 60
     private static let signInEvery: TimeInterval = 300
     private static let askAccountEvery: TimeInterval = 120
+    /// Each read starts `codex app-server`, so not on every tick.
+    private static let codexEvery: TimeInterval = 120
     private static let savedKey = "octet.accounts.v1"
     private static let historyKey = "octet.accounts.history.v1"
 
@@ -31,6 +35,8 @@ final class AccountStore: ObservableObject {
         if let data = UserDefaults.standard.data(forKey: Self.savedKey),
            let saved = try? JSONDecoder().decode([String: AgentAccount].self, from: data) {
             accounts = saved
+            // Saved before Codex was always labelled Codex.
+            if accounts["codex"]?.plan == "ChatGPT" { accounts["codex"]?.plan = "Codex" }
         }
         if let data = UserDefaults.standard.data(forKey: Self.historyKey),
            let saved = try? JSONDecoder().decode([String: [UsageHistorySample]].self, from: data) {
@@ -80,11 +86,14 @@ final class AccountStore: ObservableObject {
         // Read here, on the main actor, and handed to the background work.
         let askAccount = SettingsStore.shared.values.readClaudeAccountUsage
             && (force || now.timeIntervalSince(lastAccountAsk) >= (eager ? 30 : Self.askAccountEvery))
+        let readCodex = checkSignIn || now.timeIntervalSince(lastCodexRead) >= (eager ? 30 : Self.codexEvery)
         let knownClaude = accounts["claude"]
+        let knownCodex = accounts["codex"]
         refreshing = true
         lastRefresh = now
         if checkSignIn { lastSignInCheck = now }
         if askAccount { lastAccountAsk = now }
+        if readCodex { lastCodexRead = now }
         DispatchQueue.global(qos: .utility).async {
             var found: [AgentAccount] = []
             var refusal: String?
@@ -116,14 +125,20 @@ final class AccountStore: ObservableObject {
                 claude = account
             }
             if let claude { found.append(claude) }
+            // Codex the same way: how it signs in every few minutes, its
+            // allowance more often, from the account itself.
+            var codex: AgentAccount?
             if checkSignIn, let output = Self.run("codex login status") {
-                var codex = AgentAccounts.codex(loginStatus: output)
-                if codex.kind == .subscription, let (windows, at) = CodexUsage.windows() {
-                    codex.windows = windows
-                    codex.updatedAt = at
-                }
-                found.append(codex)
+                codex = AgentAccounts.codex(loginStatus: output)
+            } else if readCodex, let knownCodex {
+                codex = AgentAccount(agent: "codex", kind: knownCodex.kind, plan: knownCodex.plan)
             }
+            if var account = codex, account.kind == .subscription, readCodex, let (windows, at) = CodexUsage.windows() {
+                account.windows = windows
+                account.updatedAt = at
+                codex = account
+            }
+            if let codex { found.append(codex) }
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     let store = AccountStore.shared

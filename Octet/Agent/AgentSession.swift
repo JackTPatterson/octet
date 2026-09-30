@@ -1901,6 +1901,9 @@ final class AgentSession: ObservableObject, Identifiable {
                 if event["type"] as? String == "rate_limit_event", !conversation.usageWindows.isEmpty {
                     AccountStore.shared.updateClaudeWindows(conversation.usageWindows)
                 }
+                // The stream reports a window's use only past a warning
+                // threshold, so a finished turn is the moment to read again.
+                if event["type"] as? String == "result" { AccountStore.shared.refreshSoon() }
             case .codex:
                 receiveCodex(event)
             case .opencode:
@@ -2134,6 +2137,7 @@ final class AgentSession: ObservableObject, Identifiable {
         if method == "account/rateLimits/updated", !conversation.usageWindows.isEmpty {
             AccountStore.shared.updateCodexWindows(conversation.usageWindows)
         }
+        if method == "turn/completed" { AccountStore.shared.refreshSoon() }
     }
 
     private func receiveCodexAnswer(_ kind: CodexCall, _ message: [String: Any]) {

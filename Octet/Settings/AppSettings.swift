@@ -92,6 +92,10 @@ struct OctetSettings: Codable, Equatable {
     /// Settings › Other Macs: pair with Octets on the network so agents on
     /// each can message the other's and hand them tasks. Off by default.
     var peersEnabled = false
+    /// Agent Delegation: agents here can ask each other to review or work.
+    var delegationEnabled = false
+    /// When to ask before a delegation starts: `DelegationCenter.Approval`.
+    var delegationApproval = "reviews"
     /// What other Macs call this one; empty is the computer's name.
     var peerName = ""
     var offerRecovery = true
@@ -326,6 +330,8 @@ struct OctetSettings: Codable, Equatable {
         paneHistory = value("paneHistory", defaults.paneHistory)
         readClaudeAccountUsage = value("readClaudeAccountUsage", defaults.readClaudeAccountUsage)
         peersEnabled = value("peersEnabled", defaults.peersEnabled)
+        delegationEnabled = value("delegationEnabled", defaults.delegationEnabled)
+        delegationApproval = value("delegationApproval", defaults.delegationApproval)
         peerName = value("peerName", defaults.peerName)
         offerRecovery = value("offerRecovery", defaults.offerRecovery)
         keepClosedTabsMinutes = value("keepClosedTabsMinutes", defaults.keepClosedTabsMinutes)
@@ -736,6 +742,11 @@ final class SettingsStore: ObservableObject {
         if values.keepAwake != old.keepAwake { SleepGuard.shared.update() }
         if values.globalHotkey != old.globalHotkey { GlobalHotkey.shared.apply(values.globalHotkey) }
         if values.peersEnabled != old.peersEnabled { PeerCenter.shared.apply() }
+        if values.delegationEnabled != old.delegationEnabled {
+            DelegationCenter.shared.apply()
+            // The tools go into the agents' own settings only while it's on.
+            DelegationCenter.shared.configureAgents(install: values.delegationEnabled)
+        }
         // A new name is advertised by starting again.
         if values.peerName != old.peerName, values.peersEnabled { PeerCenter.shared.restart() }
         if !values.hotkeyDropDown, old.hotkeyDropDown { GlobalHotkey.shared.restoreDropDown() }
