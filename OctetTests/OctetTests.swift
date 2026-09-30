@@ -341,6 +341,32 @@ final class SubagentTranscriptTests: XCTestCase {
         renderer.render(line: Data(text.utf8))
         XCTAssertEqual(finishedCount, 1)
     }
+
+    func testHandingTheReportBackFinishesTheSubagent() {
+        let renderer = SubagentTranscriptRenderer()
+        var finishedCount = 0
+        renderer.onFinished = { finishedCount += 1 }
+        let handback = #"{"type":"assistant","message":{"stop_reason":"tool_use","content":[{"type":"tool_use","id":"toolu_9","name":"SubagentHandback","input":{"report":"Done: 3 files."}}]}}"#
+        let delivered = #"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_9","content":"{"success":true,"message":"Report delivered to your caller."}"}]}}"#
+        renderer.render(line: Data(handback.utf8))
+        XCTAssertEqual(finishedCount, 0, "not until the report is delivered")
+        renderer.render(line: Data(delivered.utf8))
+        XCTAssertEqual(finishedCount, 1)
+        XCTAssertNotNil(renderer.finishedAt)
+    }
+
+    func testAFailedHandbackDoesntFinish() {
+        let renderer = SubagentTranscriptRenderer()
+        var finishedCount = 0
+        renderer.onFinished = { finishedCount += 1 }
+        renderer.render(line: Data(#"{"type":"assistant","message":{"stop_reason":"tool_use","content":[{"type":"tool_use","id":"t1","name":"SubagentHandback","input":{}}]}}"#.utf8))
+        renderer.render(line: Data(#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":"no caller"}]}}"#.utf8))
+        XCTAssertEqual(finishedCount, 0)
+        // Another tool's result isn't a handback either.
+        renderer.render(line: Data(#"{"type":"assistant","message":{"stop_reason":"tool_use","content":[{"type":"tool_use","id":"t2","name":"Read","input":{}}]}}"#.utf8))
+        renderer.render(line: Data(#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t2","content":"x"}]}}"#.utf8))
+        XCTAssertEqual(finishedCount, 0)
+    }
 }
 
 final class FuzzyMatcherTests: XCTestCase {

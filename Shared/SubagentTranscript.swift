@@ -47,6 +47,10 @@ final class SubagentTranscriptRenderer {
     var home = FileManager.default.currentDirectoryPath
     private var cwd: String?
     private var location: AgentLocation?
+    /// Calls to the tool a subagent hands its report back with, by id: its
+    /// last act, so its result means the subagent is done.
+    private var handbacks: Set<String> = []
+    static let handbackTool = "SubagentHandback"
 
     private let esc = "\u{1B}["
 
@@ -101,6 +105,7 @@ final class SubagentTranscriptRenderer {
                     if !text.isEmpty { print("⏺ " + text) }
                 case "tool_use":
                     let name = block["name"] as? String ?? "Tool"
+                    if name == Self.handbackTool, let id = block["id"] as? String { handbacks.insert(id) }
                     let summary = Self.toolSummary(block["input"] as? [String: Any])
                     print(color(36, "⏺ " + bold(name)) + (summary.isEmpty ? "" : dim("(\(summary))")))
                 case "thinking":
@@ -112,11 +117,7 @@ final class SubagentTranscriptRenderer {
             // Claude splits one turn into several lines (thinking, text) that
             // all carry end_turn; the turn is finished at the one with text.
             let hasText = blocks.contains { $0["type"] as? String == "text" }
-            if message["stop_reason"] as? String == "end_turn", hasText {
-                print(color(32, bold("✓ Subagent finished")))
-                finishedAt = Date()
-                onFinished?()
-            }
+            if message["stop_reason"] as? String == "end_turn", hasText { finish() }
         case "user":
             if let prompt = message["content"] as? String {
                 let visiblePrompt = prompt.components(separatedBy: "<system-reminder>").first ?? prompt
@@ -131,10 +132,22 @@ final class SubagentTranscriptRenderer {
                 let firstLine = text.split(separator: "\n").first.map(String.init) ?? ""
                 let line = "  ⎿ " + Self.truncate(firstLine.isEmpty ? "done" : firstLine, 120)
                 print(block["is_error"] as? Bool == true ? color(31, line) : dim(line))
+                // Handing the report back ends the subagent without a
+                // closing message of its own.
+                if let id = block["tool_use_id"] as? String, handbacks.remove(id) != nil,
+                   block["is_error"] as? Bool != true {
+                    finish()
+                }
             }
         default:
             break
         }
+    }
+
+    private func finish() {
+        print(color(32, bold("✓ Subagent finished")))
+        finishedAt = Date()
+        onFinished?()
     }
 
     /// Says so when the subagent changes folder, but only as often as the
