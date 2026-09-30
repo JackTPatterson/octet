@@ -270,6 +270,8 @@ final class AgentAccountTests: XCTestCase {
 
     func testCodexLoginStatus() {
         XCTAssertEqual(AgentAccounts.codex(loginStatus: "Logged in using ChatGPT").kind, .subscription)
+        // Codex's allowance, whatever account pays for it.
+        XCTAssertEqual(AgentAccounts.codex(loginStatus: "Logged in using ChatGPT").plan, "Codex")
         XCTAssertEqual(AgentAccounts.codex(loginStatus: "Logged in using an API key - sk-...").kind, .apiKey)
         XCTAssertEqual(AgentAccounts.codex(loginStatus: "Not logged in").kind, .signedOut)
     }

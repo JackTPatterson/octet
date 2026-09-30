@@ -3554,4 +3554,24 @@ final class UsageWindowMergeTests: XCTestCase {
         account.windows = merged
         XCTAssertEqual(account.windows.max { $0.used < $1.used }, weekly)
     }
+
+    func testAResetWindowDoesntHideTheOneRunningNow() {
+        let now = Date(timeIntervalSince1970: 10_000_000)
+        let stale = UsageWindow(name: "5h", used: 0.9, resetsAt: now.addingTimeInterval(-60))
+        let current = UsageWindow(name: "5h", used: 0.1, resetsAt: now.addingTimeInterval(4 * 3600))
+        XCTAssertEqual(AgentAccounts.mergeWindows(newer: [stale], older: [current], now: now), [current])
+        // With nothing newer, the reset window stays, so the card can say when.
+        XCTAssertEqual(AgentAccounts.mergeWindows(newer: [stale], older: [], now: now), [stale])
+    }
+
+    func testARejectedRequestSpendsItsWindow() {
+        let windows = AgentAccounts.claudeWindows(rateLimitInfo: [
+            "status": "rejected", "rateLimitType": "five_hour", "resetsAt": 1_789_863_000.0,
+        ])
+        XCTAssertEqual(windows.map(\.name), ["5h"])
+        XCTAssertEqual(windows.first?.used, 1)
+        // An allowed request with no utilization says nothing about use.
+        XCTAssertTrue(AgentAccounts.claudeWindows(rateLimitInfo: ["status": "allowed", "rateLimitType": "five_hour"]).isEmpty)
+        XCTAssertTrue(AgentAccounts.claudeWindows(rateLimitInfo: ["status": "rejected", "rateLimitType": "overage"]).isEmpty)
+    }
 }

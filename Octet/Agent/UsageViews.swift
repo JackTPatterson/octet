@@ -67,7 +67,7 @@ struct AccountChips: View {
                         if inside {
                             hovered = account.agent
                             // Read afresh while the card is up.
-                            if account.agent == "claude" { store.refreshSoon() }
+                            if ["claude", "codex"].contains(account.agent) { store.refreshSoon() }
                         } else if hovered == account.agent { hovered = nil }
                     }
                     .popover(isPresented: card(account.agent), arrowEdge: .bottom) {
