@@ -347,7 +347,7 @@ final class SubagentTranscriptTests: XCTestCase {
         var finishedCount = 0
         renderer.onFinished = { finishedCount += 1 }
         let handback = #"{"type":"assistant","message":{"stop_reason":"tool_use","content":[{"type":"tool_use","id":"toolu_9","name":"SubagentHandback","input":{"report":"Done: 3 files."}}]}}"#
-        let delivered = #"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_9","content":"{"success":true,"message":"Report delivered to your caller."}"}]}}"#
+        let delivered = #"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_9","content":"{\"success\":true,\"message\":\"Report delivered to your caller.\"}"}]}}"#
         renderer.render(line: Data(handback.utf8))
         XCTAssertEqual(finishedCount, 0, "not until the report is delivered")
         renderer.render(line: Data(delivered.utf8))
