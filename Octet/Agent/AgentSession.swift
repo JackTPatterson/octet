@@ -2042,7 +2042,9 @@ final class AgentCenter: ObservableObject {
     static let shared = AgentCenter()
 
     @Published private(set) var sessions: [AgentSession] = []
-    enum Board { case claude, codex }
+    /// What takes the terminal's place: the agents hub. (Claude and Codex
+    /// had boards of their own; the hub shows both.)
+    enum Board { case all }
 
     /// What each workspace shows in place of its terminal: a conversation,
     /// or an agents board. A workspace is in one window at a time, so this is
@@ -2050,8 +2052,9 @@ final class AgentCenter: ObservableObject {
     @Published private var activeIds: [String: String] = [:]
     @Published private var boards: [String: Board] = [:] {
         didSet {
-            AgentsStore.shared.watching = boards.values.contains(.claude)
-            CodexAgentsStore.shared.watching = boards.values.contains(.codex)
+            let open = !boards.isEmpty
+            AgentsStore.shared.watching = open
+            CodexAgentsStore.shared.watching = open
         }
     }
 
@@ -2094,10 +2097,10 @@ final class AgentCenter: ObservableObject {
         set { setBoard(newValue, in: frontWorkspace) }
     }
 
-    /// The Claude board, kept as a flag for the places that toggle it.
+    /// The agents hub, kept as a flag for the places that toggle it.
     var showingBoard: Bool {
-        get { board == .claude }
-        set { board = newValue ? .claude : (board == .claude ? nil : board) }
+        get { board != nil }
+        set { board = newValue ? .all : nil }
     }
 
     /// Takes in a session made elsewhere (brought back from the background).

@@ -1262,13 +1262,10 @@ final class SessionStore: ObservableObject {
         runInFocusedPane(agent.onShellPath == true ? agent.command : shellQuote(path))
     }
 
-    /// ⌘⇧A: the agents board for the tab in front (Codex's in a Codex tab,
-    /// otherwise Claude's), or closes whichever is open.
+    /// ⌘⇧A: the agents hub, open or closed.
     func toggleAgentsBoard() {
         let center = AgentCenter.shared
-        if center.board != nil { center.board = nil; return }
-        let agent = displayedFocusedTabId.flatMap { primaryAgent(in: snapshot.agents(inTab: $0)) }
-        center.board = AgentBrand.forAgent(agent?.agent)?.id == "codex" ? .codex : .claude
+        center.board = center.board == nil ? .all : nil
     }
 
     /// A native conversation in the focused workspace's folder, with either
