@@ -60,15 +60,19 @@ struct OctetPluginManifest: Codable, Equatable {
         var statusItems: [StatusItemContribution] = []
         /// Items in a tab's or workspace's right-click menu.
         var menuItems: [MenuItemContribution] = []
+        /// Buttons at the right of the tab bar, beside Todos and Git, each
+        /// opening a panel of rows with actions.
+        var panels: [PanelContribution] = []
 
         init(completions: [CompletionContribution] = [], runtimes: [RuntimeContribution] = [],
              runtimeIgnore: [String] = [], statusItems: [StatusItemContribution] = [],
-             menuItems: [MenuItemContribution] = []) {
+             menuItems: [MenuItemContribution] = [], panels: [PanelContribution] = []) {
             self.completions = completions
             self.runtimes = runtimes
             self.runtimeIgnore = runtimeIgnore
             self.statusItems = statusItems
             self.menuItems = menuItems
+            self.panels = panels
         }
 
         init(from decoder: Decoder) throws {
@@ -78,6 +82,37 @@ struct OctetPluginManifest: Codable, Equatable {
             runtimeIgnore = try container.decodeIfPresent([String].self, forKey: .runtimeIgnore) ?? []
             statusItems = try container.decodeIfPresent([StatusItemContribution].self, forKey: .statusItems) ?? []
             menuItems = try container.decodeIfPresent([MenuItemContribution].self, forKey: .menuItems) ?? []
+            panels = try container.decodeIfPresent([PanelContribution].self, forKey: .panels) ?? []
+        }
+    }
+
+    /// A button at the right of the tab bar and the panel it opens, for the
+    /// folder in front. `run` prints the panel as JSON (`PluginPanel`); the
+    /// button shows only while it prints something. An action in the panel
+    /// runs `act` with OCTET_ACTION and OCTET_ITEM set, and what `act`
+    /// prints is read as a menu item's is: a command opens in a new tab,
+    /// `message: …` is shown, nothing just refreshes the panel.
+    struct PanelContribution: Codable, Equatable {
+        let id: String
+        let title: String
+        /// An SF Symbol name, or `icon`: an image in the plugin's folder.
+        var symbol: String?
+        var icon: String?
+        var color: String?
+        /// Per platform; see `PluginCommand`.
+        let runs: PluginCommand
+        let acts: PluginCommand?
+        /// Shown only when one of these files is in the folder or one above
+        /// it, up to the repository's root.
+        var whenFiles: [String]?
+        var refreshSeconds: Double?
+        var timeoutSeconds: Double?
+
+        var run: String { runs.command() ?? "" }
+        var act: String { acts?.command() ?? "" }
+
+        enum CodingKeys: String, CodingKey {
+            case id, title, symbol, icon, color, runs = "run", acts = "act", whenFiles, refreshSeconds, timeoutSeconds
         }
     }
 
@@ -392,6 +427,16 @@ enum OctetPlugins {
             if !menuIds.insert(item.id).inserted { return "menu item \(item.id) appears twice" }
             if item.title.trimmingCharacters(in: .whitespaces).isEmpty { return "menu item \(item.id) has no title" }
             if let problem = problem(item.runs) { return "menu item \(item.id) \(problem)" }
+        }
+        var panelIds: Set<String> = []
+        for panel in manifest.contributes.panels {
+            if panel.id.range(of: "^[a-z0-9][a-z0-9._-]*$", options: .regularExpression) == nil {
+                return "panel ids must be lowercase letters, digits, dots, dashes or underscores"
+            }
+            if !panelIds.insert(panel.id).inserted { return "panel \(panel.id) appears twice" }
+            if panel.title.trimmingCharacters(in: .whitespaces).isEmpty { return "panel \(panel.id) has no title" }
+            if let problem = problem(panel.runs) { return "panel \(panel.id) \(problem)" }
+            if let acts = panel.acts, let problem = problem(acts) { return "panel \(panel.id)'s act \(problem)" }
         }
         for completion in manifest.contributes.completions {
             if completion.command.isEmpty || completion.command.contains(where: \.isWhitespace) {

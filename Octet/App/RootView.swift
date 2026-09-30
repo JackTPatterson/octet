@@ -305,6 +305,7 @@ struct RootView: View {
         .onAppear {
             window.todos.attach(window)
             window.git.attach(window)
+            window.pluginPanels.attach(window)
             window.terminalQuestions.attach(window)
         }
         .animation(motion.animation(.sidebar), value: boardHere)

@@ -95,6 +95,7 @@ enum SubagentWatch {
             reporter.report(state: "idle", message: "finished")
             playFinishedSound()
         }
+        renderer.onResumed = { reporter.report(state: "working", message: title) }
         var lastCheck = Date.distantPast
         renderer.onTick = {
             // The setting is read again each time, so changing it in Octet
