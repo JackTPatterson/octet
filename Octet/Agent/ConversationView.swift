@@ -995,6 +995,9 @@ private struct ToolCard: View {
                 if !call.resultImages.isEmpty {
                     ImageGallery(images: call.resultImages)
                 }
+                if call.result == nil, let live = call.liveOutput, !live.isEmpty {
+                    CodePanel(text: live, language: "output", tint: Theme.textSecondary, maxLines: 14, highlights: false)
+                }
                 if let result = call.result, !result.isEmpty, todos == nil, diff == nil || call.isError {
                     CodePanel(text: result, language: call.isError ? "error" : "output",
                               tint: call.isError ? Theme.danger : Theme.textSecondary, maxLines: 14, highlights: false)

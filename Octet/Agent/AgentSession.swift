@@ -293,11 +293,15 @@ final class AgentSession: ObservableObject, Identifiable {
     var threadId: String?
     /// What each call Octet has made to the app server was for, by id, so an
     /// answer (or an error) lands where it belongs.
-    private enum CodexCall { case handshake, thread, turn, settings, interrupt, command(String) }
+    private enum CodexCall { case handshake, thread, turn, settings, interrupt, command(String), steer(String, [[String: Any]]) }
     private var codexCalls: [Int: CodexCall] = [:]
     private var nextRequestId = 0
     /// Messages sent before the thread was open, in order.
     private var queuedTurns: [String] = []
+    /// What each waiting message sends, with its images.
+    private var queuedInputs: [String: [[String: Any]]] = [:]
+    /// The Codex turn running now, which a message sent mid-turn steers.
+    private var codexTurnId: String?
 
     /// Follow-ups waiting behind the current turn. The composer draws these
     /// beside questions and approvals instead of burying them in transcript.
@@ -597,14 +601,18 @@ final class AgentSession: ObservableObject, Identifiable {
             ]
             if write(message) { hasTurns = true }
         case .codex:
-            if !attachments.isEmpty {
-                conversation.items.append(AgentItem(id: UUID().uuidString,
-                                                    kind: .notice("Codex conversations don't take images yet; the text was sent.")))
-            }
+            let input = Self.codexInput(trimmed, attachments)
             // The thread may still be opening, and a turn needs its id.
-            guard let threadId else { queuedTurns.append(trimmed); return }
-            if wasRunning { queuedTurns.append(trimmed); return }
-            startTurn(trimmed, threadId: threadId)
+            guard let threadId else { queuedTurns.append(trimmed); queuedInputs[trimmed] = input; return }
+            // Mid-turn, it goes into the running turn, as Codex's own
+            // composer does; a message sent between turns waits.
+            if wasRunning, let turnId = codexTurnId {
+                call("turn/steer", ["threadId": threadId, "input": input, "expectedTurnId": turnId], as: .steer(trimmed, input))
+                if let index = conversation.items.firstIndex(where: { $0.id == messageId }) { conversation.items[index].queued = false }
+                return
+            }
+            if wasRunning { queuedTurns.append(trimmed); queuedInputs[trimmed] = input; return }
+            startTurn(trimmed, threadId: threadId, input: input)
         case .opencode:
             break
         case .pi:
@@ -650,8 +658,17 @@ final class AgentSession: ObservableObject, Identifiable {
         }
     }
 
-    private func startTurn(_ text: String, threadId: String) {
-        var params: [String: Any] = ["threadId": threadId, "input": [["type": "text", "text": text]]]
+    /// A Codex turn's input: images as data URLs, then the text.
+    static func codexInput(_ text: String, _ attachments: [Attachment]) -> [[String: Any]] {
+        let images: [[String: Any]] = attachments.map {
+            ["type": "image", "url": "data:\($0.mediaType);base64,\($0.data.base64EncodedString())"]
+        }
+        return images + (text.isEmpty ? [] : [["type": "text", "text": text]])
+    }
+
+    private func startTurn(_ text: String, threadId: String, input: [[String: Any]]? = nil) {
+        let input = input ?? queuedInputs.removeValue(forKey: text) ?? [["type": "text", "text": text]]
+        var params: [String: Any] = ["threadId": threadId, "input": input]
         // Every turn carries the effort picked, so it holds even if a
         // settings update mid-conversation wasn't taken.
         if let effort { params["effort"] = effort }
@@ -722,6 +739,7 @@ final class AgentSession: ObservableObject, Identifiable {
                    "request": ["subtype": "cancel_async_message", "message_uuid": item.id]])
         case .codex:
             if let index = queuedTurns.firstIndex(of: text) { queuedTurns.remove(at: index) }
+            if !queuedTurns.contains(text) { queuedInputs[text] = nil }
         default:
             return
         }
@@ -1714,6 +1732,11 @@ final class AgentSession: ObservableObject, Identifiable {
             receiveCodexAnswer(kind, message)
             return
         }
+        if method == "turn/started" {
+            codexTurnId = ((message["params"] as? [String: Any])?["turn"] as? [String: Any])?["id"] as? String
+        } else if method == "turn/completed" {
+            codexTurnId = nil
+        }
         conversation.applyCodex(message)
         if ["turn/completed", "turn/failed", "turn/aborted"].contains(method),
            let threadId, !queuedTurns.isEmpty {
@@ -1747,6 +1770,16 @@ final class AgentSession: ObservableObject, Identifiable {
             // A turn Codex refuses never starts, so nothing else would end it
             // and the composer would say "working" forever.
             if let error { conversation.applyCodex(["method": "turn/failed", "params": ["error": ["message": error]]]) }
+        case .steer(let text, let input):
+            // The turn ended first, or Codex wouldn't take it: it goes as
+            // the next turn instead.
+            guard error != nil else { return }
+            if let threadId, !conversation.isRunning {
+                startTurn(text, threadId: threadId, input: input)
+            } else {
+                queuedTurns.append(text)
+                queuedInputs[text] = input
+            }
         case .settings:
             // Changing a running thread rides on Codex's experimental API,
             // which a newer Codex may change; say so rather than pretend.

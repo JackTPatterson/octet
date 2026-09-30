@@ -31,6 +31,21 @@ extension AgentConversation {
         case "item/agentMessage/delta":
             guard let id = params["itemId"] as? String, let delta = params["delta"] as? String else { return }
             appendCodexText(id: id, delta: delta)
+        case "item/commandExecution/outputDelta":
+            // A long command's output as it comes, not only when it ends.
+            guard let id = params["itemId"] as? String, let delta = params["delta"] as? String,
+                  let position = items.firstIndex(where: { $0.id == id }),
+                  case .tool(var call) = items[position].kind, call.result == nil else { return }
+            call.liveOutput = (call.liveOutput ?? "") + delta
+            items[position].kind = .tool(call)
+        case "item/reasoning/summaryTextDelta", "item/reasoning/textDelta":
+            // Thinking as it happens; the full text replaces it when done.
+            guard let id = params["itemId"] as? String, let delta = params["delta"] as? String else { return }
+            if let position = items.firstIndex(where: { $0.id == id }), case .thinking(let text) = items[position].kind {
+                items[position].kind = .thinking(text + delta)
+            } else {
+                items.append(AgentItem(id: id, kind: .thinking(delta)))
+            }
         case "thread/tokenUsage/updated":
             guard let usage = params["tokenUsage"] as? [String: Any] else { return }
             if let total = usage["total"] as? [String: Any], let used = total["totalTokens"] as? Int { contextUsed = used }

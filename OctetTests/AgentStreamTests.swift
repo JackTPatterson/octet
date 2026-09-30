@@ -423,6 +423,23 @@ final class AgentAccountTests: XCTestCase {
         ])
     }
 
+    func testCodexStreamsCommandOutputAndReasoning() {
+        var conversation = AgentConversation()
+        conversation.applyCodex(["method": "turn/started", "params": [:]])
+        conversation.applyCodex(["method": "item/started", "params": ["item": [
+            "type": "commandExecution", "id": "e1", "command": "npm test", "status": "inProgress",
+        ]]])
+        conversation.applyCodex(["method": "item/commandExecution/outputDelta", "params": ["itemId": "e1", "delta": "PASS a\n"]])
+        conversation.applyCodex(["method": "item/commandExecution/outputDelta", "params": ["itemId": "e1", "delta": "PASS b\n"]])
+        guard case .tool(let running)? = conversation.items.last?.kind else { return XCTFail("no tool item") }
+        XCTAssertNil(running.result)
+        XCTAssertEqual(running.liveOutput, "PASS a\nPASS b\n")
+
+        conversation.applyCodex(["method": "item/reasoning/summaryTextDelta", "params": ["itemId": "r1", "delta": "Look"]])
+        conversation.applyCodex(["method": "item/reasoning/summaryTextDelta", "params": ["itemId": "r1", "delta": "ing"]])
+        XCTAssertEqual(conversation.items.last?.kind, .thinking("Looking"))
+    }
+
     func testCodexAppServerRateLimits() {
         // The app server answers in camel case, with a null second window.
         let limits: [String: Any] = [

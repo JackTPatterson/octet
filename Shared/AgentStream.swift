@@ -636,6 +636,8 @@ struct AgentToolCall: Equatable {
     /// The same input as JSON, for views that draw it (diffs for edits).
     var inputData: Data?
     var result: String?
+    /// Output streamed while it runs, until `result` arrives in full.
+    var liveOutput: String?
     /// Images a tool returned, e.g. a screenshot Claude read.
     var resultImages: [Data] = []
     var isError = false
