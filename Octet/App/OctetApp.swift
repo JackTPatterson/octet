@@ -36,7 +36,9 @@ struct OctetApp: App {
         let socketPath = session?.socketPath ?? EngineClient.socketPath(session: EngineSession.name)
         let store = SessionStore(client: EngineClient(socketPath: socketPath))
         _store = StateObject(wrappedValue: store)
-        _marketplace = StateObject(wrappedValue: MarketplaceStore(session: store))
+        let marketplace = MarketplaceStore(session: store)
+        MarketplaceWindow.store = marketplace
+        _marketplace = StateObject(wrappedValue: marketplace)
         let prompt = PromptEditor(store: store)
         _prompt = StateObject(wrappedValue: prompt)
         OctetKeyHook.prompt = prompt
@@ -425,6 +427,13 @@ enum SubagentHookMenu {
 enum MarketplaceWindow {
     static let id = "marketplace"
     static var opener: (() -> Void)?
+    static weak var store: MarketplaceStore?
+
+    /// Straight to the plugins, the whole list.
+    static func showPlugins() {
+        store?.section = .plugins
+        store?.pluginFilter = .all
+    }
 
     static func open() {
         NSApp.activate(ignoringOtherApps: true)

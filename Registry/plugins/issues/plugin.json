@@ -1,0 +1,182 @@
+{
+  "id": "issues",
+  "name": "Issues",
+  "version": "1.0.0",
+  "description": "Jira and GitHub issues where you work. The status bar shows the issue your branch is for (ENG-142-retry, 123-fix-login) and the issues assigned to you; click to open. Typing gh issue view, develop, close or comment lists the repository's open issues, and jira issue view, move or assign lists yours. GitHub uses the gh CLI's sign-in. For Jira, put JIRA_URL, JIRA_EMAIL and JIRA_API_TOKEN in ~/.config/octet/jira, or keep the token in the Keychain under octet-jira; jira-cli's config is read too.",
+  "author": "Octet",
+  "keywords": [
+    "jira",
+    "github",
+    "gh",
+    "issues",
+    "tickets",
+    "atlassian"
+  ],
+  "octet": 1,
+  "contributes": {
+    "statusItems": [
+      {
+        "id": "jira-issue",
+        "name": "Jira issue",
+        "summary": "The Jira issue the branch is named for, and its status; click to open it",
+        "sample": "ENG-142 · In Progress",
+        "color": "2684FF",
+        "run": "sh \"$OCTET_PLUGIN_DIR/scripts/jira-issue.sh\"",
+        "refreshSeconds": 60,
+        "timeoutSeconds": 10,
+        "enabledByDefault": true,
+        "icon": "icons/jira.svg"
+      },
+      {
+        "id": "github-issue",
+        "name": "GitHub issue",
+        "summary": "The GitHub issue the branch is named for, and whether it's open; click to open it",
+        "sample": "#123 · open",
+        "run": "sh \"$OCTET_PLUGIN_DIR/scripts/github-issue.sh\"",
+        "refreshSeconds": 60,
+        "timeoutSeconds": 10,
+        "enabledByDefault": true,
+        "icon": "icons/github.svg"
+      },
+      {
+        "id": "my-issues",
+        "name": "My issues",
+        "summary": "How many open issues are assigned to you, in Jira and this GitHub repository; each on hover",
+        "sample": "5 issues",
+        "symbol": "tray.full",
+        "run": "sh \"$OCTET_PLUGIN_DIR/scripts/my-issues.sh\"",
+        "refreshSeconds": 180,
+        "timeoutSeconds": 15
+      }
+    ],
+    "completions": [
+      {
+        "command": "gh",
+        "path": [
+          "issue",
+          "view"
+        ],
+        "summary": "Show an issue",
+        "run": "sh \"$OCTET_PLUGIN_DIR/scripts/gh-issues.sh\"",
+        "kind": "branch",
+        "cacheSeconds": 60,
+        "timeoutSeconds": 10,
+        "opensMenu": true,
+        "firstArgumentOnly": true
+      },
+      {
+        "command": "gh",
+        "path": [
+          "issue",
+          "develop"
+        ],
+        "summary": "Make a branch for an issue",
+        "run": "sh \"$OCTET_PLUGIN_DIR/scripts/gh-issues.sh\"",
+        "kind": "branch",
+        "cacheSeconds": 60,
+        "timeoutSeconds": 10,
+        "opensMenu": true,
+        "firstArgumentOnly": true
+      },
+      {
+        "command": "gh",
+        "path": [
+          "issue",
+          "close"
+        ],
+        "summary": "Close an issue",
+        "run": "sh \"$OCTET_PLUGIN_DIR/scripts/gh-issues.sh\"",
+        "kind": "branch",
+        "cacheSeconds": 60,
+        "timeoutSeconds": 10,
+        "opensMenu": true,
+        "firstArgumentOnly": true
+      },
+      {
+        "command": "gh",
+        "path": [
+          "issue",
+          "comment"
+        ],
+        "summary": "Comment on an issue",
+        "run": "sh \"$OCTET_PLUGIN_DIR/scripts/gh-issues.sh\"",
+        "kind": "branch",
+        "cacheSeconds": 60,
+        "timeoutSeconds": 10,
+        "opensMenu": true,
+        "firstArgumentOnly": true
+      },
+      {
+        "command": "gh",
+        "path": [
+          "issue",
+          "edit"
+        ],
+        "summary": "Edit an issue",
+        "run": "sh \"$OCTET_PLUGIN_DIR/scripts/gh-issues.sh\"",
+        "kind": "branch",
+        "cacheSeconds": 60,
+        "timeoutSeconds": 10,
+        "firstArgumentOnly": true
+      },
+      {
+        "command": "jira",
+        "path": [
+          "issue",
+          "view"
+        ],
+        "summary": "Show an issue",
+        "run": "sh \"$OCTET_PLUGIN_DIR/scripts/jira-issues.sh\"",
+        "kind": "branch",
+        "cacheSeconds": 60,
+        "timeoutSeconds": 10,
+        "perFolder": false,
+        "opensMenu": true,
+        "firstArgumentOnly": true
+      },
+      {
+        "command": "jira",
+        "path": [
+          "issue",
+          "move"
+        ],
+        "summary": "Move an issue to another status",
+        "run": "sh \"$OCTET_PLUGIN_DIR/scripts/jira-issues.sh\"",
+        "kind": "branch",
+        "cacheSeconds": 60,
+        "timeoutSeconds": 10,
+        "perFolder": false,
+        "opensMenu": true,
+        "firstArgumentOnly": true
+      },
+      {
+        "command": "jira",
+        "path": [
+          "issue",
+          "assign"
+        ],
+        "summary": "Assign an issue",
+        "run": "sh \"$OCTET_PLUGIN_DIR/scripts/jira-issues.sh\"",
+        "kind": "branch",
+        "cacheSeconds": 60,
+        "timeoutSeconds": 10,
+        "perFolder": false,
+        "firstArgumentOnly": true
+      },
+      {
+        "command": "jira",
+        "path": [
+          "open"
+        ],
+        "summary": "Open an issue in the browser",
+        "run": "sh \"$OCTET_PLUGIN_DIR/scripts/jira-issues.sh\"",
+        "kind": "branch",
+        "cacheSeconds": 60,
+        "timeoutSeconds": 10,
+        "perFolder": false,
+        "opensMenu": true,
+        "firstArgumentOnly": true
+      }
+    ]
+  }
+}

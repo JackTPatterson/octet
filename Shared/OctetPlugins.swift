@@ -37,6 +37,12 @@ struct OctetPluginManifest: Codable, Equatable {
     /// The manifest format the plugin was written for.
     var octet: Int = 1
     var contributes: Contributions = .init()
+    /// A native feature the plugin switches on, e.g. `peers`. Honoured only
+    /// for plugins that ship with Octet: a downloaded one can't claim it.
+    var feature: String?
+    /// Whether a built-in plugin starts on; installed ones start on when
+    /// installed from the Marketplace.
+    var enabledByDefault: Bool?
 
     struct Contributions: Codable, Equatable {
         var completions: [CompletionContribution] = []
@@ -184,6 +190,8 @@ struct OctetPluginManifest: Codable, Equatable {
         author = try container.decodeIfPresent(String.self, forKey: .author)
         octet = try container.decodeIfPresent(Int.self, forKey: .octet) ?? 1
         contributes = try container.decodeIfPresent(Contributions.self, forKey: .contributes) ?? .init()
+        feature = try container.decodeIfPresent(String.self, forKey: .feature)
+        enabledByDefault = try container.decodeIfPresent(Bool.self, forKey: .enabledByDefault)
     }
 }
 
@@ -193,6 +201,8 @@ struct OctetPlugin: Identifiable, Equatable {
     let directory: String
     /// Shipped inside Octet, rather than installed by the person.
     let isBundled: Bool
+    /// Set when it was installed from the registry.
+    var receipt: PluginInstallReceipt? = nil
 
     var id: String { manifest.id }
 }
@@ -220,7 +230,9 @@ enum OctetPlugins {
                     if let problem = validate(manifest) {
                         problems.append("\(name): \(problem)")
                     } else {
-                        found[manifest.id] = OctetPlugin(manifest: manifest, directory: directory, isBundled: isBundled)
+                        let receipt = isBundled ? nil : (try? Data(contentsOf: URL(fileURLWithPath: directory + "/" + PluginInstallReceipt.fileName)))
+                            .flatMap { try? PluginInstallReceipt.decoder.decode(PluginInstallReceipt.self, from: $0) }
+                        found[manifest.id] = OctetPlugin(manifest: manifest, directory: directory, isBundled: isBundled, receipt: receipt)
                     }
                 case .failure(let error):
                     problems.append("\(name): \(error.localizedDescription)")

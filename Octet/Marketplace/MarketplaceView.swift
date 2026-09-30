@@ -5,6 +5,7 @@ import SwiftUI
 /// agent from one window, then reload running agents in place.
 struct MarketplaceView: View {
     @ObservedObject var store: MarketplaceStore
+    @ObservedObject private var pluginHost = OctetPluginHost.shared
     @State private var editing: LibraryDraft?
     @State private var addingServer = false
 
@@ -113,7 +114,12 @@ struct MarketplaceView: View {
                     .help("Copy a folder of .md prompts into your library")
             }
             Button {
-                store.section == .plugins ? store.loadPlugins(force: true) : store.refreshAll()
+                if store.section == .plugins {
+                    store.loadPlugins(force: true)
+                    pluginHost.loadRegistry(force: true)
+                } else {
+                    store.refreshAll()
+                }
             } label: {
                 OctetIcon("arrow.clockwise", size: 13)
             }
@@ -148,16 +154,21 @@ struct MarketplaceView: View {
         let total = totalCount(of: section)
         guard total > 0 else { return nil }
         guard section == .plugins else { return "\(total)" }
-        return "\(store.plugins.filter(\.isInstalled).count) / \(total)"
+        return "\(store.plugins.filter(\.isInstalled).count + pluginHost.plugins.count) / \(total)"
     }
 
     private func totalCount(of section: MarketplaceStore.Section) -> Int {
         switch section {
         case .mcp: store.servers.count
-        case .plugins: store.plugins.count
+        case .plugins: store.plugins.count + terminalPluginCount
         case .skills: store.skills.count
         case .prompts: store.prompts.count
         }
+    }
+
+    /// Octet's own plugins, built in, installed or listed.
+    private var terminalPluginCount: Int {
+        Set(pluginHost.plugins.map(\.id)).union(pluginHost.registry.map(\.id)).count
     }
 
     private func retry(_ section: MarketplaceStore.Section) {
@@ -187,10 +198,23 @@ struct MarketplaceView: View {
                         EntryRow(store: store, entry: entry)
                     }
                 case .plugins:
-                    let plugins = store.filteredPlugins()
+                    let filter = store.pluginFilter
+                    let terminal = filter == .agents ? [] : store.filteredTerminalPlugins()
+                    let plugins = filter == .terminal ? [] : store.filteredPlugins()
                     let limit = MarketplaceStore.pluginDisplayLimit
-                    if let state = emptyState(section, total: total, visible: plugins.count) {
+                    PluginFilterBar(store: store)
+                    if filter != .agents, let error = pluginHost.registryError {
+                        LoadErrorBanner(message: "Terminal plugins: \(error)", retrying: pluginHost.registryLoading) {
+                            pluginHost.loadRegistry(force: true)
+                        }
+                    }
+                    // What the filter can show, so the empty state reads right.
+                    let shown = (filter == .terminal ? 0 : store.plugins.count) + (filter == .agents ? 0 : terminalPluginCount)
+                    if let state = emptyState(section, total: shown, visible: plugins.count + terminal.count) {
                         state
+                    }
+                    ForEach(terminal) { plugin in
+                        TerminalPluginRow(plugin: plugin)
                     }
                     ForEach(plugins.prefix(limit)) { entry in
                         EntryRow(store: store, entry: entry)
@@ -288,6 +312,110 @@ struct MarketplaceView: View {
             message: "Nothing in \(section.title) matches \u{201C}\(store.query.trimmingCharacters(in: .whitespaces))\u{201D}.",
             actionTitle: "Clear Search"
         ) { store.query = "" }
+    }
+}
+
+// MARK: - Plugins
+
+/// All, agents' plugins, or Octet's own: one list, filtered.
+private struct PluginFilterBar: View {
+    @ObservedObject var store: MarketplaceStore
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(MarketplaceStore.PluginFilter.allCases) { filter in
+                let selected = store.pluginFilter == filter
+                Button { store.pluginFilter = filter } label: {
+                    Text(filter.title)
+                        .font(Theme.captionFont.weight(.medium))
+                        .foregroundStyle(selected ? Theme.textPrimary : Theme.textSecondary)
+                        .padding(.horizontal, 9)
+                        .frame(height: 22)
+                        .background(RoundedRectangle(cornerRadius: Theme.rowRadius).fill(selected ? Theme.cardSelected : Color.clear))
+                        .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius)
+                            .strokeBorder(Theme.border.opacity(selected ? 1 : 0.6), lineWidth: 1))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(selected ? .isSelected : [])
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.bottom, 4)
+    }
+}
+
+/// One of Octet's own plugins: on or off when it's here, Install when it's
+/// only in the registry, Update when the registry has newer, Remove when
+/// the person installed it.
+private struct TerminalPluginRow: View {
+    let plugin: MarketplaceStore.TerminalPlugin
+    @ObservedObject private var host = OctetPluginHost.shared
+    @State private var hovered = false
+
+    var body: some View {
+        let installed = plugin.installed
+        let busy = host.installing.contains(plugin.id)
+        HStack(alignment: .top, spacing: 10) {
+            OctetIcon("terminal", size: 16)
+                .foregroundStyle(installed.map(host.isEnabled) == true ? Theme.accent : Theme.textTertiary)
+                .frame(width: 16)
+                .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(plugin.name)
+                        .font(Theme.uiFontMedium)
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                        .layoutPriority(1)
+                    Text(plugin.version).font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
+                    Text(installed?.isBundled == true ? "Built in" : plugin.author)
+                        .font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
+                    Text("Terminal")
+                        .font(Theme.captionFont)
+                        .foregroundStyle(Theme.textTertiary)
+                        .padding(.horizontal, 5)
+                        .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(Theme.border, lineWidth: 1))
+                }
+                if !plugin.summary.isEmpty {
+                    Text(plugin.summary)
+                        .font(Theme.captionFont)
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(3)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Spacer(minLength: 8)
+            HStack(spacing: 6) {
+                if busy {
+                    LoadingLine(width: 14)
+                } else if let installed {
+                    if let update = host.update(for: installed) {
+                        Button("Update") { host.install(update) }.controlSize(.small)
+                    }
+                    if !installed.isBundled {
+                        Button("Remove") {
+                            ConfirmCenter.shared.ask(title: "Remove \(plugin.name)?", message: "Deletes it from your plugin folder.",
+                                                     confirmTitle: "Remove", destructive: true) { _ in host.uninstall(installed) }
+                        }
+                        .controlSize(.small)
+                        .opacity(hovered ? 1 : 0.5)
+                    }
+                    Toggle(plugin.name, isOn: Binding(get: { host.isEnabled(installed) },
+                                                      set: { host.setEnabled(installed, $0) }))
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                } else if let entry = plugin.entry {
+                    Button("Install") { host.install(entry) }.controlSize(.small)
+                }
+            }
+        }
+        .padding(10)
+        .background(hovered ? Theme.hover : Theme.card)
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .onHover { hovered = $0 }
+        .help(plugin.entry.map { "From github.com/\($0.repo)" } ?? "")
     }
 }
 

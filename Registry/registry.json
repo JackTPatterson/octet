@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "plugins": [
+    {
+      "id": "issues",
+      "name": "Issues",
+      "description": "Jira and GitHub issues where you work. The status bar shows the issue your branch is for (ENG-142-retry, 123-fix-login) and the issues assigned to you; click to open. Typing gh issue view, develop, close or comment lists the repository's open issues, and jira issue view, move or assign lists yours. GitHub uses the gh CLI's sign-in. For Jira, put JIRA_URL, JIRA_EMAIL and JIRA_API_TOKEN in ~/.config/octet/jira, or keep the token in the Keychain under octet-jira; jira-cli's config is read too.",
+      "author": "Octet",
+      "version": "1.0.0",
+      "keywords": [
+        "jira",
+        "github",
+        "gh",
+        "issues",
+        "tickets",
+        "atlassian"
+      ],
+      "repo": "JackTPatterson/octet",
+      "ref": "master",
+      "path": "Registry/plugins/issues",
+      "files": [
+        {
+          "path": "plugin.json",
+          "sha256": "8945ae14bc7b8bd507184937af08f0798b65d864633860cdad10ea532de0b048"
+        },
+        {
+          "path": "icons/github.svg",
+          "sha256": "3bf8cceead820aec50d4ee825a3fd02c5a1cd6665cc9cf4cbf3d9c8861a204bb"
+        },
+        {
+          "path": "icons/jira.svg",
+          "sha256": "68f8703698538ee7863bf69b72bf9f0d78a72d218e7eb7e0617237ae43ae5ade"
+        },
+        {
+          "path": "scripts/gh-issues.sh",
+          "sha256": "34c6fa31e4508b0b9bffd039049c74f25d66fb5bcae8e0ebc5245c3fd8448eae"
+        },
+        {
+          "path": "scripts/github-issue.sh",
+          "sha256": "63387b4e891e18ad3430235a0122671aebc4fad3690ebe504157716853d7faf3"
+        },
+        {
+          "path": "scripts/jira-issue.sh",
+          "sha256": "8f71907fa2c83099e7107b802f25857f4830a8242e5c4689e3bb402085193b1d"
+        },
+        {
+          "path": "scripts/jira-issues.sh",
+          "sha256": "c344ea9151540095aee9559b519d62dc31a8d683f2262fa99d0640e45a902d54"
+        },
+        {
+          "path": "scripts/jira-lib.sh",
+          "sha256": "f091a5ad3c2210a81b76bccb5f0515ad0b5dee8e6ef86e44d7f87d549279e84b"
+        },
+        {
+          "path": "scripts/my-issues.sh",
+          "sha256": "c8eb90e05d7df9fe192534a49e6a5eb7c03fda3ffbbccd721ace4cbf08b348a8"
+        }
+      ]
+    }
+  ]
+}
