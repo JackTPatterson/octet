@@ -113,6 +113,8 @@ enum PaletteCatalog {
             action("focusUp", "Focus Pane Up", "arrow.up", shortcut: "⌘⌥↑") { window.focusPane(.up) },
             action("focusDown", "Focus Pane Down", "arrow.down", shortcut: "⌘⌥↓") { window.focusPane(.down) },
             action("toggleSidebar", "Toggle Sidebar", "sidebar.left", shortcut: "⌘B") { ui.sidebarVisible.toggle() },
+            action("todos", "Show Todos", "tool.todo.done",
+                   keywords: ["todo", "todos", "TODO.md", "tasks", "plan", "checklist", "project"]) { ui.todoPanelVisible.toggle() },
             action("reloadConfig", "Reload Terminal Config", "arrow.clockwise", keywords: ["settings"]) { store.reloadSessionConfig() },
             action("installHook", "Install Subagent Tabs Hook", "sparkles",
                    keywords: ["claude", "codex", "agent", "setup"]) { SubagentHookMenu.install() },
