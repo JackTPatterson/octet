@@ -569,6 +569,10 @@ struct RootView: View {
                     if let dragged = tabDrag.tabId, let showing = splitTargetTab(for: dragged) {
                         splitDropLayer(moving: dragged, into: showing)
                     }
+                    if let dragged = tabDrag.workspaceId {
+                        WorkspaceDropLayer(workspaceId: dragged, window: window,
+                                           animation: motion.animation(.tabs, .smooth(duration: 0.15)))
+                    }
                 }
                 .overlay(alignment: .top) { BroadcastBanner(mode: BroadcastMode.shared, tabId: window.displayedFocusedTabId) }
                 .overlay(alignment: .bottomLeading) { HoverLinkPreview() }

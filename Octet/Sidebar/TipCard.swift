@@ -28,11 +28,11 @@ struct TipCard: View {
                             .padding(.vertical, 1)
                             .background(RoundedRectangle(cornerRadius: 3).fill(Theme.hover))
                     }
-                    if hovered {
-                        Text(store.tipPosition)
-                            .font(Theme.captionFont)
-                            .foregroundStyle(Theme.textTertiary)
-                    }
+                    // Always laid out, so hovering never reflows the title.
+                    Text(store.tipPosition)
+                        .font(Theme.captionFont)
+                        .foregroundStyle(Theme.textTertiary)
+                        .opacity(hovered ? 1 : 0)
                     Button { store.dismissTips() } label: {
                         OctetIcon("xmark", size: 15)
                             .foregroundStyle(Theme.textTertiary)

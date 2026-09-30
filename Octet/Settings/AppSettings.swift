@@ -618,7 +618,23 @@ final class SettingsStore: ObservableObject {
                 forName: Notification.Name("AppleInterfaceThemeChangedNotification"), object: nil, queue: .main, using: refresh),
             NSWorkspace.shared.notificationCenter.addObserver(
                 forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil, queue: .main, using: refresh),
+            // Back from editing the terminal config: follow what changed.
+            NotificationCenter.default.addObserver(
+                forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+                DispatchQueue.main.async { self?.refreshImportedTheme() }
+            },
         ]
+        refreshImportedTheme()
+    }
+
+    /// An imported theme follows its terminal config: re-read on launch and
+    /// whenever Octet comes back to the front, so an edit there (a new
+    /// cursor colour, a different theme) shows without re-importing.
+    private func refreshImportedTheme() {
+        guard let current = values.importedTheme,
+              let fresh = TerminalThemeImport.importFromConfig(),
+              fresh.name == current.name, fresh != current else { return }
+        values.importedTheme = fresh
     }
 
     private func systemAppearanceChanged() {
