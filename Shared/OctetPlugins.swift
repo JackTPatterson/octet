@@ -58,13 +58,17 @@ struct OctetPluginManifest: Codable, Equatable {
         var runtimeIgnore: [String] = []
         /// Chips for the status bar under the terminal.
         var statusItems: [StatusItemContribution] = []
+        /// Items in a tab's or workspace's right-click menu.
+        var menuItems: [MenuItemContribution] = []
 
         init(completions: [CompletionContribution] = [], runtimes: [RuntimeContribution] = [],
-             runtimeIgnore: [String] = [], statusItems: [StatusItemContribution] = []) {
+             runtimeIgnore: [String] = [], statusItems: [StatusItemContribution] = [],
+             menuItems: [MenuItemContribution] = []) {
             self.completions = completions
             self.runtimes = runtimes
             self.runtimeIgnore = runtimeIgnore
             self.statusItems = statusItems
+            self.menuItems = menuItems
         }
 
         init(from decoder: Decoder) throws {
@@ -73,6 +77,35 @@ struct OctetPluginManifest: Codable, Equatable {
             runtimes = try container.decodeIfPresent([RuntimeContribution].self, forKey: .runtimes) ?? []
             runtimeIgnore = try container.decodeIfPresent([String].self, forKey: .runtimeIgnore) ?? []
             statusItems = try container.decodeIfPresent([StatusItemContribution].self, forKey: .statusItems) ?? []
+            menuItems = try container.decodeIfPresent([MenuItemContribution].self, forKey: .menuItems) ?? []
+        }
+    }
+
+    /// An item in a tab's or workspace's right-click menu. `run` works out
+    /// what to start, in the tab's or workspace's folder: its first line of
+    /// output is a command Octet runs in a new tab of that workspace, and
+    /// later lines can set `label: …` (the tab's name) and `cwd: …` (where
+    /// it runs, else the folder). Printing nothing means there's nothing to
+    /// start there, and `message: …` alone says why.
+    struct MenuItemContribution: Codable, Equatable {
+        enum Place: String, Codable { case tab, workspace }
+
+        let id: String
+        let title: String
+        /// Which menus it's in; both unless it says.
+        var places: [Place]?
+        /// Shown only when one of these files is in the folder or one above
+        /// it, up to the repository's root.
+        var whenFiles: [String]?
+        /// Per platform; see `PluginCommand`.
+        let runs: PluginCommand
+        var timeoutSeconds: Double?
+
+        var run: String { runs.command() ?? "" }
+        func isIn(_ place: Place) -> Bool { (places ?? [.tab, .workspace]).contains(place) }
+
+        enum CodingKeys: String, CodingKey {
+            case id, title, places = "in", whenFiles, runs = "run", timeoutSeconds
         }
     }
 
@@ -233,6 +266,34 @@ extension OctetPluginManifest.StatusItemContribution {
     }
 }
 
+/// What a menu item's command printed: the command to start, and how.
+struct PluginMenuOutput: Equatable {
+    var command: String?
+    var label: String?
+    var cwd: String?
+    /// Why there's nothing to start, when there isn't.
+    var message: String?
+
+    static func parse(_ output: String) -> PluginMenuOutput {
+        var result = PluginMenuOutput()
+        let lines = output.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        for (index, line) in lines.enumerated() {
+            if let colon = line.firstIndex(of: ":") {
+                let key = line[..<colon].lowercased()
+                let value = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+                switch key {
+                case "label": result.label = value; continue
+                case "cwd": result.cwd = value; continue
+                case "message": result.message = value; continue
+                default: break
+                }
+            }
+            if index == 0 { result.command = line }
+        }
+        return result
+    }
+}
+
 /// A plugin found on disk.
 struct OctetPlugin: Identifiable, Equatable {
     let manifest: OctetPluginManifest
@@ -322,6 +383,15 @@ enum OctetPlugins {
             }
             if !statusIds.insert(item.id).inserted { return "status item \(item.id) appears twice" }
             if let problem = problem(item.runs) { return "status item \(item.id) \(problem)" }
+        }
+        var menuIds: Set<String> = []
+        for item in manifest.contributes.menuItems {
+            if item.id.range(of: "^[a-z0-9][a-z0-9._-]*$", options: .regularExpression) == nil {
+                return "menu item ids must be lowercase letters, digits, dots, dashes or underscores"
+            }
+            if !menuIds.insert(item.id).inserted { return "menu item \(item.id) appears twice" }
+            if item.title.trimmingCharacters(in: .whitespaces).isEmpty { return "menu item \(item.id) has no title" }
+            if let problem = problem(item.runs) { return "menu item \(item.id) \(problem)" }
         }
         for completion in manifest.contributes.completions {
             if completion.command.isEmpty || completion.command.contains(where: \.isWhitespace) {

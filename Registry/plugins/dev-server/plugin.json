@@ -1,0 +1,23 @@
+{
+  "id": "dev-server",
+  "name": "Dev Server",
+  "version": "1.0.0",
+  "description": "Start Dev Server in a tab's or workspace's right-click menu: finds how the project runs (its package.json dev script with the right package manager, Rails, Django, Phoenix, Laravel, Go, Cargo, Hugo, Jekyll or Docker Compose) and starts it in a new tab of that workspace.",
+  "author": "Octet",
+  "keywords": ["dev server", "npm run dev", "start", "server", "vite", "next", "rails", "django"],
+  "octet": 1,
+  "platforms": ["macos", "linux"],
+  "contributes": {
+    "menuItems": [
+      {
+        "id": "start",
+        "title": "Start Dev Server",
+        "whenFiles": ["package.json", "Gemfile", "manage.py", "mix.exs", "artisan", "go.mod", "Cargo.toml",
+                      "compose.yaml", "compose.yml", "docker-compose.yml", "docker-compose.yaml",
+                      "hugo.toml", "hugo.yaml", "_config.yml", "Procfile.dev"],
+        "run": "sh \"$OCTET_PLUGIN_DIR/detect.sh\"",
+        "timeoutSeconds": 8
+      }
+    ]
+  }
+}

@@ -324,6 +324,10 @@ private struct TabItem: View {
                 WindowActions.tearOff(tabId: tab.tabId, store: store, frame: WindowActions.cascaded(from: window))
             }
             .disabled(store.onlyPane(ofTab: tab.tabId) == nil)
+            PluginMenuItems(place: .tab,
+                            directory: store.snapshot.panes.first { $0.tabId == tab.tabId && $0.focused }?.effectiveCwd
+                                ?? store.snapshot.panes.first { $0.tabId == tab.tabId }?.effectiveCwd,
+                            workspaceId: tab.workspaceId)
             Divider()
             Button("Close Tab") { window.closeTab(tab.tabId) }
             Button("Close Other Tabs") {

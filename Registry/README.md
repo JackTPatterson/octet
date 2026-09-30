@@ -22,7 +22,7 @@ Keep the plugin in your own public GitHub repository, then open a pull request a
 
 Pin `ref` to a tag or commit. `scripts/build-plugin-registry.py --fetch` fills in the checksums, so a later change to the repository can't reach anyone without a new entry.
 
-Plugins run shell commands as the person who installs them; the registry is reviewed, and each plugin is off until someone installs it from the Marketplace. A plugin can contribute terminal completions, status bar chips and runtime icons; see any plugin here for the manifest format. (`Plugins/` in the app holds only what stands for native features, like Other Macs.)
+Plugins run shell commands as the person who installs them; the registry is reviewed, and each plugin is off until someone installs it from the Marketplace. A plugin can contribute terminal completions, status bar chips, runtime icons, and items in a tab's or workspace's right-click menu (`menuItems`: a command that prints what to start in a new tab, like `dev-server`); see any plugin here for the manifest format. (`Plugins/` in the app holds only what stands for native features, like Other Macs.)
 
 ## macOS, Linux and Windows
 

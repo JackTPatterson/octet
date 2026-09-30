@@ -503,6 +503,7 @@ struct WorkspaceOrganizeMenu: View {
         if store.isWorkspaceManuallyNamed(id), SettingsStore.shared.values.autoNameWorkspaces {
             Button("Name After Its Work") { store.resumeWorkspaceAutoNaming(id) }
         }
+        PluginMenuItems(place: .workspace, directory: store.snapshot.directory(ofWorkspace: id), workspaceId: id)
         Divider()
         TabColorPicker(title: "Workspace Color", selection: Binding(
             get: { store.workspaceColor(id) },

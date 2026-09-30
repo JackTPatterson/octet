@@ -466,6 +466,40 @@
       ]
     },
     {
+      "id": "dev-server",
+      "name": "Dev Server",
+      "description": "Start Dev Server in a tab's or workspace's right-click menu: finds how the project runs (its package.json dev script with the right package manager, Rails, Django, Phoenix, Laravel, Go, Cargo, Hugo, Jekyll or Docker Compose) and starts it in a new tab of that workspace.",
+      "author": "Octet",
+      "version": "1.0.0",
+      "keywords": [
+        "dev server",
+        "npm run dev",
+        "start",
+        "server",
+        "vite",
+        "next",
+        "rails",
+        "django"
+      ],
+      "platforms": [
+        "macos",
+        "linux"
+      ],
+      "repo": "JackTPatterson/octet",
+      "ref": "master",
+      "path": "Registry/plugins/dev-server",
+      "files": [
+        {
+          "path": "detect.sh",
+          "sha256": "fac172a42dbae51f511d180bc668fb5de5f8028b57e06c88a25e2bf45b5d04fe"
+        },
+        {
+          "path": "plugin.json",
+          "sha256": "13887a48317b5788364ef91b64d5b8936166d8ba395371ee8619d42e19dc592b"
+        }
+      ]
+    },
+    {
       "id": "github-repos",
       "name": "GitHub Repositories",
       "description": "Typing git clone lists the repositories your GitHub CLI account can clone, most recently pushed first, and inserts the URL your git protocol setting prefers.",

@@ -320,6 +320,59 @@ final class OctetPluginHost: ObservableObject {
         }
     }
 
+    // MARK: - Menu items
+
+    typealias MenuItem = (item: OctetPluginManifest.MenuItemContribution, plugin: OctetPlugin)
+
+    /// Enabled plugins' items for a tab's or workspace's menu in
+    /// `directory`: the ones with a command here whose files are present.
+    func menuItems(for place: OctetPluginManifest.MenuItemContribution.Place, directory: String) -> [MenuItem] {
+        let root = Self.repositoryRoot(of: directory)
+        return plugins.filter(isEnabled).flatMap { plugin in
+            plugin.manifest.contributes.menuItems
+                .filter { $0.isIn(place) && !$0.run.isEmpty
+                    && StatusBarItems.hasMarker($0.whenFiles ?? [], from: directory, root: root) }
+                .map { ($0, plugin) }
+        }
+    }
+
+    /// Runs a menu item's command in `directory`, then opens what it
+    /// printed in a new tab of `workspaceId`.
+    func perform(_ entry: MenuItem, directory: String, workspaceId: String?, in window: WindowContext) {
+        let environment = ["OCTET_PLUGIN_DIR": entry.plugin.directory, "OCTET_CWD": directory,
+                           "OCTET_REPO_ROOT": Self.repositoryRoot(of: directory) ?? directory]
+        let timeout = min(max(entry.item.timeoutSeconds ?? 10, 1), 30)
+        StatusCommand.run(entry.item.run, in: directory, environment: environment, timeout: timeout) { [weak window] output in
+            guard let window else { return }
+            let result = PluginMenuOutput.parse(output)
+            guard let command = result.command else {
+                ToastCenter.shared.info(entry.item.title, detail: result.message ?? "Nothing to start here")
+                return
+            }
+            let label = result.label ?? entry.item.title
+            let cwd = result.cwd.map { $0.hasPrefix("/") ? $0 : directory + "/" + $0 } ?? directory
+            let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+            var layout: [String: Any] = [
+                "tab_label": label,
+                // The shell stays when the command ends, so its output can be read.
+                "root": ["type": "pane", "label": label, "cwd": cwd,
+                         "command": [shell, "-lic", "\(command); exec \(shell) -l"]] as [String: Any],
+            ]
+            if let workspaceId { layout["workspace_id"] = workspaceId }
+            window.applyLayout(layout, failure: "Couldn't start \(label)")
+        }
+    }
+
+    /// The repository `directory` is in, found by its `.git`.
+    static func repositoryRoot(of directory: String) -> String? {
+        var url = URL(fileURLWithPath: directory, isDirectory: true).standardizedFileURL
+        while url.path != "/" {
+            if FileManager.default.fileExists(atPath: url.appendingPathComponent(".git").path) { return url.path }
+            url.deleteLastPathComponent()
+        }
+        return nil
+    }
+
     func revealUserDirectory() {
         try? FileManager.default.createDirectory(atPath: userDirectory, withIntermediateDirectories: true)
         NSWorkspace.shared.open(URL(fileURLWithPath: userDirectory))
