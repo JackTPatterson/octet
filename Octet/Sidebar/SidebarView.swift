@@ -247,7 +247,7 @@ private struct WorkspaceCard: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 4) {
                         ForEach(ports, id: \.self) { port in
-                            PortButton(port: port) {
+                            PortButton(port: port, service: portsWatcher.services[port]) {
                                 if let url = URL(string: "http://localhost:" + String(port)) { openURL(url) }
                             }
                         }
@@ -282,8 +282,16 @@ private struct WorkspaceCard: View {
 
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                AgentStateGlyph(status: status)
-                    .frame(width: 12)
+                // With no agent here, a running server's logo takes the
+                // empty state's place.
+                if status == .unknown,
+                   let logo = LanguageLogo(service: portsWatcher.service(inWorkspace: workspace.workspaceId, snapshot: snapshot), size: 11) {
+                    logo.frame(width: 12)
+                        .help("Serving on localhost")
+                } else {
+                    AgentStateGlyph(status: status)
+                        .frame(width: 12)
+                }
                 if renaming {
                     InlineRenameField(initial: workspace.label, placeholder: "Workspace name") { label in
                         renaming = false
@@ -707,14 +715,20 @@ private struct AgentCountBadge: View {
 /// little taller than the branch chip below, so it's easy to hit on purpose.
 private struct PortButton: View {
     let port: Int
+    /// What serves it, for its logo; a network glyph when unknown.
+    let service: String?
     let action: () -> Void
     @State private var hovered = false
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 4) {
-                Image(systemName: "network").font(.system(size: 9.5, weight: .medium))
-                    .foregroundStyle(Theme.textTertiary)
+                if let logo = LanguageLogo(service: service, size: 11) {
+                    logo
+                } else {
+                    Image(systemName: "network").font(.system(size: 9.5, weight: .medium))
+                        .foregroundStyle(Theme.textTertiary)
+                }
                 Text(":" + String(port))
                     .font(Theme.monoFont)
                     .foregroundStyle(hovered ? Theme.textPrimary : Theme.textSecondary)
@@ -729,7 +743,7 @@ private struct PortButton: View {
         }
         .buttonStyle(.plain)
         .onHover { hovered = $0 }
-        .help("Open http://localhost:" + String(port))
+        .help("Open http://localhost:" + String(port) + (service.map { " (\(ServiceKind.name($0)))" } ?? ""))
     }
 }
 
