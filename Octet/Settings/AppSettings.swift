@@ -744,11 +744,14 @@ final class SettingsStore: ObservableObject {
     private func apply(from old: OctetSettings) {
         if values.keepAwake != old.keepAwake { SleepGuard.shared.update() }
         if values.globalHotkey != old.globalHotkey { GlobalHotkey.shared.apply(values.globalHotkey) }
-        if values.peersEnabled != old.peersEnabled { PeerCenter.shared.apply() }
+        // Each feature's tools go into the agents' own settings only while it's on.
+        if values.peersEnabled != old.peersEnabled {
+            PeerCenter.shared.apply()
+            AgentMCPInstaller.shared.sync(server: PeerMCP.serverName)
+        }
         if values.delegationEnabled != old.delegationEnabled {
             DelegationCenter.shared.apply()
-            // The tools go into the agents' own settings only while it's on.
-            DelegationCenter.shared.configureAgents(install: values.delegationEnabled)
+            AgentMCPInstaller.shared.sync(server: DelegationMCP.serverName)
         }
         // A new name is advertised by starting again.
         if values.peerName != old.peerName, values.peersEnabled { PeerCenter.shared.restart() }

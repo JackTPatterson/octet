@@ -289,49 +289,4 @@ final class DelegationCenter: ObservableObject {
         }
         return answer
     }
-
-    // MARK: - Agents' configuration
-
-    /// Adds, or removes, the tools in the installed agents' MCP settings.
-    func configureAgents(install: Bool) {
-        let installed = AgentDiscoveryStore.shared.agents.filter { $0.executablePath != nil }.map(\.id)
-        let commands: [String]
-        if install {
-            guard let cli = Bundle.main.url(forAuxiliaryExecutable: "octet-cli")?.path else {
-                return ToastCenter.shared.fail(nil, "octet-cli is missing from the app bundle")
-            }
-            commands = DelegationMCP.installCommands(cliPath: cli, agents: installed)
-        } else {
-            commands = DelegationMCP.removeCommands(agents: installed)
-        }
-        guard !commands.isEmpty else { return }
-        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-        DispatchQueue.global(qos: .userInitiated).async {
-            var failures: [String] = []
-            for command in commands {
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: shell)
-                process.arguments = ["-lc", command]
-                let output = Pipe()
-                process.standardOutput = output
-                process.standardError = output
-                try? process.run()
-                let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-                process.waitUntilExit()
-                // Already added, or already gone, counts as done.
-                let lowered = text.lowercased()
-                if process.terminationStatus != 0, !lowered.contains("already"), !lowered.contains("not found"), !lowered.contains("no mcp server") {
-                    failures.append(text.trimmingCharacters(in: .whitespacesAndNewlines))
-                }
-            }
-            DispatchQueue.main.async {
-                if !failures.isEmpty {
-                    ToastCenter.shared.fail(nil, install ? "Couldn't add the delegation tools everywhere" : "Couldn't remove the delegation tools everywhere",
-                                            detail: failures.joined(separator: "\n"))
-                } else if install {
-                    ToastCenter.shared.info("Agents can now ask each other", detail: "New agent sessions pick up the delegation tools.")
-                }
-            }
-        }
-    }
 }

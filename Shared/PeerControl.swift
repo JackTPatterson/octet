@@ -199,16 +199,4 @@ enum PeerMCP {
         (try? JSONSerialization.data(withJSONObject: answer, options: [.prettyPrinted, .sortedKeys]))
             .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
     }
-
-    /// The commands that add this server to an agent's MCP config.
-    static func installCommands(cliPath: String, agents: [String]) -> [String] {
-        let quoted = "'" + cliPath.replacingOccurrences(of: "'", with: "'\\''") + "'"
-        return agents.compactMap { agent in
-            switch agent {
-            case "claude": "claude mcp add --scope user \(serverName) -- \(quoted) peer-mcp"
-            case "codex": "codex mcp add \(serverName) -- \(quoted) peer-mcp"
-            default: nil
-            }
-        }
-    }
 }

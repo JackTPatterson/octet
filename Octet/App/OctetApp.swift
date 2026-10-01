@@ -69,6 +69,7 @@ struct OctetApp: App {
                     AgentsStore.shared.start()
                     CodexAgentsStore.shared.start()
                     AgentDiscoveryStore.shared.scanIfStale()
+                    AgentMCPInstaller.shared.start()
                     repairInstalledSubagentHooks()
                     DebugSnapshot.start()
                 }
