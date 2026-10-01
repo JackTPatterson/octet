@@ -84,6 +84,8 @@ struct OctetPluginManifest: Codable, Equatable {
         /// Buttons at the right of the tab bar, beside Todos and Git, each
         /// opening a panel of rows with actions.
         var panels: [PanelContribution] = []
+        /// Images that stand for a workspace's project in the sidebar.
+        var workspaceIcons: [WorkspaceIconContribution] = []
 
         init(completions: [CompletionContribution] = [], runtimes: [RuntimeContribution] = [],
              runtimeIgnore: [String] = [], statusItems: [StatusItemContribution] = [],
@@ -104,6 +106,30 @@ struct OctetPluginManifest: Codable, Equatable {
             statusItems = try container.decodeIfPresent([StatusItemContribution].self, forKey: .statusItems) ?? []
             menuItems = try container.decodeIfPresent([MenuItemContribution].self, forKey: .menuItems) ?? []
             panels = try container.decodeIfPresent([PanelContribution].self, forKey: .panels) ?? []
+            workspaceIcons = try container.decodeIfPresent([WorkspaceIconContribution].self, forKey: .workspaceIcons) ?? []
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case completions, runtimes, runtimeIgnore, statusItems, menuItems, panels, workspaceIcons
+        }
+    }
+
+    /// The picture for a workspace's project: `run` is run in the
+    /// workspace's folder and prints the path of an image in it (PNG, JPEG,
+    /// ICO, ICNS, SVG or WebP), like a web app's favicon or a mobile app's
+    /// icon, which the sidebar shows as the workspace's icon. Printing
+    /// nothing leaves the workspace as it was.
+    struct WorkspaceIconContribution: Codable, Equatable {
+        let id: String
+        /// Per platform; see `PluginCommand`.
+        let runs: PluginCommand
+        var refreshSeconds: Double?
+        var timeoutSeconds: Double?
+
+        var run: String { runs.command() ?? "" }
+
+        enum CodingKeys: String, CodingKey {
+            case id, runs = "run", refreshSeconds, timeoutSeconds
         }
     }
 
@@ -462,6 +488,14 @@ enum OctetPlugins {
             }
             if !settingIds.insert(setting.id).inserted { return "setting \(setting.id) appears twice" }
             if setting.title.trimmingCharacters(in: .whitespaces).isEmpty { return "setting \(setting.id) has no title" }
+        }
+        var iconIds: Set<String> = []
+        for icon in manifest.contributes.workspaceIcons {
+            if icon.id.range(of: "^[a-z0-9][a-z0-9._-]*$", options: .regularExpression) == nil {
+                return "workspace icon ids must be lowercase letters, digits, dots, dashes or underscores"
+            }
+            if !iconIds.insert(icon.id).inserted { return "workspace icon \(icon.id) appears twice" }
+            if let problem = problem(icon.runs) { return "workspace icon \(icon.id) \(problem)" }
         }
         var panelIds: Set<String> = []
         for panel in manifest.contributes.panels {
