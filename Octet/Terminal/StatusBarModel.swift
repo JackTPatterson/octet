@@ -49,6 +49,11 @@ final class StatusBarModel: ObservableObject {
     private var ssh: SSHTarget?
     private var shellPid: Int?
     private var timer: Timer?
+    /// Runs the chips again when a plugin's settings are saved, so a chip
+    /// waiting on them shows what it found at once.
+    private lazy var settingsObserver: NSObjectProtocol = NotificationCenter.default.addObserver(
+        forName: PluginSettingsStore.didChange, object: nil, queue: .main
+    ) { [weak self] _ in MainActor.assumeIsolated { self?.refreshPluginsNow() } }
     private var readingGit = false
     private var readingPullRequest = false
     private var pullRequestReadAt = Date.distantPast
@@ -465,6 +470,7 @@ final class StatusBarModel: ObservableObject {
     // MARK: - Plugin chips
 
     private func refreshPlugins() {
+        _ = settingsObserver
         guard let directory else { return }
         let host = OctetPluginHost.shared
         let order = Set(host.statusBarOrder)
@@ -490,12 +496,14 @@ final class StatusBarModel: ObservableObject {
         let running = id + "\u{0}" + directory
         guard pluginRunning.insert(running).inserted else { return }
         pluginRanAt[id] = Date()
-        var environment = [
+        var environment = PluginSettingsStore.shared.commandEnvironment(for: plugin)
+            .merging(OctetPluginHost.settingsVariables(plugin)) { _, octet in octet }
+        environment.merge([
             "OCTET_PLUGIN_DIR": plugin.directory,
             "OCTET_CWD": directory,
             "OCTET_REPO_ROOT": repo?.root ?? "",
             "OCTET_SHELL_PID": shellPid.map(String.init) ?? "",
-        ]
+        ]) { _, octet in octet }
         if let ssh {
             environment["OCTET_SSH_HOST"] = ssh.host
             environment["OCTET_SSH_USER"] = ssh.user ?? ""

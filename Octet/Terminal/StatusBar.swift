@@ -299,7 +299,10 @@ struct StatusBar: View {
             Text(output.text).lineLimit(1)
         }
         if let url = output.url {
-            Button { openURL(url) } label: { content }
+            Button {
+                // Octet's own links (a plugin's settings) open here.
+                if let link = OctetURL(url) { OctetURLHandler.handle(link) } else { openURL(url) }
+            } label: { content }
                 .buttonStyle(.plain)
                 .modifier(LinkHover())
         } else {

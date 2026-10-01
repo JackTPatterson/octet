@@ -44,6 +44,8 @@ struct CompletionSpec: Equatable {
         var perFolder = true
         /// How long the command may run before it's abandoned.
         var timeout: TimeInterval = 2
+        /// Set for the command, e.g. a plugin's settings.
+        var environment: [String: String] = [:]
     }
 
     let name: String
@@ -268,8 +270,9 @@ final class GeneratorCache {
         guard running.insert(key).inserted else { return }
         let command = generator.command
         let timeout = generator.timeout
+        let environment = generator.environment
         DispatchQueue.global(qos: .userInitiated).async {
-            let output = Self.run(command, in: cwd, timeout: timeout)
+            let output = Self.run(command, in: cwd, timeout: timeout, environment: environment)
             let values = output.split(separator: "\n")
                 .map { $0.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "'")) }
                 .filter { !$0.isEmpty }
@@ -282,15 +285,25 @@ final class GeneratorCache {
         }
     }
 
+    /// Drops what generators whose id starts with `prefix` returned, e.g. a
+    /// plugin's after its settings change.
+    func forget(idPrefix prefix: String) {
+        for key in entries.keys where key.hasPrefix(prefix) { entries[key] = nil }
+    }
+
     private func key(_ generator: CompletionSpec.Generator, cwd: String) -> String {
         generator.perFolder ? generator.id + "\u{0}" + cwd : generator.id
     }
 
-    private nonisolated static func run(_ command: String, in cwd: String, timeout: TimeInterval) -> String {
+    private nonisolated static func run(_ command: String, in cwd: String, timeout: TimeInterval,
+                                        environment: [String: String] = [:]) -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
         process.arguments = ["-c", command]
         process.currentDirectoryURL = URL(fileURLWithPath: cwd)
+        if !environment.isEmpty {
+            process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, new in new }
+        }
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
