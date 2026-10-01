@@ -39,6 +39,7 @@ struct RootView: View {
     static let todoPanelWidth: CGFloat = 293
     static let gitPanelWidth: CGFloat = 321
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         layered
@@ -322,6 +323,7 @@ struct RootView: View {
     private func appeared() {
             AgentBoardWindow.opener = { openWindow(id: AgentBoardWindow.id) }
             MarketplaceWindow.opener = { openWindow(id: MarketplaceWindow.id) }
+            PluginSettingsOpener.opener = { openSettings() }
             ClipboardWatcher.shared.start()
             #if DEBUG
             // Verification hook: "conversation" opens a native conversation;

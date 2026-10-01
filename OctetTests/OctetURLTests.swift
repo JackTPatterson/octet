@@ -30,4 +30,15 @@ final class OctetURLTests: XCTestCase {
         XCTAssertNil(OctetURL(URL(string: "octet://plugin?id=../evil")!))
         XCTAssertNil(OctetURL(URL(string: "octet://plugin")!))
     }
+
+    func testPluginSettingsLinksAndWhichAChipMayOpen() {
+        XCTAssertEqual(OctetURL(URL(string: "octet://plugin-settings?id=issues")!), .pluginSettings(id: "issues"))
+        XCTAssertEqual(OctetURL.pluginSettings(id: "issues").url.absoluteString, "octet://plugin-settings?id=issues")
+        // A chip may open a plugin's settings, never a link that types or installs.
+        XCTAssertEqual(StatusItemOutput.parse("NXS-528\nurl: octet://plugin-settings?id=issues")?.url?.absoluteString,
+                       "octet://plugin-settings?id=issues")
+        XCTAssertNil(StatusItemOutput.parse("x\nurl: octet://send?text=rm")?.url)
+        XCTAssertNil(StatusItemOutput.parse("x\nurl: octet://plugin?id=evil")?.url)
+        XCTAssertNil(StatusItemOutput.parse("x\nurl: file:///etc/passwd")?.url)
+    }
 }

@@ -421,6 +421,9 @@ private struct TerminalPluginRow: View {
                     if let update = host.update(for: installed) {
                         Button("Update") { host.install(update) }.controlSize(.small)
                     }
+                    if installed.manifest.settings?.isEmpty == false, host.isEnabled(installed) {
+                        Button("Settings") { PluginSettingsOpener.show(pluginId: installed.id) }.controlSize(.small)
+                    }
                     if !installed.isBundled {
                         Button("Remove") {
                             ConfirmCenter.shared.ask(title: "Remove \(plugin.name)?", message: "Deletes it from your plugin folder.",

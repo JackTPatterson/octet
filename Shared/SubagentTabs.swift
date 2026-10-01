@@ -92,7 +92,7 @@ enum SubagentWatch {
         reporter.report(state: "working", message: title)
         renderer.onDirectory = { cwd in reporter.markSubagent(cwd: cwd) }
         renderer.onFinished = {
-            reporter.report(state: "idle", message: "finished")
+            reporter.reportFinishedQuietly()
             playFinishedSound()
         }
         renderer.onResumed = { reporter.report(state: "working", message: title) }
@@ -244,6 +244,14 @@ struct PaneAgentReporter {
         for move in moves {
             guard (try? client.call("tab.move", ["tab_id": move.tabId, "insert_index": move.gap])) != nil else { return }
         }
+    }
+
+    /// Idle without the engine's own "done" sound, which it plays on a
+    /// working-to-idle change: by way of `unknown`, so the only sound is
+    /// the subagent's, not that one as well.
+    func reportFinishedQuietly() {
+        report(state: "unknown", message: "finished")
+        report(state: "idle", message: "finished")
     }
 
     func report(state: String, message: String) {

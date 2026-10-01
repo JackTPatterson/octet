@@ -40,6 +40,13 @@ struct StatusItemOutput: Equatable {
     var help: String?
     var url: URL?
 
+    /// The Octet links a chip may open: only ones that show something, never
+    /// one that runs, types or installs.
+    static func isSafeFromAChip(_ link: OctetURL) -> Bool {
+        if case .pluginSettings = link { return true }
+        return false
+    }
+
     /// nil when the command printed nothing, which hides the chip.
     static func parse(_ output: String) -> StatusItemOutput? {
         let lines = output.split(separator: "\n", omittingEmptySubsequences: false)
@@ -53,7 +60,10 @@ struct StatusItemOutput: Equatable {
             switch key {
             case "tone": result.tone = Tone(rawValue: value.lowercased()) ?? .normal
             case "help": result.help = value.replacingOccurrences(of: "\\n", with: "\n")
-            case "url": result.url = URL(string: value).flatMap { ["http", "https"].contains($0.scheme ?? "") ? $0 : nil }
+            // Web pages, and Octet's own links (a plugin's settings).
+            case "url": result.url = URL(string: value).flatMap { url in
+                ["http", "https"].contains(url.scheme ?? "") || OctetURL(url).map(Self.isSafeFromAChip) == true ? url : nil
+            }
             default: break
             }
         }

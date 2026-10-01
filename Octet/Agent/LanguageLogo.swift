@@ -78,6 +78,8 @@ struct LanguageLogo: View {
         .init("css", "663399", ["css", "scss", "sass", "less"]),
         .init("json", "000000", ["json", "jsonc", "json5", "jsonl"]),
         .init("yaml", "CB171E", ["yaml", "yml"]),
+        // Git's own mark, for the tab bar's Git button.
+        .init("git", "F05032", ["git"]),
         .init("toml", "9C4121", ["toml"]),
         .init("xml", "005FAD", ["xml", "plist", "xib", "storyboard", "svg"]),
         .init("markdown", "000000", ["markdown", "md", "mdx"]),

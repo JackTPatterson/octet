@@ -37,6 +37,8 @@ enum OctetURLHandler {
             ) { _ in window.store.runInPane(pane, line: text) }
         case .installPlugin(let id):
             OctetPluginHost.shared.installFromLink(id: id)
+        case .pluginSettings(let id):
+            PluginSettingsOpener.show(pluginId: id)
         }
     }
 

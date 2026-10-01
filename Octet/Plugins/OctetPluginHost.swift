@@ -36,6 +36,7 @@ final class OctetPluginHost: ObservableObject {
     /// plugin with runtime rules is on.
     func attach(_ store: SessionStore) {
         self.store = store
+        PluginSettingsStore.install(plugins)
         installFormerlyBuiltIn()
         startUpdateChecks()
         runtimeTimer?.invalidate()
@@ -360,7 +361,17 @@ final class OctetPluginHost: ObservableObject {
                 if !isUpdate, let plugin = plugins.first(where: { $0.id == entry.id }), !isEnabled(plugin) {
                     setEnabled(plugin, true)
                 }
-                if !quietly { ToastCenter.shared.info("\(isUpdate ? "Updated" : "Installed") \(entry.name)", detail: "Version \(entry.version)") }
+                if !quietly {
+                    // One that needs to be told something says so, and opens where.
+                    if let plugin = plugins.first(where: { $0.id == entry.id }), plugin.manifest.settings?.isEmpty == false,
+                       !PluginSettingsStore.shared.isComplete(plugin) {
+                        ToastCenter.shared.info("\(isUpdate ? "Updated" : "Installed") \(entry.name)",
+                                                detail: "It needs a few details to connect.", after: 10,
+                                                action: .init(title: "Set Up") { PluginSettingsOpener.show(pluginId: entry.id) })
+                    } else {
+                        ToastCenter.shared.info("\(isUpdate ? "Updated" : "Installed") \(entry.name)", detail: "Version \(entry.version)")
+                    }
+                }
                 then?(true)
             } catch {
                 if !quietly { ToastCenter.shared.fail(nil, "Couldn't install \(entry.name)", detail: error.localizedDescription) }
@@ -444,8 +455,16 @@ final class OctetPluginHost: ObservableObject {
 
     /// What every plugin command sees.
     static func environment(_ plugin: OctetPlugin, directory: String) -> [String: String] {
-        ["OCTET_PLUGIN_DIR": plugin.directory, "OCTET_CWD": directory,
-         "OCTET_REPO_ROOT": repositoryRoot(of: directory) ?? directory]
+        PluginSettingsStore.shared.commandEnvironment(for: plugin).merging(settingsVariables(plugin)) { _, octet in octet }
+            .merging(["OCTET_PLUGIN_DIR": plugin.directory, "OCTET_CWD": directory,
+                      "OCTET_REPO_ROOT": repositoryRoot(of: directory) ?? directory]) { _, octet in octet }
+    }
+
+    /// Where a plugin with settings sends someone to fill them in: a chip
+    /// prints it as its `url:` when what it needs is missing.
+    static func settingsVariables(_ plugin: OctetPlugin) -> [String: String] {
+        guard plugin.manifest.settings?.isEmpty == false else { return [:] }
+        return ["OCTET_PLUGIN_SETTINGS_URL": OctetURL.pluginSettings(id: plugin.id).url.absoluteString]
     }
 
     /// Opens the command a plugin printed in a new tab of `workspaceId`;

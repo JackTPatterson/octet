@@ -150,10 +150,18 @@ struct StatusBar: View {
             }
         case "builtin.worktree":
             if let repo = model.repo, repo.linkedWorktree {
-                StatusChip(color: descriptor.color, help: "Worktree at \(repo.root)") {
-                    OctetIcon("square.stack.3d.up", size: 10)
-                    Text((repo.root as NSString).lastPathComponent).lineLimit(1)
+                // A click offers what's worth doing from a worktree.
+                Menu { worktreeActions(repo) } label: {
+                    StatusChip(color: descriptor.color, help: "Worktree at \(repo.root)") {
+                        OctetIcon("square.stack.3d.up", size: 10)
+                        Text((repo.root as NSString).lastPathComponent).lineLimit(1)
+                    }
                 }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .contextMenu { worktreeActions(repo) }
             }
         case "builtin.gitState":
             if let operation = model.repo?.operation, !operation.isEmpty {
@@ -299,12 +307,26 @@ struct StatusBar: View {
             Text(output.text).lineLimit(1)
         }
         if let url = output.url {
-            Button { openURL(url) } label: { content }
+            Button {
+                // Octet's own links (a plugin's settings) open here.
+                if let link = OctetURL(url) { OctetURLHandler.handle(link) } else { openURL(url) }
+            } label: { content }
                 .buttonStyle(.plain)
                 .modifier(LinkHover())
         } else {
             content
         }
+    }
+
+    @ViewBuilder
+    private func worktreeActions(_ repo: StatusBarModel.Repo) -> some View {
+        if let main = GitBranch.mainCheckout(ofWorktreeGitDir: repo.gitDir) {
+            Button("Open Main Checkout") { WindowRegistry.shared.key?.openProject(path: main) }
+        }
+        Button("Show Worktrees") { WindowRegistry.shared.key?.ui.gitPanelVisible = true }
+        Divider()
+        Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: repo.root)]) }
+        Button("Copy Path") { copy(repo.root) }
     }
 
     private func copy(_ text: String) {

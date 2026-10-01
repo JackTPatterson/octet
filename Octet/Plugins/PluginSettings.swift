@@ -40,6 +40,9 @@ struct PluginSettings: View {
                 }
             }
         }
+        ForEach(host.plugins.filter { $0.manifest.settings?.isEmpty == false && host.isEnabled($0) }) { plugin in
+            PluginSettingsGroup(plugin: plugin)
+        }
         if !host.problems.isEmpty {
             SettingsGroup(title: "Couldn't load") {
                 ForEach(Array(host.problems.enumerated()), id: \.offset) { index, problem in

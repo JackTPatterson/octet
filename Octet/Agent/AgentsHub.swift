@@ -472,6 +472,7 @@ struct AgentsHubButton: View {
         let showing = center.board(in: workspace) != nil
         Button { center.setBoard(showing ? nil : .all, in: workspace) } label: {
             HStack(spacing: 5) {
+                OctetIcon("tool.agent", size: 12)
                 Text("Agents").font(Theme.uiFontMedium)
                 if waiting > 0 {
                     Text("\(waiting)")

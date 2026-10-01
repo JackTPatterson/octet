@@ -46,6 +46,27 @@ struct OctetPluginManifest: Codable, Equatable {
     /// Where it runs: `macos`, `linux`, `windows`. Unset means macOS and
     /// Linux, as its plain-string commands are `sh`.
     var platforms: [PluginPlatform]?
+    /// What the plugin needs to be told, asked in Settings › Plugins and
+    /// handed to every command it runs as environment variables.
+    var settings: [Setting]?
+
+    /// One value a plugin asks for: `id` is the environment variable its
+    /// commands read it from. A `secret` is kept in the Keychain and drawn
+    /// as a password field.
+    struct Setting: Codable, Equatable, Identifiable {
+        let id: String
+        let title: String
+        var detail: String?
+        var placeholder: String?
+        var secret: Bool?
+        /// Where to get the value, e.g. the page that makes an API token.
+        var link: String?
+
+        var isSecret: Bool { secret == true }
+        var linkURL: URL? {
+            link.flatMap(URL.init(string:)).flatMap { ["http", "https"].contains($0.scheme ?? "") ? $0 : nil }
+        }
+    }
 
     var supportedPlatforms: [PluginPlatform] { platforms ?? PluginPlatform.unixDefault }
 
@@ -286,6 +307,7 @@ struct OctetPluginManifest: Codable, Equatable {
         feature = try container.decodeIfPresent(String.self, forKey: .feature)
         enabledByDefault = try container.decodeIfPresent(Bool.self, forKey: .enabledByDefault)
         platforms = try container.decodeIfPresent([PluginPlatform].self, forKey: .platforms)
+        settings = try container.decodeIfPresent([Setting].self, forKey: .settings)
     }
 }
 
@@ -428,6 +450,19 @@ enum OctetPlugins {
             if item.title.trimmingCharacters(in: .whitespaces).isEmpty { return "menu item \(item.id) has no title" }
             if let problem = problem(item.runs) { return "menu item \(item.id) \(problem)" }
         }
+        var settingIds: Set<String> = []
+        for setting in manifest.settings ?? [] {
+            if setting.id.range(of: "^[A-Z][A-Z0-9_]*$", options: .regularExpression) == nil {
+                return "setting \(setting.id) must be an environment variable name, like JIRA_URL"
+            }
+            // Octet's own variables, and ones that change how commands run.
+            if setting.id.hasPrefix("OCTET_") || ["PATH", "HOME", "SHELL", "USER", "TMPDIR", "IFS", "ENV", "BASH_ENV"].contains(setting.id)
+                || setting.id.hasPrefix("DYLD_") || setting.id.hasPrefix("LD_") {
+                return "setting \(setting.id) is a name Octet keeps for itself"
+            }
+            if !settingIds.insert(setting.id).inserted { return "setting \(setting.id) appears twice" }
+            if setting.title.trimmingCharacters(in: .whitespaces).isEmpty { return "setting \(setting.id) has no title" }
+        }
         var panelIds: Set<String> = []
         for panel in manifest.contributes.panels {
             if panel.id.range(of: "^[a-z0-9][a-z0-9._-]*$", options: .regularExpression) == nil {
@@ -458,9 +493,15 @@ enum OctetPlugins {
             cacheSeconds: contribution.cacheSeconds ?? 10,
             kind: kind(contribution.kind),
             perFolder: contribution.perFolder ?? true,
-            timeout: min(max(contribution.timeoutSeconds ?? 2, 0.5), 30)
+            timeout: min(max(contribution.timeoutSeconds ?? 2, 0.5), 30),
+            environment: settingsEnvironment?(plugin) ?? [:]
         )
     }
+
+    /// The plugin's settings as environment variables, set by the app,
+    /// which keeps them; passed to commands in their environment, never on
+    /// a command line, as some are secrets.
+    nonisolated(unsafe) static var settingsEnvironment: ((OctetPlugin) -> [String: String])?
 
     static func kind(_ name: String?) -> Completion.Kind {
         switch name {
