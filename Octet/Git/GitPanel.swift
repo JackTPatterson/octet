@@ -743,6 +743,7 @@ struct GitPanelButton: View {
         if model.hasRepository || isShowing {
             Button { isShowing.toggle() } label: {
                 HStack(spacing: 5) {
+                    LanguageLogo(language: "git", size: 11)
                     Text("Git").font(Theme.uiFontMedium)
                     if isShowing, model.changedFiles > 0 {
                         Text("\(model.changedFiles)")
