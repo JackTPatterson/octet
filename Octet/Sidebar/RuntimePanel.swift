@@ -87,7 +87,10 @@ struct RuntimePanel: View {
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 14) {
+                        // Not lazy: a handful of rows whose heights change as
+                        // they open, which a lazy stack could lose track of
+                        // and draw as an empty panel.
+                        VStack(alignment: .leading, spacing: 14) {
                             ForEach(RuntimeKind.allCases) { kind in
                                 let rows = current.filter { $0.kind == kind }
                                 if !rows.isEmpty { section(kind, rows: rows, proxy: proxy) }
@@ -773,12 +776,21 @@ private struct ExpandableText: View {
         text.count > 360 || text.reduce(0) { $1 == "\n" ? $0 + 1 : $0 } >= Self.collapsedLines
     }
 
+    /// The opening lines, cut here rather than by a line limit: selectable
+    /// text draws every line however few it was given room for, so a long
+    /// prompt ran over the sections below it.
+    private var collapsed: String {
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).prefix(Self.collapsedLines)
+        var shown = lines.joined(separator: "\n")
+        if shown.count > 360 { shown = String(shown.prefix(360)) }
+        return shown.count < text.count ? shown.trimmingCharacters(in: .whitespacesAndNewlines) + "…" : shown
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(text)
+            Text(showsAll ? text : collapsed)
                 .font(font)
                 .foregroundStyle(Theme.textSecondary)
-                .lineLimit(showsAll ? nil : Self.collapsedLines)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
             if isLong {
