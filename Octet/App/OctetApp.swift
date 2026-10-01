@@ -80,7 +80,11 @@ struct OctetApp: App {
         // in the window in front. Left to SwiftUI, each one also made a new
         // window: a second view of the same session, with the file nowhere.
         .handlesExternalEvents(matching: [])
-        .commands { OctetCommands(store: store, updater: updaterController.updater) }
+        .commands {
+            OctetCommands(store: store, updater: updaterController.updater)
+            // Apart from OctetCommands, which holds as many as a builder takes.
+            PeerCommands(settings: SettingsStore.shared, center: PeerCenter.shared)
+        }
 
         Settings {
             SettingsView(store: store)
@@ -118,8 +122,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Restores a saved Secure Keyboard Entry choice.
         _ = SecureInput.shared
         GlobalHotkey.shared.apply(SettingsStore.shared.values.globalHotkey)
-        // The Peer menu, while Other Macs is on.
-        PeerMenu.shared.start()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
