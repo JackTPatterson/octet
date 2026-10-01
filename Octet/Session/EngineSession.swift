@@ -92,18 +92,9 @@ struct EngineSession {
         let session = Self.name
         let enginePath = self.enginePath
         DispatchQueue.global(qos: .utility).async {
-            guard let problem = TerminalEnvironment.serverProblem(session: session) else { return }
-            let pid: Int, title: String, message: String
-            switch problem {
-            case .colorless(let server):
-                pid = server
-                title = "Colour is off in this terminal session"
-                message = "The terminal server was started from a shell with NO_COLOR set, so Claude Code and other programs print everything in plain text colour. Restarting the server fixes it, but ends everything running in its panes. Octet reopens afterwards."
-            case .foreign(let server):
-                pid = server
-                title = "This terminal session thinks it's another terminal"
-                message = "The terminal server was started from another terminal's shell (Warp, iTerm, …) and passes its settings to every pane, so Claude Code and other programs act as if they ran there, like sending Warp notifications. Restarting the server fixes it, but ends everything running in its panes. Octet reopens afterwards."
-            }
+            guard let pid = TerminalEnvironment.colorlessServer(session: session) else { return }
+            let title = "Colour is off in this terminal session"
+            let message = "The terminal server was started from a shell with NO_COLOR set, so Claude Code and other programs print everything in plain text colour. Restarting the server fixes it, but ends everything running in its panes. Octet reopens afterwards."
             DispatchQueue.main.async {
                 let declinedKey = "octet.colorlessServerDeclined"
                 guard UserDefaults.standard.integer(forKey: declinedKey) != pid else { return }

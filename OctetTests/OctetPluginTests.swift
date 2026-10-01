@@ -215,19 +215,6 @@ final class ColorlessServerTests: XCTestCase {
         """))
     }
 
-    func testFindsAServerStartedFromAnotherTerminal() {
-        let warp = """
-          500 /Applications/Octet.app/Contents/MacOS/octet-engine server HERDR_SESSION=octet WARP_IS_LOCAL_SHELL_SESSION=1 TERM_PROGRAM=Octet
-        """
-        XCTAssertEqual(TerminalEnvironment.serverProblem(session: "octet", processList: warp), .foreign(500))
-        XCTAssertNil(TerminalEnvironment.serverProblem(session: "octet", processList: """
-          500 /Applications/Octet.app/Contents/MacOS/octet-engine server HERDR_SESSION=octet TERM_PROGRAM=Octet
-        """))
-        XCTAssertEqual(TerminalEnvironment.serverProblem(session: "octet", processList: """
-          501 /Applications/Octet.app/Contents/MacOS/octet-engine server HERDR_SESSION=octet NO_COLOR=1 WARP_X=1
-        """), .colorless(501))
-    }
-
     func testAnotherTerminalsVariablesAreDropped() {
         let cleaned = TerminalEnvironment.sanitized([
             "WARP_IS_LOCAL_SHELL_SESSION": "1", "WARP_HONOR_PS1": "0", "ITERM_SESSION_ID": "w0", "NO_COLOR": "1",
