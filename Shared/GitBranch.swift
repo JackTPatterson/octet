@@ -52,6 +52,24 @@ enum GitBranch {
         return nil
     }
 
+    /// The main checkout a linked worktree belongs to: its git data's
+    /// `commondir` names the shared `.git`, whose folder is the checkout.
+    /// nil for a bare repository, which has no checkout of its own.
+    static func mainCheckout(ofWorktreeGitDir gitDir: String,
+                             read: (String) -> String? = { try? String(contentsOfFile: $0, encoding: .utf8) }) -> String? {
+        var common: String
+        if let raw = read(gitDir + "/commondir")?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty {
+            common = raw.hasPrefix("/") ? raw : URL(fileURLWithPath: gitDir + "/" + raw).standardizedFileURL.path
+        } else if let range = gitDir.range(of: "/worktrees/", options: .backwards) {
+            common = String(gitDir[..<range.lowerBound])
+        } else {
+            return nil
+        }
+        while common.count > 1, common.hasSuffix("/") { common.removeLast() }
+        guard (common as NSString).lastPathComponent == ".git" else { return nil }
+        return (common as NSString).deletingLastPathComponent
+    }
+
     /// Whether HEAD names a commit rather than a branch.
     static func isDetached(gitDir: String) -> Bool {
         guard let head = try? String(contentsOfFile: gitDir + "/HEAD", encoding: .utf8) else { return false }

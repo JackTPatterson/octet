@@ -118,3 +118,16 @@ final class WorktreeSetupTests: XCTestCase {
         XCTAssertNil(find("/tmp/nothing"))
     }
 }
+
+final class MainCheckoutTests: XCTestCase {
+    func testAWorktreeFindsItsMainCheckout() {
+        // What git writes: commondir is relative to the worktree's git data.
+        let files = ["/code/app/.git/worktrees/fix-login/commondir": "../..\n"]
+        XCTAssertEqual(GitBranch.mainCheckout(ofWorktreeGitDir: "/code/app/.git/worktrees/fix-login", read: { files[$0] }),
+                       "/code/app")
+        // Without commondir, from the path itself.
+        XCTAssertEqual(GitBranch.mainCheckout(ofWorktreeGitDir: "/code/app/.git/worktrees/x", read: { _ in nil }), "/code/app")
+        // A bare repository has no checkout to open.
+        XCTAssertNil(GitBranch.mainCheckout(ofWorktreeGitDir: "/code/app.git/worktrees/x", read: { _ in nil }))
+    }
+}
