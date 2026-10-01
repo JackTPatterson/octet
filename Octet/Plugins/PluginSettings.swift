@@ -40,6 +40,21 @@ struct PluginSettings: View {
                 }
             }
         }
+        // Octet's own features that come as plugins: switched on here, and
+        // their settings appear below once they are.
+        let features = host.plugins.filter { $0.isBundled && $0.manifest.feature != nil }
+        if !features.isEmpty {
+            SettingsGroup(title: "Built-in features") {
+                ForEach(Array(features.enumerated()), id: \.element.id) { index, plugin in
+                    if index > 0 { SettingsDivider() }
+                    SettingsRow(title: plugin.manifest.name, detail: plugin.manifest.description) {
+                        Toggle(plugin.manifest.name, isOn: Binding(get: { host.isEnabled(plugin) },
+                                                                   set: { host.setEnabled(plugin, $0) }))
+                            .labelsHidden().toggleStyle(.switch)
+                    }
+                }
+            }
+        }
         ForEach(host.plugins.filter { $0.manifest.settings?.isEmpty == false && host.isEnabled($0) }) { plugin in
             PluginSettingsGroup(plugin: plugin)
         }
