@@ -299,7 +299,9 @@ struct StatusBar: View {
             Text(output.text).lineLimit(1)
         }
         if let url = output.url {
-            Button { openURL(url) } label: { content }.buttonStyle(.plain)
+            Button { openURL(url) } label: { content }
+                .buttonStyle(.plain)
+                .modifier(LinkHover())
         } else {
             content
         }
@@ -365,6 +367,21 @@ struct StatusChip<Content: View>: View {
         case .warning, .danger: (toneColor ?? Theme.border).opacity(0.5)
         default: Theme.border
         }
+    }
+}
+
+/// A chip that opens something: the pointing hand and a lift on hover, so it
+/// reads as a link and not as a label.
+private struct LinkHover: ViewModifier {
+    @State private var hovered = false
+
+    func body(content: Content) -> some View {
+        content
+            .brightness(hovered ? 0.08 : 0)
+            .onHover { inside in
+                hovered = inside
+                if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+            }
     }
 }
 

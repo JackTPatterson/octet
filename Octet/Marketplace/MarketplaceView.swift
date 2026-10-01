@@ -203,6 +203,9 @@ struct MarketplaceView: View {
                     let plugins = filter == .terminal ? [] : store.filteredPlugins()
                     let limit = MarketplaceStore.pluginDisplayLimit
                     PluginFilterBar(store: store)
+                    if filter != .agents, !pluginHost.updates.isEmpty {
+                        PluginUpdatesBanner(updates: pluginHost.updates)
+                    }
                     if filter != .agents, let error = pluginHost.registryError {
                         LoadErrorBanner(message: "Terminal plugins: \(error)", retrying: pluginHost.registryLoading) {
                             pluginHost.loadRegistry(force: true)
@@ -316,6 +319,31 @@ struct MarketplaceView: View {
 }
 
 // MARK: - Plugins
+
+/// Newer versions of installed terminal plugins, updated in one click.
+private struct PluginUpdatesBanner: View {
+    let updates: [PluginRegistry.Entry]
+    @ObservedObject private var host = OctetPluginHost.shared
+
+    var body: some View {
+        HStack(spacing: 8) {
+            OctetIcon("arrow.down", size: 13).foregroundStyle(Theme.accent)
+            Text(updates.count == 1 ? "An update for \(updates[0].name)" : "\(updates.count) plugin updates")
+                .font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary)
+            Text(updates.map { "\($0.name) \($0.version)" }.joined(separator: ", "))
+                .font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
+                .lineLimit(1).truncationMode(.tail)
+            Spacer(minLength: 8)
+            Button(updates.count == 1 ? "Update" : "Update All") { host.update(updates) }
+                .controlSize(.small)
+                .disabled(!host.installing.isEmpty)
+        }
+        .padding(10)
+        .background(Theme.card)
+        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.accent.opacity(0.4), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+}
 
 /// All, agents' plugins, or Octet's own: one list, filtered.
 private struct PluginFilterBar: View {

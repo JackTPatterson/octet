@@ -22,4 +22,12 @@ final class OctetURLTests: XCTestCase {
             XCTAssertEqual(OctetURL(command.url), command)
         }
     }
+
+    func testPluginInstallLinks() {
+        XCTAssertEqual(OctetURL(URL(string: "octet://plugin?id=containers")!), .installPlugin(id: "containers"))
+        XCTAssertEqual(OctetURL.installPlugin(id: "issues").url.absoluteString, "octet://plugin?id=issues")
+        // Only registry ids: nothing that could name a path.
+        XCTAssertNil(OctetURL(URL(string: "octet://plugin?id=../evil")!))
+        XCTAssertNil(OctetURL(URL(string: "octet://plugin")!))
+    }
 }
