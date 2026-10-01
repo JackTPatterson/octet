@@ -80,7 +80,11 @@ struct OctetApp: App {
         // in the window in front. Left to SwiftUI, each one also made a new
         // window: a second view of the same session, with the file nowhere.
         .handlesExternalEvents(matching: [])
-        .commands { OctetCommands(store: store, updater: updaterController.updater) }
+        .commands {
+            OctetCommands(store: store, updater: updaterController.updater)
+            // Apart from OctetCommands, which holds as many as a builder takes.
+            PeerCommands(settings: SettingsStore.shared, center: PeerCenter.shared)
+        }
 
         Settings {
             SettingsView(store: store)
@@ -315,7 +319,6 @@ struct OctetCommands: Commands {
             Button(OctetShortcut.focusDown.title) { KeyWindow.act { $0.focusPane(.down) } }
                 .keyboardShortcut(OctetShortcut.focusDown.keyboardShortcut)
         }
-        PeerCommands(settings: SettingsStore.shared, center: PeerCenter.shared)
         CommandMenu("Navigate") {
             Button(OctetShortcut.nextTab.title) { KeyWindow.act { $0.selectAdjacentTab(offset: 1) } }
                 .keyboardShortcut(OctetShortcut.nextTab.keyboardShortcut)
