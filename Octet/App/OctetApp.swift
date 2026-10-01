@@ -118,6 +118,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Restores a saved Secure Keyboard Entry choice.
         _ = SecureInput.shared
         GlobalHotkey.shared.apply(SettingsStore.shared.values.globalHotkey)
+        // The Peer menu, while Other Macs is on.
+        PeerMenu.shared.start()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
