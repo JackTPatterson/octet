@@ -13,15 +13,33 @@ enum TerminalEnvironment {
         "FORCE_COLOR": "3",
     ]
 
-    static func sanitized(_ environment: [String: String]) -> [String: String] {
-        var environment = environment
-        environment.removeValue(forKey: "NO_COLOR")
-        return environment
+    /// Variables another terminal set for the programs in it. Inherited by
+    /// Octet when it's started from that terminal's shell, they'd tell every
+    /// program in Octet's panes it's running there: with Warp's, Claude Code
+    /// sends Warp its events as notifications (warp://cli-agent) that Octet
+    /// would show as banners.
+    static func isInheritedTerminalVariable(_ name: String) -> Bool {
+        name == "NO_COLOR" || name.hasPrefix("WARP_") || inheritedTerminalVariables.contains(name)
     }
 
-    /// Run before any terminal engine or session process is created.
-    static func clearInheritedColorSuppression() {
-        unsetenv("NO_COLOR")
+    private static let inheritedTerminalVariables: Set<String> = [
+        "TERM_SESSION_ID", "TERM_PROGRAM_VERSION", "TERMINAL_EMULATOR",
+        "ITERM_SESSION_ID", "ITERM_PROFILE", "LC_TERMINAL", "LC_TERMINAL_VERSION",
+        "KITTY_WINDOW_ID", "KITTY_PID", "KITTY_PUBLIC_KEY",
+        "WEZTERM_PANE", "WEZTERM_EXECUTABLE", "WEZTERM_UNIX_SOCKET",
+        "ALACRITTY_WINDOW_ID", "ALACRITTY_SOCKET", "ALACRITTY_LOG",
+    ]
+
+    static func sanitized(_ environment: [String: String]) -> [String: String] {
+        environment.filter { !isInheritedTerminalVariable($0.key) }
+    }
+
+    /// Run before any terminal engine or session process is created: what
+    /// Octet starts inherits its environment.
+    static func clearInheritedTerminalVariables() {
+        for name in ProcessInfo.processInfo.environment.keys where isInheritedTerminalVariable(name) {
+            unsetenv(name)
+        }
     }
 
     /// The pid of `session`'s server when it was started with NO_COLOR, from
@@ -41,6 +59,22 @@ enum TerminalEnvironment {
         return nil
     }
 
+    /// The pid of `session`'s server when it was started from another
+    /// terminal's shell, carrying its variables (see
+    /// `isInheritedTerminalVariable`), from the same `ps` output.
+    static func foreignServer(session: String, processList: String) -> Int? {
+        for line in processList.split(separator: "\n") {
+            let fields = line.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
+            guard fields.count > 2, let pid = Int(fields[0]),
+                  EngineProtocol.processNames.contains((fields[1] as NSString).lastPathComponent),
+                  fields[2] == "server",
+                  fields.contains("HERDR_SESSION=\(session)") else { continue }
+            let names = fields.dropFirst(3).compactMap { $0.split(separator: "=", maxSplits: 1).first.map(String.init) }
+            if names.contains(where: { $0 != "NO_COLOR" && isInheritedTerminalVariable($0) }) { return pid }
+        }
+        return nil
+    }
+
     static func colorlessServer(session: String) -> Int? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/ps")
@@ -52,5 +86,41 @@ enum TerminalEnvironment {
         let data = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         return colorlessServer(session: session, processList: String(decoding: data, as: UTF8.self))
+    }
+
+    /// What's wrong with this session's running server, if anything: started
+    /// with NO_COLOR, or from another terminal's shell.
+    enum ServerProblem: Equatable { case colorless(Int), foreign(Int) }
+
+    static func serverProblem(session: String, processList: String) -> ServerProblem? {
+        if let pid = colorlessServer(session: session, processList: processList) { return .colorless(pid) }
+        if let pid = foreignServer(session: session, processList: processList) { return .foreign(pid) }
+        return nil
+    }
+
+    static func serverProblem(session: String) -> ServerProblem? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/ps")
+        process.arguments = ["-axwwE", "-o", "pid=,command="]
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        do { try process.run() } catch { return nil }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return serverProblem(session: session, processList: String(decoding: data, as: UTF8.self))
+    }
+}
+
+/// Desktop notifications (OSC 9, OSC 777) a program in a pane sends.
+enum TerminalNotice {
+    /// Meant for software, not a person: titled with an address, like Warp's
+    /// `warp://cli-agent`, or a body that is a JSON message. Never shown.
+    static func isForSoftware(title: String, body: String) -> Bool {
+        let title = title.trimmingCharacters(in: .whitespaces)
+        if title.range(of: "^[A-Za-z][A-Za-z0-9+.-]*://", options: .regularExpression) != nil { return true }
+        let body = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard body.hasPrefix("{"), body.hasSuffix("}") else { return false }
+        return (try? JSONSerialization.jsonObject(with: Data(body.utf8))) is [String: Any]
     }
 }

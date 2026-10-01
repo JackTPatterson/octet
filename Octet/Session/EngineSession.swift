@@ -92,13 +92,24 @@ struct EngineSession {
         let session = Self.name
         let enginePath = self.enginePath
         DispatchQueue.global(qos: .utility).async {
-            guard let pid = TerminalEnvironment.colorlessServer(session: session) else { return }
+            guard let problem = TerminalEnvironment.serverProblem(session: session) else { return }
+            let pid: Int, title: String, message: String
+            switch problem {
+            case .colorless(let server):
+                pid = server
+                title = "Colour is off in this terminal session"
+                message = "The terminal server was started from a shell with NO_COLOR set, so Claude Code and other programs print everything in plain text colour. Restarting the server fixes it, but ends everything running in its panes. Octet reopens afterwards."
+            case .foreign(let server):
+                pid = server
+                title = "This terminal session thinks it's another terminal"
+                message = "The terminal server was started from another terminal's shell (Warp, iTerm, …) and passes its settings to every pane, so Claude Code and other programs act as if they ran there, like sending Warp notifications. Restarting the server fixes it, but ends everything running in its panes. Octet reopens afterwards."
+            }
             DispatchQueue.main.async {
                 let declinedKey = "octet.colorlessServerDeclined"
                 guard UserDefaults.standard.integer(forKey: declinedKey) != pid else { return }
                 ConfirmCenter.shared.ask(ConfirmCenter.Request(
-                    title: "Colour is off in this terminal session",
-                    message: "The terminal server was started from a shell with NO_COLOR set, so Claude Code and other programs print everything in plain text colour. Restarting the server fixes it, but ends everything running in its panes. Octet reopens afterwards.",
+                    title: title,
+                    message: message,
                     confirmTitle: "Restart Terminal Server",
                     cancelTitle: "Not Now",
                     destructive: true,
@@ -118,9 +129,7 @@ struct EngineSession {
         let relaunch = Process()
         relaunch.executableURL = URL(fileURLWithPath: "/bin/sh")
         relaunch.arguments = ["-c", "sleep 0.5; " + script]
-        var environment = ProcessInfo.processInfo.environment
-        environment.removeValue(forKey: "NO_COLOR")
-        relaunch.environment = environment
+        relaunch.environment = TerminalEnvironment.sanitized(ProcessInfo.processInfo.environment)
         try? relaunch.run()
         NSApp.terminate(nil)
     }

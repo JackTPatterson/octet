@@ -27,6 +27,7 @@ enum TerminalAttention {
 
     /// Shown as Octet's own banner when that's how notices are delivered.
     static func notify(title: String, body: String) {
+        guard !TerminalNotice.isForSoftware(title: title, body: body) else { return }
         let heading = title.isEmpty ? "Terminal" : title
         // With system notifications on, the session server delivers them itself.
         guard SettingsStore.shared.values.notifications == .banner else { return }

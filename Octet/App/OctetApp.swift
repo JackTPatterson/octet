@@ -21,10 +21,11 @@ struct OctetApp: App {
             updaterDelegate: nil,
             userDriverDelegate: nil
         )
-        // IDEs and parent agents commonly export NO_COLOR for their own logs.
-        // Octet is a real PTY, so that host-only preference must not erase the
-        // native colors of Claude, Codex, shells, or any other terminal app.
-        TerminalEnvironment.clearInheritedColorSuppression()
+        // IDEs and parent agents commonly export NO_COLOR for their own logs,
+        // and a terminal Octet was started from leaves its own variables.
+        // Octet is a real PTY: neither may reach Claude, Codex, shells, or any
+        // other program in its panes.
+        TerminalEnvironment.clearInheritedTerminalVariables()
         let session = EngineSession.make()
         let settings = SettingsStore.shared
         settings.sessionConfigPath = session?.configPath
