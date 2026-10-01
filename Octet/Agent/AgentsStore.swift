@@ -144,7 +144,7 @@ final class AgentsStore: ObservableObject {
         // Resume the session whose log actually holds the conversation.
         let logId = Self.logPath(for: agent).map { (($0 as NSString).lastPathComponent as NSString).deletingPathExtension } ?? agent.sessionId
         let saved = AgentSession.Saved(sessionId: logId, cwd: agent.cwd, title: agent.name,
-                                       model: "claude-sonnet-5", effort: nil, permissionMode: AgentSession.PermissionMode.auto.rawValue,
+                                       model: AgentSession.defaultModel, effort: nil, permissionMode: AgentSession.PermissionMode.auto.rawValue,
                                        hasTurns: true)
         DispatchQueue.global(qos: .userInitiated).async {
             _ = LoginShell.run(["claude", "stop", agent.id])

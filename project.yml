@@ -16,7 +16,7 @@ settings:
     # The generated Info.plist takes its version from these; without them
     # the app ships with no version at all.
     MARKETING_VERSION: "0.1.0"
-    CURRENT_PROJECT_VERSION: "8"
+    CURRENT_PROJECT_VERSION: "11"
     # The release stage shown beside the sidebar button; empty for a
     # stable release, which shows none.
     OCTET_PRERELEASE: "beta"
@@ -66,6 +66,12 @@ targets:
         embed: true
         copy:
           destination: executables
+    # The hardened runtime blocks the microphone without this, which Hold
+    # Space to talk needs.
+    entitlements:
+      path: Octet/Octet.entitlements
+      properties:
+        com.apple.security.device.audio-input: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.jpxsoftware.octet

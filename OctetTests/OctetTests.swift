@@ -341,6 +341,59 @@ final class SubagentTranscriptTests: XCTestCase {
         renderer.render(line: Data(text.utf8))
         XCTAssertEqual(finishedCount, 1)
     }
+
+    func testHandingTheReportBackFinishesTheSubagent() {
+        let renderer = SubagentTranscriptRenderer()
+        var finishedCount = 0
+        renderer.onFinished = { finishedCount += 1 }
+        let handback = #"{"type":"assistant","message":{"stop_reason":"tool_use","content":[{"type":"tool_use","id":"toolu_9","name":"SubagentHandback","input":{"report":"Done: 3 files."}}]}}"#
+        let delivered = #"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_9","content":"{\"success\":true,\"message\":\"Report delivered to your caller.\"}"}]}}"#
+        renderer.render(line: Data(handback.utf8))
+        XCTAssertEqual(finishedCount, 0, "not until the report is delivered")
+        renderer.render(line: Data(delivered.utf8))
+        XCTAssertEqual(finishedCount, 1)
+        XCTAssertNotNil(renderer.finishedAt)
+    }
+
+    func testAFinishedSubagentStaysFinishedUntilItHasNewWork() {
+        let renderer = SubagentTranscriptRenderer()
+        var resumed = 0
+        renderer.onResumed = { resumed += 1 }
+        renderer.render(line: Data(#"{"type":"assistant","message":{"stop_reason":"tool_use","content":[{"type":"tool_use","id":"h1","name":"SubagentHandback","input":{"report":"Done."}}]}}"#.utf8))
+        renderer.render(line: Data(#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"h1","content":"Report delivered to your caller."}]}}"#.utf8))
+        XCTAssertNotNil(renderer.finishedAt)
+        // What a subagent writes after handing back doesn't undo it.
+        renderer.render(line: Data(#"{"type":"assistant","message":{"stop_reason":"end_turn","content":[]}}"#.utf8))
+        renderer.render(line: Data(#"{"type":"assistant","message":{"stop_reason":"end_turn","content":[{"type":"thinking","thinking":"…"}]}}"#.utf8))
+        renderer.render(line: Data(#"{"type":"user","message":{"role":"user","content":"<system-reminder>idle</system-reminder>"}}"#.utf8))
+        XCTAssertNotNil(renderer.finishedAt)
+        XCTAssertEqual(resumed, 0)
+        // A new prompt does.
+        renderer.render(line: Data(#"{"type":"user","message":{"role":"user","content":"Now check the tests."}}"#.utf8))
+        XCTAssertNil(renderer.finishedAt)
+        XCTAssertEqual(resumed, 1)
+    }
+
+    func testAToolCallAfterAFinishIsMoreWork() {
+        let renderer = SubagentTranscriptRenderer()
+        renderer.render(line: Data(#"{"type":"assistant","message":{"stop_reason":"end_turn","content":[{"type":"text","text":"Done."}]}}"#.utf8))
+        XCTAssertNotNil(renderer.finishedAt)
+        renderer.render(line: Data(#"{"type":"assistant","message":{"stop_reason":"tool_use","content":[{"type":"tool_use","id":"t9","name":"Read","input":{}}]}}"#.utf8))
+        XCTAssertNil(renderer.finishedAt)
+    }
+
+    func testAFailedHandbackDoesntFinish() {
+        let renderer = SubagentTranscriptRenderer()
+        var finishedCount = 0
+        renderer.onFinished = { finishedCount += 1 }
+        renderer.render(line: Data(#"{"type":"assistant","message":{"stop_reason":"tool_use","content":[{"type":"tool_use","id":"t1","name":"SubagentHandback","input":{}}]}}"#.utf8))
+        renderer.render(line: Data(#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":"no caller"}]}}"#.utf8))
+        XCTAssertEqual(finishedCount, 0)
+        // Another tool's result isn't a handback either.
+        renderer.render(line: Data(#"{"type":"assistant","message":{"stop_reason":"tool_use","content":[{"type":"tool_use","id":"t2","name":"Read","input":{}}]}}"#.utf8))
+        renderer.render(line: Data(#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t2","content":"x"}]}}"#.utf8))
+        XCTAssertEqual(finishedCount, 0)
+    }
 }
 
 final class FuzzyMatcherTests: XCTestCase {
@@ -1694,6 +1747,15 @@ final class ImagePasteTests: XCTestCase {
 }
 
 final class TerminalThemeImportTests: XCTestCase {
+    func testANamedCursorColourIsTheAccent() throws {
+        // Ghostty takes colour names; "white" used to fall back to palette blue.
+        let theme = try XCTUnwrap(TerminalThemeImport.parse("background = #101010\nforeground = #eeeeee\ncursor-color = white\npalette = 4=#0000ee", name: "T"))
+        XCTAssertEqual(theme.accent, "ffffff")
+        let follows = try XCTUnwrap(TerminalThemeImport.parse("cursor-color = cell-foreground\nbackground = #101010\nforeground = #eeeeee", name: "T"))
+        XCTAssertEqual(follows.accent, "eeeeee")
+        XCTAssertEqual(TerminalThemeImport.hex("Cornflower Blue"), "6495ed")
+    }
+
     func testAGhosttyStyleConfigBecomesATheme() throws {
         let theme = try XCTUnwrap(TerminalThemeImport.parse("""
         # my terminal
@@ -3518,5 +3580,25 @@ final class UsageWindowMergeTests: XCTestCase {
         var account = AgentAccount(agent: "claude", kind: .subscription)
         account.windows = merged
         XCTAssertEqual(account.windows.max { $0.used < $1.used }, weekly)
+    }
+
+    func testAResetWindowDoesntHideTheOneRunningNow() {
+        let now = Date(timeIntervalSince1970: 10_000_000)
+        let stale = UsageWindow(name: "5h", used: 0.9, resetsAt: now.addingTimeInterval(-60))
+        let current = UsageWindow(name: "5h", used: 0.1, resetsAt: now.addingTimeInterval(4 * 3600))
+        XCTAssertEqual(AgentAccounts.mergeWindows(newer: [stale], older: [current], now: now), [current])
+        // With nothing newer, the reset window stays, so the card can say when.
+        XCTAssertEqual(AgentAccounts.mergeWindows(newer: [stale], older: [], now: now), [stale])
+    }
+
+    func testARejectedRequestSpendsItsWindow() {
+        let windows = AgentAccounts.claudeWindows(rateLimitInfo: [
+            "status": "rejected", "rateLimitType": "five_hour", "resetsAt": 1_789_863_000.0,
+        ])
+        XCTAssertEqual(windows.map(\.name), ["5h"])
+        XCTAssertEqual(windows.first?.used, 1)
+        // An allowed request with no utilization says nothing about use.
+        XCTAssertTrue(AgentAccounts.claudeWindows(rateLimitInfo: ["status": "allowed", "rateLimitType": "five_hour"]).isEmpty)
+        XCTAssertTrue(AgentAccounts.claudeWindows(rateLimitInfo: ["status": "rejected", "rateLimitType": "overage"]).isEmpty)
     }
 }

@@ -77,6 +77,14 @@ struct AgentConversation: Equatable {
     /// Claude Code echoes each message it starts on (`--replay-user-messages`);
     /// these are Octet's own, already drawn, and any other is from elsewhere.
     var sentUserIds: Set<String> = []
+    /// The MCP servers the agent reported starting with (Claude Code's and
+    /// Qwen Code's init event).
+    var mcpServers: [MCPServerState]?
+    /// Claude Code: for each user message (its id, lowercased), the uuid of
+    /// the main conversation's last assistant event before it, where a
+    /// rewind resumes (`--resume-session-at`). A first message has none.
+    var resumeAnchors: [String: String] = [:]
+    private var lastAssistantUUID: String?
     /// A plan the agent sent as an event rather than a tool call (Codex's
     /// `turn/plan/updated`), for the todo panel.
     var plan: [AgentTodo]?
@@ -89,10 +97,35 @@ struct AgentConversation: Equatable {
     private var currentMessageId: String?
     private var currentParent: String?
 
-    mutating func appendUser(_ text: String, images: [Data] = [], queued: Bool = false) {
-        items.append(AgentItem(id: UUID().uuidString, kind: .user(text), images: images, queued: queued))
+    mutating func appendUser(_ text: String, images: [Data] = [], queued: Bool = false, id: String = UUID().uuidString) {
+        noteUser(id)
+        items.append(AgentItem(id: id, kind: .user(text), images: images, queued: queued))
         isRunning = true
         lastError = nil
+    }
+
+    /// Remembers where a rewind to user message `id` resumes.
+    mutating func noteUser(_ id: String) {
+        if let lastAssistantUUID { resumeAnchors[id.lowercased()] = lastAssistantUUID }
+    }
+
+    /// Where a rewind to user message `id` resumes: the assistant event
+    /// before it, or nil when it was the first message.
+    func resumeAnchor(before id: String) -> String? { resumeAnchors[id.lowercased()] }
+
+    /// Removes user message `id` and everything after it, returning it.
+    @discardableResult
+    mutating func truncate(from id: String) -> AgentItem? {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return nil }
+        let item = items[index]
+        // The conversation now ends where that message's rewind resumes.
+        lastAssistantUUID = resumeAnchors[id.lowercased()]
+        items.removeSubrange(index...)
+        // Anything later can't be rewound to any more.
+        let kept = Set(items.map { $0.id.lowercased() })
+        resumeAnchors = resumeAnchors.filter { kept.contains($0.key) }
+        isRunning = false
+        return item
     }
 
     /// Promotes the oldest follow-up from queued to active when the turn in
@@ -115,6 +148,7 @@ struct AgentConversation: Equatable {
             applyStreamEvent(inner, parent: parent)
         case "assistant":
             guard let message = event["message"] as? [String: Any] else { return }
+            if parent == nil, let uuid = event["uuid"] as? String { lastAssistantUUID = uuid }
             applyAssistant(message, parent: parent)
         case "user":
             guard let message = event["message"] as? [String: Any] else { return }
@@ -144,6 +178,7 @@ struct AgentConversation: Equatable {
         permissionMode = event["permissionMode"] as? String ?? permissionMode
         cwd = event["cwd"] as? String ?? cwd
         if let commands = event["slash_commands"] as? [String] { slashCommands = commands }
+        if let servers = event["mcp_servers"] as? [[String: Any]] { mcpServers = MCPServerState.list(servers) }
     }
 
     /// Applies one event from Pi's RPC mode. Pi uses a different envelope,
@@ -403,7 +438,9 @@ struct AgentConversation: Equatable {
         if let uuid, sentUserIds.contains(uuid) || items.contains(where: { $0.id.lowercased() == uuid }) { return }
         guard event["isSynthetic"] as? Bool != true, let text = Self.userText(message["content"]) else { return }
         let images = Self.images(in: message["content"])
-        items.append(AgentItem(id: uuid ?? UUID().uuidString,
+        let id = uuid ?? UUID().uuidString
+        noteUser(id)
+        items.append(AgentItem(id: id,
                                kind: .user(images.isEmpty ? text : Self.strippingImageMarkers(text)),
                                images: images, remote: true))
         isRunning = true
@@ -636,6 +673,8 @@ struct AgentToolCall: Equatable {
     /// The same input as JSON, for views that draw it (diffs for edits).
     var inputData: Data?
     var result: String?
+    /// Output streamed while it runs, until `result` arrives in full.
+    var liveOutput: String?
     /// Images a tool returned, e.g. a screenshot Claude read.
     var resultImages: [Data] = []
     var isError = false
@@ -746,8 +785,9 @@ extension AgentConversation {
                 if let text = Self.userText(message["content"]) {
                     let images = Self.images(in: message["content"])
                     let shown = images.isEmpty ? text : Self.strippingImageMarkers(text)
-                    conversation.items.append(AgentItem(id: record["uuid"] as? String ?? UUID().uuidString,
-                                                        kind: .user(shown), images: images))
+                    let id = record["uuid"] as? String ?? UUID().uuidString
+                    conversation.noteUser(id)
+                    conversation.items.append(AgentItem(id: id, kind: .user(shown), images: images))
                 } else {
                     conversation.apply(record)
                 }
@@ -827,6 +867,7 @@ extension AgentToolCall {
         case "Monitor": return "eye"
         case "Task", "Agent": return "tool.agent"
         case "Skill", "skill": return "sparkles"
+        case "Artifact", "ArtifactComments", "ArtifactData": return "safari"
         case "TodoWrite", "TaskCreate", "TaskUpdate": return "tool.todo"
         case "NotebookEdit", "NotebookRead": return "tool.notebook"
         default: return "tool.other"

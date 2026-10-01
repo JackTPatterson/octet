@@ -844,6 +844,20 @@ private struct AgentSettings: View {
             }
             SettingsDivider()
             SettingsRow(
+                title: "Name workspaces after their work",
+                detail: "A workspace takes the task its agents report, else what its conversation is about, else its branch. A workspace you rename yourself keeps its name."
+            ) {
+                Toggle("Name workspaces after their work", isOn: $settings.values.autoNameWorkspaces).labelsHidden().toggleStyle(.switch)
+            }
+            SettingsDivider()
+            SettingsRow(
+                title: "Hold Space to talk",
+                detail: "In a conversation's message box, hold Space and speak; let go and what you said is typed in. A tap still types a space. Speech is recognized on this Mac where the language allows."
+            ) {
+                Toggle("Hold Space to talk", isOn: $settings.values.holdSpaceToTalk).labelsHidden().toggleStyle(.switch)
+            }
+            SettingsDivider()
+            SettingsRow(
                 title: "Restore recent terminal output",
                 detail: "Saves pane contents so they reappear after a restart. Output can include secrets."
             ) {
@@ -881,7 +895,6 @@ private struct AgentSettings: View {
             }
         }
         }
-        PeersSettingsGroup(settings: settings)
         SettingsGroup(title: "Accounts") {
             SettingsRow(
                 title: "Agent accounts",

@@ -23,6 +23,8 @@ import Foundation
 //   octet-cli peer wait <task> [--timeout <s>]
 //   octet-cli peer pair <host:port>      pair with a Mac (both people confirm the code)
 //   octet-cli peer-mcp                  the same, as MCP tools for agents (stdio)
+//   octet-cli delegate-mcp              Agent Delegation's tools: another agent here
+//                                      reviews an agent's changes or takes a task
 //   octet-cli mcp-permission --socket <path>
 //                                      permission prompt tool for conversations
 //                                      Octet drives headless (stdio MCP server)
@@ -235,6 +237,18 @@ case "peer":
     } catch {
         fail(String(describing: error))
     }
+case "delegate-mcp":
+    // Agent Delegation's tools, for agents in Octet panes (stdio MCP).
+    let socket = DelegationControl.resolveSocket(environment: environment)
+    let origin = DelegationControl.Origin.current(environment)
+    while let line = readLine(strippingNewline: true) {
+        if let reply = DelegationMCP.respond(to: line, origin: origin, call: { method, params in
+            try DelegationControl.call(socketPath: socket, method: method, params: params)
+        }) {
+            print(reply)
+            fflush(stdout)
+        }
+    }
 case "peer-mcp":
     let socket = PeerControl.resolveSocket(explicit: option("--socket", in: Array(arguments.dropFirst())), environment: environment)
     let origin = PeerControl.Origin.current(environment)
@@ -260,5 +274,5 @@ case "mcp-permission":
     }
 
 default:
-    fail("usage: octet-cli <open [folder]|run <agent> [--in <folder>] [--prompt <text>]|send <text>|panes|read [--pane <id>] [--lines <n>]|peer …|peer-mcp|hook <agent>|agent-watch|install-subagent-hook [agent]|uninstall-subagent-hook [agent]|mcp-permission --socket <path>>")
+    fail("usage: octet-cli <open [folder]|run <agent> [--in <folder>] [--prompt <text>]|send <text>|panes|read [--pane <id>] [--lines <n>]|peer …|peer-mcp|delegate-mcp|hook <agent>|agent-watch|install-subagent-hook [agent]|uninstall-subagent-hook [agent]|mcp-permission --socket <path>>")
 }

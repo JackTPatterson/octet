@@ -247,7 +247,8 @@ private struct WorkspaceCard: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 4) {
                         ForEach(ports, id: \.self) { port in
-                            PortButton(port: port) {
+                            PortButton(port: port, service: portsWatcher.services[port],
+                                       owners: portsWatcher.listeners[port] ?? []) {
                                 if let url = URL(string: "http://localhost:" + String(port)) { openURL(url) }
                             }
                         }
@@ -282,8 +283,16 @@ private struct WorkspaceCard: View {
 
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                AgentStateGlyph(status: status)
-                    .frame(width: 12)
+                // With no agent here, a running server's logo takes the
+                // empty state's place.
+                if status == .unknown,
+                   let logo = LanguageLogo(service: portsWatcher.service(inWorkspace: workspace.workspaceId, snapshot: snapshot), size: 11) {
+                    logo.frame(width: 12)
+                        .help("Serving on localhost")
+                } else {
+                    AgentStateGlyph(status: status)
+                        .frame(width: 12)
+                }
                 if renaming {
                     InlineRenameField(initial: workspace.label, placeholder: "Workspace name") { label in
                         renaming = false
@@ -311,14 +320,11 @@ private struct WorkspaceCard: View {
                         .help("Open in another window. Click to bring it forward.")
                         .accessibilityLabel("Open in another window")
                 }
-                // Always laid out, only shown on hover: appearing would make
-                // the line taller and push the name aside.
-                let showsClose = hovered && !renaming
-                WorkspaceCloseButton { store.closeWorkspace(workspace.workspaceId) }
-                    .opacity(showsClose ? 1 : 0)
-                    .allowsHitTesting(showsClose)
-                    .accessibilityHidden(!showsClose)
+                // Room for the close button, which floats over the card so
+                // its appearing can never move or resize anything.
+                Color.clear.frame(width: 18, height: 1)
             }
+            .frame(minHeight: 18)
             // Always shown: the folder is what decides the card's group.
             if let directory {
                 Text(abbreviateHome(directory))
@@ -377,6 +383,15 @@ private struct WorkspaceCard: View {
                     : (hovered ? Theme.border : Theme.border.opacity(0.6)), lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
+        .overlay(alignment: .topTrailing) {
+            let showsClose = hovered && !renaming
+            WorkspaceCloseButton { store.closeWorkspace(workspace.workspaceId) }
+                .padding(.top, 8)
+                .padding(.trailing, 10)
+                .opacity(showsClose ? 1 : 0)
+                .allowsHitTesting(showsClose)
+                .accessibilityHidden(!showsClose)
+        }
         .contentShape(Rectangle())
         .onHover { hovering in
             hovered = hovering
@@ -486,6 +501,10 @@ struct WorkspaceOrganizeMenu: View {
     var body: some View {
         let id = workspace.workspaceId
         Button("Rename Workspace…", action: rename)
+        if store.isWorkspaceManuallyNamed(id), SettingsStore.shared.values.autoNameWorkspaces {
+            Button("Name After Its Work") { store.resumeWorkspaceAutoNaming(id) }
+        }
+        PluginMenuItems(place: .workspace, directory: store.snapshot.directory(ofWorkspace: id), workspaceId: id)
         Divider()
         TabColorPicker(title: "Workspace Color", selection: Binding(
             get: { store.workspaceColor(id) },
@@ -662,13 +681,19 @@ private struct IdleRow: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 4)
-            if hovered && !renaming {
-                WorkspaceCloseButton { store.closeWorkspace(workspace.workspaceId) }
-            } else {
-                Text(WorkspaceActivity.ageLabel(since: store.activity.lastActive(workspace.workspaceId)))
-                    .font(.system(size: 10.5, design: .monospaced))
-                    .foregroundStyle(Theme.textTertiary)
-            }
+            // The age and the close button share a spot; the button floats
+            // over it, so swapping them never changes the row.
+            let showsClose = hovered && !renaming
+            Text(WorkspaceActivity.ageLabel(since: store.activity.lastActive(workspace.workspaceId)))
+                .font(.system(size: 10.5, design: .monospaced))
+                .foregroundStyle(Theme.textTertiary)
+                .opacity(showsClose ? 0 : 1)
+                .overlay(alignment: .trailing) {
+                    WorkspaceCloseButton { store.closeWorkspace(workspace.workspaceId) }
+                        .opacity(showsClose ? 1 : 0)
+                        .allowsHitTesting(showsClose)
+                        .accessibilityHidden(!showsClose)
+                }
         }
         .padding(.horizontal, 8)
         .frame(height: 24)
@@ -707,14 +732,30 @@ private struct AgentCountBadge: View {
 /// little taller than the branch chip below, so it's easy to hit on purpose.
 private struct PortButton: View {
     let port: Int
+    /// What serves it, for its logo; a network glyph when unknown.
+    let service: String?
+    /// What listens on it, for stopping from its menu.
+    let owners: [ListeningPorts.Listener]
     let action: () -> Void
     @State private var hovered = false
+
+    private var url: String { "http://localhost:" + String(port) }
+
+    /// "node (4312)", or the pids when several processes share it.
+    private var ownerName: String {
+        guard let first = owners.first else { return "server" }
+        return owners.count == 1 ? "\(first.command) (\(first.pid))" : "\(first.command) and \(owners.count - 1) more"
+    }
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 4) {
-                Image(systemName: "network").font(.system(size: 9.5, weight: .medium))
-                    .foregroundStyle(Theme.textTertiary)
+                if let logo = LanguageLogo(service: service, size: 11) {
+                    logo
+                } else {
+                    Image(systemName: "network").font(.system(size: 9.5, weight: .medium))
+                        .foregroundStyle(Theme.textTertiary)
+                }
                 Text(":" + String(port))
                     .font(Theme.monoFont)
                     .foregroundStyle(hovered ? Theme.textPrimary : Theme.textSecondary)
@@ -729,7 +770,19 @@ private struct PortButton: View {
         }
         .buttonStyle(.plain)
         .onHover { hovered = $0 }
-        .help("Open http://localhost:" + String(port))
+        .help("Open http://localhost:" + String(port) + (service.map { " (\(ServiceKind.name($0)))" } ?? ""))
+        .contextMenu {
+            Button("Open in Browser", action: action)
+            Button("Copy URL") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(url, forType: .string)
+            }
+            Divider()
+            Button("Stop \(ownerName)") { PortsWatcher.shared.stop(port: port) }
+                .disabled(owners.isEmpty)
+            Button("Force Quit \(ownerName)") { PortsWatcher.shared.stop(port: port, force: true) }
+                .disabled(owners.isEmpty)
+        }
     }
 }
 

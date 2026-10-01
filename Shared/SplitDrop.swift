@@ -113,3 +113,58 @@ enum SplitDrop {
         return (dx * dx + dy * dy).squareRoot()
     }
 }
+
+/// Where a workspace card dragged over a window's content would go: beside
+/// this window, splitting it in two, or into it in place of what it shows.
+enum WorkspaceDropTarget: Equatable {
+    case here
+    case beside(SplitEdge)
+
+    var title: String {
+        switch self {
+        case .here: "Show Here"
+        case .beside(.left): "Open in a Window on the Left"
+        case .beside(.right): "Open in a Window on the Right"
+        case .beside(.top): "Open in a Window Above"
+        case .beside(.bottom): "Open in a Window Below"
+        }
+    }
+
+    /// The outer band along each edge splits the window; the middle shows
+    /// the workspace here. The nearest edge wins in a corner.
+    static func at(_ point: CGPoint, in size: CGSize, band: CGFloat = 0.28) -> WorkspaceDropTarget? {
+        guard size.width > 0, size.height > 0 else { return nil }
+        let u = point.x / size.width, v = point.y / size.height
+        let distances: [(SplitEdge, CGFloat)] = [(.left, u), (.right, 1 - u), (.top, v), (.bottom, 1 - v)]
+        guard let nearest = distances.min(by: { $0.1 < $1.1 }) else { return nil }
+        return nearest.1 < band ? .beside(nearest.0) : .here
+    }
+
+    /// The part of a view of `size` it would take, for its highlight.
+    func highlight(in size: CGSize) -> CGRect {
+        let w = size.width, h = size.height
+        switch self {
+        case .here: return CGRect(origin: .zero, size: size)
+        case .beside(.left): return CGRect(x: 0, y: 0, width: w / 2, height: h)
+        case .beside(.right): return CGRect(x: w / 2, y: 0, width: w / 2, height: h)
+        case .beside(.top): return CGRect(x: 0, y: 0, width: w, height: h / 2)
+        case .beside(.bottom): return CGRect(x: 0, y: h / 2, width: w, height: h / 2)
+        }
+    }
+
+    /// A window frame (screen coordinates, origin bottom left) split for the
+    /// drop: the new window's half, and what the old window keeps.
+    static func split(_ frame: CGRect, at edge: SplitEdge) -> (new: CGRect, kept: CGRect) {
+        let halfW = (frame.width / 2).rounded(), halfH = (frame.height / 2).rounded()
+        let left = CGRect(x: frame.minX, y: frame.minY, width: halfW, height: frame.height)
+        let right = CGRect(x: frame.minX + halfW, y: frame.minY, width: frame.width - halfW, height: frame.height)
+        let top = CGRect(x: frame.minX, y: frame.minY + halfH, width: frame.width, height: frame.height - halfH)
+        let bottom = CGRect(x: frame.minX, y: frame.minY, width: frame.width, height: halfH)
+        switch edge {
+        case .left: return (left, right)
+        case .right: return (right, left)
+        case .top: return (top, bottom)
+        case .bottom: return (bottom, top)
+        }
+    }
+}

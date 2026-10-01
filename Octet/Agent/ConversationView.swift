@@ -26,7 +26,7 @@ struct ConversationView: View {
             // instead of appearing as a detached card above it.
             VStack(spacing: 0) {
                 if !session.queuedMessages.isEmpty {
-                    QueuedMessagesPanel(items: session.queuedMessages)
+                    QueuedMessagesPanel(session: session, items: session.queuedMessages)
                 }
                 let suggestedCommands = AgentComposerSyntax.suggestedShellCommands(in: session.conversation.items)
                 if !session.conversation.isRunning, !suggestedCommands.isEmpty {
@@ -425,6 +425,62 @@ private struct ContextMeter: View {
     }
 }
 
+// MARK: - Message actions
+
+/// What a message's right-click menu offers: copying it, and for your own
+/// messages, going back to before it.
+private struct MessageMenu: View {
+    @ObservedObject var session: AgentSession
+    let item: AgentItem
+
+    var body: some View {
+        if let text = copyableText {
+            Button("Copy") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(text, forType: .string)
+            }
+        }
+        if case .user = item.kind, session.canRewind(to: item) || (session.engine == .claude && session.canFork) {
+            Divider()
+            if session.canRewind(to: item) {
+                Button("Rewind to Here…") { askToRewind() }
+            }
+            if session.engine == .claude, session.canFork {
+                Button("Fork From Here") { session.fork(from: item) }
+                    .help("A new conversation with what came before this message, which you can edit and send")
+            }
+        }
+    }
+
+    private var copyableText: String? {
+        switch item.kind {
+        case .user(let text), .text(let text): text.isEmpty ? nil : text
+        default: nil
+        }
+    }
+
+    /// Shows what a rewind would undo, from Claude Code's checkpoint, and
+    /// rewinds when confirmed.
+    private func askToRewind() {
+        session.previewRewind(to: item) { preview in
+            let files = preview.filesChanged.map { ($0 as NSString).lastPathComponent }
+            let message: String
+            if preview.canRestoreFiles, !files.isEmpty {
+                message = "Undoes \(files.count == 1 ? "1 file's" : "\(files.count) files'") changes since then (+\(preview.insertions) −\(preview.deletions)) and goes back to before this message. It comes back in the box below to edit."
+            } else if preview.canRestoreFiles {
+                message = "No files changed since then. The conversation goes back to before this message, which comes back in the box below to edit."
+            } else {
+                message = "The conversation goes back to before this message, which comes back in the box below to edit. Files stay as they are: \(preview.reason ?? "there's no checkpoint for them")."
+            }
+            ConfirmCenter.shared.ask(title: "Rewind to before this message?", message: message, items: Array(files.prefix(8)),
+                                     detail: "\(session.engine.displayName) keeps the conversation as it was in its history.",
+                                     confirmTitle: "Rewind", destructive: true) { _ in
+                session.rewind(to: item, restoreFiles: preview.canRestoreFiles)
+            }
+        }
+    }
+}
+
 // MARK: - Transcript
 
 private struct Transcript: View {
@@ -446,6 +502,7 @@ private struct Transcript: View {
                         ForEach(items.filter(Self.isShown)) { item in
                             ItemRow(item: item, running: session.conversation.isRunning)
                                 .equatable()
+                                .contextMenu { MessageMenu(session: session, item: item) }
                                 .padding(.leading, item.parent == nil ? 0 : 18)
                                 .overlay(alignment: .leading) {
                                     if item.parent != nil {
@@ -589,6 +646,7 @@ extension Transcript {
 }
 
 private struct QueuedMessagesPanel: View {
+    @ObservedObject var session: AgentSession
     let items: [AgentItem]
 
     var body: some View {
@@ -604,6 +662,17 @@ private struct QueuedMessagesPanel: View {
                                     .lineLimit(3).textSelection(.enabled)
                             }
                             Spacer(minLength: 0)
+                            if session.canCancelQueued(item) {
+                                Button { session.cancelQueued(item) } label: {
+                                    OctetIcon("xmark", size: 11)
+                                        .foregroundStyle(Theme.textTertiary)
+                                        .frame(width: 18, height: 18)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .help("Don't send this")
+                                .accessibilityLabel("Remove queued message")
+                            }
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 9)
@@ -957,6 +1026,47 @@ private struct ErrorNotice: View {
     }
 }
 
+/// A published artifact: its title and description, and buttons to open
+/// the page, copy its link, or preview the local file it came from.
+private struct ArtifactPanel: View {
+    let artifact: ArtifactCall
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let title = artifact.title {
+                Text(title).font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary)
+            }
+            if let detail = artifact.detail {
+                Text(detail).font(Theme.uiFont).foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let url = artifact.url {
+                Text(url.absoluteString)
+                    .font(Theme.monoFont).foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1).truncationMode(.middle)
+                    .textSelection(.enabled)
+            }
+            HStack(spacing: 6) {
+                if let url = artifact.url {
+                    OctetButton(title: "Open", icon: "safari", kind: .primary, compact: true) {
+                        NSWorkspace.shared.open(url)
+                    }
+                    OctetButton(title: "Copy Link", kind: .secondary, compact: true) {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(url.absoluteString, forType: .string)
+                        ToastCenter.shared.info("Copied the artifact's link")
+                    }
+                }
+                if let path = artifact.filePath, FileManager.default.fileExists(atPath: path) {
+                    OctetButton(title: "Preview File", kind: .ghost, compact: true) {
+                        NSWorkspace.shared.open(URL(fileURLWithPath: path))
+                    }
+                }
+            }
+        }
+    }
+}
+
 private struct ToolCard: View {
     let call: AgentToolCall
     let running: Bool
@@ -966,12 +1076,19 @@ private struct ToolCard: View {
         let diff = call.diff
         // Edits show their diff straight away; other calls stay one line.
         let todos = call.todos
-        let subtitle = todos.map { list in "\(list.filter { $0.state == .completed }.count) of \(list.count) done" } ?? call.summary
+        let artifact = call.artifact
+        let subtitle = todos.map { list in "\(list.filter { $0.state == .completed }.count) of \(list.count) done" }
+            ?? artifact?.summary ?? call.summary
         Disclosure(title: call.displayName, subtitle: subtitle, tint: call.isError ? Theme.danger : Theme.textSecondary,
-                   icon: call.iconName, logo: LanguageLogo(path: call.filePath),
+                   icon: call.iconName, logo: artifact == nil ? LanguageLogo(path: call.filePath) : nil,
                    highlightsShell: call.name.caseInsensitiveCompare("Monitor") == .orderedSame,
-                   initiallyOpen: diff != nil || todos != nil || !call.resultImages.isEmpty, trailing: { status(diff) }) {
+                   initiallyOpen: diff != nil || todos != nil || !call.resultImages.isEmpty
+                       || (artifact?.url != nil && !call.isError),
+                   trailing: { status(diff) }) {
             VStack(alignment: .leading, spacing: 8) {
+                if let artifact, !call.isError, artifact.url != nil || artifact.filePath != nil {
+                    ArtifactPanel(artifact: artifact)
+                }
                 if let todos {
                     TodoList(todos: todos)
                 } else if let diff {
@@ -982,6 +1099,9 @@ private struct ToolCard: View {
                 }
                 if !call.resultImages.isEmpty {
                     ImageGallery(images: call.resultImages)
+                }
+                if call.result == nil, let live = call.liveOutput, !live.isEmpty {
+                    CodePanel(text: live, language: "output", tint: Theme.textSecondary, maxLines: 14, highlights: false)
                 }
                 if let result = call.result, !result.isEmpty, todos == nil, diff == nil || call.isError {
                     CodePanel(text: result, language: call.isError ? "error" : "output",
@@ -1232,7 +1352,9 @@ private struct PermissionCard: View {
     @State private var showInput = false
 
     var body: some View {
-        if let request = session.pendingPermission {
+        if let request = session.pendingPermission, request.toolName == "ExitPlanMode" {
+            PlanApprovalCard(session: session, request: request)
+        } else if let request = session.pendingPermission {
             OctetPalettePanel {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 8) {
@@ -1299,6 +1421,98 @@ private struct PermissionCard: View {
     }
 }
 
+/// Claude's plan, asking to start work: the plan itself, and the choices
+/// Claude Code's own interface gives. Approving picks how edits are then
+/// handled; keeping on planning sends what should change.
+private struct PlanApprovalCard: View {
+    @ObservedObject var session: AgentSession
+    let request: AgentPermissionRequest
+    @State private var feedback = ""
+
+    var body: some View {
+        let plan = request.inputObject["plan"] as? String ?? ""
+        OctetPalettePanel {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    OctetIcon("tool.todo", size: 15).foregroundStyle(Theme.accent)
+                    Text("Ready to code?")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    Spacer()
+                }
+                if plan.isEmpty {
+                    Text("Claude has finished planning.").font(Theme.uiFont).foregroundStyle(Theme.textSecondary)
+                } else {
+                    ScrollView {
+                        MarkdownView(text: plan)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 320)
+                }
+                HStack(spacing: 8) {
+                    OctetTextField(placeholder: "What should change in the plan?", text: $feedback) {
+                        keepPlanning()
+                    }
+                    OctetButton(title: "Keep Planning", kind: .secondary) { keepPlanning() }
+                        .keyboardShortcut(.cancelAction)
+                        .help("Stay in plan mode and tell Claude what to change")
+                    OctetButton(title: "Approve", kind: .secondary) { approve(.default) }
+                        .help("Start work, asking before each edit")
+                    OctetButton(title: "Approve & Auto-Accept Edits", kind: .primary) { approve(.acceptEdits) }
+                        .keyboardShortcut(.defaultAction)
+                        .help("Start work, accepting file edits without asking")
+                }
+            }
+            .padding(12)
+        }
+        .onAppear {
+            AccessibilityNotification.Announcement("Claude's plan is ready for review").post()
+        }
+    }
+
+    private func approve(_ mode: AgentSession.PermissionMode) {
+        session.answerPermission(allow: true)
+        // Out of plan mode, into the one picked; sent live.
+        session.permissionMode = mode
+    }
+
+    private func keepPlanning() {
+        let note = feedback.trimmingCharacters(in: .whitespacesAndNewlines)
+        session.answerPermission(allow: false, note: note.isEmpty ? "Keep planning. The plan isn't approved yet." : note)
+        feedback = ""
+    }
+}
+
+// MARK: - Listening
+
+/// Over the message box while Space is held: what's been heard so far.
+private struct ListeningIndicator: View {
+    let heard: String
+    @State private var pulse = false
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Circle()
+                .fill(Color(hex: AgentStateColor.blocked))
+                .frame(width: 7, height: 7)
+                .opacity(pulse ? 1 : 0.35)
+                .animation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true), value: pulse)
+                .onAppear { pulse = true }
+            Text(heard.isEmpty ? "Listening… let go of Space to type it" : heard)
+                .font(.system(size: 13))
+                .foregroundStyle(heard.isEmpty ? Theme.textTertiary : Theme.textPrimary)
+                .lineLimit(4)
+        }
+        .padding(.horizontal, 5)
+        .padding(.vertical, 1)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.card)
+        .allowsHitTesting(false)
+        .accessibilityLabel("Listening")
+        .accessibilityValue(heard)
+    }
+}
+
 // MARK: - Composer
 
 private struct Composer: View {
@@ -1306,6 +1520,8 @@ private struct Composer: View {
     @ObservedObject var dropdowns: OctetDropdownState
     @EnvironmentObject private var window: WindowContext
     @State private var text = ""
+    @State private var spaceHold = SpaceHold()
+    @ObservedObject private var voice = VoiceInput.shared
     @FocusState private var focused: Bool
     @State private var highlighted = 0
     @State private var dismissedFor: String?
@@ -1316,6 +1532,33 @@ private struct Composer: View {
     /// The commands on show, changed inside an animation so the list, the
     /// composer card around it and the transcript above all move together.
     @State private var shownSuggestions: [SlashCommand] = []
+
+    /// Hold Space to talk: a tap types, a hold listens until let go.
+    private func holdSpace(_ press: KeyPress) -> KeyPress.Result {
+        guard SettingsStore.shared.values.holdSpaceToTalk, press.modifiers.isEmpty || spaceHold.listening else { return .ignored }
+        let action: SpaceHold.Action
+        switch press.phase {
+        case .down: action = spaceHold.down(at: Date(), text: text)
+        case .repeat: action = spaceHold.repeated(at: Date())
+        default: action = spaceHold.up()
+        }
+        switch action {
+        case .type:
+            return .ignored
+        case .swallow:
+            return .handled
+        case .startListening(let restore):
+            text = restore
+            voice.start { problem in
+                spaceHold.cancel()
+                ToastCenter.shared.fail(nil, "Can't listen", detail: problem)
+            }
+            return .handled
+        case .stopListening:
+            voice.stop { said in text = SpaceHold.inserting(said, into: text) }
+            return .handled
+        }
+    }
 
     private func attach(_ images: [NSImage]) {
         attachments += images.compactMap(AgentSession.Attachment.init(image:))
@@ -1414,7 +1657,9 @@ private struct Composer: View {
         let needle = name.lowercased()
         switch session.engine {
         case .claude:
-            return AgentSession.models.first { $0.id.lowercased() == needle || $0.family.lowercased() == needle }?.id
+            return AgentSession.models.first {
+                $0.id.lowercased() == needle || $0.family.lowercased() == needle || $0.title.lowercased() == needle
+            }?.id
         case .codex:
             return CodexCatalogStore.shared.models.first { $0.id.lowercased() == needle }?.id
         case .pi:
@@ -1469,6 +1714,18 @@ private struct Composer: View {
                     .focused($focused)
                     .frame(minHeight: 22, maxHeight: 160)
                     .fixedSize(horizontal: false, vertical: true)
+                    .overlay(alignment: .topLeading) {
+                        if spaceHold.listening { ListeningIndicator(heard: voice.partial) }
+                    }
+                    .onKeyPress(.space, phases: [.down, .repeat, .up]) { press in
+                        holdSpace(press)
+                    }
+                    .onChange(of: focused) { _, isFocused in
+                        // Space's release goes elsewhere once focus does.
+                        guard !isFocused, spaceHold.listening else { return }
+                        _ = spaceHold.up()
+                        voice.stop { said in text = SpaceHold.inserting(said, into: text) }
+                    }
                     .onKeyPress(.tab) {
                         // Tab cycles OpenCode's agents, as in its own interface.
                         guard session.engine == .opencode, suggestions.isEmpty else { return .ignored }
@@ -1544,8 +1801,8 @@ private struct Composer: View {
                         refreshSuggestions()
                         refreshReferences()
                     }
-                    .onChange(of: session.piEditorRequest?.id) { _, _ in
-                        guard let request = session.piEditorRequest else { return }
+                    .onChange(of: session.editorRequest?.id) { _, _ in
+                        guard let request = session.editorRequest else { return }
                         text = request.text
                         focused = true
                     }
@@ -1604,6 +1861,8 @@ private struct Composer: View {
                     OpenCodeControls(session: session, dropdowns: dropdowns)
                 } else if session.engine == .pi {
                     PiControls(session: session, dropdowns: dropdowns)
+                } else if session.engine == .qwen {
+                    QwenControls(session: session, dropdowns: dropdowns)
                 } else if let brand = AgentBrand.forAgent(session.engine.agent) {
                     HStack(spacing: 5) {
                         AgentLogo(brand: brand, size: 12)
@@ -1615,6 +1874,7 @@ private struct Composer: View {
                 OctetButton(title: "", icon: "paperclip", kind: .ghost, compact: true) { pickImages() }
                     .help("Attach images (or paste or drop them here)")
                     .accessibilityLabel("Attach images")
+                MCPProblemChip(session: session)
                 Spacer()
                 let empty = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty
                 if running {
@@ -2160,6 +2420,68 @@ private struct PiControls: View {
     }
 }
 
+/// Qwen's model (what its providers offer), effort and approval mode, all
+/// taken live by its control channel.
+private struct QwenControls: View {
+    @ObservedObject var session: AgentSession
+    @ObservedObject var dropdowns: OctetDropdownState
+
+    var body: some View {
+        let models = session.qwenModels
+        OctetDropdown(spec: OctetDropdownSpec(
+            id: "model",
+            options: models.map { OctetDropdownOption(id: $0.id, title: $0.label, detail: $0.label == $0.id ? nil : $0.id) },
+            selected: models.contains(where: { $0.id == session.model }) ? session.model : "",
+            select: { session.model = $0 },
+            searchPlaceholder: "Search models…"
+        ), label: "Model", state: dropdowns)
+        .disabled(models.isEmpty)
+        .help(models.isEmpty ? "Qwen lists its models once it has started." : "Models from Qwen's providers. Applies at once.")
+
+        let effortSpec = OctetDropdownSpec(
+            id: "effort", options: [], selected: session.effort ?? "", select: { _ in },
+            panel: { close in
+                AnyView(EffortSliderPanel(initial: session.effort, implicit: nil, levels: AgentSession.qwenEfforts,
+                                          apply: { session.effort = $0 }, close: close))
+            }
+        )
+        OctetDropdownAnchor(spec: effortSpec, state: dropdowns) { open in
+            EffortChip(level: session.effort, implicit: nil, open: open)
+        }
+        .help("How hard Qwen reasons. Applies at once.")
+        .accessibilityLabel("Effort")
+        .accessibilityValue(session.effort ?? "default")
+
+        OctetDropdownAnchor(spec: OctetDropdownSpec(
+            id: "mode",
+            options: AgentSession.PermissionMode.allCases.map {
+                OctetDropdownOption(id: $0.rawValue, title: $0.title, detail: Composer.modeDetail[$0],
+                                   dangerous: $0 == .bypassPermissions,
+                                   tint: $0 == .default ? nil : ModeStyle.color($0), glyph: ModeStyle.glyph($0))
+            },
+            selected: session.permissionMode.rawValue,
+            select: { choice in
+                let mode = AgentSession.PermissionMode(rawValue: choice) ?? .default
+                guard mode == .bypassPermissions, session.permissionMode != mode else {
+                    session.permissionMode = mode
+                    return
+                }
+                ConfirmCenter.shared.ask(
+                    title: "Run Qwen in YOLO mode?",
+                    message: "Qwen will run commands, edit and delete files, and use every tool without asking you first, for the rest of this conversation. Use it only in a folder you can afford to lose changes in.",
+                    confirmTitle: "Use YOLO Mode",
+                    destructive: true
+                ) { _ in session.permissionMode = .bypassPermissions }
+            }
+        ), state: dropdowns) { open in
+            ModeChip(mode: session.permissionMode, open: open)
+        }
+        .accessibilityLabel("Approval mode")
+        .accessibilityValue(session.permissionMode.title)
+        .help("How Qwen asks before using tools (its approval mode). Applies at once.")
+    }
+}
+
 /// The effort chip, opening Octet's slider panel above the composer.
 private struct EffortControl: View {
     @ObservedObject var session: AgentSession
@@ -2169,8 +2491,10 @@ private struct EffortControl: View {
         let spec = OctetDropdownSpec(
             id: "effort", options: [], selected: session.effort ?? "", select: { _ in },
             panel: { close in
-                AnyView(EffortSliderPanel(initial: session.effort, implicit: AgentSession.defaultEffort(model: session.model),
-                                          apply: { session.effort = $0 }, close: close))
+                let levels = AgentSession.model(session.model)?.efforts.flatMap { $0.isEmpty ? nil : $0 }
+                return AnyView(EffortSliderPanel(initial: session.effort, implicit: AgentSession.defaultEffort(model: session.model),
+                                                 levels: levels ?? AgentSession.efforts,
+                                                 apply: { session.effort = $0 }, close: close))
             }
         )
         let supported = AgentSession.supportsEffort(model: session.model)
@@ -2180,7 +2504,7 @@ private struct EffortControl: View {
         }
         .disabled(!supported)
         .opacity(supported ? 1 : 0.5)
-        .help(supported ? "How hard Claude thinks. Applies from the next message." : "This model has no effort setting.")
+        .help(supported ? "How hard Claude thinks. Applies at once." : "This model has no effort setting.")
         .accessibilityLabel("Effort")
         .accessibilityValue(session.effort ?? "default")
     }

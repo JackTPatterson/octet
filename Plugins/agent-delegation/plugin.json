@@ -1,0 +1,10 @@
+{
+  "id": "agent-delegation",
+  "name": "Agent Delegation",
+  "version": "1.0.0",
+  "description": "Lets an agent on this Mac ask another for a second opinion or a hand: Claude Code can have Codex review its changes (read-only, ending in a pass or fail verdict with the problems listed), or give it a task in a separate git worktree. The delegate runs in a tab you can watch, and its answer goes back to the agent that asked. Turning this on adds Octet's delegation tools to Claude Code and Codex; turning it off removes them.",
+  "author": "Octet",
+  "octet": 1,
+  "feature": "delegation",
+  "enabledByDefault": false
+}

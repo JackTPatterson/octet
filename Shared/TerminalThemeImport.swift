@@ -62,6 +62,7 @@ enum TerminalThemeImport {
         var background: String?
         var foreground: String?
         var cursor: String?
+        var cursorFollowsText = false
         var palette = [String?](repeating: nil, count: 16)
 
         for raw in text.components(separatedBy: "\n") {
@@ -72,7 +73,9 @@ enum TerminalThemeImport {
             switch key {
             case "background": background = hex(value)
             case "foreground": foreground = hex(value)
-            case "cursor-color", "cursor_color": cursor = hex(value)
+            // Ghostty's `cell-foreground` is the text colour under the cursor.
+            case "cursor-color", "cursor_color":
+                if value.lowercased() == "cell-foreground" { cursorFollowsText = true } else { cursor = hex(value) }
             case "palette":
                 // `palette = 4=#7aa2f7`
                 let parts = value.split(separator: "=", maxSplits: 1).map(String.init)
@@ -92,16 +95,18 @@ enum TerminalThemeImport {
             background: background,
             foreground: foreground,
             // Blue is what terminals use for the things Octet accents.
-            accent: cursor ?? palette[4] ?? filled[4],
+            accent: cursor ?? (cursorFollowsText ? foreground : nil) ?? palette[4] ?? filled[4],
             ansi: ansi,
             isLight: isLight(background)
         )
     }
 
-    /// `#rrggbb`, `rrggbb`, or `rgb` — all become six digits, no hash.
+    /// `#rrggbb`, `rrggbb`, `rgb`, or a colour name Ghostty accepts
+    /// (`white`, `cornflowerblue`…) — all become six digits, no hash.
     static func hex(_ value: String) -> String? {
         var text = value.trimmingCharacters(in: .whitespaces)
             .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+        if let named = namedColors[text.lowercased().replacingOccurrences(of: " ", with: "")] { return named }
         if text.hasPrefix("#") { text.removeFirst() }
         if text.count == 3 {
             text = text.map { "\($0)\($0)" }.joined()
@@ -109,6 +114,25 @@ enum TerminalThemeImport {
         guard text.count == 6, text.allSatisfy({ $0.isHexDigit }) else { return nil }
         return text.lowercased()
     }
+
+    /// The common X11 colour names, as Ghostty reads them.
+    static let namedColors: [String: String] = [
+        "white": "ffffff", "black": "000000", "red": "ff0000", "green": "00ff00", "blue": "0000ff",
+        "yellow": "ffff00", "cyan": "00ffff", "magenta": "ff00ff", "gray": "bebebe", "grey": "bebebe",
+        "darkgray": "a9a9a9", "darkgrey": "a9a9a9", "lightgray": "d3d3d3", "lightgrey": "d3d3d3",
+        "dimgray": "696969", "dimgrey": "696969", "silver": "c0c0c0", "gainsboro": "dcdcdc",
+        "whitesmoke": "f5f5f5", "snow": "fffafa", "ivory": "fffff0", "orange": "ffa500",
+        "darkorange": "ff8c00", "orangered": "ff4500", "tomato": "ff6347", "coral": "ff7f50",
+        "salmon": "fa8072", "gold": "ffd700", "khaki": "f0e68c", "purple": "a020f0", "violet": "ee82ee",
+        "orchid": "da70d6", "plum": "dda0dd", "pink": "ffc0cb", "hotpink": "ff69b4", "deeppink": "ff1493",
+        "navy": "000080", "royalblue": "4169e1", "dodgerblue": "1e90ff", "deepskyblue": "00bfff",
+        "skyblue": "87ceeb", "lightblue": "add8e6", "steelblue": "4682b4", "cornflowerblue": "6495ed",
+        "teal": "008080", "turquoise": "40e0d0", "aquamarine": "7fffd4", "lime": "00ff00",
+        "limegreen": "32cd32", "forestgreen": "228b22", "seagreen": "2e8b57", "olive": "808000",
+        "springgreen": "00ff7f", "chartreuse": "7fff00", "brown": "a52a2a", "maroon": "b03060",
+        "crimson": "dc143c", "firebrick": "b22222", "indigo": "4b0082", "slateblue": "6a5acd",
+        "slategray": "708090", "slategrey": "708090", "beige": "f5f5dc", "tan": "d2b48c", "wheat": "f5deb3",
+    ]
 
     /// A light background wants dark chrome; measured the way terminals do.
     static func isLight(_ background: String) -> Bool {

@@ -270,6 +270,8 @@ final class AgentAccountTests: XCTestCase {
 
     func testCodexLoginStatus() {
         XCTAssertEqual(AgentAccounts.codex(loginStatus: "Logged in using ChatGPT").kind, .subscription)
+        // Codex's allowance, whatever account pays for it.
+        XCTAssertEqual(AgentAccounts.codex(loginStatus: "Logged in using ChatGPT").plan, "Codex")
         XCTAssertEqual(AgentAccounts.codex(loginStatus: "Logged in using an API key - sk-...").kind, .apiKey)
         XCTAssertEqual(AgentAccounts.codex(loginStatus: "Not logged in").kind, .signedOut)
     }
@@ -387,6 +389,57 @@ final class AgentAccountTests: XCTestCase {
         XCTAssertFalse(conversation.isRunning)
         XCTAssertEqual(conversation.lastError, "Out of credits")
         XCTAssertEqual(conversation.items.map(\.kind), [.notice("Out of credits")])
+    }
+
+    func testCodexTurnThatEndsFailedIsReportedOnce() {
+        var conversation = AgentConversation()
+        conversation.applyCodex(["method": "turn/started", "params": [:]])
+        // The error arrives first, then the turn it ended says the same.
+        conversation.applyCodex(["method": "error", "params": [
+            "error": ["message": "Context window exceeded"], "willRetry": false, "threadId": "t", "turnId": "1",
+        ]])
+        conversation.applyCodex(["method": "turn/completed", "params": ["threadId": "t", "turn": [
+            "id": "1", "status": "failed", "error": ["message": "Context window exceeded"],
+        ]]])
+        XCTAssertFalse(conversation.isRunning)
+        XCTAssertEqual(conversation.lastError, "Context window exceeded")
+        XCTAssertEqual(conversation.items.map(\.kind), [.notice("Context window exceeded")])
+    }
+
+    func testCodexRetriesWarningsAndReroutesAreNoticed() {
+        var conversation = AgentConversation()
+        conversation.applyCodex(["method": "turn/started", "params": [:]])
+        conversation.applyCodex(["method": "error", "params": [
+            "error": ["message": "Rate limited"], "willRetry": true, "threadId": "t", "turnId": "1",
+        ]])
+        XCTAssertTrue(conversation.isRunning)
+        XCTAssertNil(conversation.lastError)
+        conversation.applyCodex(["method": "warning", "params": ["message": "Slow network"]])
+        conversation.applyCodex(["method": "model/rerouted", "params": [
+            "threadId": "t", "turnId": "1", "fromModel": "a", "toModel": "b", "reason": "highRiskCyberActivity",
+        ]])
+        conversation.applyCodex(["method": "turn/completed", "params": ["turn": ["id": "1", "status": "interrupted"]]])
+        XCTAssertEqual(conversation.items.map(\.kind), [
+            .notice("Retrying: Rate limited"), .notice("Slow network"),
+            .notice("Codex moved this turn from a to b."), .notice("Stopped"),
+        ])
+    }
+
+    func testCodexStreamsCommandOutputAndReasoning() {
+        var conversation = AgentConversation()
+        conversation.applyCodex(["method": "turn/started", "params": [:]])
+        conversation.applyCodex(["method": "item/started", "params": ["item": [
+            "type": "commandExecution", "id": "e1", "command": "npm test", "status": "inProgress",
+        ]]])
+        conversation.applyCodex(["method": "item/commandExecution/outputDelta", "params": ["itemId": "e1", "delta": "PASS a\n"]])
+        conversation.applyCodex(["method": "item/commandExecution/outputDelta", "params": ["itemId": "e1", "delta": "PASS b\n"]])
+        guard case .tool(let running)? = conversation.items.last?.kind else { return XCTFail("no tool item") }
+        XCTAssertNil(running.result)
+        XCTAssertEqual(running.liveOutput, "PASS a\nPASS b\n")
+
+        conversation.applyCodex(["method": "item/reasoning/summaryTextDelta", "params": ["itemId": "r1", "delta": "Look"]])
+        conversation.applyCodex(["method": "item/reasoning/summaryTextDelta", "params": ["itemId": "r1", "delta": "ing"]])
+        XCTAssertEqual(conversation.items.last?.kind, .thinking("Looking"))
     }
 
     func testCodexAppServerRateLimits() {
@@ -685,5 +738,85 @@ final class CodexApprovalTests: XCTestCase {
         guard case .tool(let call)? = conversation.items.first?.kind else { return XCTFail("no tool item") }
         XCTAssertTrue(call.isError)
         XCTAssertEqual(call.result, "Declined")
+    }
+}
+
+final class RewindAnchorTests: XCTestCase {
+    private func assistant(_ uuid: String, text: String, parent: String? = nil) -> [String: Any] {
+        var event: [String: Any] = ["type": "assistant", "uuid": uuid,
+                                    "message": ["id": "msg_" + uuid, "role": "assistant", "content": [["type": "text", "text": text]]]]
+        if let parent { event["parent_tool_use_id"] = parent }
+        return event
+    }
+
+    func testEachMessageRewindsToTheAssistantEventBeforeIt() {
+        var conversation = AgentConversation()
+        conversation.appendUser("first", id: "U1")
+        conversation.apply(assistant("a1", text: "one"))
+        // A subagent's events aren't places the main conversation resumes.
+        conversation.apply(assistant("sub", text: "inner", parent: "tool_1"))
+        conversation.appendUser("second", id: "U2")
+        conversation.apply(assistant("a2", text: "two"))
+        conversation.appendUser("third", id: "U3")
+        XCTAssertNil(conversation.resumeAnchor(before: "U1"), "a first message rewinds to an empty session")
+        XCTAssertEqual(conversation.resumeAnchor(before: "u2"), "a1")
+        XCTAssertEqual(conversation.resumeAnchor(before: "U3"), "a2")
+    }
+
+    func testTruncatingDropsTheMessageAndWhatFollowed() throws {
+        var conversation = AgentConversation()
+        conversation.appendUser("first", id: "U1")
+        conversation.apply(assistant("a1", text: "one"))
+        conversation.appendUser("second", id: "U2")
+        conversation.apply(assistant("a2", text: "two"))
+        let removed = try XCTUnwrap(conversation.truncate(from: "U2"))
+        XCTAssertEqual(removed.kind, .user("second"))
+        XCTAssertEqual(conversation.items.count, 2)
+        XCTAssertNil(conversation.resumeAnchor(before: "U2"))
+        // Sending again after the rewind resumes from the same place.
+        conversation.appendUser("second, edited", id: "U4")
+        XCTAssertEqual(conversation.resumeAnchor(before: "U4"), "a1")
+    }
+
+    func testAnchorsAreRebuiltFromTheSessionLog() {
+        let lines = [
+            #"{"type":"user","uuid":"U1","sessionId":"s","message":{"role":"user","content":"first"}}"#,
+            #"{"type":"assistant","uuid":"a1","message":{"id":"m1","role":"assistant","content":[{"type":"text","text":"one"}]}}"#,
+            #"{"type":"user","uuid":"U2","message":{"role":"user","content":"second"}}"#,
+        ]
+        let conversation = AgentConversation.replay(lines: lines)
+        XCTAssertEqual(conversation.resumeAnchor(before: "U2"), "a1")
+        XCTAssertNil(conversation.resumeAnchor(before: "U1"))
+    }
+}
+
+final class PiSessionTreeTests: XCTestCase {
+    private func user(_ id: String, _ parent: String?, _ text: String, children: [[String: Any]] = []) -> [String: Any] {
+        ["entry": ["type": "message", "id": id, "parentId": parent as Any,
+                   "message": ["role": "user", "content": [["type": "text", "text": text]]]] as [String: Any],
+         "children": children]
+    }
+
+    private func reply(_ id: String, _ parent: String, children: [[String: Any]] = []) -> [String: Any] {
+        ["entry": ["type": "message", "id": id, "parentId": parent,
+                   "message": ["role": "assistant", "content": [["type": "text", "text": "ok"]]]] as [String: Any],
+         "children": children]
+    }
+
+    func testBranchesIndentAndTheActiveOneIsMarked() {
+        // u1 → a1 → { u2 → a2, u3 → a3 (leaf) }
+        let tree = [user("u1", nil, "Add login", children: [
+            reply("a1", "u1", children: [
+                user("u2", "a1", "Use cookies", children: [reply("a2", "u2")]),
+                user("u3", "a1", "Use JWT\ninstead", children: [reply("a3", "u3")]),
+            ]),
+        ])]
+        let lines = PiSessionTree.outline(tree, leafId: "a3")
+        XCTAssertEqual(lines, [
+            .init(depth: 0, text: "Add login", active: true),
+            .init(depth: 1, text: "Use cookies", active: false),
+            .init(depth: 1, text: "Use JWT instead", active: true),
+        ])
+        XCTAssertEqual(PiSessionTree.text(lines), "● Add login\n    ○ Use cookies\n    ● Use JWT instead")
     }
 }

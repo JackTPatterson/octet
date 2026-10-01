@@ -35,6 +35,8 @@ enum OctetURLHandler {
                 message: "A link asked Octet to. Only go ahead if you opened it.",
                 detail: text, confirmTitle: "Run", destructive: true
             ) { _ in window.store.runInPane(pane, line: text) }
+        case .installPlugin(let id):
+            OctetPluginHost.shared.installFromLink(id: id)
         }
     }
 

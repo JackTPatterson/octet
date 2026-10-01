@@ -305,6 +305,7 @@ struct RootView: View {
         .onAppear {
             window.todos.attach(window)
             window.git.attach(window)
+            window.pluginPanels.attach(window)
             window.terminalQuestions.attach(window)
         }
         .animation(motion.animation(.sidebar), value: boardHere)
@@ -539,11 +540,8 @@ struct RootView: View {
                             .onDisappear { DebugSnapshot.overlay("review", false) }
                     } else if window.editor.isPresented, window.editor.presentation == .full {
                         CodeEditorView(workspace: window.editor, rootDirectory: window.editorRootDirectory)
-                    } else if boardHere == .claude {
-                        AgentsBoard(store: store)
-                            .transition(motion.animates(.sidebar) ? .move(edge: .leading).combined(with: .opacity) : .identity)
-                    } else if boardHere == .codex {
-                        CodexBoard(store: store)
+                    } else if boardHere != nil {
+                        AgentsHub(store: store)
                             .transition(motion.animates(.sidebar) ? .move(edge: .leading).combined(with: .opacity) : .identity)
                     } else if let conversation = agents.active(in: window.focusedWorkspace?.workspaceId) {
                         ConversationView(session: conversation, client: store.client)
@@ -571,6 +569,10 @@ struct RootView: View {
                     }
                     if let dragged = tabDrag.tabId, let showing = splitTargetTab(for: dragged) {
                         splitDropLayer(moving: dragged, into: showing)
+                    }
+                    if let dragged = tabDrag.workspaceId {
+                        WorkspaceDropLayer(workspaceId: dragged, window: window,
+                                           animation: motion.animation(.tabs, .smooth(duration: 0.15)))
                     }
                 }
                 .overlay(alignment: .top) { BroadcastBanner(mode: BroadcastMode.shared, tabId: window.displayedFocusedTabId) }
@@ -758,7 +760,7 @@ struct RootView: View {
                         window.newConversation(engine: .qwen, replacingStarterTab: window.displayedFocusedTabId)
                     },
                     .init(title: "Split Right", keys: OctetShortcut.splitRight.display) { window.splitPane(.right) },
-                    .init(title: "Agents Board", keys: OctetShortcut.agents.display) { window.toggleAgentsBoard() },
+                    .init(title: "Agents", keys: OctetShortcut.agents.display) { window.toggleAgentsBoard() },
                 ]
             )
             .frame(width: proxy.size.width, height: height)

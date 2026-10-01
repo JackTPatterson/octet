@@ -1,24 +1,42 @@
 import SwiftUI
 
-/// Settings › Plugins: Octet's own plugins, on or off, and where to add more.
+/// Settings › Plugins: where plugins live (the Marketplace), the folder for
+/// making your own, and the settings of plugins that have some.
 struct PluginSettings: View {
     @ObservedObject private var host = OctetPluginHost.shared
     @ObservedObject private var settings = SettingsStore.shared
 
     var body: some View {
-        SettingsGroup(title: "Installed") {
-            if host.plugins.isEmpty {
-                SettingsRow(title: "No plugins", detail: "Add a plugin folder below, then reload.") { EmptyView() }
+        SettingsGroup(title: "Plugins") {
+            SettingsRow(
+                title: "Find, add and turn off plugins",
+                detail: "Plugins for your agents and for the terminal are in one place, the Marketplace. Filter by Agents or Terminal there."
+            ) {
+                Button("Open Marketplace") {
+                    MarketplaceWindow.open()
+                    MarketplaceWindow.showPlugins()
+                }
             }
-            ForEach(Array(host.plugins.enumerated()), id: \.element.id) { index, plugin in
-                if index > 0 { SettingsDivider() }
-                SettingsRow(title: plugin.manifest.name, detail: detail(plugin)) {
-                    Toggle(plugin.manifest.name, isOn: Binding(
-                        get: { host.isEnabled(plugin) },
-                        set: { host.setEnabled(plugin, $0) }
-                    ))
-                    .labelsHidden()
-                    .toggleStyle(.switch)
+            SettingsDivider()
+            SettingsRow(
+                title: "Plugin folder",
+                detail: "Each terminal plugin is a folder here with a plugin.json manifest. One you add by hand starts turned off, because what it contributes runs as shell commands."
+            ) {
+                HStack(spacing: 6) {
+                    Button("Reveal") { host.revealUserDirectory() }
+                    Button("Reload") { host.reload() }
+                }
+            }
+            SettingsDivider()
+            SettingsRow(
+                title: "Update plugins automatically",
+                detail: "Installs new versions of plugins from the Marketplace as they're published, checked at launch and every few hours. Off, Octet says when there's an update."
+            ) {
+                HStack(spacing: 8) {
+                    Button("Check Now") { host.checkForUpdates(manual: true) }
+                        .disabled(host.registryLoading)
+                    Toggle("Update plugins automatically", isOn: $settings.values.autoUpdatePlugins)
+                        .labelsHidden().toggleStyle(.switch)
                 }
             }
         }
@@ -30,30 +48,12 @@ struct PluginSettings: View {
                 }
             }
         }
-        SettingsGroup(title: "Plugin folder") {
-            SettingsRow(
-                title: "Plugin folder",
-                detail: "Each plugin is a folder here with a plugin.json manifest. Plugins you add start turned off, because what they contribute runs as shell commands."
-            ) {
-                HStack(spacing: 6) {
-                    Button("Reveal") { host.revealUserDirectory() }
-                    Button("Reload") { host.reload() }
-                }
-            }
+        // A plugin's own settings, while it's on.
+        if settings.values.peersEnabled {
+            PeersSettingsGroup(settings: settings)
         }
-        .onAppear { host.reload() }
-    }
-
-    private func detail(_ plugin: OctetPlugin) -> String {
-        let manifest = plugin.manifest
-        var lines: [String] = []
-        if let description = manifest.description, !description.isEmpty { lines.append(description) }
-        let adds = manifest.contributes.completions.map { completion in
-            "Completes " + ([completion.command] + completion.path).joined(separator: " ")
+        if settings.values.delegationEnabled {
+            DelegationSettingsGroup(settings: settings)
         }
-        if !adds.isEmpty { lines.append(adds.joined(separator: " · ")) }
-        let source = plugin.isBundled ? "Built in" : (manifest.author.map { "By \($0)" } ?? "Installed")
-        lines.append("\(source) · \(manifest.version)")
-        return lines.joined(separator: "\n")
     }
 }

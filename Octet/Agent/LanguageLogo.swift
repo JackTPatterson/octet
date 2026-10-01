@@ -16,6 +16,15 @@ struct LanguageLogo: View {
         self.size = size
     }
 
+    /// The logo for a service slug from `ServiceKind`.
+    init?(service: String?, size: CGFloat = 13) {
+        guard let service, let entry = Self.services.first(where: { $0.slug == service })
+                ?? Self.lookup[service] else { return nil }
+        slug = entry.slug
+        hex = entry.hex
+        self.size = size
+    }
+
     init?(path: String?, size: CGFloat = 13) {
         guard let path else { return nil }
         let name = (path as NSString).lastPathComponent.lowercased()
@@ -96,6 +105,49 @@ struct LanguageLogo: View {
         .init("julia", "9558B2", ["julia", "jl"]),
         .init("solidity", "363636", ["solidity", "sol"]),
         .init("latex", "008080", ["latex", "tex"]),
+    ]
+
+    /// Servers, frameworks and runtimes behind a listening port, for its
+    /// button; a language's own logo (Python, Ruby, Go…) comes from `table`.
+    static let services: [Entry] = [
+        .init("nodedotjs", "5FA04E", []),
+        .init("bun", "000000", []),
+        .init("deno", "000000", []),
+        .init("vite", "9135FF", []),
+        .init("nextdotjs", "000000", []),
+        .init("nuxt", "00DC82", []),
+        .init("remix", "000000", []),
+        .init("gatsby", "663399", []),
+        .init("storybook", "FF4785", []),
+        .init("angular", "DD0031", []),
+        .init("expo", "1C2024", []),
+        .init("webpack", "8DD6F9", []),
+        .init("esbuild", "FFCF00", []),
+        .init("electron", "47848F", []),
+        .init("django", "092E20", []),
+        .init("fastapi", "009688", []),
+        .init("flask", "3BABC3", []),
+        .init("streamlit", "FF4B4B", []),
+        .init("gradio", "F97316", []),
+        .init("jupyter", "F37626", []),
+        .init("gunicorn", "499848", []),
+        .init("rubyonrails", "D30001", []),
+        .init("laravel", "FF2D20", []),
+        .init("phoenixframework", "FD4F00", []),
+        .init("hugo", "FF4088", []),
+        .init("jekyll", "CC0000", []),
+        .init("ollama", "000000", []),
+        .init("supabase", "3FCF8E", []),
+        .init("prisma", "2D3748", []),
+        .init("redis", "FF4438", []),
+        .init("mysql", "4479A1", []),
+        .init("mariadb", "003545", []),
+        .init("mongodb", "47A248", []),
+        .init("elasticsearch", "005571", []),
+        .init("rabbitmq", "FF6600", []),
+        .init("nginx", "009639", []),
+        .init("caddy", "1F88C0", []),
+        .init("apache", "D22128", []),
     ]
 
     /// Files known by name rather than extension.

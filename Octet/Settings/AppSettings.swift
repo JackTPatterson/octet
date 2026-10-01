@@ -92,6 +92,10 @@ struct OctetSettings: Codable, Equatable {
     /// Settings › Other Macs: pair with Octets on the network so agents on
     /// each can message the other's and hand them tasks. Off by default.
     var peersEnabled = false
+    /// Agent Delegation: agents here can ask each other to review or work.
+    var delegationEnabled = false
+    /// When to ask before a delegation starts: `DelegationCenter.Approval`.
+    var delegationApproval = "reviews"
     /// What other Macs call this one; empty is the computer's name.
     var peerName = ""
     var offerRecovery = true
@@ -114,6 +118,8 @@ struct OctetSettings: Codable, Equatable {
     /// Octet plugins turned on by hand (installed ones start off) and
     /// bundled ones turned off (they start on), by id.
     var enabledPlugins: [String] = []
+    /// Install newer versions of registry plugins as they're published.
+    var autoUpdatePlugins = true
     var disabledPlugins: [String] = []
     /// The sound a subagent's tab plays when it finishes, so it's told
     /// apart from a main agent; empty for none.
@@ -132,6 +138,10 @@ struct OctetSettings: Codable, Equatable {
     var suggestionAcceptKey: SuggestionAcceptKey = .right
     var pasteImagesAsFiles = true
     var autoNameTabs = true
+    /// Workspaces take the name of the work in them until renamed by hand.
+    var autoNameWorkspaces = true
+    /// Holding Space in a conversation's message box talks instead of typing.
+    var holdSpaceToTalk = true
     var visualTwin = true
     // Native agent opening is controlled separately; terminal sessions stay in
     // their own interface unless the user explicitly enables the twin.
@@ -322,6 +332,8 @@ struct OctetSettings: Codable, Equatable {
         paneHistory = value("paneHistory", defaults.paneHistory)
         readClaudeAccountUsage = value("readClaudeAccountUsage", defaults.readClaudeAccountUsage)
         peersEnabled = value("peersEnabled", defaults.peersEnabled)
+        delegationEnabled = value("delegationEnabled", defaults.delegationEnabled)
+        delegationApproval = value("delegationApproval", defaults.delegationApproval)
         peerName = value("peerName", defaults.peerName)
         offerRecovery = value("offerRecovery", defaults.offerRecovery)
         keepClosedTabsMinutes = value("keepClosedTabsMinutes", defaults.keepClosedTabsMinutes)
@@ -340,6 +352,7 @@ struct OctetSettings: Codable, Equatable {
             if subagentFinishedSound == "Glass" { subagentFinishedSound = defaults.subagentFinishedSound }
         }
         enabledPlugins = value("enabledPlugins", defaults.enabledPlugins)
+        autoUpdatePlugins = value("autoUpdatePlugins", defaults.autoUpdatePlugins)
         disabledPlugins = value("disabledPlugins", defaults.disabledPlugins)
         agentBanner = value("agentBanner", defaults.agentBanner)
         agentQuickAnswers = value("agentQuickAnswers", defaults.agentQuickAnswers)
@@ -349,6 +362,8 @@ struct OctetSettings: Codable, Equatable {
         suggestionAcceptKey = value("suggestionAcceptKey", defaults.suggestionAcceptKey)
         pasteImagesAsFiles = value("pasteImagesAsFiles", defaults.pasteImagesAsFiles)
         autoNameTabs = value("autoNameTabs", defaults.autoNameTabs)
+        autoNameWorkspaces = value("autoNameWorkspaces", defaults.autoNameWorkspaces)
+        holdSpaceToTalk = value("holdSpaceToTalk", defaults.holdSpaceToTalk)
         visualTwin = value("visualTwin", defaults.visualTwin)
         twinByDefault = value("twinByDefault", defaults.twinByDefault)
         showTips = value("showTips", defaults.showTips)
@@ -618,7 +633,23 @@ final class SettingsStore: ObservableObject {
                 forName: Notification.Name("AppleInterfaceThemeChangedNotification"), object: nil, queue: .main, using: refresh),
             NSWorkspace.shared.notificationCenter.addObserver(
                 forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil, queue: .main, using: refresh),
+            // Back from editing the terminal config: follow what changed.
+            NotificationCenter.default.addObserver(
+                forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+                DispatchQueue.main.async { self?.refreshImportedTheme() }
+            },
         ]
+        refreshImportedTheme()
+    }
+
+    /// An imported theme follows its terminal config: re-read on launch and
+    /// whenever Octet comes back to the front, so an edit there (a new
+    /// cursor colour, a different theme) shows without re-importing.
+    private func refreshImportedTheme() {
+        guard let current = values.importedTheme,
+              let fresh = TerminalThemeImport.importFromConfig(),
+              fresh.name == current.name, fresh != current else { return }
+        values.importedTheme = fresh
     }
 
     private func systemAppearanceChanged() {
@@ -714,6 +745,11 @@ final class SettingsStore: ObservableObject {
         if values.keepAwake != old.keepAwake { SleepGuard.shared.update() }
         if values.globalHotkey != old.globalHotkey { GlobalHotkey.shared.apply(values.globalHotkey) }
         if values.peersEnabled != old.peersEnabled { PeerCenter.shared.apply() }
+        if values.delegationEnabled != old.delegationEnabled {
+            DelegationCenter.shared.apply()
+            // The tools go into the agents' own settings only while it's on.
+            DelegationCenter.shared.configureAgents(install: values.delegationEnabled)
+        }
         // A new name is advertised by starting again.
         if values.peerName != old.peerName, values.peersEnabled { PeerCenter.shared.restart() }
         if !values.hotkeyDropDown, old.hotkeyDropDown { GlobalHotkey.shared.restoreDropDown() }

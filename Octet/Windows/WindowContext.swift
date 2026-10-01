@@ -32,6 +32,8 @@ final class WindowContext: ObservableObject, Identifiable {
     let todos = TodoModel()
     /// The agents' git, for the git panel and its button.
     let git = GitPanelModel()
+    /// Plugins' panels for the folder in front, for their tab bar buttons.
+    let pluginPanels = PluginPanelModel()
     let terminalQuestions = TerminalQuestionWatcher()
     let editor = EditorWorkspace()
     private(set) lazy var twin = TwinSession(window: self)
@@ -713,13 +715,11 @@ final class WindowContext: ObservableObject, Identifiable {
         }
     }
 
-    /// ⌘⇧A: this window's agents board, for the agent in its tab.
+    /// ⌘⇧A: this window's agents hub, open or closed.
     func toggleAgentsBoard() {
         let center = AgentCenter.shared
         let workspace = focusedWorkspace?.workspaceId
-        if center.board(in: workspace) != nil { return center.setBoard(nil, in: workspace) }
-        let agent = displayedFocusedTabId.flatMap { store.primaryAgent(in: store.snapshot.agents(inTab: $0)) }
-        center.setBoard(AgentBrand.forAgent(agent?.agent)?.id == "codex" ? .codex : .claude, in: workspace)
+        center.setBoard(center.board(in: workspace) == nil ? .all : nil, in: workspace)
     }
 
     // MARK: - Steering
