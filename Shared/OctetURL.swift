@@ -7,11 +7,13 @@ import Foundation
 ///                                                      an agent in a new tab there
 ///     octet://send?text=npm%20test                     typed into the pane in front
 ///     octet://plugin?id=containers                     a registry plugin, installed
+///     octet://plugin-settings?id=issues                that plugin's settings
 enum OctetURL: Equatable {
     case open(path: String)
     case run(agent: String, path: String?, prompt: String?)
     case send(text: String)
     case installPlugin(id: String)
+    case pluginSettings(id: String)
 
     static let scheme = "octet"
 
@@ -39,6 +41,10 @@ enum OctetURL: Equatable {
             guard let id = query["id"],
                   id.range(of: "^[a-z0-9][a-z0-9._-]*$", options: .regularExpression) != nil else { return nil }
             self = .installPlugin(id: id)
+        case "plugin-settings":
+            guard let id = query["id"],
+                  id.range(of: "^[a-z0-9][a-z0-9._-]*$", options: .regularExpression) != nil else { return nil }
+            self = .pluginSettings(id: id)
         default:
             return nil
         }
@@ -61,6 +67,9 @@ enum OctetURL: Equatable {
             components.queryItems = [URLQueryItem(name: "text", value: text)]
         case .installPlugin(let id):
             components.host = "plugin"
+            components.queryItems = [URLQueryItem(name: "id", value: id)]
+        case .pluginSettings(let id):
+            components.host = "plugin-settings"
             components.queryItems = [URLQueryItem(name: "id", value: id)]
         }
         return components.url!
