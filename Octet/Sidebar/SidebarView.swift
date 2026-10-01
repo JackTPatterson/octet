@@ -235,6 +235,7 @@ private struct WorkspaceCard: View {
     @StateObject private var peek = HoverIntent()
     @ObservedObject private var conversations = AgentCenter.shared
     @ObservedObject private var portsWatcher = PortsWatcher.shared
+    @ObservedObject private var workspaceIcons = WorkspaceIconStore.shared
     @ObservedObject private var motion = MotionPreferences.shared
     @Environment(\.openURL) private var openURL
 
@@ -285,7 +286,12 @@ private struct WorkspaceCard: View {
             HStack(spacing: 6) {
                 // With no agent here, a running server's logo takes the
                 // empty state's place.
-                if status == .unknown,
+                // A plugin's picture of the project (its favicon or app
+                // icon), with the agent's state as a dot on its corner.
+                if let projectIcon = workspaceIcons.image(for: directory) {
+                    WorkspaceProjectIcon(image: projectIcon, status: status)
+                        .frame(width: 12)
+                } else if status == .unknown,
                    let logo = LanguageLogo(service: portsWatcher.service(inWorkspace: workspace.workspaceId, snapshot: snapshot), size: 11) {
                     logo.frame(width: 12)
                         .help("Serving on localhost")
@@ -804,5 +810,49 @@ struct WorkspaceCloseButton: View {
         .onHover { hovered = $0 }
         .help("Close workspace")
         .accessibilityLabel("Close workspace")
+    }
+}
+
+/// A workspace's project icon in the sidebar, and its agent's state as a dot
+/// on the corner: accent while working, amber when it needs you, green when
+/// it's done.
+private struct WorkspaceProjectIcon: View {
+    let image: NSImage
+    let status: EngineAgentStatus
+
+    var body: some View {
+        Image(nsImage: image)
+            .resizable()
+            .interpolation(.high)
+            .aspectRatio(contentMode: .fit)
+            .frame(width: 12, height: 12)
+            .clipShape(RoundedRectangle(cornerRadius: 2.5))
+            .overlay(alignment: .bottomTrailing) {
+                if let color = dot {
+                    Circle().fill(color)
+                        .frame(width: 6, height: 6)
+                        .overlay(Circle().strokeBorder(Theme.sidebar, lineWidth: 1.2))
+                        .offset(x: 2.5, y: 2.5)
+                }
+            }
+            .help(help)
+    }
+
+    private var dot: Color? {
+        switch status {
+        case .working: Theme.accent
+        case .blocked: Color(hex: AgentStateColor.blocked)
+        case .done: Color(hex: AgentStateColor.done)
+        default: nil
+        }
+    }
+
+    private var help: String {
+        switch status {
+        case .working: "Agent working"
+        case .blocked: "Agent needs you"
+        case .done: "Agent done"
+        default: "Project icon"
+        }
     }
 }
