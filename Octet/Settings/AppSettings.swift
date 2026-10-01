@@ -118,6 +118,8 @@ struct OctetSettings: Codable, Equatable {
     /// Octet plugins turned on by hand (installed ones start off) and
     /// bundled ones turned off (they start on), by id.
     var enabledPlugins: [String] = []
+    /// Install newer versions of registry plugins as they're published.
+    var autoUpdatePlugins = true
     var disabledPlugins: [String] = []
     /// The sound a subagent's tab plays when it finishes, so it's told
     /// apart from a main agent; empty for none.
@@ -350,6 +352,7 @@ struct OctetSettings: Codable, Equatable {
             if subagentFinishedSound == "Glass" { subagentFinishedSound = defaults.subagentFinishedSound }
         }
         enabledPlugins = value("enabledPlugins", defaults.enabledPlugins)
+        autoUpdatePlugins = value("autoUpdatePlugins", defaults.autoUpdatePlugins)
         disabledPlugins = value("disabledPlugins", defaults.disabledPlugins)
         agentBanner = value("agentBanner", defaults.agentBanner)
         agentQuickAnswers = value("agentQuickAnswers", defaults.agentQuickAnswers)

@@ -37,6 +37,7 @@ final class OctetPluginHost: ObservableObject {
     func attach(_ store: SessionStore) {
         self.store = store
         installFormerlyBuiltIn()
+        startUpdateChecks()
         runtimeTimer?.invalidate()
         runtimeTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.refreshRuntimes() }
@@ -251,6 +252,92 @@ final class OctetPluginHost: ObservableObject {
         defaults.set(Array(done), forKey: Self.formerlyBuiltInKey)
     }
 
+    // MARK: - Updates
+
+    /// Installed plugins the registry has a newer version of.
+    var updates: [PluginRegistry.Entry] { plugins.compactMap(update(for:)) }
+
+    private var updateTimer: Timer?
+    static let updateCheckInterval: TimeInterval = 6 * 3600
+
+    /// Looks for plugin updates a little after launch, then every few hours.
+    private func startUpdateChecks() {
+        guard updateTimer == nil else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in self?.checkForUpdates() }
+        let timer = Timer(timeInterval: Self.updateCheckInterval, repeats: true) { _ in
+            MainActor.assumeIsolated { OctetPluginHost.shared.checkForUpdates() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        updateTimer = timer
+    }
+
+    /// Reads the registry afresh and, with automatic updates on, installs
+    /// what's newer; otherwise says what is. `manual` says so either way.
+    func checkForUpdates(manual: Bool = false) {
+        loadRegistry(force: true) { [weak self] in
+            guard let self else { return }
+            guard self.registryLoaded, self.registryError == nil else {
+                if manual { ToastCenter.shared.fail(nil, "Couldn't check for plugin updates", detail: self.registryError) }
+                return
+            }
+            // Only plugins installed from the registry: a folder someone
+            // made by hand with the same id is theirs, not the registry's.
+            let found = self.plugins.filter { $0.receipt != nil }.compactMap(self.update(for:))
+            guard !found.isEmpty else {
+                if manual { ToastCenter.shared.info("Plugins are up to date") }
+                return
+            }
+            if SettingsStore.shared.values.autoUpdatePlugins {
+                self.update(found)
+            } else {
+                let names = found.map(\.name).joined(separator: ", ")
+                ToastCenter.shared.info(found.count == 1 ? "An update for \(names)" : "\(found.count) plugin updates",
+                                        detail: found.count == 1 ? "Version \(found[0].version)" : names, after: 8,
+                                        action: .init(title: "Update") { OctetPluginHost.shared.update(found) })
+            }
+        }
+    }
+
+    /// Installs each newer version, then says once what was updated.
+    func update(_ entries: [PluginRegistry.Entry]) {
+        var updated: [String] = []
+        var remaining = entries.count
+        for entry in entries {
+            install(entry, quietly: true) { installed in
+                if installed { updated.append("\(entry.name) \(entry.version)") }
+                remaining -= 1
+                guard remaining == 0, !updated.isEmpty else { return }
+                ToastCenter.shared.info(updated.count == 1 ? "Updated \(updated[0])" : "Updated \(updated.count) plugins",
+                                        detail: updated.count == 1 ? nil : updated.joined(separator: ", "))
+            }
+        }
+    }
+
+    /// Installs a registry plugin a link asked for, once the person agrees:
+    /// it runs shell commands as them, and a web page can open the link.
+    func installFromLink(id: String) {
+        loadRegistry(force: !registryLoaded) { [weak self] in
+            guard let self else { return }
+            guard let entry = self.registry.first(where: { $0.id == id }) else {
+                ToastCenter.shared.fail(nil, "There's no plugin \(id) in the registry",
+                                        detail: self.registryError ?? "Or it doesn't run on this Mac.")
+                return
+            }
+            if let installed = self.plugins.first(where: { $0.id == id }), self.update(for: installed) == nil {
+                if !self.isEnabled(installed) { self.setEnabled(installed, true) }
+                ToastCenter.shared.info("\(entry.name) is already installed", detail: "Version \(installed.manifest.version)")
+                return
+            }
+            ConfirmCenter.shared.ask(
+                title: "Install \(entry.name)?",
+                message: "A link asked Octet to install this plugin from github.com/\(entry.repo). Plugins run commands as you, so only go ahead if you opened it.",
+                detail: [entry.description, "Version \(entry.version)" + (entry.author.isEmpty ? "" : " by \(entry.author)")]
+                    .filter { !$0.isEmpty }.joined(separator: "\n\n"),
+                confirmTitle: "Install"
+            ) { _ in self.install(entry) }
+        }
+    }
+
     /// The registry's newer version of an installed plugin, if there is one.
     func update(for plugin: OctetPlugin) -> PluginRegistry.Entry? {
         guard !plugin.isBundled, let entry = registry.first(where: { $0.id == plugin.id }),
@@ -263,15 +350,17 @@ final class OctetPluginHost: ObservableObject {
     func install(_ entry: PluginRegistry.Entry, quietly: Bool = false, then: ((Bool) -> Void)? = nil) {
         guard installing.insert(entry.id).inserted else { return }
         let root = userDirectory, registry = registryURL
+        // An update keeps the plugin as it was, on or off.
+        let isUpdate = plugins.contains { $0.id == entry.id }
         Task { @MainActor in
             defer { installing.remove(entry.id) }
             do {
                 try await PluginInstaller.install(entry, into: root, registry: registry)
                 reload()
-                if let plugin = plugins.first(where: { $0.id == entry.id }), !isEnabled(plugin) {
+                if !isUpdate, let plugin = plugins.first(where: { $0.id == entry.id }), !isEnabled(plugin) {
                     setEnabled(plugin, true)
                 }
-                if !quietly { ToastCenter.shared.info("Installed \(entry.name)", detail: "Version \(entry.version)") }
+                if !quietly { ToastCenter.shared.info("\(isUpdate ? "Updated" : "Installed") \(entry.name)", detail: "Version \(entry.version)") }
                 then?(true)
             } catch {
                 if !quietly { ToastCenter.shared.fail(nil, "Couldn't install \(entry.name)", detail: error.localizedDescription) }
