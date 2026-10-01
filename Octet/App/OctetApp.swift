@@ -118,8 +118,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Restores a saved Secure Keyboard Entry choice.
         _ = SecureInput.shared
         GlobalHotkey.shared.apply(SettingsStore.shared.values.globalHotkey)
-        // The Peer menu, while Other Macs is on.
-        PeerMenu.shared.start()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
@@ -317,6 +315,7 @@ struct OctetCommands: Commands {
             Button(OctetShortcut.focusDown.title) { KeyWindow.act { $0.focusPane(.down) } }
                 .keyboardShortcut(OctetShortcut.focusDown.keyboardShortcut)
         }
+        PeerCommands(settings: SettingsStore.shared, center: PeerCenter.shared)
         CommandMenu("Navigate") {
             Button(OctetShortcut.nextTab.title) { KeyWindow.act { $0.selectAdjacentTab(offset: 1) } }
                 .keyboardShortcut(OctetShortcut.nextTab.keyboardShortcut)
