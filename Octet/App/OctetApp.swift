@@ -65,6 +65,7 @@ struct OctetApp: App {
                     Self.started = true
                     store.start()
                     AccountStore.shared.start()
+                    ModelPolicyStore.shared.start()
                     AgentsStore.shared.start()
                     CodexAgentsStore.shared.start()
                     AgentDiscoveryStore.shared.scanIfStale()

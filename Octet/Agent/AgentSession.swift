@@ -142,8 +142,31 @@ final class AgentSession: ObservableObject, Identifiable {
     }
     // Claude Code starts on these as flags and takes changes live over its
     // control channel; Codex's app server takes them live too.
-    @Published var model: String { didSet { if model != oldValue { settingsChanged() } } }
-    @Published var effort: String? { didSet { if effort != oldValue { settingsChanged() } } }
+    @Published var model: String { didSet { if model != oldValue { pickChanged() } } }
+    @Published var effort: String? { didSet { if effort != oldValue { pickChanged() } } }
+
+    /// The person's own model and effort while a model policy plugin has the
+    /// conversation on others; nil while it's on theirs.
+    @Published private(set) var policyHeld: ModelPolicy.Pick?
+    /// The person picked a model while a policy had moved the conversation:
+    /// theirs stands until the policy no longer calls for a switch.
+    private(set) var policyOverridden = false
+    /// What the policy was last asked about, so it's asked again only when
+    /// the pick or the usage changed.
+    var policyKey: String?
+    private var applyingPolicy = false
+
+    private func pickChanged() {
+        if !applyingPolicy {
+            if policyHeld != nil {
+                policyHeld = nil
+                policyOverridden = true
+            }
+            // A model policy weighs in on the new pick before the next turn.
+            AgentCenter.shared.objectWillChange.send()
+        }
+        settingsChanged()
+    }
     @Published var permissionMode: PermissionMode {
         didSet { if permissionMode != oldValue { settingsChanged() } }
     }
@@ -387,13 +410,17 @@ final class AgentSession: ObservableObject, Identifiable {
         var forkAt: String?
         /// The working tree as the conversation started, for its changes.
         var baseline: String?
+        /// The person's pick while a model policy has it on another.
+        var policyHeld: ModelPolicy.Pick?
+        var policyOverridden: Bool?
     }
 
     var saved: Saved {
         Saved(sessionId: sessionId, cwd: cwd, title: title, model: model, effort: effort,
               permissionMode: permissionMode.rawValue, hasTurns: hasTurns, engine: engine, threadId: threadId,
               permissionProfile: permissionProfile, agent: agentName,
-              forkFrom: forkFrom?.session, forkAt: forkFrom?.at, baseline: baselineCommit)
+              forkFrom: forkFrom?.session, forkAt: forkFrom?.at, baseline: baselineCommit,
+              policyHeld: policyHeld, policyOverridden: policyOverridden ? true : nil)
     }
 
     static func restore(_ saved: Saved, workspaceId: String, start: Bool = true) -> AgentSession {
@@ -408,6 +435,8 @@ final class AgentSession: ObservableObject, Identifiable {
         session.hasTurns = saved.hasTurns
         session.forkFrom = saved.forkFrom.map { ($0, saved.forkAt) }
         session.baselineCommit = saved.baseline
+        session.policyHeld = saved.policyHeld
+        session.policyOverridden = saved.policyOverridden == true
         session.needsRestart = false
         switch engine {
         case .claude:
@@ -2278,6 +2307,40 @@ final class AgentSession: ObservableObject, Identifiable {
 
     func notice(_ text: String) {
         conversation.items.append(AgentItem(id: UUID().uuidString, kind: .notice(text)))
+    }
+
+    // MARK: - Model policy
+
+    /// The model and effort the person chose, whatever a policy has the
+    /// conversation on now.
+    var personalPick: ModelPolicy.Pick { policyHeld ?? ModelPolicy.Pick(model: model, effort: effort) }
+
+    /// Moves the conversation onto what a model policy chose, or back onto
+    /// the person's own pick, saying so in the conversation.
+    func applyPolicy(_ target: ModelPolicy.Pick, message: String?, modelName: (String) -> String) {
+        let pick = personalPick
+        if target == pick {
+            // The policy no longer calls for a switch.
+            policyOverridden = false
+        } else if policyOverridden {
+            return
+        }
+        let current = ModelPolicy.Pick(model: model, effort: effort)
+        guard target != current else { return }
+        applyingPolicy = true
+        model = target.model
+        effort = target.effort
+        applyingPolicy = false
+        let name = modelName(target.model) + (target.effort.map { " · \($0) effort" } ?? "")
+        if target == pick {
+            policyHeld = nil
+            notice("Back on \(name)" + (message.map { ": \($0)" } ?? ", the model you picked."))
+        } else {
+            policyHeld = pick
+            notice("Switched to \(name)" + (message.map { ": \($0)" } ?? " to save usage.")
+                   + " Picking a model yourself keeps it for this conversation.")
+        }
+        AgentCenter.shared.save()
     }
 
     /// Picks up after a terminal session moved here: its log may have grown
