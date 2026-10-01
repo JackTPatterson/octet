@@ -511,7 +511,7 @@ final class OctetPluginHost: ObservableObject {
     /// command it prints opens in a new tab and a message is shown; `done`
     /// follows either way, to read the panel again.
     func act(_ action: PluginPanel.Action, item: String?, entry: Panel, directory: String, workspaceId: String?,
-             in window: WindowContext, done: @escaping () -> Void) {
+             in window: WindowContext, done: @escaping (_ openedTab: Bool) -> Void) {
         guard !entry.panel.act.isEmpty else { return }
         let run = { [weak window] in
             var environment = Self.environment(entry.plugin, directory: directory)
@@ -524,12 +524,12 @@ final class OctetPluginHost: ObservableObject {
                 if let window {
                     Self.open(result, title: action.title, directory: directory, workspaceId: workspaceId, in: window)
                 }
-                done()
+                done(result.command != nil && window != nil)
             }
         }
         guard let question = action.confirm else { return run() }
         ConfirmCenter.shared.ask(ConfirmCenter.Request(title: question, confirmTitle: action.title, destructive: true,
-                                                       onConfirm: { _ in run() }, onCancel: { done() }))
+                                                       onConfirm: { _ in run() }, onCancel: { done(false) }))
     }
 
     /// The repository `directory` is in, found by its `.git`.
