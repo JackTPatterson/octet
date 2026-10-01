@@ -307,6 +307,7 @@ struct OctetPluginManifest: Codable, Equatable {
         feature = try container.decodeIfPresent(String.self, forKey: .feature)
         enabledByDefault = try container.decodeIfPresent(Bool.self, forKey: .enabledByDefault)
         platforms = try container.decodeIfPresent([PluginPlatform].self, forKey: .platforms)
+        settings = try container.decodeIfPresent([Setting].self, forKey: .settings)
     }
 }
 
