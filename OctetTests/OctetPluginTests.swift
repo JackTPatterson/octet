@@ -266,7 +266,9 @@ final class GitCloneEdgeCaseTests: XCTestCase {
     }
 
     func testRepositoriesFillTheFirstArgument() throws {
-        XCTAssertTrue(kinds("git clone ", try cloneSpec()).contains(.repository))
+        // Out here, so a missing plugins checkout skips rather than fails.
+        let spec = try cloneSpec()
+        XCTAssertTrue(kinds("git clone ", spec).contains(.repository))
     }
 
     func testAfterTheRepositoryComesADirectory() throws {
