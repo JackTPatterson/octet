@@ -855,6 +855,8 @@ final class UIState: ObservableObject {
     var paletteStart: [String]?
     /// The changes review over the terminal, while it's open.
     @Published var review: DiffReviewModel?
+    /// Bumped to put the keyboard in the sidebar's search field.
+    @Published var sidebarSearchRequest = 0
     @Published var sidebarVisible = UserDefaults.standard.object(forKey: "octet.sidebarVisible") as? Bool ?? true {
         didSet { UserDefaults.standard.set(sidebarVisible, forKey: "octet.sidebarVisible") }
     }

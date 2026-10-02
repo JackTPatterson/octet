@@ -293,6 +293,14 @@ struct OctetCommands: Commands {
                 .keyboardShortcut(OctetShortcut.hints.keyboardShortcut)
             Button(OctetShortcut.toggleSidebar.title) { KeyWindow.act { $0.ui.sidebarVisible.toggle() } }
                 .keyboardShortcut(OctetShortcut.toggleSidebar.keyboardShortcut)
+            Button(OctetShortcut.searchWorkspaces.title) {
+                KeyWindow.act { context in
+                    context.ui.sidebarVisible = true
+                    // After the sidebar is back, so the field exists to focus.
+                    DispatchQueue.main.async { context.ui.sidebarSearchRequest += 1 }
+                }
+            }
+                .keyboardShortcut(OctetShortcut.searchWorkspaces.keyboardShortcut)
             Divider()
             // The terminal's own zoom keys are unbound (Theme.octetShortcutUnbinds),
             // so these change the Font size setting instead of one pane.
