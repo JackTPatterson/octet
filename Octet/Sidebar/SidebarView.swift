@@ -359,7 +359,7 @@ private struct WorkspaceCard: View {
         VStack(spacing: 4) {
             card
             if !ports.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
+                ScrollView(.horizontal) {
                     HStack(spacing: 4) {
                         ForEach(ports, id: \.self) { port in
                             PortButton(port: port, service: portsWatcher.services[port],
@@ -369,6 +369,9 @@ private struct WorkspaceCard: View {
                         }
                     }
                 }
+                // Hidden even with "Show scroll bars: Always" or a mouse
+                // attached, which showsIndicators: false doesn't cover.
+                .scrollIndicators(.never)
                 .transition(motion.animates(.sidebar) ? .opacity : .identity)
             }
         }
