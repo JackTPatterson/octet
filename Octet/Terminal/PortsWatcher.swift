@@ -13,6 +13,11 @@ final class PortsWatcher: ObservableObject {
     @Published private(set) var listeners: [Int: [ListeningPorts.Listener]] = [:]
     private var timer: Timer?
     private var reading = false
+    /// Whether each server serves a page, by "pid:port", once known; ports
+    /// that don't aren't shown, as opening them shows nothing.
+    private var pages: [String: Bool] = [:]
+    /// Probes a server didn't answer, so one that never does isn't asked forever.
+    private var unanswered: [String: Int] = [:]
     private var ticks = 0
     private weak var store: SessionStore?
 
@@ -46,6 +51,8 @@ final class PortsWatcher: ObservableObject {
         reading = true
         let client = store.client
         let panes = store.snapshot.panes.map(\.paneId)
+        let known = pages
+        let unanswered = self.unanswered
         DispatchQueue.global(qos: .utility).async {
             var shells: [String: Int] = [:]
             for pane in panes {
@@ -57,10 +64,27 @@ final class PortsWatcher: ObservableObject {
             let table = Self.output("/bin/ps", ["-axww", "-o", "pid=,ppid=,args="])
             let parents = ListeningPorts.parseParents(table)
             let processes = ServiceKind.parseArguments(table)
-            let found = ListeningPorts.byPane(listeners, parents: parents, shells: shells)
+            let owned = ListeningPorts.owned(listeners, parents: parents, shells: shells).map(\.0)
+            // Ask each server once whether it serves a page; one still
+            // thinking is shown meanwhile and asked again next time, and
+            // one that never answers stays shown, as it was before.
+            var pages: [String: Bool] = [:]
+            var stillUnanswered: [String: Int] = [:]
+            for listener in owned {
+                let key = "\(listener.pid):\(listener.port)"
+                if let page = known[key] ?? pages[key] { pages[key] = page; continue }
+                switch Self.probe(port: listener.port) {
+                case .page: pages[key] = true
+                case .notPage: pages[key] = false
+                case .noAnswer:
+                    let tries = (unanswered[key] ?? 0) + 1
+                    if tries >= 3 { pages[key] = true } else { stillUnanswered[key] = tries }
+                }
+            }
+            let shown = listeners.filter { pages["\($0.pid):\($0.port)"] ?? true }
+            let found = ListeningPorts.byPane(shown, parents: parents, shells: shells)
             var services: [Int: String] = [:]
-            let owners = Dictionary(grouping: ListeningPorts.owned(listeners, parents: parents, shells: shells).map(\.0),
-                                    by: \.port)
+            let owners = Dictionary(grouping: owned, by: \.port)
             for listener in listeners where services[listener.port] == nil {
                 services[listener.port] = ServiceKind.detect(pid: listener.pid, command: listener.command,
                                                             processes: processes, parents: parents)
@@ -68,6 +92,8 @@ final class PortsWatcher: ObservableObject {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     self.reading = false
+                    self.pages = pages
+                    self.unanswered = stillUnanswered
                     if found != self.byPane { self.byPane = found }
                     if services != self.services { self.services = services }
                     if owners != self.listeners { self.listeners = owners }
@@ -98,6 +124,43 @@ final class PortsWatcher: ObservableObject {
         for delay in [0.8, 3.0] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.read() }
         }
+    }
+
+    /// Asks a local server for `/` over plain TCP, on IPv4 then IPv6, as
+    /// servers often listen on only one.
+    nonisolated private static func probe(port: Int) -> ListeningPorts.Probe {
+        for host in ["127.0.0.1", "::1"] {
+            if let answer = probe(host: host, port: port) { return answer }
+        }
+        return .notPage
+    }
+
+    /// Nil when nothing could be reached there.
+    nonisolated private static func probe(host: String, port: Int) -> ListeningPorts.Probe? {
+        var hints = addrinfo()
+        hints.ai_flags = AI_NUMERICHOST
+        hints.ai_family = AF_UNSPEC
+        hints.ai_socktype = SOCK_STREAM
+        var info: UnsafeMutablePointer<addrinfo>?
+        guard getaddrinfo(host, String(port), &hints, &info) == 0, let address = info else { return nil }
+        defer { freeaddrinfo(info) }
+        let fd = socket(address.pointee.ai_family, address.pointee.ai_socktype, address.pointee.ai_protocol)
+        guard fd >= 0 else { return nil }
+        defer { close(fd) }
+        var timeout = timeval(tv_sec: 3, tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        var noSignal: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, socklen_t(MemoryLayout<Int32>.size))
+        guard connect(fd, address.pointee.ai_addr, address.pointee.ai_addrlen) == 0 else { return nil }
+        let request = "GET / HTTP/1.0\r\nHost: localhost:\(port)\r\nAccept: text/html\r\nConnection: close\r\n\r\n"
+        let sent = request.withCString { send(fd, $0, strlen($0), 0) }
+        guard sent > 0 else { return .notPage }
+        var buffer = [UInt8](repeating: 0, count: 256)
+        let count = recv(fd, &buffer, buffer.count, 0)
+        if count < 0, errno == EAGAIN || errno == EWOULDBLOCK { return .noAnswer }
+        guard count > 0 else { return .notPage }
+        return ListeningPorts.probe(response: String(decoding: buffer[..<count], as: UTF8.self))
     }
 
     nonisolated private static func output(_ path: String, _ arguments: [String]) -> String {
