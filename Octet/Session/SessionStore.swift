@@ -1169,7 +1169,35 @@ final class SessionStore: ObservableObject {
 
     func closeWorkspace(_ id: String) {
         let label = workspaceLabel(id)
-        perform("workspace.close", ["workspace_id": id], failure: "Couldn't close workspace \(label)")
+        let showing = keyWindow?.focusedWorkspace?.workspaceId ?? snapshot.focusedWorkspaceId
+        let next = WorkspaceActivity.successor(closing: id, showing: showing,
+                                               active: activeGroups.flatMap(\.workspaces).map(\.workspaceId),
+                                               shownElsewhere: WindowRegistry.shared.shownWorkspaceIds(except: keyWindow))
+        guard let next else {
+            return perform("workspace.close", ["workspace_id": id], failure: "Couldn't close workspace \(label)")
+        }
+        // Move to the next active workspace before closing, so the session
+        // server doesn't bring an idle one forward, which would count as
+        // using it and take it out of Idle.
+        lastFocusedWorkspaceId = next
+        if let window = keyWindow, window.steers {
+            window.focusWorkspace(next)
+            return perform("workspace.close", ["workspace_id": id], failure: "Couldn't close workspace \(label)")
+        }
+        let client = self.client
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            // In this order, on one thread: two separate calls could arrive
+            // the other way round.
+            _ = try? client.call("workspace.focus", ["workspace_id": next])
+            let outcome = Result { try client.call("workspace.close", ["workspace_id": id]) }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if case .failure(let error) = outcome {
+                    self.toasts.fail(nil, "Couldn't close workspace \(label)", detail: Self.describe(error))
+                }
+                self.scheduleRefresh()
+            }
+        }
     }
 
     func renameTab(_ id: String, to label: String) {
