@@ -31,6 +31,11 @@ enum ListeningPorts {
         return result
     }
 
+    /// macOS hands out ports in this range to whatever asks for any free
+    /// one: debuggers, language servers, editor and agent bridges. Dev
+    /// servers pick fixed ports below it, so these are never shown.
+    static let ephemeral = 49152...65535
+
     /// What a listener said to `GET /`: a page a browser can show, an
     /// answer that isn't one (a WebSocket or API endpoint, a debugger, a
     /// language server, anything not speaking HTTP), or nothing yet, as a

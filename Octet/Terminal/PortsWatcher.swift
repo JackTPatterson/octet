@@ -61,6 +61,7 @@ final class PortsWatcher: ObservableObject {
                 }
             }
             let listeners = ListeningPorts.parseLsof(Self.output("/usr/sbin/lsof", ["-nP", "-iTCP", "-sTCP:LISTEN", "-Fpcn"]))
+                .filter { !ListeningPorts.ephemeral.contains($0.port) }
             let table = Self.output("/bin/ps", ["-axww", "-o", "pid=,ppid=,args="])
             let parents = ListeningPorts.parseParents(table)
             let processes = ServiceKind.parseArguments(table)

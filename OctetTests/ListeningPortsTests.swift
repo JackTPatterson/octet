@@ -1,6 +1,13 @@
 import XCTest
 
 final class ListeningPortsTests: XCTestCase {
+    func testEphemeralPortsAreNeverShown() {
+        XCTAssertTrue(ListeningPorts.ephemeral.contains(55564))
+        XCTAssertTrue(ListeningPorts.ephemeral.contains(49152))
+        XCTAssertFalse(ListeningPorts.ephemeral.contains(3000))
+        XCTAssertFalse(ListeningPorts.ephemeral.contains(8080))
+    }
+
     func testOnlyPortsServingAPageAreWorthOpening() {
         XCTAssertEqual(ListeningPorts.probe(response: "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n"), .page)
         XCTAssertEqual(ListeningPorts.probe(response: "HTTP/1.0 302 Found\r\nLocation: /login\r\n"), .page)
