@@ -113,8 +113,8 @@ struct SidebarView: View {
     /// idle ones it finds; groups aren't collapsed while searching.
     private var matches: (groups: [ProjectGroup], idle: [EngineWorkspace]) {
         let groups = store.activeGroups.compactMap { group -> ProjectGroup? in
-            let found = group.workspaces.filter { found($0, group: group.name) }
-            return found.isEmpty ? nil : ProjectGroup(id: group.id, name: group.name, workspaces: found)
+            let hits = group.workspaces.filter { found($0, group: group.name) }
+            return hits.isEmpty ? nil : ProjectGroup(id: group.id, name: group.name, workspaces: hits)
         }
         return (groups, store.idleWorkspaces.filter { found($0, group: nil) })
     }
