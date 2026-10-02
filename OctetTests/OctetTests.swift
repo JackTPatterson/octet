@@ -479,6 +479,18 @@ final class EnginePluginTests: XCTestCase {
 }
 
 final class WorkspaceActivityTests: XCTestCase {
+    func testClosingTheWorkspaceOnScreenMovesToAnActiveNeighbour() {
+        let active = ["a", "b", "c"]
+        // The next one down, else the one above; never an idle one.
+        XCTAssertEqual(WorkspaceActivity.successor(closing: "b", showing: "b", active: active, shownElsewhere: []), "c")
+        XCTAssertEqual(WorkspaceActivity.successor(closing: "c", showing: "c", active: active, shownElsewhere: []), "b")
+        XCTAssertEqual(WorkspaceActivity.successor(closing: "b", showing: "b", active: active, shownElsewhere: ["c"]), "a")
+        // Closing one that isn't on screen leaves the screen alone.
+        XCTAssertNil(WorkspaceActivity.successor(closing: "b", showing: "a", active: active, shownElsewhere: []))
+        // Nothing active left: the session server decides.
+        XCTAssertNil(WorkspaceActivity.successor(closing: "a", showing: "a", active: ["a"], shownElsewhere: []))
+    }
+
     private func workspace(_ id: String, status: EngineAgentStatus = .idle) -> EngineWorkspace {
         EngineWorkspace(workspaceId: id, number: 1, label: id, focused: false, paneCount: 1, tabCount: 1,
                        activeTabId: "\(id):t1", agentStatus: status, worktree: nil)

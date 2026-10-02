@@ -1,6 +1,25 @@
 import XCTest
 
 final class ListeningPortsTests: XCTestCase {
+    func testEphemeralPortsAreNeverShown() {
+        XCTAssertTrue(ListeningPorts.ephemeral.contains(55564))
+        XCTAssertTrue(ListeningPorts.ephemeral.contains(49152))
+        XCTAssertFalse(ListeningPorts.ephemeral.contains(3000))
+        XCTAssertFalse(ListeningPorts.ephemeral.contains(8080))
+    }
+
+    func testOnlyPortsServingAPageAreWorthOpening() {
+        XCTAssertEqual(ListeningPorts.probe(response: "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n"), .page)
+        XCTAssertEqual(ListeningPorts.probe(response: "HTTP/1.0 302 Found\r\nLocation: /login\r\n"), .page)
+        XCTAssertEqual(ListeningPorts.probe(response: "HTTP/1.1 401 Unauthorized\r\n"), .page)
+        XCTAssertEqual(ListeningPorts.probe(response: "HTTP/1.0 200\r\nServer: x\r\n"), .page)
+        // A WebSocket or API endpoint, a missing page, or something not HTTP.
+        XCTAssertEqual(ListeningPorts.probe(response: "HTTP/1.1 426 Upgrade Required\r\n"), .notPage)
+        XCTAssertEqual(ListeningPorts.probe(response: "HTTP/1.1 404 Not Found\r\n"), .notPage)
+        XCTAssertEqual(ListeningPorts.probe(response: "Content-Length: 120\r\n\r\n{\"jsonrpc\""), .notPage)
+        XCTAssertEqual(ListeningPorts.probe(response: ""), .notPage)
+    }
+
     func testReadsLsofsFieldOutput() {
         let text = "p501\ncnode\nn*:3000\nn[::1]:3000\np777\ncPython\nn127.0.0.1:8765\np900\ncrapportd\nn*:49152\n"
         XCTAssertEqual(ListeningPorts.parseLsof(text), [

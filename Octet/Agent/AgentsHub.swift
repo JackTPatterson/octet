@@ -472,7 +472,10 @@ struct AgentsHubButton: View {
         let showing = center.board(in: workspace) != nil
         Button { center.setBoard(showing ? nil : .all, in: workspace) } label: {
             HStack(spacing: 5) {
-                OctetIcon("tool.agent", size: 12)
+                Image(systemName: Self.brain)
+                    .font(.system(size: 11, weight: .semibold))
+                    .frame(width: 12, height: 12)
+                    .accessibilityHidden(true)
                 Text("Agents").font(Theme.uiFontMedium)
                 if waiting > 0 {
                     Text("\(waiting)")
@@ -494,4 +497,8 @@ struct AgentsHubButton: View {
         .help("Agents (⌘⇧A)" + (waiting > 0 ? ": \(waiting) waiting on you" : ""))
         .accessibilityLabel("Agents" + (waiting > 0 ? ", \(waiting) need input" : ""))
     }
+
+    /// A filled brain; macOS versions without it get the filled head.
+    private static let brain = NSImage(systemSymbolName: "brain.fill", accessibilityDescription: nil) != nil
+        ? "brain.fill" : "brain.filled.head.profile"
 }

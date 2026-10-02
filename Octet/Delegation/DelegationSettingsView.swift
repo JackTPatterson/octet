@@ -21,9 +21,9 @@ struct DelegationSettingsGroup: View {
             SettingsDivider()
             SettingsRow(
                 title: "Tools in your agents",
-                detail: "Claude Code and Codex get delegate_to_agent, wait_for_delegate and list_delegates through the octet-delegate MCP server. A delegate can't delegate again."
+                detail: "While this is on, Claude Code, Codex, Gemini, Qwen, OpenCode, Cursor and Copilot get delegate_to_agent, wait_for_delegate and list_delegates through the octet-delegate MCP server. A delegate can't delegate again."
             ) {
-                Button("Add Again") { center.configureAgents(install: true) }
+                Button("Add Again") { AgentMCPInstaller.shared.sync(server: DelegationMCP.serverName, force: true) }
             }
             let running = center.delegations.values.filter { $0.result == nil }.sorted { $0.started > $1.started }
             if !running.isEmpty {

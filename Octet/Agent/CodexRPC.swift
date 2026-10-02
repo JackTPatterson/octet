@@ -60,7 +60,15 @@ enum CodexRPC {
         process.standardOutput = stdout
         process.standardError = Pipe()
         guard (try? process.run()) != nil else { return }
-        stdin.fileHandleForWriting.write(Data(input.utf8))
+        // The server can be gone already (it failed to start, or its login
+        // shell exited). `write(_:)` raises an Objective-C exception on a
+        // closed pipe, which Swift can't catch and which aborts the app;
+        // `write(contentsOf:)` throws instead.
+        do { try stdin.fileHandleForWriting.write(contentsOf: Data(input.utf8)) } catch {
+            process.terminate()
+            DispatchQueue.global(qos: .utility).async { process.waitUntilExit() }
+            return
+        }
 
         let done = DispatchSemaphore(value: 0)
         let reader = Reader(receive: receive)

@@ -21,10 +21,11 @@ struct OctetApp: App {
             updaterDelegate: nil,
             userDriverDelegate: nil
         )
-        // IDEs and parent agents commonly export NO_COLOR for their own logs.
-        // Octet is a real PTY, so that host-only preference must not erase the
-        // native colors of Claude, Codex, shells, or any other terminal app.
-        TerminalEnvironment.clearInheritedColorSuppression()
+        // IDEs and parent agents commonly export NO_COLOR for their own logs,
+        // and a terminal Octet was started from leaves its own variables.
+        // Octet is a real PTY: neither may reach Claude, Codex, shells, or any
+        // other program in its panes.
+        TerminalEnvironment.clearInheritedTerminalVariables()
         let session = EngineSession.make()
         let settings = SettingsStore.shared
         settings.sessionConfigPath = session?.configPath
@@ -65,9 +66,11 @@ struct OctetApp: App {
                     Self.started = true
                     store.start()
                     AccountStore.shared.start()
+                    ModelPolicyStore.shared.start()
                     AgentsStore.shared.start()
                     CodexAgentsStore.shared.start()
                     AgentDiscoveryStore.shared.scanIfStale()
+                    AgentMCPInstaller.shared.start()
                     repairInstalledSubagentHooks()
                     DebugSnapshot.start()
                 }
@@ -290,6 +293,14 @@ struct OctetCommands: Commands {
                 .keyboardShortcut(OctetShortcut.hints.keyboardShortcut)
             Button(OctetShortcut.toggleSidebar.title) { KeyWindow.act { $0.ui.sidebarVisible.toggle() } }
                 .keyboardShortcut(OctetShortcut.toggleSidebar.keyboardShortcut)
+            Button(OctetShortcut.searchWorkspaces.title) {
+                KeyWindow.act { context in
+                    context.ui.sidebarVisible = true
+                    // After the sidebar is back, so the field exists to focus.
+                    DispatchQueue.main.async { context.ui.sidebarSearchRequest += 1 }
+                }
+            }
+                .keyboardShortcut(OctetShortcut.searchWorkspaces.keyboardShortcut)
             Divider()
             // The terminal's own zoom keys are unbound (Theme.octetShortcutUnbinds),
             // so these change the Font size setting instead of one pane.

@@ -215,6 +215,22 @@ final class ColorlessServerTests: XCTestCase {
         """))
     }
 
+    func testAnotherTerminalsVariablesAreDropped() {
+        let cleaned = TerminalEnvironment.sanitized([
+            "WARP_IS_LOCAL_SHELL_SESSION": "1", "WARP_HONOR_PS1": "0", "ITERM_SESSION_ID": "w0", "NO_COLOR": "1",
+            "PATH": "/bin", "HOME": "/Users/me", "TERM_PROGRAM": "Octet",
+        ])
+        XCTAssertEqual(cleaned.keys.sorted(), ["HOME", "PATH", "TERM_PROGRAM"])
+    }
+
+    func testNotificationsForSoftwareAreNotShown() {
+        XCTAssertTrue(TerminalNotice.isForSoftware(title: "warp://cli-agent",
+                                                   body: #"{"v":1,"agent":"claude","event":"tool_complete"}"#))
+        XCTAssertTrue(TerminalNotice.isForSoftware(title: "", body: #"{"event":"stop"}"#))
+        XCTAssertFalse(TerminalNotice.isForSoftware(title: "Claude Code", body: "Claude is waiting for your input"))
+        XCTAssertFalse(TerminalNotice.isForSoftware(title: "Build", body: "{ finished }"))
+    }
+
     func testTheLiveCheckRuns() {
         // Nothing to assert about this machine's servers; it must not hang or crash.
         _ = TerminalEnvironment.colorlessServer(session: "octet-tests-\(UUID().uuidString)")

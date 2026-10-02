@@ -26,6 +26,9 @@ struct OctetSettings: Codable, Equatable {
     var lightThemeName = "Light"
     var darkThemeName = "Dark"
     var fontFamily = ""
+    /// Octet's own text: the sidebar, tabs, panels and settings. Empty is
+    /// the system font.
+    var interfaceFontFamily = ""
     var fontSize: Double = 13
     var lineHeightPercent: Double = 100
     var fontThicken = false
@@ -284,6 +287,7 @@ struct OctetSettings: Codable, Equatable {
         lightThemeName = value("lightThemeName", defaults.lightThemeName)
         darkThemeName = value("darkThemeName", defaults.darkThemeName)
         fontFamily = value("fontFamily", defaults.fontFamily)
+        interfaceFontFamily = value("interfaceFontFamily", defaults.interfaceFontFamily)
         fontSize = value("fontSize", defaults.fontSize)
         lineHeightPercent = value("lineHeightPercent", defaults.lineHeightPercent)
         fontThicken = value("fontThicken", defaults.fontThicken)
@@ -612,6 +616,7 @@ final class SettingsStore: ObservableObject {
         TerminalTheme.imported = values.importedTheme
         values.themeName = values.resolvedThemeName(systemIsDark: SystemDisplay.isDark)
         Theme.palette = ThemePalette(theme: .named(values.themeName))
+        Theme.interfaceFamily = values.interfaceFontFamily
         themeKey = Self.makeThemeKey(values.themeName)
         observeSystem()
         // Rewrites settings read under older key names with the current ones.
@@ -620,7 +625,7 @@ final class SettingsStore: ObservableObject {
     }
 
     private static func makeThemeKey(_ themeName: String) -> String {
-        "\(themeName)|\(SystemDisplay.increaseContrast)|\(SystemDisplay.reduceTransparency)"
+        "\(themeName)|\(SystemDisplay.increaseContrast)|\(SystemDisplay.reduceTransparency)|\(Theme.interfaceFamily)"
     }
 
     /// macOS light/dark switches and the accessibility display options.
@@ -744,11 +749,14 @@ final class SettingsStore: ObservableObject {
     private func apply(from old: OctetSettings) {
         if values.keepAwake != old.keepAwake { SleepGuard.shared.update() }
         if values.globalHotkey != old.globalHotkey { GlobalHotkey.shared.apply(values.globalHotkey) }
-        if values.peersEnabled != old.peersEnabled { PeerCenter.shared.apply() }
+        // Each feature's tools go into the agents' own settings only while it's on.
+        if values.peersEnabled != old.peersEnabled {
+            PeerCenter.shared.apply()
+            AgentMCPInstaller.shared.sync(server: PeerMCP.serverName)
+        }
         if values.delegationEnabled != old.delegationEnabled {
             DelegationCenter.shared.apply()
-            // The tools go into the agents' own settings only while it's on.
-            DelegationCenter.shared.configureAgents(install: values.delegationEnabled)
+            AgentMCPInstaller.shared.sync(server: DelegationMCP.serverName)
         }
         // A new name is advertised by starting again.
         if values.peerName != old.peerName, values.peersEnabled { PeerCenter.shared.restart() }
@@ -759,6 +767,11 @@ final class SettingsStore: ObservableObject {
         }
         if values.importedTheme != old.importedTheme {
             TerminalTheme.imported = values.importedTheme
+        }
+        if values.interfaceFontFamily != old.interfaceFontFamily {
+            // Views read Theme's fonts as they draw; a new key redraws them all.
+            Theme.interfaceFamily = values.interfaceFontFamily
+            themeKey = Self.makeThemeKey(values.themeName)
         }
         if values.themeName != old.themeName || values.importedTheme != old.importedTheme {
             Theme.palette = ThemePalette(theme: .named(values.themeName))
