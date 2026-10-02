@@ -101,7 +101,9 @@ enum PluginCLI {
                 if shouldAnswer { answered = true }
                 lock.unlock()
                 if shouldAnswer, let answer {
-                    input.fileHandleForWriting.write(Data(answer.text.utf8))
+                    // A closed pipe throws here; the legacy `write(_:)` would
+                    // raise an exception that aborts the app.
+                    try? input.fileHandleForWriting.write(contentsOf: Data(answer.text.utf8))
                 }
             }
 
