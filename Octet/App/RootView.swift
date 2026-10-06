@@ -296,6 +296,7 @@ struct RootView: View {
     private func appeared() {
             AgentBoardWindow.opener = { openWindow(id: AgentBoardWindow.id) }
             MarketplaceWindow.opener = { openWindow(id: MarketplaceWindow.id) }
+            HuggingFaceWindow.opener = { openWindow(id: HuggingFaceWindow.id) }
             PluginSettingsOpener.opener = { openSettings() }
             ClipboardWatcher.shared.start()
             #if DEBUG
