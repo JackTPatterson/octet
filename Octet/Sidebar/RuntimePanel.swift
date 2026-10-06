@@ -505,6 +505,7 @@ struct RuntimePanel: View {
 private enum RuntimeKind: String, CaseIterable, Identifiable {
     case agent, task, monitor, shell
     var id: String { rawValue }
+    var title: String { section.title }
     var section: SidePanelSection {
         switch self {
         case .monitor: .monitors
