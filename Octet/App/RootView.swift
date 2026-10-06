@@ -35,9 +35,6 @@ struct RootView: View {
     /// Where the terminal starts across the window.
     private var sidebarInset: CGFloat { ui.sidebarVisible ? ui.sidebarWidth + 1 : 0 }
     private var windowHeight: CGFloat { NSApp.keyWindow?.contentView?.bounds.height ?? 800 }
-    private let runtimePanelWidth: CGFloat = 293
-    static let todoPanelWidth: CGFloat = 293
-    static let gitPanelWidth: CGFloat = 321
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
 
@@ -202,42 +199,20 @@ struct RootView: View {
                     }
                     contentArea
                 }
+                // The right panel: files, todos, agents, tasks and the
+                // plugins' panels, as sections down one page.
                 ZStack(alignment: .leading) {
                     Rectangle().fill(Theme.divider).frame(width: 1)
                         .frame(maxHeight: .infinity, alignment: .leading)
-                    TodoPanel(model: window.todos, ui: ui)
-                        .frame(width: Self.todoPanelWidth - 1)
+                    SidePanel(store: store, ui: ui)
+                        .frame(width: SidePanel.width - 1)
                         .padding(.leading, 1)
-                        .offset(x: ui.todoPanelVisible ? 0 : Self.todoPanelWidth)
+                        .offset(x: ui.sidePanelVisible ? 0 : SidePanel.width)
                 }
-                .frame(width: ui.todoPanelVisible ? Self.todoPanelWidth : 0, alignment: .leading)
+                .frame(width: ui.sidePanelVisible ? SidePanel.width : 0, alignment: .leading)
                 .clipped()
-                .allowsHitTesting(ui.todoPanelVisible)
-                .accessibilityHidden(!ui.todoPanelVisible)
-                ZStack(alignment: .leading) {
-                    Rectangle().fill(Theme.divider).frame(width: 1)
-                        .frame(maxHeight: .infinity, alignment: .leading)
-                    GitPanel(model: window.git, ui: ui)
-                        .frame(width: Self.gitPanelWidth - 1)
-                        .padding(.leading, 1)
-                        .offset(x: ui.gitPanelVisible ? 0 : Self.gitPanelWidth)
-                }
-                .frame(width: ui.gitPanelVisible ? Self.gitPanelWidth : 0, alignment: .leading)
-                .clipped()
-                .allowsHitTesting(ui.gitPanelVisible)
-                .accessibilityHidden(!ui.gitPanelVisible)
-                ZStack(alignment: .leading) {
-                    Rectangle().fill(Theme.divider).frame(width: 1)
-                        .frame(maxHeight: .infinity, alignment: .leading)
-                    RuntimePanel(store: store, ui: ui)
-                        .frame(width: runtimePanelWidth - 1)
-                        .padding(.leading, 1)
-                        .offset(x: ui.runtimePanelVisible ? 0 : runtimePanelWidth)
-                }
-                .frame(width: ui.runtimePanelVisible ? runtimePanelWidth : 0, alignment: .leading)
-                .clipped()
-                .allowsHitTesting(ui.runtimePanelVisible)
-                .accessibilityHidden(!ui.runtimePanelVisible)
+                .allowsHitTesting(ui.sidePanelVisible)
+                .accessibilityHidden(!ui.sidePanelVisible)
             }
         }
         .overlay(alignment: .topTrailing) {
@@ -300,9 +275,7 @@ struct RootView: View {
         .overlay { PastePreviewDialog(center: PastePreviewCenter.shared, store: store) }
         .animation(motion.animation(.palette, .smooth(duration: 0.16)), value: ui.paletteVisible)
         .animation(motion.animation(.sidebar), value: ui.sidebarVisible)
-        .animation(motion.animation(.sidebar), value: ui.runtimePanelVisible)
-        .animation(motion.animation(.sidebar), value: ui.todoPanelVisible)
-        .animation(motion.animation(.sidebar), value: ui.gitPanelVisible)
+        .animation(motion.animation(.sidebar), value: ui.sidePanelVisible)
         .onAppear {
             window.todos.attach(window)
             window.git.attach(window)
@@ -860,20 +833,41 @@ final class UIState: ObservableObject {
     @Published var sidebarVisible = UserDefaults.standard.object(forKey: "octet.sidebarVisible") as? Bool ?? true {
         didSet { UserDefaults.standard.set(sidebarVisible, forKey: "octet.sidebarVisible") }
     }
-    /// The right-hand panel shows one thing at a time: runtimes, todos or git.
-    @Published var runtimePanelVisible = false {
+    /// The right panel, with every section (`SidePanel`).
+    @Published var sidePanelVisible = UserDefaults.standard.bool(forKey: "octet.sidePanelVisible") {
         didSet {
-            if runtimePanelVisible { todoPanelVisible = false; gitPanelVisible = false } else { runtimePanelAutoOpened = false }
+            UserDefaults.standard.set(sidePanelVisible, forKey: "octet.sidePanelVisible")
+            if !sidePanelVisible { sidePanelAutoOpened = false }
         }
     }
-    /// The Runtime panel opened itself for a new runtime, and nobody has
-    /// pointed at it since: it closes again after a few seconds.
-    var runtimePanelAutoOpened = false
-    @Published var todoPanelVisible = false {
-        didSet { if todoPanelVisible { runtimePanelVisible = false; gitPanelVisible = false } }
+    /// The panel opened itself for a new runtime, and nobody has pointed
+    /// at it since: it closes again after a few seconds.
+    var sidePanelAutoOpened = false
+    /// A request to open a section and scroll to it; a new value each
+    /// time, so asking for the same section twice works.
+    struct SidePanelJump: Equatable {
+        let section: SidePanelSection
+        let at = Date()
     }
-    @Published var gitPanelVisible = false {
-        didSet { if gitPanelVisible { runtimePanelVisible = false; todoPanelVisible = false } }
+    @Published var sidePanelJump: SidePanelJump?
+
+    /// The page in front: overview, git or the terminal.
+    @Published var sidePanelTab: SidePanelTab = SidePanelTab(rawValue: UserDefaults.standard.string(forKey: "octet.sidePanelTab") ?? "") ?? .overview {
+        didSet { UserDefaults.standard.set(sidePanelTab.rawValue, forKey: "octet.sidePanelTab") }
+    }
+
+    /// Shows the panel with `section` open and in view, on its page.
+    func showSidePanel(_ section: SidePanelSection) {
+        sidePanelVisible = true
+        sidePanelAutoOpened = false
+        sidePanelTab = section == .files ? .git : .overview
+        sidePanelJump = SidePanelJump(section: section)
+    }
+
+    func showSidePanel(tab: SidePanelTab) {
+        sidePanelVisible = true
+        sidePanelAutoOpened = false
+        sidePanelTab = tab
     }
     /// Runtime identities already announced in this window. Views are rebuilt
     /// during tab switches, but old processes must not look newly created.

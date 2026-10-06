@@ -1,9 +1,10 @@
 import Combine
 import SwiftUI
 
-/// Monitors, background tasks, agents and shells owned by the agent in front.
-/// The process-tree boundary is important: a workspace can contain many agents
-/// and terminals, but this panel describes only the Claude session being viewed.
+/// Monitors, background tasks, agents and shells owned by the agent in front,
+/// as sections of the right panel's Overview. The process-tree boundary is
+/// important: a workspace can contain many agents and terminals, but this
+/// describes only the session being viewed.
 struct RuntimePanel: View {
     @EnvironmentObject private var window: WindowContext
     @ObservedObject var store: SessionStore
@@ -14,7 +15,6 @@ struct RuntimePanel: View {
     @ObservedObject private var codexAgents = CodexAgentsStore.shared
     @ObservedObject private var motion = MotionPreferences.shared
     @State private var flashingEntryIDs: Set<String> = []
-    @State private var hovered = false
     /// Counts auto-close timers, so only the latest one closes the panel.
     @State private var autoCloseGeneration = 0
     /// How long a panel that opened itself stays open when not hovered.
@@ -40,11 +40,6 @@ struct RuntimePanel: View {
 
     var body: some View {
         runtimeContent
-        .onHover { hovering in
-            hovered = hovering
-            // Pointed at: it's the person's panel now, and stays open.
-            if hovering { ui.runtimePanelAutoOpened = false }
-        }
         .onAppear {
             ui.seenRuntimeEntryIDs.formUnion(entries.map(\.id))
             reload()
@@ -74,58 +69,37 @@ struct RuntimePanel: View {
         .onReceive(refresh) { _ in reload() }
     }
 
-    @ViewBuilder private var runtimeContent: some View {
-        runtimeList(entries)
+    /// One stack, so the modifiers on it run once, not per section.
+    private var runtimeContent: some View {
+        VStack(alignment: .leading, spacing: 6) { runtimeList(entries) }
     }
 
+    /// Every kind is a section, with 0 when it has nothing, so the page
+    /// keeps its shape.
     private func runtimeList(_ current: [RuntimeEntry]) -> some View {
-        VStack(spacing: 0) {
-            header
-            Rectangle().fill(Theme.divider).frame(height: 1)
-            if current.isEmpty {
-                empty
-            } else {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        // Not lazy: a handful of rows whose heights change as
-                        // they open, which a lazy stack could lose track of
-                        // and draw as an empty panel.
-                        VStack(alignment: .leading, spacing: 14) {
-                            ForEach(RuntimeKind.allCases) { kind in
-                                let rows = current.filter { $0.kind == kind }
-                                if !rows.isEmpty { section(kind, rows: rows, proxy: proxy) }
-                            }
-                        }
-                        .padding(10)
-                    }
-                    .scrollIndicators(.hidden)
+        ForEach(RuntimeKind.allCases) { kind in
+            let rows = current.filter { $0.kind == kind }
+            SidePanelSectionView(kind.section, count: rows.count) {
+                if rows.isEmpty {
+                    Text(kind.emptyText)
+                        .font(Theme.captionFont)
+                        .foregroundStyle(Theme.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    section(kind, rows: rows)
                 }
             }
         }
-        .background(Theme.sidebar)
     }
 
-    private func close() {
-        withoutLayoutAnimation {
-            ui.runtimeExpandedEntryIDs = []
-            ui.runtimePanelVisible = false
-        }
-    }
-
-    /// Opens or closes a row in place. An opened row near the bottom is
-    /// scrolled into view once it has grown, so its details aren't cut off.
-    private func toggle(_ entry: RuntimeEntry, proxy: ScrollViewProxy) {
-        let opening = !ui.runtimeExpandedEntryIDs.contains(entry.id)
+    /// Opens or closes a row in place.
+    private func toggle(_ entry: RuntimeEntry) {
         motion.perform(.sidebar, .spring(response: 0.32, dampingFraction: 0.86)) {
-            if opening {
-                ui.runtimeExpandedEntryIDs.insert(entry.id)
-            } else {
+            if ui.runtimeExpandedEntryIDs.contains(entry.id) {
                 ui.runtimeExpandedEntryIDs.remove(entry.id)
+            } else {
+                ui.runtimeExpandedEntryIDs.insert(entry.id)
             }
-        }
-        guard opening else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + (motion.animates(.sidebar) ? 0.2 : 0)) {
-            motion.perform(.sidebar, .smooth(duration: 0.25)) { proxy.scrollTo(entry.id) }
         }
     }
 
@@ -135,53 +109,12 @@ struct RuntimePanel: View {
         withTransaction(transaction, changes)
     }
 
-    private var header: some View {
-        HStack(spacing: 7) {
-            Text("Runtime").font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary)
-            Text("\(entries.count)")
-                .font(Theme.captionFont.monospacedDigit())
-                .foregroundStyle(Theme.textTertiary)
-            Spacer()
-            Button { close() } label: {
-                OctetIcon("xmark", size: 13)
-                    .foregroundStyle(Theme.textSecondary)
-                    .frame(width: 24, height: 24)
-            }
-            .buttonStyle(.plain)
-            .help("Close runtime panel")
-        }
-        .padding(.horizontal, 10)
-        .frame(height: Theme.tabBarHeight)
-    }
-
-    private var empty: some View {
-        VStack(spacing: 8) {
-            Text("No active runtimes")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(Theme.textPrimary)
-            Text("Tasks, agents, monitors and shells created by this tab's agent appear here.")
-                .font(Theme.captionFont)
-                .foregroundStyle(Theme.textTertiary)
-                .multilineTextAlignment(.center)
-        }
-        .padding(24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private func section(_ kind: RuntimeKind, rows: [RuntimeEntry], proxy: ScrollViewProxy) -> some View {
+    private func section(_ kind: RuntimeKind, rows: [RuntimeEntry]) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            HStack {
-                Text(kind.title.uppercased())
-                    .font(Theme.headerFont)
-                    .kerning(0.4)
-                    .foregroundStyle(Theme.textTertiary)
-                Spacer()
-                Text("\(rows.count)").font(Theme.captionFont).foregroundStyle(Theme.textMuted)
-            }
             ForEach(rows) { row in
                 RuntimeRow(entry: row,
                            flashes: flashingEntryIDs.contains(row.id),
-                           expanded: ui.runtimeExpandedEntryIDs.contains(row.id)) { toggle(row, proxy: proxy) }
+                           expanded: ui.runtimeExpandedEntryIDs.contains(row.id)) { toggle(row) }
                     .id(row.id)
             }
         }
@@ -194,11 +127,14 @@ struct RuntimePanel: View {
         ui.seenRuntimeEntryIDs.formUnion(current)
         flashingEntryIDs.formIntersection(current)
         guard !added.isEmpty else { return }
-        if !ui.runtimePanelVisible {
-            ui.runtimePanelVisible = true
-            ui.runtimePanelAutoOpened = true
+        // A new runtime opens the panel on its page, briefly, unless the
+        // panel is already the person's.
+        if !ui.sidePanelVisible {
+            ui.sidePanelVisible = true
+            ui.sidePanelAutoOpened = true
+            ui.sidePanelTab = .overview
         }
-        if ui.runtimePanelAutoOpened { scheduleAutoClose() }
+        if ui.sidePanelAutoOpened { scheduleAutoClose() }
         flashingEntryIDs.formUnion(added)
         DispatchQueue.main.asyncAfter(deadline: .now() + (motion.animates(.sidebar) ? 0.85 : 0.15)) {
             flashingEntryIDs.subtract(added)
@@ -211,8 +147,8 @@ struct RuntimePanel: View {
         autoCloseGeneration += 1
         let generation = autoCloseGeneration
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.autoCloseAfter) {
-            guard generation == autoCloseGeneration, ui.runtimePanelAutoOpened, !hovered else { return }
-            ui.runtimePanelVisible = false
+            guard generation == autoCloseGeneration, ui.sidePanelAutoOpened else { return }
+            ui.sidePanelVisible = false
         }
     }
 
@@ -567,14 +503,22 @@ struct RuntimePanel: View {
 }
 
 private enum RuntimeKind: String, CaseIterable, Identifiable {
-    case monitor, task, agent, shell
+    case agent, task, monitor, shell
     var id: String { rawValue }
-    var title: String {
+    var section: SidePanelSection {
         switch self {
-        case .monitor: "Monitors"
-        case .task: "Background tasks"
-        case .agent: "Agents"
-        case .shell: "Shells"
+        case .monitor: .monitors
+        case .task: .tasks
+        case .agent: .agents
+        case .shell: .shells
+        }
+    }
+    var emptyText: String {
+        switch self {
+        case .monitor: "No monitors. Builds and watchers the agent runs in the background show here."
+        case .task: "No background tasks running."
+        case .agent: "No subagents running. Ones this tab's agent starts show here."
+        case .shell: "No shells started by the agent."
         }
     }
 }

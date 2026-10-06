@@ -91,7 +91,7 @@ struct ConversationView: View {
             if id == "queued" { session.debugLoadQueuedMessages(); return }
             if id == "monitor" || id == "monitor-detail" {
                 session.debugLoadMonitor()
-                window.ui.runtimePanelVisible = true
+                window.ui.showSidePanel(.monitors)
                 if id == "monitor-detail" {
                     // Let the Runtime panel ingest the fixture entries before
                     // opening one; an early one is correctly dropped as
