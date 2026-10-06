@@ -9,35 +9,37 @@ struct GitPanel: View {
     @ObservedObject var ui: UIState
     @ObservedObject private var motion = MotionPreferences.shared
 
+    /// Whether the Git page is in front, which is when the model reads.
+    private var showing: Bool { ui.sidePanelVisible && ui.sidePanelTab == .git }
+
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Rectangle().fill(Theme.divider).frame(height: 1)
+        VStack(alignment: .leading, spacing: 18) {
+            heading
             if model.groups.isEmpty {
                 empty
             } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 18) {
-                        ForEach(model.groups) { group in
-                            CheckoutSection(model: model, group: group)
-                        }
-                        if model.worktrees.count > 1, let top = model.groups.first?.checkout.top {
-                            WorktreeMap(model: model, top: top, current: Set(model.groups.map(\.checkout.top)))
-                        }
-                    }
-                    .padding(12)
+                ForEach(model.groups) { group in
+                    CheckoutSection(model: model, group: group)
                 }
-                .scrollIndicators(.hidden)
+                if model.worktrees.count > 1, let top = model.groups.first?.checkout.top {
+                    WorktreeMap(model: model, top: top, current: Set(model.groups.map(\.checkout.top)))
+                }
             }
         }
-        .background(Theme.sidebar)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .animation(motion.animation(.sidebar, .smooth(duration: 0.2)), value: model.groups)
-        .onChange(of: ui.gitPanelVisible) { _, visible in if visible { model.refresh() } }
+        .onChange(of: showing, initial: true) { _, visible in if visible { model.refresh() } }
     }
 
-    private var header: some View {
-        HStack(spacing: 7) {
-            Text("Git").font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary)
+    private var heading: some View {
+        HStack(spacing: 8) {
+            Text("Files Changed").font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary)
+            Text("\(model.changedFiles)")
+                .font(Theme.captionFont.monospacedDigit())
+                .foregroundStyle(Theme.textTertiary)
+                .padding(.horizontal, 6)
+                .frame(minWidth: 20, minHeight: 18)
+                .background(Capsule().fill(Theme.card))
             if let branch = model.groups.first?.checkout.branch.name {
                 Text(branch)
                     .font(Theme.captionFont)
@@ -45,36 +47,21 @@ struct GitPanel: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
-            Spacer()
-            Button { ui.gitPanelVisible = false } label: {
-                OctetIcon("xmark", size: 13)
-                    .foregroundStyle(Theme.textSecondary)
-                    .frame(width: 24, height: 24)
-            }
-            .buttonStyle(.plain)
-            .help("Close the git panel")
+            Spacer(minLength: 0)
         }
-        .padding(.horizontal, 10)
-        .frame(height: Theme.tabBarHeight)
+        .id(SidePanelSection.files)
     }
 
     @ViewBuilder
     private var empty: some View {
-        VStack(spacing: 8) {
-            if model.loading {
-                ProgressView().controlSize(.small)
-            } else {
-                Text("Not in a repository")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(Theme.textPrimary)
-                Text("When the agent in this tab, or a subagent it started, works in a git repository, its changes, commits and worktrees show here.")
-                    .font(Theme.captionFont)
-                    .foregroundStyle(Theme.textTertiary)
-                    .multilineTextAlignment(.center)
-            }
+        if model.loading {
+            ProgressView().controlSize(.small)
+        } else {
+            Text("Not in a repository. When the agent in this tab, or a subagent it started, works in a git repository, its changes, commits and worktrees show here.")
+                .font(Theme.captionFont)
+                .foregroundStyle(Theme.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -736,31 +723,31 @@ private struct WorktreeRow: View {
 /// The tab bar's Git button, with how many files the agents have changed.
 struct GitPanelButton: View {
     @ObservedObject var model: GitPanelModel
-    @Binding var isShowing: Bool
+    @ObservedObject var ui: UIState
     @State private var hovered = false
 
     var body: some View {
-        if model.hasRepository || isShowing {
-            Button { isShowing.toggle() } label: {
+        if model.hasRepository {
+            Button { ui.showSidePanel(tab: .git) } label: {
                 HStack(spacing: 5) {
                     LanguageLogo(language: "git", size: 11)
                     Text("Git").font(Theme.uiFontMedium)
-                    if isShowing, model.changedFiles > 0 {
+                    if model.changedFiles > 0 {
                         Text("\(model.changedFiles)")
                             .font(Theme.captionFont.monospacedDigit())
                             .foregroundStyle(Theme.textTertiary)
                     }
                 }
-                .foregroundStyle(isShowing ? Theme.textPrimary : Theme.textSecondary)
+                .foregroundStyle(Theme.textSecondary)
                 .padding(.horizontal, 7)
                 .frame(height: 24)
-                .background(isShowing ? Theme.cardSelected : hovered ? Theme.hover : Color.clear)
+                .background(hovered ? Theme.hover : Color.clear)
                 .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
             }
             .buttonStyle(.plain)
             .onHover { hovered = $0 }
             .help("Show the agents' git: changes, commits, checkpoints and worktrees")
-            .accessibilityLabel(isShowing ? "Hide git panel" : "Show git panel")
+            .accessibilityLabel("Show git")
         }
     }
 }

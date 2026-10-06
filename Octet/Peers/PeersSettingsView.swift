@@ -43,9 +43,11 @@ struct PeersSettingsGroup: View {
                     Text(status).font(Theme.captionFont).foregroundStyle(Theme.textTertiary).padding(.horizontal, 14)
                 }
                 SettingsDivider()
-                SettingsRow(title: "Let agents use other Macs",
-                            detail: "Adds Octet's tools to Claude Code and Codex (list_agents, send_to_agent, read_agent, delegate_task, wait_for_task), so an agent can talk to agents on your paired Macs itself. Scripts can use octet-cli peer.") {
-                    OctetButton(title: "Add to Agents…", kind: .secondary, compact: true) { PeerActions.installTools() }
+                SettingsRow(title: "Tools in your agents",
+                            detail: "While this is on, Claude Code, Codex, Gemini, Qwen, OpenCode, Cursor and Copilot get list_agents, send_to_agent, read_agent, delegate_task and wait_for_task through the octet-peers MCP server, so an agent can talk to agents on your paired Macs itself. They're taken out when it's off. Scripts can use octet-cli peer.") {
+                    OctetButton(title: "Add Again", kind: .secondary, compact: true) {
+                        AgentMCPInstaller.shared.sync(server: PeerMCP.serverName, force: true)
+                    }
                 }
             }
         }
@@ -96,53 +98,6 @@ struct PeersSettingsGroup: View {
                 OctetButton(title: "Pair…", kind: .secondary, compact: true) { center.pair(with: found.endpoint, name: found.name) }
             }
             .padding(.horizontal, 14).padding(.vertical, 8)
-        }
-    }
-}
-
-/// Palette and Settings actions for other Macs.
-@MainActor
-enum PeerActions {
-    /// Registers the MCP tools with the installed agents, after asking.
-    static func installTools() {
-        guard let cli = Bundle.main.url(forAuxiliaryExecutable: "octet-cli")?.path else {
-            return ToastCenter.shared.fail(nil, "octet-cli is missing from the app bundle")
-        }
-        let installed = AgentDiscoveryStore.shared.agents.filter { $0.executablePath != nil }.map(\.id)
-        let commands = PeerMCP.installCommands(cliPath: cli, agents: installed)
-        guard !commands.isEmpty else {
-            return ToastCenter.shared.info("Neither Claude Code nor Codex is installed")
-        }
-        ConfirmCenter.shared.ask(title: "Add the other-Macs tools to your agents?",
-                                 message: "Runs these, which add an MCP server to each agent's own settings. Remove it with `claude mcp remove octet-peers` or `codex mcp remove octet-peers`.",
-                                 detail: commands.joined(separator: "\n"), confirmTitle: "Add") { _ in
-            let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-            let toast = ToastCenter.shared.progress("Adding the tools…")
-            DispatchQueue.global(qos: .userInitiated).async {
-                var failures: [String] = []
-                for command in commands {
-                    let process = Process()
-                    process.executableURL = URL(fileURLWithPath: shell)
-                    process.arguments = ["-lc", command]
-                    let output = Pipe()
-                    process.standardOutput = output
-                    process.standardError = output
-                    try? process.run()
-                    let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-                    process.waitUntilExit()
-                    // Already added counts as done.
-                    if process.terminationStatus != 0, !text.lowercased().contains("already") {
-                        failures.append(text.trimmingCharacters(in: .whitespacesAndNewlines))
-                    }
-                }
-                DispatchQueue.main.async {
-                    if failures.isEmpty {
-                        ToastCenter.shared.succeed(toast, "Agents can use your other Macs", detail: "New agent sessions pick up the tools.")
-                    } else {
-                        ToastCenter.shared.fail(toast, "Couldn't add the tools everywhere", detail: failures.joined(separator: "\n"))
-                    }
-                }
-            }
         }
     }
 }

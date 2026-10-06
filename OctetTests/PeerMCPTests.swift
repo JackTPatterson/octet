@@ -60,9 +60,6 @@ final class PeerMCPTests: XCTestCase {
         XCTAssertEqual(PeerControl.resolveSocket(explicit: nil, environment: ["OCTET_PEERS_SOCKET": "/s"]), "/s")
         XCTAssertEqual(PeerControl.session(ofServer: "/Users/me/.config/herdr/sessions/e2e-b/herdr.sock"), "e2e-b")
         XCTAssertNil(PeerControl.session(ofServer: "/Users/me/.config/herdr/herdr.sock"))
-        XCTAssertEqual(PeerMCP.installCommands(cliPath: "/A/octet-cli", agents: ["claude", "codex", "pi"]),
-                       ["claude mcp add --scope user octet-peers -- '/A/octet-cli' peer-mcp",
-                        "codex mcp add octet-peers -- '/A/octet-cli' peer-mcp"])
     }
 
     /// A claude started in another terminal still launches the server (it's

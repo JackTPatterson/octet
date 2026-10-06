@@ -84,6 +84,11 @@ struct OctetPluginManifest: Codable, Equatable {
         /// Buttons at the right of the tab bar, beside Todos and Git, each
         /// opening a panel of rows with actions.
         var panels: [PanelContribution] = []
+        /// Images that stand for a workspace's project in the sidebar.
+        var workspaceIcons: [WorkspaceIconContribution] = []
+        /// Picks the model and effort a conversation's next turn runs on,
+        /// from how much of the account's allowance is used.
+        var modelPolicies: [ModelPolicyContribution] = []
 
         init(completions: [CompletionContribution] = [], runtimes: [RuntimeContribution] = [],
              runtimeIgnore: [String] = [], statusItems: [StatusItemContribution] = [],
@@ -104,6 +109,55 @@ struct OctetPluginManifest: Codable, Equatable {
             statusItems = try container.decodeIfPresent([StatusItemContribution].self, forKey: .statusItems) ?? []
             menuItems = try container.decodeIfPresent([MenuItemContribution].self, forKey: .menuItems) ?? []
             panels = try container.decodeIfPresent([PanelContribution].self, forKey: .panels) ?? []
+            workspaceIcons = try container.decodeIfPresent([WorkspaceIconContribution].self, forKey: .workspaceIcons) ?? []
+            modelPolicies = try container.decodeIfPresent([ModelPolicyContribution].self, forKey: .modelPolicies) ?? []
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case completions, runtimes, runtimeIgnore, statusItems, menuItems, panels, workspaceIcons, modelPolicies
+        }
+    }
+
+    /// The picture for a workspace's project: `run` is run in the
+    /// workspace's folder and prints the path of an image in it (PNG, JPEG,
+    /// ICO, ICNS, SVG or WebP), like a web app's favicon or a mobile app's
+    /// icon, which the sidebar shows as the workspace's icon. Printing
+    /// nothing leaves the workspace as it was.
+    struct WorkspaceIconContribution: Codable, Equatable {
+        let id: String
+        /// Per platform; see `PluginCommand`.
+        let runs: PluginCommand
+        var refreshSeconds: Double?
+        var timeoutSeconds: Double?
+
+        var run: String { runs.command() ?? "" }
+
+        enum CodingKeys: String, CodingKey {
+            case id, runs = "run", refreshSeconds, timeoutSeconds
+        }
+    }
+
+    /// Chooses the model and effort for a Claude or Codex conversation in
+    /// Octet, between turns, from the account's usage. `run` is run in the
+    /// conversation's folder with the person's pick and the usage in its
+    /// environment (`ModelPolicy.environment`) and prints `model: <id>`,
+    /// `effort: <level>` and `message: <why>` lines; printing nothing keeps
+    /// the person's pick, and brings it back once a switch is no longer
+    /// called for.
+    struct ModelPolicyContribution: Codable, Equatable {
+        let id: String
+        /// `claude`, `codex`; unset means both.
+        var agents: [String]?
+        /// Per platform; see `PluginCommand`.
+        let runs: PluginCommand
+        var timeoutSeconds: Double?
+
+        var run: String { runs.command() ?? "" }
+
+        func applies(to agent: String) -> Bool { agents?.contains(agent) ?? true }
+
+        enum CodingKeys: String, CodingKey {
+            case id, agents, runs = "run", timeoutSeconds
         }
     }
 
@@ -462,6 +516,25 @@ enum OctetPlugins {
             }
             if !settingIds.insert(setting.id).inserted { return "setting \(setting.id) appears twice" }
             if setting.title.trimmingCharacters(in: .whitespaces).isEmpty { return "setting \(setting.id) has no title" }
+        }
+        var iconIds: Set<String> = []
+        for icon in manifest.contributes.workspaceIcons {
+            if icon.id.range(of: "^[a-z0-9][a-z0-9._-]*$", options: .regularExpression) == nil {
+                return "workspace icon ids must be lowercase letters, digits, dots, dashes or underscores"
+            }
+            if !iconIds.insert(icon.id).inserted { return "workspace icon \(icon.id) appears twice" }
+            if let problem = problem(icon.runs) { return "workspace icon \(icon.id) \(problem)" }
+        }
+        var policyIds: Set<String> = []
+        for policy in manifest.contributes.modelPolicies {
+            if policy.id.range(of: "^[a-z0-9][a-z0-9._-]*$", options: .regularExpression) == nil {
+                return "model policy ids must be lowercase letters, digits, dots, dashes or underscores"
+            }
+            if !policyIds.insert(policy.id).inserted { return "model policy \(policy.id) appears twice" }
+            if let agents = policy.agents, agents.isEmpty || agents.contains(where: { !ModelPolicy.agents.contains($0) }) {
+                return "model policy \(policy.id) names an agent other than claude or codex"
+            }
+            if let problem = problem(policy.runs) { return "model policy \(policy.id) \(problem)" }
         }
         var panelIds: Set<String> = []
         for panel in manifest.contributes.panels {

@@ -81,11 +81,12 @@ struct TabBarView: View {
             // or while its panel is open so it can still be closed.
             HStack(spacing: 2) {
                 PluginPanelButtons(model: window.pluginPanels)
-                TodoPanelButton(model: window.todos, isShowing: $ui.todoPanelVisible)
-                GitPanelButton(model: window.git, isShowing: $ui.gitPanelVisible)
-                if ui.runtimeHasEntries || ui.runtimePanelVisible {
-                    RuntimePanelButton(isShowing: $ui.runtimePanelVisible)
+                TodoPanelButton(model: window.todos, ui: ui)
+                GitPanelButton(model: window.git, ui: ui)
+                if ui.runtimeHasEntries {
+                    RuntimePanelButton(ui: ui)
                 }
+                SidePanelButton(ui: ui)
             }
             .padding(.trailing, 8)
         }
@@ -111,22 +112,22 @@ struct TabBarView: View {
 }
 
 private struct RuntimePanelButton: View {
-    @Binding var isShowing: Bool
+    @ObservedObject var ui: UIState
     @State private var hovered = false
 
     var body: some View {
-        Button { isShowing.toggle() } label: {
+        Button { ui.showSidePanel(.agents) } label: {
             Text("Runtime").font(Theme.uiFontMedium)
-            .foregroundStyle(isShowing ? Theme.textPrimary : Theme.textSecondary)
+            .foregroundStyle(Theme.textSecondary)
             .padding(.horizontal, 7)
             .frame(height: 24)
-            .background(isShowing ? Theme.cardSelected : hovered ? Theme.hover : Color.clear)
+            .background(hovered ? Theme.hover : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
         }
         .buttonStyle(.plain)
         .onHover { hovered = $0 }
         .help("Show runtimes created by this tab's agent")
-        .accessibilityLabel(isShowing ? "Hide runtime panel" : "Show runtime panel")
+        .accessibilityLabel("Show runtimes")
     }
 }
 

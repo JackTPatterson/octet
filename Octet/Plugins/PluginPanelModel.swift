@@ -100,9 +100,17 @@ final class PluginPanelModel: ObservableObject {
         guard let window, let directory else { return }
         busy.insert(entry.id)
         OctetPluginHost.shared.act(action, item: item, entry: entry.panel, directory: directory,
-                                   workspaceId: window.focusedWorkspace?.workspaceId, in: window) { [weak self] in
-            self?.busy.remove(entry.id)
-            self?.refresh(force: true)
+                                   workspaceId: window.focusedWorkspace?.workspaceId, in: window) { [weak self] openedTab in
+            guard let self else { return }
+            self.busy.remove(entry.id)
+            if openedTab {
+                // The new tab is where to look: close the panel, which held
+                // focus and kept the terminal drawing the tab before it.
+                self.shown = nil
+                // Once the popover has gone, so the terminal's window is key.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { OctetTerminalRuntime.focusTerminal() }
+            }
+            self.refresh(force: true)
         }
     }
 

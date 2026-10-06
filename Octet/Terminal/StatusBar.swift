@@ -15,6 +15,8 @@ struct StatusBar: View {
     @ObservedObject private var settings = SettingsStore.shared
     @Environment(\.openURL) private var openURL
     @State private var ciShown = false
+    /// The plugin chip whose setup popover is open, by descriptor id.
+    @State private var setupShown: String?
 
     static let height: CGFloat = 32
 
@@ -306,9 +308,19 @@ struct StatusBar: View {
             StatusItemIcon(descriptor: descriptor)
             Text(output.text).lineLimit(1)
         }
-        if let url = output.url {
+        if let url = output.url, case .pluginSettings(let id)? = OctetURL(url),
+           let plugin = plugins.plugins.first(where: { $0.id == id }) {
+            // What the plugin needs, asked right here on the chip.
+            Button { setupShown = setupShown == descriptor.id ? nil : descriptor.id } label: { content }
+                .buttonStyle(.plain)
+                .modifier(LinkHover())
+                .popover(isPresented: Binding(get: { setupShown == descriptor.id },
+                                              set: { if !$0, setupShown == descriptor.id { setupShown = nil } }),
+                         arrowEdge: .top) {
+                    PluginSetupPopover(plugin: plugin) { setupShown = nil }
+                }
+        } else if let url = output.url {
             Button {
-                // Octet's own links (a plugin's settings) open here.
                 if let link = OctetURL(url) { OctetURLHandler.handle(link) } else { openURL(url) }
             } label: { content }
                 .buttonStyle(.plain)
@@ -323,7 +335,7 @@ struct StatusBar: View {
         if let main = GitBranch.mainCheckout(ofWorktreeGitDir: repo.gitDir) {
             Button("Open Main Checkout") { WindowRegistry.shared.key?.openProject(path: main) }
         }
-        Button("Show Worktrees") { WindowRegistry.shared.key?.ui.gitPanelVisible = true }
+        Button("Show Worktrees") { WindowRegistry.shared.key?.ui.showSidePanel(tab: .git) }
         Divider()
         Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: repo.root)]) }
         Button("Copy Path") { copy(repo.root) }
