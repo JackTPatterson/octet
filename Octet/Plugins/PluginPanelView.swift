@@ -13,19 +13,35 @@ struct PluginPanelButtons: View {
     }
 }
 
+/// Each plugin's panel as a section of the right panel's Overview.
+struct PluginPanelSections: View {
+    @ObservedObject var model: PluginPanelModel
+
+    var body: some View {
+        ForEach(model.entries) { entry in
+            let panel = entry.panel.panel
+            SidePanelSectionView(.plugin(entry.id), title: panel.title,
+                                 count: entry.content.badge == nil ? entry.content.rows.count : nil,
+                                 label: entry.content.badge,
+                                 labelColor: PluginPanelTone.color(entry.content.tone)) {
+                PluginPanelBody(model: model, id: entry.id)
+            }
+        }
+    }
+}
+
 private struct PluginPanelButton: View {
     @ObservedObject var model: PluginPanelModel
     let entry: PluginPanelModel.Entry
+    @EnvironmentObject private var window: WindowContext
     @State private var hovered = false
-
-    private var isShowing: Binding<Bool> {
-        Binding(get: { model.shown == entry.id },
-                set: { shown in model.shown = shown ? entry.id : (model.shown == entry.id ? nil : model.shown) })
-    }
 
     var body: some View {
         let panel = entry.panel.panel
-        Button { isShowing.wrappedValue.toggle() } label: {
+        Button {
+            model.shown = entry.id
+            window.ui.showSidePanel(.plugin(entry.id))
+        } label: {
             HStack(spacing: 5) {
                 PluginPanelIcon(entry: entry, size: 11)
                 Text(panel.title).font(Theme.uiFontMedium)
@@ -35,19 +51,16 @@ private struct PluginPanelButton: View {
                         .foregroundStyle(PluginPanelTone.color(entry.content.tone) ?? Theme.textTertiary)
                 }
             }
-            .foregroundStyle(isShowing.wrappedValue ? Theme.textPrimary : Theme.textSecondary)
+            .foregroundStyle(Theme.textSecondary)
             .padding(.horizontal, 7)
             .frame(height: 24)
-            .background(isShowing.wrappedValue ? Theme.cardSelected : hovered ? Theme.hover : Color.clear)
+            .background(hovered ? Theme.hover : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
         }
         .buttonStyle(.plain)
         .onHover { hovered = $0 }
         .help("Show \(panel.title)")
-        .accessibilityLabel(isShowing.wrappedValue ? "Hide \(panel.title)" : "Show \(panel.title)")
-        .popover(isPresented: isShowing, arrowEdge: .bottom) {
-            PluginPanelContent(model: model, id: entry.id)
-        }
+        .accessibilityLabel("Show \(panel.title)")
     }
 }
 
@@ -79,9 +92,9 @@ private struct PluginPanelIcon: View {
     }
 }
 
-/// The open panel: its rows, each with its state and actions, and the
-/// panel's own actions underneath. Read from the model, so it stays live.
-private struct PluginPanelContent: View {
+/// A panel's rows, each with its state and actions, and the panel's own
+/// actions underneath. Read from the model, so it stays live.
+private struct PluginPanelBody: View {
     @ObservedObject var model: PluginPanelModel
     let id: String
 
@@ -91,39 +104,25 @@ private struct PluginPanelContent: View {
         } else {
             Text("Nothing to show here now")
                 .font(Theme.uiFont).foregroundStyle(Theme.textTertiary)
-                .padding(12).frame(width: 320).background(Theme.chrome)
         }
     }
 
     private func content(_ entry: PluginPanelModel.Entry) -> some View {
         let busy = model.busy.contains(entry.id)
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                PluginPanelIcon(entry: entry, size: 13)
-                Text(entry.panel.panel.title).font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary)
-                Spacer(minLength: 8)
-                if busy { ProgressView().controlSize(.small) }
-                if let badge = entry.content.badge, !badge.isEmpty {
-                    Text(badge)
-                        .font(Theme.captionFont.monospacedDigit())
-                        .foregroundStyle(PluginPanelTone.color(entry.content.tone) ?? Theme.textSecondary)
-                }
-            }
+        return VStack(alignment: .leading, spacing: 8) {
+            if busy { ProgressView().controlSize(.small) }
             if entry.content.rows.isEmpty {
                 Text(entry.content.message ?? "Nothing to show here now")
-                    .font(Theme.uiFont).foregroundStyle(Theme.textTertiary)
+                    .font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 2) {
-                        ForEach(entry.content.rows) { row in
-                            PluginPanelRow(row: row, disabled: busy) { action in
-                                model.perform(action, item: row.id, in: entry)
-                            }
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(entry.content.rows) { row in
+                        PluginPanelRow(row: row, disabled: busy) { action in
+                            model.perform(action, item: row.id, in: entry)
                         }
                     }
                 }
-                .frame(maxHeight: 360)
             }
             if !entry.content.actions.isEmpty {
                 HStack(spacing: 6) {
@@ -136,9 +135,7 @@ private struct PluginPanelContent: View {
                 .disabled(busy)
             }
         }
-        .padding(12)
-        .frame(width: 360, alignment: .leading)
-        .background(Theme.chrome)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

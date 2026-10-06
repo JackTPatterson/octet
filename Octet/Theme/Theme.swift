@@ -41,10 +41,19 @@ enum Theme {
     static let tabColorOpacity = 0.15
     static let tabColorHoverOpacity = 0.25
 
-    static let uiFont = Font.system(size: 12)
-    static let uiFontMedium = Font.system(size: 12, weight: .medium)
-    static let headerFont = Font.system(size: 10.5, weight: .semibold)
-    static let captionFont = Font.system(size: 10.5)
+    /// The interface font's family, from Settings › Text; empty is the
+    /// system font. The terminal has its own.
+    nonisolated(unsafe) static var interfaceFamily = ""
+
+    static var uiFont: Font { interfaceFont(12) }
+    static var uiFontMedium: Font { interfaceFont(12, weight: .medium) }
+    static var headerFont: Font { interfaceFont(10.5, weight: .semibold) }
+    static var captionFont: Font { interfaceFont(10.5) }
+
+    /// Octet's own text at `size`, in the interface font.
+    static func interfaceFont(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        interfaceFamily.isEmpty ? .system(size: size, weight: weight) : .custom(interfaceFamily, size: size).weight(weight)
+    }
     static let monoFont = Font.system(size: 11.5, design: .monospaced)
 
     /// Shortcuts Octet's menus own; unbound in the renderer so the surface lets them through.

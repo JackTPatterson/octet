@@ -310,6 +310,10 @@ private struct GeneralSettings: View {
 
 private struct AppearanceSettings: View {
     @ObservedObject var settings: SettingsStore
+    /// Fonts added this time Settings was open, and a count that makes the
+    /// pickers read the installed fonts again.
+    @State private var addedFamilies: [String] = []
+    @State private var fontsRevision = 0
 
     /// With Match system on, a swatch fills the light or dark slot it fits.
     /// What Octet found to follow, or how to point it at a file.
@@ -363,10 +367,28 @@ private struct AppearanceSettings: View {
         if theme.isLight { settings.values.lightThemeName = theme.name } else { settings.values.darkThemeName = theme.name }
     }
 
-    private var monospacedFamilies: [String] {
-        let names = NSFontManager.shared.availableFontNames(with: .fixedPitchFontMask) ?? []
-        let families = Set(names.compactMap { NSFont(name: $0, size: 12)?.familyName })
-        return families.filter { !$0.hasPrefix(".") }.sorted()
+    /// Fixed-width fonts, plus any added here and the one chosen, so a font
+    /// macOS doesn't mark fixed-width can still be used.
+    private var terminalFamilies: [String] {
+        _ = fontsRevision
+        let extra = addedFamilies + [settings.values.fontFamily].filter { !$0.isEmpty }
+        return Array(Set(CustomFonts.monospacedFamilies + extra)).sorted()
+    }
+
+    private var interfaceFamilies: [String] {
+        _ = fontsRevision
+        let extra = [settings.values.interfaceFontFamily].filter { !$0.isEmpty }
+        return Array(Set(CustomFonts.allFamilies + extra)).sorted()
+    }
+
+    private func addFonts() {
+        CustomFonts.add { families in
+            guard !families.isEmpty else { return }
+            addedFamilies = Array(Set(addedFamilies + families)).sorted()
+            fontsRevision += 1
+            ToastCenter.shared.info("Added \(ListFormatter.localizedString(byJoining: families))",
+                                    detail: "Pick it for the terminal or the interface below.")
+        }
     }
 
     var body: some View {
@@ -405,12 +427,24 @@ private struct AppearanceSettings: View {
             .padding(14)
         }
         SettingsGroup(title: "Text") {
-            SettingsRow(title: "Font") {
-                Picker("Font", selection: $settings.values.fontFamily) {
+            SettingsRow(title: "Terminal font", detail: "Panes, the prompt editor and code.") {
+                Picker("Terminal font", selection: $settings.values.fontFamily) {
                     Text("Default (JetBrains Mono)").tag("")
-                    ForEach(monospacedFamilies, id: \.self) { Text($0).tag($0) }
+                    ForEach(terminalFamilies, id: \.self) { Text($0).tag($0) }
                 }
                 .labelsHidden().frame(width: 220)
+            }
+            SettingsDivider()
+            SettingsRow(title: "Interface font", detail: "The sidebar, tabs, panels and Settings.") {
+                Picker("Interface font", selection: $settings.values.interfaceFontFamily) {
+                    Text("System (SF Pro)").tag("")
+                    ForEach(interfaceFamilies, id: \.self) { Text($0).tag($0) }
+                }
+                .labelsHidden().frame(width: 220)
+            }
+            SettingsDivider()
+            SettingsRow(title: "Add a font", detail: "A .ttf, .otf or .ttc file. It's installed for you, as Font Book does, and works in every app.") {
+                Button("Add Font…", action: addFonts)
             }
             SettingsDivider()
             SettingsRow(title: "Font size") {

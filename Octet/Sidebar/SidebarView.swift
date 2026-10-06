@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 /// Vertical tabs: project groups with uppercase headers and
@@ -8,14 +9,22 @@ struct SidebarView: View {
     var width: CGFloat = Theme.sidebarWidth
     @ObservedObject private var motion = MotionPreferences.shared
     @State private var collapsedGroups: Set<String> = []
+    @State private var query = ""
+    @FocusState private var searchFocused: Bool
+
+    private var searching: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty }
 
     var body: some View {
         VStack(spacing: 0) {
             controlBar
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 8) {
-                    ForEach(store.activeGroups) { group in
-                        groupSection(group)
+                    if searching {
+                        searchResults
+                    } else {
+                        ForEach(store.activeGroups) { group in
+                            groupSection(group)
+                        }
                     }
                     if store.snapshot.workspaces.isEmpty {
                         VStack(alignment: .leading, spacing: 4) {
@@ -42,8 +51,11 @@ struct SidebarView: View {
                     .contentShape(Rectangle())
                     .onTapGesture(count: 2) { window.newWorkspace() }
             }
-            TipCard(store: store)
-            if !store.idleWorkspaces.isEmpty {
+            // While searching, idle workspaces are among the results.
+            if !searching {
+                TipCard(store: store)
+            }
+            if !searching, !store.idleWorkspaces.isEmpty {
                 IdleDock(store: store)
                     .transition(motion.animates(.sidebar) ? .move(edge: .bottom).combined(with: .opacity) : .identity)
             }
@@ -53,16 +65,118 @@ struct SidebarView: View {
         .background(Theme.sidebar)
         // Peeks come back once the pointer has left the sidebar.
         .onHover { if !$0 { HoverIntent.navigating = false } }
+        .onReceive(window.ui.$sidebarSearchRequest.dropFirst()) { _ in searchFocused = true }
     }
 
     private var controlBar: some View {
-        HStack(spacing: 6) {
+        VStack(spacing: 6) {
+            searchField
             ControlButton(title: "New workspace", icon: "plus", shortcut: "⌘N") {
                 window.newWorkspace()
             }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 6) {
+            OctetIcon("magnifyingglass", size: 13)
+                .foregroundStyle(Theme.textTertiary)
+            TextField("Search workspaces", text: $query)
+                .textFieldStyle(.plain)
+                .font(Theme.uiFont)
+                .focused($searchFocused)
+                .onSubmit(openFirstResult)
+                .onExitCommand(perform: clearSearch)
+            if !query.isEmpty {
+                Button(action: clearSearch) {
+                    OctetIcon("xmark.circle.fill", size: 12)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Theme.textTertiary)
+                .help("Clear the search")
+            } else if !searchFocused {
+                Text(OctetShortcut.searchWorkspaces.display)
+                    .font(Theme.captionFont)
+                    .foregroundStyle(Theme.textTertiary)
+            }
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 24)
+        .background(RoundedRectangle(cornerRadius: Theme.rowRadius).fill(searchFocused ? Theme.hover : Color.clear))
+        .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius)
+            .strokeBorder(searchFocused ? Theme.accent.opacity(0.6) : Theme.border, lineWidth: 1))
+    }
+
+    /// The workspaces the query finds, under their groups' names, then the
+    /// idle ones it finds; groups aren't collapsed while searching.
+    private var matches: (groups: [ProjectGroup], idle: [EngineWorkspace]) {
+        let groups = store.activeGroups.compactMap { group -> ProjectGroup? in
+            let hits = group.workspaces.filter { found($0, group: group.name) }
+            return hits.isEmpty ? nil : ProjectGroup(id: group.id, name: group.name, workspaces: hits)
+        }
+        return (groups, store.idleWorkspaces.filter { found($0, group: nil) })
+    }
+
+    private func found(_ workspace: EngineWorkspace, group: String?) -> Bool {
+        let titles = AgentCenter.shared.sessions(in: workspace.workspaceId).map(\.title)
+        let fields = SidebarSearch.fields(of: workspace, in: store.snapshot, group: group,
+                                          branch: store.branches[workspace.workspaceId], extra: titles)
+        return SidebarSearch.matches(query, fields: fields)
+    }
+
+    @ViewBuilder
+    private var searchResults: some View {
+        let matches = matches
+        ForEach(matches.groups) { group in
+            VStack(alignment: .leading, spacing: 4) {
+                resultsHeader(group.name)
+                ForEach(group.workspaces) { workspace in
+                    WorkspaceCard(store: store, workspace: workspace).padding(.horizontal, 8)
+                }
+            }
+        }
+        if !matches.idle.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                resultsHeader("Idle")
+                ForEach(matches.idle) { workspace in
+                    WorkspaceCard(store: store, workspace: workspace).padding(.horizontal, 8)
+                }
+            }
+        }
+        if matches.groups.isEmpty, matches.idle.isEmpty, !store.snapshot.workspaces.isEmpty {
+            Text("No workspace matches “\(query.trimmingCharacters(in: .whitespaces))”")
+                .font(Theme.captionFont)
+                .foregroundStyle(Theme.textTertiary)
+                .padding(.horizontal, 12)
+                .padding(.top, 4)
+        }
+    }
+
+    private func resultsHeader(_ name: String) -> some View {
+        Text(name.uppercased())
+            .font(Theme.headerFont)
+            .kerning(0.4)
+            .foregroundStyle(Theme.textSecondary)
+            .lineLimit(1)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 4)
+    }
+
+    /// Return opens the first workspace found and gives the terminal back
+    /// the keyboard.
+    private func openFirstResult() {
+        guard searching else { return }
+        let matches = matches
+        guard let first = matches.groups.first?.workspaces.first ?? matches.idle.first else { return }
+        clearSearch()
+        window.focusWorkspace(first.workspaceId)
+    }
+
+    private func clearSearch() {
+        query = ""
+        searchFocused = false
     }
 
     @ViewBuilder
@@ -245,7 +359,7 @@ private struct WorkspaceCard: View {
         VStack(spacing: 4) {
             card
             if !ports.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
+                ScrollView(.horizontal) {
                     HStack(spacing: 4) {
                         ForEach(ports, id: \.self) { port in
                             PortButton(port: port, service: portsWatcher.services[port],
@@ -255,6 +369,9 @@ private struct WorkspaceCard: View {
                         }
                     }
                 }
+                // Hidden even with "Show scroll bars: Always" or a mouse
+                // attached, which showsIndicators: false doesn't cover.
+                .scrollIndicators(.never)
                 .transition(motion.animates(.sidebar) ? .opacity : .identity)
             }
         }

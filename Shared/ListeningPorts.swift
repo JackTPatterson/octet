@@ -31,6 +31,33 @@ enum ListeningPorts {
         return result
     }
 
+    /// macOS hands out ports in this range to whatever asks for any free
+    /// one: debuggers, language servers, editor and agent bridges. Dev
+    /// servers pick fixed ports below it, so these are never shown.
+    static let ephemeral = 49152...65535
+
+    /// What a listener said to `GET /`: a page a browser can show, an
+    /// answer that isn't one (a WebSocket or API endpoint, a debugger, a
+    /// language server, anything not speaking HTTP), or nothing yet, as a
+    /// dev server still compiling its first page.
+    enum Probe: Equatable { case page, notPage, noAnswer }
+
+    /// The status of an HTTP response's first line, `HTTP/1.1 200 OK`; nil
+    /// when it isn't HTTP.
+    static func httpStatus(_ response: String) -> Int? {
+        let firstLine = response.prefix(64).split(whereSeparator: \.isNewline).first ?? ""
+        let fields = firstLine.split(separator: " ", maxSplits: 2)
+        guard fields.count >= 2, fields[0].hasPrefix("HTTP/"), let status = Int(fields[1]) else { return nil }
+        return status
+    }
+
+    /// Whether a response is something worth opening: a page, a redirect to
+    /// one, or a sign-in in front of one.
+    static func probe(response: String) -> Probe {
+        guard let status = httpStatus(response) else { return .notPage }
+        return (200..<400).contains(status) || status == 401 || status == 403 ? .page : .notPage
+    }
+
     /// `ps -axo pid=,ppid=` output as child → parent.
     static func parseParents(_ text: String) -> [Int: Int] {
         var parents: [Int: Int] = [:]

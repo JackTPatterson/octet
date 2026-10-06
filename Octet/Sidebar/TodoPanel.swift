@@ -226,65 +226,34 @@ struct TodoPanel: View {
     @ObservedObject private var motion = MotionPreferences.shared
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Rectangle().fill(Theme.divider).frame(height: 1)
+        let todos = model.todos
+        let projectOpen = model.project?.open.count ?? 0
+        SidePanelSectionView(.todos,
+                             count: todos.isEmpty ? projectOpen : nil,
+                             label: todos.isEmpty ? nil : "\(todos.completedCount)/\(todos.count)",
+                             labelColor: !todos.isEmpty && todos.completedCount == todos.count ? Color(hex: AgentStateColor.done) : nil) {
             if model.sections.isEmpty && model.projectRoot == nil {
                 empty
             } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        ForEach(model.sections) { section in
-                            TodoSectionView(section: section, showsTitle: model.sections.count > 1)
-                        }
-                        if let root = model.projectRoot {
-                            if !model.sections.isEmpty { Rectangle().fill(Theme.divider).frame(height: 1) }
-                            ProjectTodoSection(model: model, root: root)
-                        }
+                VStack(alignment: .leading, spacing: 16) {
+                    ForEach(model.sections) { section in
+                        TodoSectionView(section: section, showsTitle: model.sections.count > 1)
                     }
-                    .padding(12)
+                    if let root = model.projectRoot {
+                        if !model.sections.isEmpty { Rectangle().fill(Theme.divider).frame(height: 1) }
+                        ProjectTodoSection(model: model, root: root)
+                    }
                 }
-                .scrollIndicators(.hidden)
             }
         }
-        .background(Theme.sidebar)
         .animation(motion.animation(.sidebar, .smooth(duration: 0.2)), value: model.sections)
     }
 
-    private var header: some View {
-        let todos = model.todos
-        return HStack(spacing: 7) {
-            Text("Todos").font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary)
-            if !todos.isEmpty {
-                Text("\(todos.completedCount)/\(todos.count)")
-                    .font(Theme.captionFont.monospacedDigit())
-                    .foregroundStyle(Theme.textTertiary)
-            }
-            Spacer()
-            Button { ui.todoPanelVisible = false } label: {
-                OctetIcon("xmark", size: 13)
-                    .foregroundStyle(Theme.textSecondary)
-                    .frame(width: 24, height: 24)
-            }
-            .buttonStyle(.plain)
-            .help("Close the todo panel")
-        }
-        .padding(.horizontal, 10)
-        .frame(height: Theme.tabBarHeight)
-    }
-
     private var empty: some View {
-        VStack(spacing: 8) {
-            Text("No todos yet")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(Theme.textPrimary)
-            Text("When the agent in this tab plans its work (Claude Code's tasks, Codex's plan, OpenCode's todos), the steps and where it's got to show here, along with the project's TODO.md.")
-                .font(Theme.captionFont)
-                .foregroundStyle(Theme.textTertiary)
-                .multilineTextAlignment(.center)
-        }
-        .padding(24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        Text("No todos yet. When the agent in this tab plans its work, the steps and where it's got to show here, with the project's TODO.md.")
+            .font(Theme.captionFont)
+            .foregroundStyle(Theme.textTertiary)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }
 
@@ -536,19 +505,19 @@ private struct TodoRow: View {
 /// The tab bar's Todos button, with how far along the plan is.
 struct TodoPanelButton: View {
     @ObservedObject var model: TodoModel
-    @Binding var isShowing: Bool
+    @ObservedObject var ui: UIState
     @State private var hovered = false
 
     var body: some View {
         let todos = model.todos
         let projectOpen = model.project?.open.count ?? 0
-        if !todos.isEmpty || projectOpen > 0 || isShowing {
+        if !todos.isEmpty || projectOpen > 0 {
             button(todos, projectOpen: projectOpen)
         }
     }
 
     private func button(_ todos: [AgentTodo], projectOpen: Int) -> some View {
-        Button { isShowing.toggle() } label: {
+        Button { ui.showSidePanel(.todos) } label: {
             HStack(spacing: 5) {
                 Text("Todos").font(Theme.uiFontMedium)
                 if !todos.isEmpty {
@@ -562,16 +531,16 @@ struct TodoPanelButton: View {
                         .foregroundStyle(Theme.textTertiary)
                 }
             }
-            .foregroundStyle(isShowing ? Theme.textPrimary : Theme.textSecondary)
+            .foregroundStyle(Theme.textSecondary)
             .padding(.horizontal, 7)
             .frame(height: 24)
-            .background(isShowing ? Theme.cardSelected : hovered ? Theme.hover : Color.clear)
+            .background(hovered ? Theme.hover : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
         }
         .buttonStyle(.plain)
         .onHover { hovered = $0 }
         .help(todos.current.map { "Now: \($0.shownText)" }
               ?? (projectOpen > 0 ? "\(projectOpen) open in the project's TODO.md" : "Show todos"))
-        .accessibilityLabel(isShowing ? "Hide todo panel" : "Show todo panel")
+        .accessibilityLabel("Show todos")
     }
 }

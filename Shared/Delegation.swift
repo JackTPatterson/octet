@@ -273,26 +273,4 @@ enum DelegationMCP {
         }
         return lines.joined(separator: "\n")
     }
-
-    /// The commands that add, and remove, this server in each agent's MCP config.
-    static func installCommands(cliPath: String, agents: [String]) -> [String] {
-        let cli = DelegationPlan.quote(cliPath)
-        return agents.compactMap { agent in
-            switch agent {
-            case "claude": "claude mcp add --scope user \(serverName) -- \(cli) delegate-mcp"
-            case "codex": "codex mcp add \(serverName) -- \(cli) delegate-mcp"
-            default: nil
-            }
-        }
-    }
-
-    static func removeCommands(agents: [String]) -> [String] {
-        agents.compactMap { agent in
-            switch agent {
-            case "claude": "claude mcp remove --scope user \(serverName)"
-            case "codex": "codex mcp remove \(serverName)"
-            default: nil
-            }
-        }
-    }
 }

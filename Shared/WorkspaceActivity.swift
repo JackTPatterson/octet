@@ -104,6 +104,19 @@ struct WorkspaceActivity: Equatable {
 
     func lastActive(_ workspaceId: String) -> Date? { stamps[workspaceId] }
 
+    /// Where to go when the workspace on screen closes: the next active one
+    /// in the sidebar, else the one before it, skipping those another window
+    /// shows. Nil when it isn't the one on screen, or nothing active is
+    /// left. Left to itself the session server picks, and an idle workspace
+    /// it brings forward counts as used and leaves Idle.
+    static func successor(closing id: String, showing: String?, active: [String], shownElsewhere: Set<String>) -> String? {
+        guard id == showing else { return nil }
+        let candidates = active.filter { $0 != id && !shownElsewhere.contains($0) }
+        guard let index = active.firstIndex(of: id) else { return candidates.first }
+        return active[(index + 1)...].first(where: candidates.contains)
+            ?? active[..<index].last(where: candidates.contains)
+    }
+
     /// Backdates a workspace so it reads as idle until it is used again.
     mutating func markIdle(_ workspaceId: String) {
         stamps[workspaceId] = .distantPast
