@@ -18,6 +18,11 @@ struct ConversationActionsMenu: View {
         .help("Everything changed in the folder since this conversation's first message")
         Button("Fork Conversation") { session.fork() }
             .disabled(!session.canFork)
+        Button("Move To…") { moveToFolder() }
+            .disabled(!session.canMove)
+            .help(session.engine == .claude
+                  ? "Carry on with this conversation in another folder; Claude Code resumes it there"
+                  : "Only Claude Code conversations can move: \(session.engine.displayName) ties a thread to its folder")
         if session.engine == .pi {
             Button("Session Tree…") {
                 session.piSessionTree { lines in
@@ -58,6 +63,32 @@ struct ConversationActionsMenu: View {
     private var markdown: String {
         ConversationExport.markdown(title: session.title, agent: session.engine.displayName,
                                     cwd: session.cwd, items: session.conversation.items)
+    }
+
+    /// Picks the folder, moves the conversation there, and shows it in the
+    /// workspace for that folder when one is open.
+    private func moveToFolder() {
+        let panel = NSOpenPanel()
+        panel.title = "Move the Conversation"
+        panel.message = "Choose the folder to carry on in. Claude Code resumes the conversation there."
+        panel.prompt = "Move"
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = URL(fileURLWithPath: session.cwd)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let folder = url.standardizedFileURL.path
+        let snapshot = window.store.snapshot
+        let workspace = snapshot.workspaces.first { snapshot.directory(ofWorkspace: $0.workspaceId) == folder }
+        switch session.move(to: folder, workspaceId: workspace?.workspaceId) {
+        case .success(let moved):
+            if let workspace, workspace.workspaceId != session.workspaceId { window.focusWorkspace(workspace.workspaceId) }
+            ToastCenter.shared.info("Moved to \(abbreviateHome(folder))",
+                                    detail: "\(moved.title) carries on there; its transcript was copied into that folder's project.")
+        case .failure(let error):
+            ToastCenter.shared.fail(nil, "Couldn't move the conversation", detail: error.localizedDescription)
+        }
     }
 
     private func copy(_ text: String) {
