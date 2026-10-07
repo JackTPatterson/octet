@@ -133,7 +133,7 @@ final class TerminalAccessTests: XCTestCase {
 
     func testAnUnfitCommandIsNeverSent() throws {
         var called = false
-        for command in ["", "   ", "ls\nrm -rf x", "ls\r", "echo \u{1B}[2J", "echo a\u{202E}b"] {
+        for command in ["", "   ", "ls\nrm -rf x", "ls\r\nrm x", "echo \u{1B}[2J", "echo a\u{202E}b"] {
             let reply = try result(TerminalMCP.respond(
                 to: rpc("tools/call", params: ["name": "suggest_sidebar_command", "arguments": ["command": command]]), origin: inPane,
                 call: { _, _ in called = true; return [:] }))
