@@ -64,12 +64,14 @@ next release should build.
 | Review (4) | Diff review with comments, session changes, checkpoints, rewind | Nothing says where to look first, or whether the last edit was ever tested |
 | Done but not (5) | Recap shows files, commands and failures per run | No "edited after the last test run" signal |
 | Instruction files (6) | None found in code | Not handled |
-| Several agents (7) | Workspaces, worktree env copy and setup script, agents board, Recap | Ports per worktree (open since the second pass) |
+| Several agents (7) | Workspaces, worktree env copy and setup script that gets `OCTET_PORT` (a block of ten no other worktree has), agents board, Recap | Dev servers an agent starts itself don't get a port unless the setup script writes one into `.env` |
 | Phone (8) | ntfy push, sounds, Remote Control | One-way: cannot answer from the phone |
 | Flicker (9) | Native conversation view avoids repainting | Terminal path unchanged |
 | Multiple accounts, rewind, paste cleanup | Done | None |
 
 ## What the next release should build, in order
+
+All five are built (see `TODO.md` items 49 to 53), in this order.
 
 1. **Hand off and resume.** On the limit card: *Continue in…* another installed
    agent (a summary, the todo list and the diff carried into a new

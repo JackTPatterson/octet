@@ -425,3 +425,50 @@ account or telemetry (Warp #900, 462).
   and returned its result. Not checked: two physical Macs (Bonjour and
   the local-network prompt), and the approval dialogs by hand (the test
   used an auto-approve hook; the trust rules are unit-tested).
+
+### From the third pain-point pass (2026-10-07)
+
+See `docs/research/agent-pain-points-2026-10.md`.
+
+- [x] **49. Carry on past a limit (high).** Claude Code #13354, OpenCode
+  #7602, and people switching agents mid-session when they hit a wall. The
+  limit card offers Continue in <another installed agent>, which opens a
+  conversation in the same workspace and folder whose first message is a
+  brief of the old one (`HandoffBrief`: what was asked, where it got to,
+  the plan, files changed, last commands, whether the last edit was
+  tested, capped near 6000 characters, written from the transcript with no
+  model), and Continue when it resets, which sends "continue" just after
+  the countdown ends. The conversation menu has Start Fresh with a Summary
+  and Continue In…. Also fixed the limit splash staying over the transcript
+  after the work went on. Build-checked only; the brief and the rules are
+  unit-tested.
+- [x] **50. Where the usage went (high).** Claude Code #16157, #38335,
+  #46917; Codex #34035. `UsageLedger` notes each growth of a conversation's
+  reported cost with its time and keeps two weeks; Where did it go? (the
+  usage chip's card, the palette) ranks conversations over 5 hours, a day or
+  a week, flags a context past 60% (every message re-reads it) and offers
+  Start Fresh. Claude Code and OpenCode report a cost; Codex doesn't, so it
+  isn't counted, which the sheet says.
+- [x] **51. One set of instructions for every agent (med).** Claude Code
+  #31005, Codex #12115. Agent Setup (right panel, palette) shows when a
+  project has CLAUDE.md or AGENTS.md alone, or both apart, and an agent that
+  would miss them is installed. Share with Every Agent moves the words into
+  AGENTS.md and makes CLAUDE.md `@AGENTS.md`; when both differ, CLAUDE.md is
+  appended to AGENTS.md and kept as CLAUDE.md.octet-backup. Asks first.
+- [x] **52. Say whether the last edit was tested (med).** The CHI '26
+  verification-load findings, and agents claiming work is done. `Verification`
+  reads a conversation's tool calls: tests passed or failed after the last
+  edit, only a build or lint, or nothing since the last N edits. A line on
+  each Recap row and a badge in the conversation header.
+- [x] **53. Always allow (med).** Anthropic's reported 93% approval rate,
+  Claude Code #28240, OpenCode #37564. The permission card for Claude Code
+  offers a narrow rule saved to `.claude/settings.local.json`
+  (`Bash(swift test:*)`, `Edit`, `WebFetch(domain:…)`), applied at once. Never
+  offered for commands that delete, publish, run other code or reach the
+  network; a chained command is only matched whole. Agent Setup lists the
+  rules, with remove, and shows the project's own read-only.
+- [ ] **54. Not done from that pass.** Answering from a phone (push is
+  one-way; two-way needs a relay of our own and raises where code goes), a
+  classifier for approvals, and checking whether Codex really resolves an
+  unanswered question after 60 seconds (Codex #28969) in the app-server mode
+  Octet uses.
