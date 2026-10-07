@@ -206,11 +206,12 @@ struct RootView: View {
                     Rectangle().fill(Theme.divider).frame(width: 1)
                         .frame(maxHeight: .infinity, alignment: .leading)
                     SidePanel(store: store, ui: ui)
-                        .frame(width: SidePanel.width - 1)
+                        .frame(width: ui.sidePanelWidth - 1)
                         .padding(.leading, 1)
-                        .offset(x: ui.sidePanelVisible ? 0 : SidePanel.width)
+                        .offset(x: ui.sidePanelVisible ? 0 : ui.sidePanelWidth)
+                    SidePanelResizeHandle(ui: ui)
                 }
-                .frame(width: ui.sidePanelVisible ? SidePanel.width : 0, alignment: .leading)
+                .frame(width: ui.sidePanelVisible ? ui.sidePanelWidth : 0, alignment: .leading)
                 .clipped()
                 .allowsHitTesting(ui.sidePanelVisible)
                 .accessibilityHidden(!ui.sidePanelVisible)
@@ -916,6 +917,57 @@ final class UIState: ObservableObject {
         didSet { UserDefaults.standard.set(Double(sidebarWidth), forKey: "octet.sidebarWidth") }
     }
     static let sidebarMinWidth: CGFloat = 200
+
+    /// Drag the right panel's edge to resize it (its default width up to
+    /// half the window).
+    @Published var sidePanelWidth: CGFloat = {
+        let saved = UserDefaults.standard.double(forKey: "octet.sidePanelWidth")
+        return saved > 0 ? max(UIState.sidePanelMinWidth, CGFloat(saved)) : SidePanel.width
+    }() {
+        didSet { UserDefaults.standard.set(Double(sidePanelWidth), forKey: "octet.sidePanelWidth") }
+    }
+    static let sidePanelMinWidth: CGFloat = 260
+}
+
+/// An invisible strip along the right panel's left edge: drag to resize,
+/// double-click to go back to the default width.
+private struct SidePanelResizeHandle: View {
+    @ObservedObject var ui: UIState
+    @State private var startWidth: CGFloat?
+    @State private var hovering = false
+
+    private var maxWidth: CGFloat {
+        max(SidePanel.width, (NSApp.keyWindow?.frame.width ?? 1280) / 2)
+    }
+
+    var body: some View {
+        Color.clear
+            .frame(width: 7)
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .onHover { inside in
+                guard inside != hovering else { return }
+                hovering = inside
+                if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+            }
+            .gesture(
+                DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                    .onChanged { drag in
+                        let start = startWidth ?? ui.sidePanelWidth
+                        startWidth = start
+                        ui.sidePanelWidth = min(maxWidth, max(UIState.sidePanelMinWidth, (start - drag.translation.width).rounded()))
+                    }
+                    .onEnded { _ in startWidth = nil }
+            )
+            .onTapGesture(count: 2) { ui.sidePanelWidth = SidePanel.width }
+            .help("Drag to resize the panel. Double-click to reset.")
+            .accessibilityLabel("Panel width")
+            .accessibilityValue("\(Int(ui.sidePanelWidth)) points")
+            .accessibilityAdjustableAction { direction in
+                let delta: CGFloat = direction == .increment ? 16 : -16
+                ui.sidePanelWidth = min(maxWidth, max(UIState.sidePanelMinWidth, ui.sidePanelWidth + delta))
+            }
+    }
 }
 
 /// An invisible strip over the sidebar's divider: drag to resize, double-click

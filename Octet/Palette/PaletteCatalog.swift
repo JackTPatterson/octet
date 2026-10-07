@@ -159,6 +159,24 @@ enum PaletteCatalog {
             action("sidePanel", "Toggle Panel", "sidebar.left",
                    keywords: ["panel", "overview", "git", "terminal", "right", "files changed"]) { ui.sidePanelVisible.toggle() },
             action("reloadConfig", "Reload Terminal Config", "arrow.clockwise", keywords: ["settings"]) { store.reloadSessionConfig() },
+            action("agentsReadTerminal",
+                   SettingsStore.shared.values.agentsReadSidebarTerminal
+                       ? "Stop Agents Reading the Sidebar Terminal" : "Let Agents Read the Sidebar Terminal",
+                   "terminal",
+                   keywords: ["agent", "claude", "codex", "terminal", "sidebar", "read", "logs", "output", "mcp", "privacy"]) {
+                SettingsStore.shared.values.agentsReadSidebarTerminal.toggle()
+                ToastCenter.shared.info(SettingsStore.shared.values.agentsReadSidebarTerminal
+                                            ? "Agents can read the sidebar terminal" : "Agents can no longer read the sidebar terminal")
+            },
+            action("agentsSuggestCommands",
+                   SettingsStore.shared.values.agentsSuggestSidebarCommands
+                       ? "Stop Agents Suggesting Sidebar Commands" : "Let Agents Suggest Sidebar Commands",
+                   "terminal",
+                   keywords: ["agent", "claude", "codex", "terminal", "sidebar", "command", "run", "suggest", "paste", "mcp"]) {
+                SettingsStore.shared.values.agentsSuggestSidebarCommands.toggle()
+                ToastCenter.shared.info(SettingsStore.shared.values.agentsSuggestSidebarCommands
+                                            ? "Agents can put commands in the sidebar terminal for you to run" : "Agents can no longer suggest sidebar commands")
+            },
             action("usageBreakdown", "Where Did My Usage Go?", "clock",
                    keywords: ["usage", "limit", "cost", "spend", "tokens", "allowance", "burn", "expensive", "conversations"]) {
                 ui.usageBreakdownVisible = true

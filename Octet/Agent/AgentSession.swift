@@ -1966,7 +1966,10 @@ final class AgentSession: ObservableObject, Identifiable {
     /// Octet's own environment, plus the account the folder uses, so a
     /// conversation here signs in as the project's account.
     nonisolated static func accountEnvironment(cwd: String) -> [String: String] {
-        ProcessInfo.processInfo.environment.merging(AccountProfiles.environment(for: cwd)) { _, account in account }
+        ProcessInfo.processInfo.environment
+            .merging(AccountProfiles.environment(for: cwd)) { _, account in account }
+            // Where the sidebar terminal tool asks, for agents that have it.
+            .merging(TerminalControl.environment(session: EngineSession.name)) { _, ours in ours }
     }
 
     private func stopProcess() {

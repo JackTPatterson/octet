@@ -629,6 +629,32 @@ private struct TerminalSettings: View {
                 Toggle("Inline images", isOn: $settings.values.kittyGraphics).labelsHidden().toggleStyle(.switch)
             }
         }
+        SettingsGroup(title: "Sidebar terminal") {
+            SettingsRow(
+                title: "Let agents read the sidebar terminal",
+                detail: "The shell in the right panel, where you run servers, builds and tests. While this is on, an agent can read its latest output: Claude Code, Codex, Gemini, Qwen, OpenCode, Cursor and Copilot get a read_sidebar_terminal tool through the octet-terminal MCP server, and any other agent can run octet-cli terminal read. Off by default, since a terminal can hold secrets. A note shows over the terminal while it's on."
+            ) {
+                Toggle("Let agents read the sidebar terminal", isOn: $settings.values.agentsReadSidebarTerminal)
+                    .labelsHidden().toggleStyle(.switch)
+            }
+            SettingsDivider()
+            SettingsRow(
+                title: "Let agents suggest commands",
+                detail: "An agent can open the sidebar terminal and type a command at its prompt, for example one that needs your password or that you'd rather watch. It is never run for you: you read it and press Return, or Run. It only goes in when the terminal is waiting at a prompt. Tool: suggest_sidebar_command, or octet-cli terminal suggest. Off by default."
+            ) {
+                Toggle("Let agents suggest commands", isOn: $settings.values.agentsSuggestSidebarCommands)
+                    .labelsHidden().toggleStyle(.switch)
+            }
+            if settings.values.agentsReadSidebarTerminal || settings.values.agentsSuggestSidebarCommands {
+                SettingsDivider()
+                SettingsRow(
+                    title: "Tool in your agents",
+                    detail: "Adds the octet-terminal MCP server to each installed agent's own settings, and takes it out again when this is turned off. Use Add Again if you installed an agent after turning this on."
+                ) {
+                    Button("Add Again") { AgentMCPInstaller.shared.sync(server: TerminalMCP.serverName, force: true) }
+                }
+            }
+        }
     }
 }
 

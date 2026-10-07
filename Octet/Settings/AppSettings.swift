@@ -101,6 +101,11 @@ struct OctetSettings: Codable, Equatable {
     var peersEnabled = false
     /// Agent Delegation: agents here can ask each other to review or work.
     var delegationEnabled = false
+    /// Agents can read the sidebar terminal (read only): a socket the app
+    /// listens on and an MCP server in each agent's settings, both only
+    /// while this is on. Off by default: a terminal can hold secrets.
+    var agentsReadSidebarTerminal = false
+    var agentsSuggestSidebarCommands = false
     /// When to ask before a delegation starts: `DelegationCenter.Approval`.
     var delegationApproval = "reviews"
     /// What other Macs call this one; empty is the computer's name.
@@ -343,6 +348,8 @@ struct OctetSettings: Codable, Equatable {
         readClaudeAccountUsage = value("readClaudeAccountUsage", defaults.readClaudeAccountUsage)
         peersEnabled = value("peersEnabled", defaults.peersEnabled)
         delegationEnabled = value("delegationEnabled", defaults.delegationEnabled)
+        agentsReadSidebarTerminal = value("agentsReadSidebarTerminal", defaults.agentsReadSidebarTerminal)
+        agentsSuggestSidebarCommands = value("agentsSuggestSidebarCommands", defaults.agentsSuggestSidebarCommands)
         delegationApproval = value("delegationApproval", defaults.delegationApproval)
         peerName = value("peerName", defaults.peerName)
         offerRecovery = value("offerRecovery", defaults.offerRecovery)
@@ -763,6 +770,11 @@ final class SettingsStore: ObservableObject {
         if values.delegationEnabled != old.delegationEnabled {
             DelegationCenter.shared.apply()
             AgentMCPInstaller.shared.sync(server: DelegationMCP.serverName)
+        }
+        if values.agentsReadSidebarTerminal != old.agentsReadSidebarTerminal
+            || values.agentsSuggestSidebarCommands != old.agentsSuggestSidebarCommands {
+            TerminalAccessCenter.shared.apply()
+            AgentMCPInstaller.shared.sync(server: TerminalMCP.serverName)
         }
         // A new name is advertised by starting again.
         if values.peerName != old.peerName, values.peersEnabled { PeerCenter.shared.restart() }
