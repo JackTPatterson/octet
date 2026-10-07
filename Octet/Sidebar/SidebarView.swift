@@ -658,6 +658,17 @@ struct WorkspaceOrganizeMenu: View {
         } else {
             Button("Move to Idle") { store.markIdle(id) }
         }
+        // The workspace's Claude Code conversations, carried on in another
+        // folder; see ConversationMover.
+        let movable = AgentCenter.shared.sessions(in: id).filter(\.canMove)
+        Button(movable.count > 1 ? "Move \(movable.count) Conversations To…" : "Move Conversation To…") {
+            let from = store.snapshot.directory(ofWorkspace: id) ?? NSHomeDirectory()
+            ConversationMover.moveAfterPicking(movable, from: from, window: window)
+        }
+        .disabled(movable.isEmpty)
+        .help(movable.isEmpty
+              ? "Moves this workspace's Claude Code conversations to another folder; none here can move now"
+              : "Carry on with this workspace's Claude Code conversations in another folder")
         if AgentDiscoveryStore.shared.agents.contains(where: { $0.id == "claude" && $0.executablePath != nil }) {
             Button("New Cloud Session Here…") {
                 // In the window showing it, which the session will open in.

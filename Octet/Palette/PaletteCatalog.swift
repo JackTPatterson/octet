@@ -159,6 +159,8 @@ enum PaletteCatalog {
             action("sidePanel", "Toggle Panel", "sidebar.left",
                    keywords: ["panel", "overview", "git", "terminal", "right", "files changed"]) { ui.sidePanelVisible.toggle() },
             action("reloadConfig", "Reload Terminal Config", "arrow.clockwise", keywords: ["settings"]) { store.reloadSessionConfig() },
+            action("huggingface", "Add Model from Hugging Face…", "square.and.arrow.down",
+                   keywords: ["hugging face", "huggingface", "ollama", "gguf", "model", "download", "local", "opencode"]) { HuggingFaceWindow.open() },
             action("installHook", "Install Subagent Tabs Hook", "sparkles",
                    keywords: ["claude", "codex", "agent", "setup"]) { SubagentHookMenu.install() },
             action("removeHook", "Remove Subagent Tabs Hook", "sparkles",

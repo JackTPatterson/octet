@@ -214,6 +214,15 @@ final class SubagentTabTests: XCTestCase {
         XCTAssertEqual(snapshot.rootTabId(ofTab: "w1:t1"), "w1:t1")
         XCTAssertEqual(snapshot.rootTabId(ofTab: "w1:t2"), "w1:t1")
         XCTAssertEqual(snapshot.rootTabId(ofTab: "w1:t3"), "w1:t1")
+
+        // The panel's Subagents section: both viewers hang off the root's
+        // pane, the second one step further down; the root's own pane isn't
+        // a viewer, and a pane that launched nothing lists none.
+        let viewers = snapshot.subagentViewers(launchedFrom: ["w1:p1"])
+        XCTAssertEqual(viewers.map(\.agent.paneId), ["w1:p2", "w1:p3"])
+        XCTAssertEqual(viewers.map(\.depth), [0, 1])
+        XCTAssertEqual(snapshot.subagentViewers(launchedFrom: ["w1:p2"]).map(\.agent.paneId), ["w1:p3"])
+        XCTAssertTrue(snapshot.subagentViewers(launchedFrom: ["w1:p3"]).isEmpty)
     }
 
     func testSubagentTabsAreKeptBesideTheirParent() {
