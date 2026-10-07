@@ -11,6 +11,10 @@ enum SplitEdge: String, CaseIterable {
     var split: String { self == .left || self == .right ? "right" : "down" }
     /// Whether the moved pane then swaps with its neighbour to land first.
     var swaps: Bool { self == .left || self == .top }
+    /// Splitting a pane with a fresh one that the *existing* pane keeps
+    /// this side of: the fresh pane takes the other side, so the two swap
+    /// when this is the side the engine puts a new pane on (right, down).
+    var swapsToKeep: Bool { !swaps }
     var title: String {
         switch self {
         case .left: "Split Left"
@@ -114,8 +118,9 @@ enum SplitDrop {
     }
 }
 
-/// Where a workspace card dragged over a window's content would go: beside
-/// this window, splitting it in two, or into it in place of what it shows.
+/// Where a workspace card dragged over a window's content would go: into
+/// the tab showing as a split, with a shell in that workspace's folder on
+/// that side, or into the window in place of what it shows.
 enum WorkspaceDropTarget: Equatable {
     case here
     case beside(SplitEdge)
@@ -123,11 +128,17 @@ enum WorkspaceDropTarget: Equatable {
     var title: String {
         switch self {
         case .here: "Show Here"
-        case .beside(.left): "Open in a Window on the Left"
-        case .beside(.right): "Open in a Window on the Right"
-        case .beside(.top): "Open in a Window Above"
-        case .beside(.bottom): "Open in a Window Below"
+        case .beside(.left): "Split Left Here"
+        case .beside(.right): "Split Right Here"
+        case .beside(.top): "Split Up Here"
+        case .beside(.bottom): "Split Down Here"
         }
+    }
+
+    /// The zone's title naming the workspace, when there's room.
+    func title(workspace label: String) -> String {
+        guard case .beside = self, !label.isEmpty else { return title }
+        return title.replacingOccurrences(of: " Here", with: " in \u{201C}\(label)\u{201D}")
     }
 
     /// The outer band along each edge splits the window; the middle shows

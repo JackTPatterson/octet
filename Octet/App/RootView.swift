@@ -548,6 +548,8 @@ struct RootView: View {
                     }
                     if let dragged = tabDrag.workspaceId {
                         WorkspaceDropLayer(workspaceId: dragged, window: window,
+                                           splitsInto: boardHere == nil && agents.active(in: window.focusedWorkspace?.workspaceId) == nil
+                                               ? window.displayedFocusedTabId : nil,
                                            animation: motion.animation(.tabs, .smooth(duration: 0.15)))
                     }
                 }
@@ -650,23 +652,33 @@ struct RootView: View {
     // MARK: - Splitting by drag
 
     /// The tab a dragged tab would split into: the one showing, when the
-    /// terminal is what's showing. Only a single-pane tab can move in, and not
-    /// into itself.
+    /// terminal is what's showing. The tab in front dropped on its own edge
+    /// splits the screen there with a fresh shell; another tab moves in.
     private func splitTargetTab(for dragged: String) -> String? {
         guard boardHere == nil, agents.active(in: window.focusedWorkspace?.workspaceId) == nil,
-              let showing = window.displayedFocusedTabId, showing != dragged,
-              store.onlyPane(ofTab: dragged) != nil else { return nil }
+              let showing = window.displayedFocusedTabId else { return nil }
         return showing
     }
 
     private func splitDropLayer(moving dragged: String, into showing: String) -> some View {
-        let fromElsewhere = store.snapshot.tabs.first { $0.tabId == dragged }?.workspaceId != window.focusedWorkspace?.workspaceId
+        let fromElsewhere = dragged != showing
+            && store.snapshot.tabs.first { $0.tabId == dragged }?.workspaceId != window.focusedWorkspace?.workspaceId
         return SplitDropLayer(layout: dropLayout, acceptsTab: fromElsewhere,
                               animation: motion.animation(.tabs, .smooth(duration: 0.15))) { target in
             guard let edge = target.edge else {
                 return WindowActions.moveTab(dragged, into: window, at: window.displayedTabs.count)
             }
-            store.splitTab(dragged, into: showing, beside: target.paneId, edge: edge)
+            if dragged == showing {
+                // Its own edge: the screen splits here, in the same folder.
+                let cwd = store.snapshot.workingDirectory(ofPane: target.paneId)
+                    ?? store.snapshot.panes.first { $0.paneId == target.paneId }?.effectiveCwd
+                store.splitNewPane(beside: target.paneId, edge: edge, cwd: cwd, keepingSide: true)
+            } else if store.onlyPane(ofTab: dragged) != nil {
+                store.splitTab(dragged, into: showing, beside: target.paneId, edge: edge)
+            } else {
+                ToastCenter.shared.info("A split tab can't move in as one pane",
+                                        detail: "Move its panes out first (Pane › Move Pane to New Tab), then drag each.")
+            }
         }
     }
 
