@@ -25,7 +25,7 @@ final class AgentMCPInstaller {
             SettingsStore.shared.values.delegationEnabled
         },
         Feature(server: TerminalMCP.serverName, subcommand: "terminal-mcp", title: "the sidebar terminal tool") {
-            SettingsStore.shared.values.agentsReadSidebarTerminal
+            SettingsStore.shared.values.agentsReadSidebarTerminal || SettingsStore.shared.values.agentsSuggestSidebarCommands
         },
     ]
 

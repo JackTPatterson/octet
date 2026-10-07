@@ -91,6 +91,8 @@ enum SettingsSearchIndex {
         .init(.terminal, "Inline images", ["image", "picture", "kitty", "graphics"]),
         .init(.terminal, "Let agents read the sidebar terminal", anchor: "Sidebar terminal",
               ["agent", "claude", "codex", "mcp", "read", "output", "logs", "right panel", "octet-terminal", "privacy"]),
+        .init(.terminal, "Let agents suggest commands in the sidebar terminal", anchor: "Sidebar terminal",
+              ["agent", "claude", "codex", "mcp", "command", "run", "paste", "suggest", "right panel", "octet-terminal"]),
     ]
 
     private static let agents: [SettingsSearchEntry] = [

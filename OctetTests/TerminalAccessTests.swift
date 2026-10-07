@@ -65,29 +65,32 @@ final class TerminalAccessTests: XCTestCase {
     }
 
     func testTheToolIsOfferedOnlyInsideOctet() throws {
-        let tools = try result(TerminalMCP.respond(to: rpc("tools/list"), origin: inPane, call: { _ in [:] }))["tools"] as? [[String: Any]]
-        XCTAssertEqual(tools?.map { $0["name"] as? String }, ["read_sidebar_terminal"])
-        let none = try result(TerminalMCP.respond(to: rpc("tools/list"), origin: nil, call: { _ in [:] }))["tools"] as? [[String: Any]]
+        let tools = try result(TerminalMCP.respond(to: rpc("tools/list"), origin: inPane, call: { _, _ in [:] }))["tools"] as? [[String: Any]]
+        XCTAssertEqual(tools?.map { $0["name"] as? String }, ["read_sidebar_terminal", "suggest_sidebar_command"])
+        let none = try result(TerminalMCP.respond(to: rpc("tools/list"), origin: nil, call: { _, _ in [:] }))["tools"] as? [[String: Any]]
         XCTAssertEqual(none?.count, 0)
-        let initialized = try result(TerminalMCP.respond(to: rpc("initialize", params: ["protocolVersion": "2025-03-26"]), origin: inPane, call: { _ in [:] }))
+        let initialized = try result(TerminalMCP.respond(to: rpc("initialize", params: ["protocolVersion": "2025-03-26"]), origin: inPane, call: { _, _ in [:] }))
         XCTAssertEqual(initialized["protocolVersion"] as? String, "2025-03-26")
         XCTAssertTrue((initialized["instructions"] as? String)?.contains("read_sidebar_terminal") == true)
-        XCTAssertNil(try result(TerminalMCP.respond(to: rpc("initialize"), origin: nil, call: { _ in [:] }))["instructions"])
+        XCTAssertNil(try result(TerminalMCP.respond(to: rpc("initialize"), origin: nil, call: { _, _ in [:] }))["instructions"])
         // A notification gets no answer.
         let notification = String(decoding: try JSONSerialization.data(withJSONObject: ["jsonrpc": "2.0", "method": "notifications/initialized"]), as: UTF8.self)
-        XCTAssertNil(TerminalMCP.respond(to: notification, origin: inPane, call: { _ in [:] }))
+        XCTAssertNil(TerminalMCP.respond(to: notification, origin: inPane, call: { _, _ in [:] }))
     }
 
     func testReadingAsksTheAppAndFormatsTheAnswer() throws {
         var asked: [String: Any] = [:]
+        var askedMethod: TerminalControl.Method?
         let reply = TerminalMCP.respond(
             to: rpc("tools/call", params: ["name": "read_sidebar_terminal", "arguments": ["lines": 9999]]), origin: inPane,
-            call: { params in
+            call: { method, params in
+                askedMethod = method
                 asked = params
                 return ["text": "error: port 3000 in use", "lines": 1, "total_lines": 40, "title": "npm run dev", "shell_running": true]
             })
         let content = try XCTUnwrap(try result(reply)["content"] as? [[String: Any]])
         XCTAssertEqual(content.first?["text"] as? String, "[sidebar terminal · npm run dev · last 1 of 40 lines]\nerror: port 3000 in use")
+        XCTAssertEqual(askedMethod, .read)
         XCTAssertEqual(asked["lines"] as? Int, 500)
         XCTAssertEqual(asked["from_pane"] as? String, "w1:p2")
         XCTAssertEqual(asked["from_workspace"] as? String, "w1")
@@ -96,12 +99,12 @@ final class TerminalAccessTests: XCTestCase {
     func testFailuresReachTheAgentAsErrors() throws {
         let off = try result(TerminalMCP.respond(
             to: rpc("tools/call", params: ["name": "read_sidebar_terminal"]), origin: inPane,
-            call: { _ in throw TerminalControl.Failure(message: "The sidebar terminal isn't open.") }))
+            call: { _, _ in throw TerminalControl.Failure(message: "The sidebar terminal isn't open.") }))
         XCTAssertEqual(off["isError"] as? Bool, true)
         XCTAssertEqual(((off["content"] as? [[String: Any]])?.first?["text"] as? String), "The sidebar terminal isn't open.")
-        let outside = try result(TerminalMCP.respond(to: rpc("tools/call", params: ["name": "read_sidebar_terminal"]), origin: nil, call: { _ in [:] }))
+        let outside = try result(TerminalMCP.respond(to: rpc("tools/call", params: ["name": "read_sidebar_terminal"]), origin: nil, call: { _, _ in [:] }))
         XCTAssertEqual(outside["isError"] as? Bool, true)
-        let unknown = try result(TerminalMCP.respond(to: rpc("tools/call", params: ["name": "type_into_terminal"]), origin: inPane, call: { _ in [:] }))
+        let unknown = try result(TerminalMCP.respond(to: rpc("tools/call", params: ["name": "type_into_terminal"]), origin: inPane, call: { _, _ in [:] }))
         XCTAssertEqual(unknown["isError"] as? Bool, true)
     }
 
@@ -109,5 +112,63 @@ final class TerminalAccessTests: XCTestCase {
         XCTAssertEqual(TerminalMCP.format(["text": "a\nb", "lines": 2, "total_lines": 2]), "[sidebar terminal · 2 lines]\na\nb")
         XCTAssertEqual(TerminalMCP.format(["text": "", "lines": 0, "total_lines": 0]), "[sidebar terminal · 0 lines]\n(nothing on screen yet)")
         XCTAssertTrue(TerminalMCP.format(["text": "x", "lines": 1, "shell_running": false]).hasPrefix("[sidebar terminal · the shell has exited"))
+    }
+
+    func testASuggestedCommandIsPassedOnTrimmed() throws {
+        var asked: [String: Any] = [:]
+        var askedMethod: TerminalControl.Method?
+        let reply = TerminalMCP.respond(
+            to: rpc("tools/call", params: ["name": "suggest_sidebar_command", "arguments": ["command": "  npm run dev \n"]]), origin: inPane,
+            call: { method, params in
+                askedMethod = method
+                asked = params
+                return [:]
+            })
+        let content = try XCTUnwrap(try result(reply)["content"] as? [[String: Any]])
+        XCTAssertTrue((content.first?["text"] as? String)?.contains("npm run dev") == true)
+        XCTAssertEqual(askedMethod, .suggest)
+        XCTAssertEqual(asked["command"] as? String, "npm run dev")
+        XCTAssertEqual(asked["from_pane"] as? String, "w1:p2")
+    }
+
+    func testAnUnfitCommandIsNeverSent() throws {
+        var called = false
+        for command in ["", "   ", "ls\nrm -rf x", "ls\r", "echo \u{1B}[2J", "echo a\u{202E}b"] {
+            let reply = try result(TerminalMCP.respond(
+                to: rpc("tools/call", params: ["name": "suggest_sidebar_command", "arguments": ["command": command]]), origin: inPane,
+                call: { _, _ in called = true; return [:] }))
+            XCTAssertEqual(reply["isError"] as? Bool, true, command)
+        }
+        XCTAssertFalse(called)
+        let missing = try result(TerminalMCP.respond(
+            to: rpc("tools/call", params: ["name": "suggest_sidebar_command"]), origin: inPane, call: { _, _ in called = true; return [:] }))
+        XCTAssertEqual(missing["isError"] as? Bool, true)
+        let outside = try result(TerminalMCP.respond(
+            to: rpc("tools/call", params: ["name": "suggest_sidebar_command", "arguments": ["command": "ls"]]), origin: nil, call: { _, _ in called = true; return [:] }))
+        XCTAssertEqual(outside["isError"] as? Bool, true)
+        XCTAssertFalse(called)
+    }
+
+    func testStagedCommandRules() {
+        XCTAssertEqual(TerminalControl.stagedCommand("  git status  "), "git status")
+        XCTAssertEqual(TerminalControl.stagedCommand("echo héllo 🚀"), "echo héllo 🚀")
+        XCTAssertNil(TerminalControl.stagedCommand("a\tb"))
+        XCTAssertNil(TerminalControl.stagedCommand("a\u{7F}b"))
+        XCTAssertNil(TerminalControl.stagedCommand("a\u{85}b"))
+        XCTAssertNil(TerminalControl.stagedCommand(String(repeating: "x", count: 1001)))
+        XCTAssertNotNil(TerminalControl.stagedCommand(String(repeating: "x", count: 1000)))
+    }
+
+    func testOnlyAShellIsWaitingAtAPrompt() {
+        XCTAssertTrue(TerminalControl.isShell("zsh"))
+        XCTAssertTrue(TerminalControl.isShell("-zsh"))
+        XCTAssertTrue(TerminalControl.isShell("fish"))
+        XCTAssertFalse(TerminalControl.isShell("node"))
+        XCTAssertFalse(TerminalControl.isShell("vim"))
+        XCTAssertFalse(TerminalControl.isShell(""))
+    }
+
+    func testFormatSuggestionNamesTheCommand() {
+        XCTAssertTrue(TerminalMCP.formatSuggestion(["command": "make test"]).contains("make test"))
     }
 }

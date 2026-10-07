@@ -493,4 +493,10 @@ See `docs/research/agent-pain-points-2026-10.md`.
   its output is still there. Which terminal: the window showing the agent's
   workspace, else the one in front. Build-checked only; the protocol, the line
   handling and the MCP server are unit-tested.
+  A second, separate toggle (off by default), Let agents suggest commands, adds
+  `suggest_sidebar_command(command)` / `octet-cli terminal suggest <command>`:
+  the panel opens on its Terminal page and the command is typed at the prompt
+  without Return, only when a shell is in front and the command is one plain
+  line. A strip over the terminal shows it with Run and Clear; it is never run
+  for the person.
 

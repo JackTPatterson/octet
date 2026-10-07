@@ -1,10 +1,10 @@
 import AppKit
 import Foundation
 
-/// Lets agents read the sidebar terminal: listens on a socket while
-/// Settings › Terminal › "Let agents read the sidebar terminal" is on, and
-/// answers an agent's `read` with the end of what that terminal shows.
-/// Read only: nothing an agent sends is ever typed into it.
+/// Lets agents use the sidebar terminal: listens on a socket while either
+/// Settings › Terminal toggle is on. `read` answers with the end of what the
+/// terminal shows; `suggest` opens the panel and types a command at the
+/// prompt for the person to run. Nothing is ever run for them.
 @MainActor
 final class TerminalAccessCenter {
     static let shared = TerminalAccessCenter()
@@ -12,7 +12,9 @@ final class TerminalAccessCenter {
     private weak var store: SessionStore?
     private var server: PermissionSocketServer?
 
-    private var enabled: Bool { SettingsStore.shared.values.agentsReadSidebarTerminal }
+    private var canRead: Bool { SettingsStore.shared.values.agentsReadSidebarTerminal }
+    private var canSuggest: Bool { SettingsStore.shared.values.agentsSuggestSidebarCommands }
+    private var enabled: Bool { canRead || canSuggest }
 
     /// Starts or stops with the setting.
     func apply(store: SessionStore? = nil) {
@@ -46,11 +48,20 @@ final class TerminalAccessCenter {
 
     private func handle(_ request: [String: Any], reply: @escaping ([String: Any]) -> Void) {
         let fail: (String) -> Void = { reply(["error": $0]) }
-        guard enabled else { return fail("Letting agents read the sidebar terminal is off (Octet Settings › Terminal).") }
-        guard (request["method"] as? String).flatMap(TerminalControl.Method.init(rawValue:)) == .read else {
-            return fail("Unknown request.")
-        }
         let params = request["params"] as? [String: Any] ?? [:]
+        switch (request["method"] as? String).flatMap(TerminalControl.Method.init(rawValue:)) {
+        case .read:
+            guard canRead else { return fail("Letting agents read the sidebar terminal is off (Octet Settings › Terminal).") }
+            read(params, reply: reply, fail: fail)
+        case .suggest:
+            guard canSuggest else { return fail("Letting agents suggest commands in the sidebar terminal is off (Octet Settings › Terminal).") }
+            suggest(params, reply: reply, fail: fail)
+        case nil:
+            fail("Unknown request.")
+        }
+    }
+
+    private func read(_ params: [String: Any], reply: @escaping ([String: Any]) -> Void, fail: (String) -> Void) {
         let lines = TerminalControl.clampLines(params["lines"])
 
         // The window the agent works in: the one showing its pane's
@@ -68,6 +79,37 @@ final class TerminalAccessCenter {
         let shown = tail.text.isEmpty ? 0 : tail.text.components(separatedBy: "\n").count
         reply(["result": ["text": tail.text, "lines": shown, "total_lines": tail.total,
                           "title": entry.title, "shell_running": !entry.exited]])
+    }
+
+    /// Opens the panel on its Terminal page, waits for the shell to start if
+    /// it hadn't, and types the command at its prompt.
+    private func suggest(_ params: [String: Any], reply: @escaping ([String: Any]) -> Void, fail: @escaping (String) -> Void) {
+        guard let command = TerminalControl.stagedCommand(params["command"] as? String ?? "") else {
+            return fail("That isn't a single plain line of text.")
+        }
+        guard let target = windowShowing(params) else {
+            return fail("Octet has no window open.")
+        }
+        target.ui.showSidePanel(tab: .terminal)
+        NSApp.requestUserAttention(.informationalRequest)
+        Task { @MainActor in
+            var view: TerminalEngine.SurfaceView?
+            for _ in 0..<30 {
+                view = SidebarTerminals.shared.view(for: target.id)
+                if view?.surfaceModel != nil { break }
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+            guard let view, view.surfaceModel != nil else {
+                return fail("The sidebar terminal didn't start. Ask the person to open its Terminal tab.")
+            }
+            do {
+                try SidebarTerminals.shared.stage(command, in: view)
+            } catch {
+                return fail(String(describing: error))
+            }
+            SidebarSuggestions.shared.set(command, window: target.id)
+            reply(["result": ["command": command]])
+        }
     }
 
     private func windowShowing(_ params: [String: Any]) -> WindowContext? {

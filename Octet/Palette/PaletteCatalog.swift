@@ -168,6 +168,15 @@ enum PaletteCatalog {
                 ToastCenter.shared.info(SettingsStore.shared.values.agentsReadSidebarTerminal
                                             ? "Agents can read the sidebar terminal" : "Agents can no longer read the sidebar terminal")
             },
+            action("agentsSuggestCommands",
+                   SettingsStore.shared.values.agentsSuggestSidebarCommands
+                       ? "Stop Agents Suggesting Sidebar Commands" : "Let Agents Suggest Sidebar Commands",
+                   "terminal",
+                   keywords: ["agent", "claude", "codex", "terminal", "sidebar", "command", "run", "suggest", "paste", "mcp"]) {
+                SettingsStore.shared.values.agentsSuggestSidebarCommands.toggle()
+                ToastCenter.shared.info(SettingsStore.shared.values.agentsSuggestSidebarCommands
+                                            ? "Agents can put commands in the sidebar terminal for you to run" : "Agents can no longer suggest sidebar commands")
+            },
             action("usageBreakdown", "Where Did My Usage Go?", "clock",
                    keywords: ["usage", "limit", "cost", "spend", "tokens", "allowance", "burn", "expensive", "conversations"]) {
                 ui.usageBreakdownVisible = true

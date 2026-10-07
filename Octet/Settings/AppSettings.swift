@@ -105,6 +105,7 @@ struct OctetSettings: Codable, Equatable {
     /// listens on and an MCP server in each agent's settings, both only
     /// while this is on. Off by default: a terminal can hold secrets.
     var agentsReadSidebarTerminal = false
+    var agentsSuggestSidebarCommands = false
     /// When to ask before a delegation starts: `DelegationCenter.Approval`.
     var delegationApproval = "reviews"
     /// What other Macs call this one; empty is the computer's name.
@@ -348,6 +349,7 @@ struct OctetSettings: Codable, Equatable {
         peersEnabled = value("peersEnabled", defaults.peersEnabled)
         delegationEnabled = value("delegationEnabled", defaults.delegationEnabled)
         agentsReadSidebarTerminal = value("agentsReadSidebarTerminal", defaults.agentsReadSidebarTerminal)
+        agentsSuggestSidebarCommands = value("agentsSuggestSidebarCommands", defaults.agentsSuggestSidebarCommands)
         delegationApproval = value("delegationApproval", defaults.delegationApproval)
         peerName = value("peerName", defaults.peerName)
         offerRecovery = value("offerRecovery", defaults.offerRecovery)
@@ -769,7 +771,8 @@ final class SettingsStore: ObservableObject {
             DelegationCenter.shared.apply()
             AgentMCPInstaller.shared.sync(server: DelegationMCP.serverName)
         }
-        if values.agentsReadSidebarTerminal != old.agentsReadSidebarTerminal {
+        if values.agentsReadSidebarTerminal != old.agentsReadSidebarTerminal
+            || values.agentsSuggestSidebarCommands != old.agentsSuggestSidebarCommands {
             TerminalAccessCenter.shared.apply()
             AgentMCPInstaller.shared.sync(server: TerminalMCP.serverName)
         }

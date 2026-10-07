@@ -327,6 +327,7 @@ private struct SidePanelTerminal: View {
     @ObservedObject var ui: UIState
     @StateObject private var anchor = TerminalAnchor()
     @ObservedObject private var settings = SettingsStore.shared
+    @ObservedObject private var suggestions = SidebarSuggestions.shared
     @State private var generation = 0
     @State private var exited = false
 
@@ -338,9 +339,34 @@ private struct SidePanelTerminal: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if let suggestion = suggestions.pending[window.id] { suggestionStrip(suggestion.command) }
             if settings.values.agentsReadSidebarTerminal { readableNote }
             shell
         }
+    }
+
+    /// The command an agent put at the prompt: read it, then Run or Clear.
+    private func suggestionStrip(_ command: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "sparkles").font(.system(size: 10)).foregroundStyle(Theme.accent)
+            Text(command)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(2).truncationMode(.middle)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            OctetButton(title: "Run", kind: .primary, compact: true) {
+                if let view = SidebarTerminals.shared.view(for: window.id) { SidebarTerminals.shared.run(in: view) }
+                suggestions.dismiss(window: window.id)
+            }
+            OctetButton(title: "Clear", kind: .secondary, compact: true) {
+                if let view = SidebarTerminals.shared.view(for: window.id) { SidebarTerminals.shared.clearLine(in: view) }
+                suggestions.dismiss(window: window.id)
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(Theme.card)
+        .help("An agent put this at the prompt. It hasn't run.")
     }
 
     /// Said over the terminal for as long as agents can read it.
