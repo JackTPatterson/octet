@@ -178,6 +178,25 @@ struct RuntimePanel: View {
                 entry(runtime, location: location, paneId: pane.paneId, session: nil)
             }
         }
+        // Subagents the Subagent Tabs hook opened as tabs of their own,
+        // launched from this tab's panes (or by those subagents).
+        let launchers = Set(targetPanes.map(\.paneId))
+        if !launchers.isEmpty {
+            for viewer in snapshot.subagentViewers(launchedFrom: launchers) {
+                let title = viewer.tab.map { TabAutoName.display(label: $0.label, number: $0.number) }
+                    ?? viewer.agent.name ?? "Subagent"
+                let status = viewer.agent.agentStatus
+                result.append(RuntimeEntry(id: "subagent-tab-\(viewer.agent.paneId)", kind: .agent,
+                                           title: title,
+                                           detail: status == .unknown ? "Running" : stateLabel(status).capitalized,
+                                           location: "Its own tab", command: nil,
+                                           prompt: nil, output: nil,
+                                           process: status == .done ? "Finished" : "Working in its tab",
+                                           depth: viewer.depth, accentSeed: Self.seed(viewer.agent.paneId),
+                                           agentID: viewer.agent.agent ?? "claude", modelName: nil,
+                                           paneId: viewer.agent.paneId, autoReveal: true))
+            }
+        }
 
         if let session = activeSession {
             result += carriedRuntimes(in: session)
@@ -641,10 +660,16 @@ private struct RuntimeRow: View {
 /// runs, its latest output, and where it belongs.
 private struct RuntimeDetails: View {
     let entry: RuntimeEntry
+    @EnvironmentObject private var window: WindowContext
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Rectangle().fill(entry.tint.opacity(0.25)).frame(height: 1)
+            if let paneId = entry.paneId, entry.kind == .agent {
+                OctetButton(title: "Show Tab", kind: .secondary, compact: true) {
+                    window.focusAgent(paneId: paneId)
+                }
+            }
             RuntimeDetailSection(title: "Status", tint: entry.tint) {
                 HStack(spacing: 7) {
                     LoadingLine(width: 16, color: entry.tint)

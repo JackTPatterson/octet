@@ -22,6 +22,7 @@ struct RootView: View {
     /// The connection card over the terminal, while it shows.
     @State private var connecting: SSHTarget?
     @ObservedObject private var tabDrag = TabDrag.shared
+    @ObservedObject private var recapCenter = RecapCenter.shared
     /// The panes of the tab showing, fetched when a tab drag starts.
     @State private var dropLayout: PaneLayout?
     @ObservedObject private var agents = AgentCenter.shared
@@ -205,11 +206,12 @@ struct RootView: View {
                     Rectangle().fill(Theme.divider).frame(width: 1)
                         .frame(maxHeight: .infinity, alignment: .leading)
                     SidePanel(store: store, ui: ui)
-                        .frame(width: SidePanel.width - 1)
+                        .frame(width: ui.sidePanelWidth - 1)
                         .padding(.leading, 1)
-                        .offset(x: ui.sidePanelVisible ? 0 : SidePanel.width)
+                        .offset(x: ui.sidePanelVisible ? 0 : ui.sidePanelWidth)
+                    SidePanelResizeHandle(ui: ui)
                 }
-                .frame(width: ui.sidePanelVisible ? SidePanel.width : 0, alignment: .leading)
+                .frame(width: ui.sidePanelVisible ? ui.sidePanelWidth : 0, alignment: .leading)
                 .clipped()
                 .allowsHitTesting(ui.sidePanelVisible)
                 .accessibilityHidden(!ui.sidePanelVisible)
@@ -221,6 +223,15 @@ struct RootView: View {
             }
             .padding(.top, contentTop)
         }
+        .overlay(alignment: .top) {
+            // Only the window in front shows it, once.
+            if let recap = recapCenter.shown, recapCenter.showsIn(window) {
+                RecapCard(recap: recap)
+                    .padding(.top, contentTop + 24)
+                    .transition(motion.animates(.toasts) ? .move(edge: .top).combined(with: .opacity) : .identity)
+            }
+        }
+        .animation(motion.animation(.toasts, .smooth(duration: 0.22)), value: recapCenter.shown)
         .onAppear { appeared() }
         .modifier(TerminalWatchers(
             anchor: terminalAnchor, tabDrag: tabDrag,
@@ -270,6 +281,10 @@ struct RootView: View {
             }
             .id(settings.themeKey)
         }
+        .sheet(isPresented: $ui.usageBreakdownVisible) {
+            UsageBreakdownView { ui.usageBreakdownVisible = false }
+                .environmentObject(window)
+        }
         // Above the palette, so a confirm raised while it's open isn't buried.
         .overlay { ConfirmDialog(center: confirmations) }
         .overlay { PastePreviewDialog(center: PastePreviewCenter.shared, store: store) }
@@ -278,6 +293,7 @@ struct RootView: View {
         .animation(motion.animation(.sidebar), value: ui.sidePanelVisible)
         .onAppear {
             window.todos.attach(window)
+            window.projectAgent.attach(window)
             window.git.attach(window)
             window.pluginPanels.attach(window)
             window.terminalQuestions.attach(window)
@@ -296,6 +312,7 @@ struct RootView: View {
     private func appeared() {
             AgentBoardWindow.opener = { openWindow(id: AgentBoardWindow.id) }
             MarketplaceWindow.opener = { openWindow(id: MarketplaceWindow.id) }
+            HuggingFaceWindow.opener = { openWindow(id: HuggingFaceWindow.id) }
             PluginSettingsOpener.opener = { openSettings() }
             ClipboardWatcher.shared.start()
             #if DEBUG
@@ -547,6 +564,8 @@ struct RootView: View {
                     }
                     if let dragged = tabDrag.workspaceId {
                         WorkspaceDropLayer(workspaceId: dragged, window: window,
+                                           splitsInto: boardHere == nil && agents.active(in: window.focusedWorkspace?.workspaceId) == nil
+                                               ? window.displayedFocusedTabId : nil,
                                            animation: motion.animation(.tabs, .smooth(duration: 0.15)))
                     }
                 }
@@ -649,23 +668,33 @@ struct RootView: View {
     // MARK: - Splitting by drag
 
     /// The tab a dragged tab would split into: the one showing, when the
-    /// terminal is what's showing. Only a single-pane tab can move in, and not
-    /// into itself.
+    /// terminal is what's showing. The tab in front dropped on its own edge
+    /// splits the screen there with a fresh shell; another tab moves in.
     private func splitTargetTab(for dragged: String) -> String? {
         guard boardHere == nil, agents.active(in: window.focusedWorkspace?.workspaceId) == nil,
-              let showing = window.displayedFocusedTabId, showing != dragged,
-              store.onlyPane(ofTab: dragged) != nil else { return nil }
+              let showing = window.displayedFocusedTabId else { return nil }
         return showing
     }
 
     private func splitDropLayer(moving dragged: String, into showing: String) -> some View {
-        let fromElsewhere = store.snapshot.tabs.first { $0.tabId == dragged }?.workspaceId != window.focusedWorkspace?.workspaceId
+        let fromElsewhere = dragged != showing
+            && store.snapshot.tabs.first { $0.tabId == dragged }?.workspaceId != window.focusedWorkspace?.workspaceId
         return SplitDropLayer(layout: dropLayout, acceptsTab: fromElsewhere,
                               animation: motion.animation(.tabs, .smooth(duration: 0.15))) { target in
             guard let edge = target.edge else {
                 return WindowActions.moveTab(dragged, into: window, at: window.displayedTabs.count)
             }
-            store.splitTab(dragged, into: showing, beside: target.paneId, edge: edge)
+            if dragged == showing {
+                // Its own edge: the screen splits here, in the same folder.
+                let cwd = store.snapshot.workingDirectory(ofPane: target.paneId)
+                    ?? store.snapshot.panes.first { $0.paneId == target.paneId }?.effectiveCwd
+                store.splitNewPane(beside: target.paneId, edge: edge, cwd: cwd, keepingSide: true)
+            } else if store.onlyPane(ofTab: dragged) != nil {
+                store.splitTab(dragged, into: showing, beside: target.paneId, edge: edge)
+            } else {
+                ToastCenter.shared.info("A split tab can't move in as one pane",
+                                        detail: "Move its panes out first (Pane › Move Pane to New Tab), then drag each.")
+            }
         }
     }
 
@@ -830,6 +859,8 @@ final class UIState: ObservableObject {
     @Published var review: DiffReviewModel?
     /// Bumped to put the keyboard in the sidebar's search field.
     @Published var sidebarSearchRequest = 0
+    /// The usage breakdown sheet.
+    @Published var usageBreakdownVisible = false
     @Published var sidebarVisible = UserDefaults.standard.object(forKey: "octet.sidebarVisible") as? Bool ?? true {
         didSet { UserDefaults.standard.set(sidebarVisible, forKey: "octet.sidebarVisible") }
     }
@@ -886,6 +917,57 @@ final class UIState: ObservableObject {
         didSet { UserDefaults.standard.set(Double(sidebarWidth), forKey: "octet.sidebarWidth") }
     }
     static let sidebarMinWidth: CGFloat = 200
+
+    /// Drag the right panel's edge to resize it (its default width up to
+    /// half the window).
+    @Published var sidePanelWidth: CGFloat = {
+        let saved = UserDefaults.standard.double(forKey: "octet.sidePanelWidth")
+        return saved > 0 ? max(UIState.sidePanelMinWidth, CGFloat(saved)) : SidePanel.width
+    }() {
+        didSet { UserDefaults.standard.set(Double(sidePanelWidth), forKey: "octet.sidePanelWidth") }
+    }
+    static let sidePanelMinWidth: CGFloat = 260
+}
+
+/// An invisible strip along the right panel's left edge: drag to resize,
+/// double-click to go back to the default width.
+private struct SidePanelResizeHandle: View {
+    @ObservedObject var ui: UIState
+    @State private var startWidth: CGFloat?
+    @State private var hovering = false
+
+    private var maxWidth: CGFloat {
+        max(SidePanel.width, (NSApp.keyWindow?.frame.width ?? 1280) / 2)
+    }
+
+    var body: some View {
+        Color.clear
+            .frame(width: 7)
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .onHover { inside in
+                guard inside != hovering else { return }
+                hovering = inside
+                if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+            }
+            .gesture(
+                DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                    .onChanged { drag in
+                        let start = startWidth ?? ui.sidePanelWidth
+                        startWidth = start
+                        ui.sidePanelWidth = min(maxWidth, max(UIState.sidePanelMinWidth, (start - drag.translation.width).rounded()))
+                    }
+                    .onEnded { _ in startWidth = nil }
+            )
+            .onTapGesture(count: 2) { ui.sidePanelWidth = SidePanel.width }
+            .help("Drag to resize the panel. Double-click to reset.")
+            .accessibilityLabel("Panel width")
+            .accessibilityValue("\(Int(ui.sidePanelWidth)) points")
+            .accessibilityAdjustableAction { direction in
+                let delta: CGFloat = direction == .increment ? 16 : -16
+                ui.sidePanelWidth = min(maxWidth, max(UIState.sidePanelMinWidth, ui.sidePanelWidth + delta))
+            }
+    }
 }
 
 /// An invisible strip over the sidebar's divider: drag to resize, double-click

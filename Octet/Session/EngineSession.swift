@@ -76,6 +76,7 @@ struct EngineSession {
             env["OCTET_CLI"] = cli
         }
         env[PeerControl.socketVariable] = Self.supportDirectory.appendingPathComponent(PeerControl.socketName).path
+        env[TerminalControl.socketVariable] = Self.supportDirectory.appendingPathComponent(TerminalControl.socketName).path
         return env
     }
 

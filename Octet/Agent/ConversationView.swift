@@ -127,12 +127,17 @@ private struct ConversationHeader: View {
     @ObservedObject var session: AgentSession
     let client: EngineClient
     @ObservedObject private var accounts = AccountStore.shared
+    /// Read when a turn ends, not on every streamed word.
+    @State private var verification: Verification = .noEdits
 
     var body: some View {
         let conversation = session.conversation
         HStack(spacing: 10) {
             ProjectLocation(directory: session.cwd, branch: branch, worktree: workspace?.worktree)
             Spacer(minLength: 8)
+            if !conversation.isRunning, verification != .noEdits {
+                VerificationBadge(verification: verification, compact: true)
+            }
             if let used = conversation.contextUsed {
                 ContextMeter(used: used, window: conversation.contextWindow)
             }
@@ -159,6 +164,9 @@ private struct ConversationHeader: View {
         .padding(.horizontal, 16)
         .frame(height: 36)
         .background(Theme.chrome)
+        .onChange(of: conversation.isRunning, initial: true) { _, running in
+            if !running { verification = Verification.assess(session.conversation.items) }
+        }
     }
 
     private var workspace: EngineWorkspace? {
@@ -550,18 +558,18 @@ private struct Transcript: View {
     }
 
     private var blockingState: AgentBlockState? {
-        let transcriptMessages = session.conversation.items.compactMap { item -> String? in
-            switch item.kind {
-            // A normal assistant answer can legitimately discuss resetting a
-            // limit (retry code is a common example). Only lifecycle notices
-            // and explicit errors are allowed to replace the transcript with
-            // a blocking splash.
-            case .notice(let text): return text
-            default: return nil
-            }
+        // A normal assistant answer can legitimately discuss resetting a
+        // limit (retry code is a common example). Only lifecycle notices
+        // and explicit errors are allowed to replace the transcript with
+        // a blocking splash, and only while the conversation is stopped on
+        // one: once anything follows it, the work went on and the
+        // transcript is what to show.
+        var transcriptMessages: [String] = []
+        for item in session.conversation.items.reversed() {
+            guard case .notice(let text) = item.kind else { break }
+            transcriptMessages.append(text)
         }
-        let messages = [session.startupError, session.conversation.lastError].compactMap { $0 }
-            + Array(transcriptMessages.reversed())
+        let messages = [session.startupError, session.conversation.lastError].compactMap { $0 } + transcriptMessages
         if let message = messages.first(where: { message in
             let lower = message.lowercased()
             return lower.contains("isn't installed") || lower.contains("not installed")
@@ -592,7 +600,7 @@ private struct Transcript: View {
         }
         return AgentBlockState(title: "\(session.engine.displayName) usage limit reached",
                                message: lines.joined(separator: "\n"), actions: actions,
-                               resetAt: Self.resetDate(in: message))
+                               resetAt: Self.resetDate(in: message), isLimit: true)
     }
 
     /// CLI notices sometimes omit the scheme (`claude.ai/settings/...`).
@@ -764,6 +772,8 @@ private struct AgentBlockState {
     let message: String
     var actions: [AgentBlockAction] = []
     var resetAt: Date? = nil
+    /// A usage or spend limit, which another agent or a later time can get past.
+    var isLimit = false
 }
 
 private struct AgentBlockAction: Identifiable {
@@ -773,6 +783,7 @@ private struct AgentBlockAction: Identifiable {
 }
 
 private struct AgentBlockingState: View {
+    @EnvironmentObject private var window: WindowContext
     @ObservedObject var session: AgentSession
     let state: AgentBlockState
 
@@ -792,6 +803,7 @@ private struct AgentBlockingState: View {
             if let resetAt = state.resetAt {
                 LimitCountdown(resetAt: resetAt)
             }
+            if state.isLimit { limitWays(resetAt: state.resetAt) }
             if !state.actions.isEmpty {
                 HStack(spacing: 8) {
                     ForEach(state.actions) { action in
@@ -816,6 +828,42 @@ private struct AgentBlockingState: View {
         .frame(maxWidth: .infinity, minHeight: 360, alignment: .center)
         .padding(.horizontal, 24)
         .accessibilityElement(children: .combine)
+    }
+}
+
+extension AgentBlockingState {
+    /// What can be done instead of waiting: carry on in another agent, or
+    /// have this one carry on by itself when the limit resets.
+    @ViewBuilder
+    fileprivate func limitWays(resetAt: Date?) -> some View {
+        let others = ConversationHandoff.otherEngines(than: session)
+        let canHandOff = ConversationHandoff.canHandOff(session)
+        VStack(spacing: 8) {
+            if canHandOff, !others.isEmpty {
+                HStack(spacing: 8) {
+                    ForEach(others, id: \.self) { engine in
+                        OctetButton(title: "Continue in \(engine.displayName)", kind: .primary, compact: true) {
+                            ConversationHandoff.continueConversation(session, in: engine, reason: .limit, store: window.store)
+                        }
+                        .help("Open a conversation in \(engine.displayName) here with a summary of the work so far")
+                    }
+                }
+            }
+            if let resetAt, resetAt > Date() {
+                if let at = session.resumeAt {
+                    HStack(spacing: 8) {
+                        Text("Will continue at \(at.formatted(date: .omitted, time: .shortened))")
+                            .font(Theme.uiFont).foregroundStyle(Theme.textSecondary)
+                        OctetButton(title: "Cancel", kind: .ghost, compact: true) { session.cancelResume() }
+                    }
+                } else {
+                    OctetButton(title: "Continue when it resets", icon: "clock", kind: .secondary, compact: true) {
+                        session.scheduleResume(afterReset: resetAt)
+                    }
+                    .help("Octet sends \u{201C}continue\u{201D} for you just after the limit resets. Octet has to be open.")
+                }
+            }
+        }
     }
 }
 
@@ -1410,6 +1458,16 @@ private struct PermissionCard: View {
                             note = ""
                         }
                         .keyboardShortcut(.defaultAction)
+                    }
+                    if let rule = session.alwaysRule(for: request) {
+                        HStack {
+                            Spacer()
+                            OctetButton(title: rule.title, icon: "checkmark", kind: .ghost, compact: true) {
+                                session.answerPermission(allow: true, always: true)
+                                note = ""
+                            }
+                            .help("Allow this now and don't ask again in this project. Saved to .claude/settings.local.json, where it can be removed.")
+                        }
                     }
                 }
                 .padding(12)

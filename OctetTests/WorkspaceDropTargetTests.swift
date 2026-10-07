@@ -23,6 +23,25 @@ final class WorkspaceDropTargetTests: XCTestCase {
         XCTAssertEqual(top.kept, CGRect(x: 100, y: 50, width: 1200, height: 400))
     }
 
+    func testEdgeZonesSplitTheScreenAndSayWhere() {
+        XCTAssertEqual(WorkspaceDropTarget.beside(.right).title, "Split Right Here")
+        XCTAssertEqual(WorkspaceDropTarget.beside(.top).title(workspace: "octet"), "Split Up in \u{201C}octet\u{201D}")
+        XCTAssertEqual(WorkspaceDropTarget.beside(.left).title(workspace: ""), "Split Left Here")
+        XCTAssertEqual(WorkspaceDropTarget.here.title(workspace: "octet"), "Show Here")
+    }
+
+    func testAFreshPaneLandsOnTheSideThatIsntKept() {
+        // The engine puts a new pane right or below. Keeping the existing
+        // pane on the right means the new one goes left: split, then swap.
+        XCTAssertTrue(SplitEdge.right.swapsToKeep)
+        XCTAssertTrue(SplitEdge.bottom.swapsToKeep)
+        XCTAssertFalse(SplitEdge.left.swapsToKeep)
+        XCTAssertFalse(SplitEdge.top.swapsToKeep)
+        // A new pane taking the dropped side swaps the other way round.
+        XCTAssertTrue(SplitEdge.left.swaps)
+        XCTAssertFalse(SplitEdge.right.swaps)
+    }
+
     func testHighlightIsTheHalfTaken() {
         XCTAssertEqual(WorkspaceDropTarget.beside(.right).highlight(in: size), CGRect(x: 500, y: 0, width: 500, height: 600))
         XCTAssertEqual(WorkspaceDropTarget.here.highlight(in: size), CGRect(origin: .zero, size: size))

@@ -21,6 +21,27 @@ final class WorkspaceIconTests: XCTestCase {
         XCTAssertNil(WorkspaceIconPath.resolve("  \n", in: root))
     }
 
+    func testAnotherProjectsIconInsideTheFolderIsNotTheFolders() throws {
+        // ~/Developer holds projects; it isn't one.
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("octet-icon-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let nested = dir.appendingPathComponent("locklandia/App/Assets.xcassets/AppIcon.appiconset")
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent("locklandia/.git"), withIntermediateDirectories: true)
+        try Data([0x89]).write(to: nested.appendingPathComponent("icon-1024.png"))
+        let root = dir.path
+        XCTAssertNil(WorkspaceIconPath.resolve("locklandia/App/Assets.xcassets/AppIcon.appiconset/icon-1024.png", in: root))
+        // Opened as its own workspace, the same icon is the project's.
+        let project = dir.appendingPathComponent("locklandia").path
+        XCTAssertNotNil(WorkspaceIconPath.resolve("App/Assets.xcassets/AppIcon.appiconset/icon-1024.png", in: project))
+        // The workspace's own .git doesn't count.
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent(".git"), withIntermediateDirectories: true)
+        XCTAssertNil(WorkspaceIconPath.resolve("locklandia/App/Assets.xcassets/AppIcon.appiconset/icon-1024.png", in: root))
+        XCTAssertFalse(WorkspaceIconPath.insideNestedProject(root + "/public/favicon.png", root: root, exists: { _ in false }))
+        XCTAssertTrue(WorkspaceIconPath.insideNestedProject(root + "/a/b/icon.png", root: root, exists: { $0 == root + "/a/.git" }))
+        XCTAssertFalse(WorkspaceIconPath.insideNestedProject(root + "/a/icon.png", root: root, exists: { $0 == root + "/.git" }))
+    }
+
     func testWorkspaceIconsReadFromAManifest() throws {
         let manifest = try JSONDecoder().decode(OctetPluginManifest.self, from: Data(#"""
         {"id": "p", "name": "P", "contributes": {"workspaceIcons": [{"id": "favicon", "run": "sh find.sh", "refreshSeconds": 300}]}}

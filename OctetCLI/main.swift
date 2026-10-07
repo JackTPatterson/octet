@@ -25,6 +25,14 @@ import Foundation
 //   octet-cli peer-mcp                  the same, as MCP tools for agents (stdio)
 //   octet-cli delegate-mcp              Agent Delegation's tools: another agent here
 //                                      reviews an agent's changes or takes a task
+//   octet-cli terminal read [--lines <n>]
+//                                      the latest output of the sidebar terminal
+//                                      (read only; Settings › Terminal turns it on)
+//   octet-cli terminal suggest <command>
+//                                      put a command at the sidebar terminal's
+//                                      prompt for the person to run (never run
+//                                      for them; Settings › Terminal turns it on)
+//   octet-cli terminal-mcp              the same, as an MCP tool for any agent (stdio)
 //   octet-cli mcp-permission --socket <path>
 //                                      permission prompt tool for conversations
 //                                      Octet drives headless (stdio MCP server)
@@ -263,6 +271,43 @@ case "peer-mcp":
         }
     }
     exit(0)
+case "terminal-mcp":
+    // The sidebar terminal's one tool, for agents in Octet (stdio MCP).
+    let socket = TerminalControl.resolveSocket(environment: environment)
+    let origin = TerminalControl.Origin.current(environment)
+    while let line = readLine(strippingNewline: true) {
+        if let reply = TerminalMCP.respond(to: line, origin: origin, call: { method, params in
+            try TerminalControl.call(socketPath: socket, method: method, params: params)
+        }) {
+            print(reply)
+            fflush(stdout)
+        }
+    }
+case "terminal":
+    // For an agent that can run a command but takes no MCP tools.
+    let rest = Array(arguments.dropFirst())
+    let usage = "usage: octet-cli terminal read [--lines <n>] | terminal suggest <command>"
+    guard let verb = rest.first, ["read", "suggest"].contains(verb) else { fail(usage) }
+    guard let origin = TerminalControl.Origin.current(environment) else { fail(TerminalControl.notInOctet) }
+    var params = origin.params
+    let socket = TerminalControl.resolveSocket(environment: environment)
+    do {
+        if verb == "read" {
+            params["lines"] = TerminalControl.clampLines(option("--lines", in: rest))
+            print(TerminalMCP.format(try TerminalControl.call(socketPath: socket, method: .read, params: params)))
+        } else {
+            // Put at the prompt for the person to run; never run for them.
+            guard let command = TerminalControl.stagedCommand(rest.dropFirst().joined(separator: " ")) else {
+                fail("Give one line of text, up to \(TerminalControl.maxCommandLength) characters, with no control or invisible characters.")
+            }
+            params["command"] = command
+            _ = try TerminalControl.call(socketPath: socket, method: .suggest, params: params)
+            print(TerminalMCP.formatSuggestion(["command": command]))
+        }
+        exit(0)
+    } catch {
+        fail(String(describing: error))
+    }
 case "mcp-permission":
     guard let socketPath = option("--socket", in: Array(arguments.dropFirst())) else {
         fail("usage: octet-cli mcp-permission --socket <path>")
@@ -274,5 +319,5 @@ case "mcp-permission":
     }
 
 default:
-    fail("usage: octet-cli <open [folder]|run <agent> [--in <folder>] [--prompt <text>]|send <text>|panes|read [--pane <id>] [--lines <n>]|peer …|peer-mcp|delegate-mcp|hook <agent>|agent-watch|install-subagent-hook [agent]|uninstall-subagent-hook [agent]|mcp-permission --socket <path>>")
+    fail("usage: octet-cli <open [folder]|run <agent> [--in <folder>] [--prompt <text>]|send <text>|panes|read [--pane <id>] [--lines <n>]|peer …|peer-mcp|delegate-mcp|terminal read|terminal suggest|terminal-mcp|hook <agent>|agent-watch|install-subagent-hook [agent]|uninstall-subagent-hook [agent]|mcp-permission --socket <path>>")
 }

@@ -10,6 +10,7 @@ struct OpenCodeModelBrowser: View {
     @ObservedObject private var store = OpenCodeCatalogStore.shared
     @State private var query = ""
     @State private var signedInOnly = false
+    @State private var addingFromHuggingFace = false
     @FocusState private var searching: Bool
 
     var body: some View {
@@ -24,6 +25,9 @@ struct OpenCodeModelBrowser: View {
             store.loadEverything(cwd: session.cwd)
             searching = true
         }
+        .sheet(isPresented: $addingFromHuggingFace) {
+            HuggingFaceModelView(session: session) { addingFromHuggingFace = false }
+        }
     }
 
     private var header: some View {
@@ -36,6 +40,10 @@ struct OpenCodeModelBrowser: View {
                         .font(Theme.uiFont).foregroundStyle(Theme.textTertiary)
                 }
                 Spacer()
+                OctetButton(title: "Add from Hugging Face…", icon: "square.and.arrow.down", kind: .ghost, compact: true) {
+                    addingFromHuggingFace = true
+                }
+                .help("Download a GGUF model through Ollama and use it here")
                 OctetButton(title: "Done", kind: .secondary, compact: true) { close() }
                     .keyboardShortcut(.cancelAction)
             }

@@ -89,12 +89,18 @@ enum SettingsSearchIndex {
         .init(.terminal, "Warn before pasting risky text", ["paste", "protection", "safe", "warn", "multi-line"]),
         .init(.terminal, "Programs reading the clipboard", ["clipboard", "osc 52", "osc52", "read", "permission"]),
         .init(.terminal, "Inline images", ["image", "picture", "kitty", "graphics"]),
+        .init(.terminal, "Let agents read the sidebar terminal", anchor: "Sidebar terminal",
+              ["agent", "claude", "codex", "mcp", "read", "output", "logs", "right panel", "octet-terminal", "privacy"]),
+        .init(.terminal, "Let agents suggest commands in the sidebar terminal", anchor: "Sidebar terminal",
+              ["agent", "claude", "codex", "mcp", "command", "run", "paste", "suggest", "right panel", "octet-terminal"]),
     ]
 
     private static let agents: [SettingsSearchEntry] = [
         .init(.agents, "Quick answers", ["question", "prompt", "permission", "corner", "choice", "reply"]),
         .init(.agents, "Visual twin", ["terminal", "conversation", "transcript"]),
         .init(.agents, "Open the twin for new agents", ["automatic", "terminal", "conversation"]),
+        .init(.agents, "Recap when you come back", ["recap", "away", "catch up", "summary", "while you were away", "back", "digest"]),
+        .init(.agents, "Recap: away for at least", anchor: "Away for at least", ["recap", "away", "minutes", "threshold"]),
         .init(.agents, "Agent notifications", anchor: "When an agent finishes or needs you",
               ["notification", "notify", "alert", "banner", "done", "finished"]),
         .init(.agents, "Wait before notifying", ["notification", "delay", "wait", "seconds"]),

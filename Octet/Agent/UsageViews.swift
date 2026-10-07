@@ -156,6 +156,13 @@ struct AccountCard: View {
                                window: graphWindow,
                                updatedAt: account.updatedAt)
             }
+            if account.kind == .subscription || account.kind == .apiKey {
+                Button("Where did it go?") { WindowRegistry.shared.key?.ui.usageBreakdownVisible = true }
+                    .buttonStyle(.plain)
+                    .font(Theme.captionFont.weight(.medium))
+                    .foregroundStyle(Theme.accent)
+                    .help("Your conversations, ranked by what they spent")
+            }
         }
         .padding(12)
         .frame(width: 256, alignment: .leading)

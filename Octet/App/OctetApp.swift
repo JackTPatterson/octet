@@ -71,6 +71,7 @@ struct OctetApp: App {
                     CodexAgentsStore.shared.start()
                     AgentDiscoveryStore.shared.scanIfStale()
                     AgentMCPInstaller.shared.start()
+                    RecapCenter.shared.start()
                     repairInstalledSubagentHooks()
                     DebugSnapshot.start()
                 }
@@ -96,6 +97,11 @@ struct OctetApp: App {
             MarketplaceView(store: marketplace)
         }
         .defaultSize(width: 900, height: 620)
+        Window("Add Model from Hugging Face", id: HuggingFaceWindow.id) {
+            HuggingFaceModelView()
+        }
+        .defaultSize(width: 720, height: 620)
+        .windowResizability(.contentSize)
         Window("Running Terminal Agents", id: "terminal-agents") {
             AgentBoardView(store: store) { agent in
                 WindowRegistry.shared.key?.focus(AgentEvent(id: agent.paneId, kind: .finished, agent: agent.agent,
@@ -229,6 +235,7 @@ struct OctetCommands: Commands {
                 .keyboardShortcut(OctetShortcut.openFile.keyboardShortcut)
             Button(OctetShortcut.openFolder.title) { KeyWindow.act { PaletteCatalog.openFolder(window: $0) } }
                 .keyboardShortcut(OctetShortcut.openFolder.keyboardShortcut)
+            Button("Add Model from Hugging Face…") { HuggingFaceWindow.open() }
             Divider()
             // ⌘W closes Settings or Marketplace when one of them is in front.
             Button(OctetShortcut.closeTab.title) {
@@ -293,6 +300,7 @@ struct OctetCommands: Commands {
                 .keyboardShortcut(OctetShortcut.hints.keyboardShortcut)
             Button(OctetShortcut.toggleSidebar.title) { KeyWindow.act { $0.ui.sidebarVisible.toggle() } }
                 .keyboardShortcut(OctetShortcut.toggleSidebar.keyboardShortcut)
+            Button("Show Recap") { RecapCenter.shared.showLatest() }
             Button(OctetShortcut.searchWorkspaces.title) {
                 KeyWindow.act { context in
                     context.ui.sidebarVisible = true
@@ -456,6 +464,19 @@ enum MarketplaceWindow {
     }
 }
 
+
+/// Opens the Hugging Face model window from the File menu, the palette and
+/// OpenCode's model browser.
+@MainActor
+enum HuggingFaceWindow {
+    static let id = "huggingface-model"
+    static var opener: (() -> Void)?
+
+    static func open() {
+        NSApp.activate(ignoringOtherApps: true)
+        opener?()
+    }
+}
 
 /// Static bridge so the terminal surface can consult Octet's command line without
 /// knowing about Octet's stores.

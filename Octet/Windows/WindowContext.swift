@@ -30,6 +30,8 @@ final class WindowContext: ObservableObject, Identifiable {
     let ui = UIState()
     /// The plan of the agent in front, for the todo panel and its button.
     let todos = TodoModel()
+    /// The project's instructions files and allow rules, for the right panel.
+    let projectAgent = ProjectAgentModel()
     /// The agents' git, for the git panel and its button.
     let git = GitPanelModel()
     /// Plugins' panels for the folder in front, for their tab bar buttons.

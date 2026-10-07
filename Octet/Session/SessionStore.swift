@@ -210,6 +210,7 @@ final class SessionStore: ObservableObject {
         AttentionWatcher.shared.start(store: self)
         PeerCenter.shared.apply(store: self)
         DelegationCenter.shared.apply(store: self)
+        TerminalAccessCenter.shared.apply(store: self)
         let client = self.client
         let thread = Thread { [weak self] in
             while self != nil {
@@ -678,6 +679,7 @@ final class SessionStore: ObservableObject {
         var shown = WindowRegistry.shared.shownTabIds
         if shown.isEmpty, let tab = displayedFocusedTabId ?? snapshot.focusedTabId { shown.insert(tab) }
         let appActive = NSApp?.isActive == true
+        RecapCenter.shared.observe(snapshot)
         let events = activityWatcher.events(in: snapshot) { agent in
             appActive && agent.tabId.map(shown.contains) == true
         }
@@ -1272,6 +1274,33 @@ final class SessionStore: ObservableObject {
     func onlyPane(ofTab tabId: String) -> EnginePane? {
         let panes = snapshot.panes.filter { $0.tabId == tabId }
         return panes.count == 1 ? panes.first : nil
+    }
+
+    /// A fresh pane beside `targetPane`, in `cwd`. With `keepingSide` the
+    /// pane already there takes that side and the new one the other, as when
+    /// the tab in front is dropped on its own edge; without, the new pane
+    /// takes `edge`'s side, as when a workspace card is dropped there.
+    func splitNewPane(beside targetPane: String, edge: SplitEdge, cwd: String?, keepingSide: Bool) {
+        let client = self.client
+        let multi = WindowRegistry.shared.isMulti
+        var params: [String: Any] = ["target_pane_id": targetPane, "direction": edge.split, "focus": !multi]
+        if let cwd { params["cwd"] = cwd }
+        let swaps = keepingSide ? edge.swapsToKeep : edge.swaps
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let outcome = Result {
+                let created = EngineCreated(result: try client.call("pane.split", params))
+                if swaps, let pane = created.paneId {
+                    try client.call("pane.swap", ["source_pane_id": pane, "target_pane_id": targetPane])
+                }
+            }
+            DispatchQueue.main.async {
+                if case .failure(let error) = outcome {
+                    ToastCenter.shared.fail(nil, "Couldn't split the pane", detail: String(describing: error))
+                }
+                self?.scheduleRefresh()
+                OctetTerminalRuntime.focusTerminal()
+            }
+        }
     }
 
     /// Moves a single-pane tab into `targetTab`, beside `targetPane` on
