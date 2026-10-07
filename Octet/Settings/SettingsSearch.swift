@@ -95,6 +95,8 @@ enum SettingsSearchIndex {
         .init(.agents, "Quick answers", ["question", "prompt", "permission", "corner", "choice", "reply"]),
         .init(.agents, "Visual twin", ["terminal", "conversation", "transcript"]),
         .init(.agents, "Open the twin for new agents", ["automatic", "terminal", "conversation"]),
+        .init(.agents, "Recap when you come back", ["recap", "away", "catch up", "summary", "while you were away", "back", "digest"]),
+        .init(.agents, "Recap: away for at least", anchor: "Away for at least", ["recap", "away", "minutes", "threshold"]),
         .init(.agents, "Agent notifications", anchor: "When an agent finishes or needs you",
               ["notification", "notify", "alert", "banner", "done", "finished"]),
         .init(.agents, "Wait before notifying", ["notification", "delay", "wait", "seconds"]),
