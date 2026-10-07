@@ -22,6 +22,7 @@ struct RootView: View {
     /// The connection card over the terminal, while it shows.
     @State private var connecting: SSHTarget?
     @ObservedObject private var tabDrag = TabDrag.shared
+    @ObservedObject private var recapCenter = RecapCenter.shared
     /// The panes of the tab showing, fetched when a tab drag starts.
     @State private var dropLayout: PaneLayout?
     @ObservedObject private var agents = AgentCenter.shared
@@ -221,6 +222,15 @@ struct RootView: View {
             }
             .padding(.top, contentTop)
         }
+        .overlay(alignment: .top) {
+            // Only the window in front shows it, once.
+            if let recap = recapCenter.shown, recapCenter.showsIn(window) {
+                RecapCard(recap: recap)
+                    .padding(.top, contentTop + 24)
+                    .transition(motion.animates(.toasts) ? .move(edge: .top).combined(with: .opacity) : .identity)
+            }
+        }
+        .animation(motion.animation(.toasts, .smooth(duration: 0.22)), value: recapCenter.shown)
         .onAppear { appeared() }
         .modifier(TerminalWatchers(
             anchor: terminalAnchor, tabDrag: tabDrag,
