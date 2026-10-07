@@ -141,3 +141,62 @@ final class RecapTests: XCTestCase {
         XCTAssertFalse(Recap(leftAt: start, cameBackAt: start, runs: []).isWorthShowing)
     }
 }
+
+final class VerificationTests: XCTestCase {
+    private func edit(_ id: String, _ path: String = "/r/a.swift") -> AgentItem {
+        let data = try? JSONSerialization.data(withJSONObject: ["file_path": path])
+        return AgentItem(id: id, kind: .tool(AgentToolCall(name: "Edit", summary: "", input: "", inputData: data, result: "ok")))
+    }
+
+    private func bash(_ id: String, _ command: String, failed: Bool = false, finished: Bool = true) -> AgentItem {
+        let data = try? JSONSerialization.data(withJSONObject: ["command": command])
+        return AgentItem(id: id, kind: .tool(AgentToolCall(name: "Bash", summary: command, input: "", inputData: data,
+                                                           result: finished ? "out" : nil, isError: failed)))
+    }
+
+    func testTestsAfterTheLastEditAreWhatCount() {
+        XCTAssertEqual(Verification.assess([]), .noEdits)
+        XCTAssertEqual(Verification.assess([bash("1", "swift test")]), .noEdits)
+        XCTAssertEqual(Verification.assess([edit("1"), bash("2", "swift test")]), .tested(passed: true))
+        XCTAssertEqual(Verification.assess([edit("1"), bash("2", "swift test", failed: true)]), .tested(passed: false))
+        // A test before the last edit doesn't vouch for it.
+        XCTAssertEqual(Verification.assess([edit("1"), bash("2", "npm test"), edit("3"), edit("4")]), .unchecked(edits: 2))
+        // The last edit is the one that has to be covered.
+        XCTAssertEqual(Verification.assess([edit("1"), edit("2"), bash("3", "pytest -q"), edit("4"), bash("5", "pytest -q")]),
+                       .tested(passed: true))
+    }
+
+    func testABuildAloneIsOnlyChecked() {
+        XCTAssertEqual(Verification.assess([edit("1"), bash("2", "swift build")]), .checked(passed: true))
+        XCTAssertEqual(Verification.assess([edit("1"), bash("2", "tsc --noEmit", failed: true)]), .checked(passed: false))
+        // Tests win over a build in the same stretch.
+        XCTAssertEqual(Verification.assess([edit("1"), bash("2", "npm run build"), bash("3", "npm test")]), .tested(passed: true))
+    }
+
+    func testARunStillGoingDoesntCount() {
+        XCTAssertEqual(Verification.assess([edit("1"), bash("2", "swift test", finished: false)]), .unchecked(edits: 1))
+    }
+
+    func testCommandsAreRecognisedInCompoundLines() {
+        for command in ["swift test --filter RecapTests", "cd app && npm test", "CI=1 pnpm run test:unit", "python3 -m pytest tests/",
+                        "xcodebuild -scheme Octet test", "cargo test --all", "go test ./...", "make test", "bundle exec rspec",
+                        "./gradlew test", "uv run pytest", "npx vitest run"] {
+            XCTAssertEqual(Verification.check(command), .test, command)
+        }
+        for command in ["swift build", "npm run lint", "cargo clippy", "eslint .", "tsc", "xcodebuild -scheme Octet build"] {
+            XCTAssertEqual(Verification.check(command), .build, command)
+        }
+        for command in ["git status", "ls -la", "cat tests/foo.swift", "echo done", "grep -rn test ."] {
+            XCTAssertNil(Verification.check(command), command)
+        }
+    }
+
+    func testMessages() {
+        XCTAssertNil(Verification.noEdits.message)
+        XCTAssertEqual(Verification.unchecked(edits: 1).message, "No tests since the last edit")
+        XCTAssertEqual(Verification.unchecked(edits: 3).message, "No tests since the last 3 edits")
+        XCTAssertFalse(Verification.tested(passed: true).needsLook)
+        XCTAssertTrue(Verification.tested(passed: false).needsLook)
+        XCTAssertTrue(Verification.checked(passed: true).needsLook)
+    }
+}

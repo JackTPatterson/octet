@@ -268,6 +268,9 @@ private struct RecapRow: View {
                                 compact: true, action: open)
                 }
                 Text(run.summary).font(Theme.captionFont.monospacedDigit()).foregroundStyle(Theme.textSecondary)
+                if let verification = run.verification {
+                    VerificationBadge(verification: verification)
+                }
                 if let reason = run.reason {
                     Text(reason).font(Theme.uiFont).foregroundStyle(RecapCard.color(run.outcome)).lineLimit(3)
                 }
@@ -299,6 +302,46 @@ private struct RecapRow: View {
                 Button(showingFiles ? "Show fewer" : "and \(run.files.count - 3) more") { showingFiles.toggle() }
                     .buttonStyle(.plain).font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
             }
+        }
+    }
+}
+
+/// Whether what the agent edited was tested afterwards: a dot and a line,
+/// green when tests passed, amber when nothing vouches for the last edit,
+/// red when the check failed.
+struct VerificationBadge: View {
+    let verification: Verification
+    var compact = false
+
+    var body: some View {
+        if let message = verification.message {
+            HStack(spacing: 5) {
+                Circle().fill(color).frame(width: 6, height: 6)
+                Text(compact ? short : message)
+                    .font(Theme.captionFont)
+                    .foregroundStyle(verification.needsLook ? color : Theme.textTertiary)
+                    .lineLimit(1)
+            }
+            .help(message + (verification.needsLook ? ". Look at it before trusting it." : ""))
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    private var color: Color {
+        switch verification {
+        case .tested(let passed): passed ? Color.green : Theme.danger
+        case .checked(let passed): passed ? Color.orange : Theme.danger
+        case .unchecked: Color.orange
+        case .noEdits: Theme.textTertiary
+        }
+    }
+
+    private var short: String {
+        switch verification {
+        case .tested(let passed): passed ? "Tests passed" : "Tests failed"
+        case .checked(let passed): passed ? "Not tested" : "Build failed"
+        case .unchecked: "Not tested"
+        case .noEdits: ""
         }
     }
 }

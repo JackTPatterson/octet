@@ -87,13 +87,17 @@ private struct CheckoutSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             summary
+            SyncRow(model: model, checkout: checkout)
             let offered = AgentGitHandoff.offered(for: checkout)
             if !offered.isEmpty, group.workers.contains(where: \.takesPrompts) {
                 // Filtered to one agent's edits, Commit commits just those.
                 let only = filter == nil ? nil : shownFiles.map(\.path)
                 HandoffRow(handoffs: offered, scoped: only != nil) { model.handoff($0, in: group, only: only) }
             }
-            if !checkout.files.isEmpty { changes }
+            if !checkout.files.isEmpty {
+                changes
+                CommitBox(model: model, group: group)
+            }
             timeline
         }
     }
@@ -154,7 +158,9 @@ private struct CheckoutSection: View {
     }
 
     private var changes: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        let staged = shownFiles.filter(\.staged)
+        let unstaged = shownFiles.filter { !$0.staged }
+        return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 SectionTitle(title: "Changes", count: checkout.files.count)
                 LineCounts(added: checkout.added, removed: checkout.removed)
@@ -169,18 +175,44 @@ private struct CheckoutSection: View {
             if !editors.isEmpty {
                 EditorFilterRow(editors: editors, group: group, filter: $filter)
             }
-            VStack(spacing: 1) {
-                ForEach(shownFiles.prefix(200)) { file in
-                    FileRow(file: file, editors: group.editors[file.path] ?? [],
-                            open: { model.review(checkout.top, path: file.path) },
-                            toggleStaged: { model.toggleStaged(file, in: checkout.top) },
-                            discard: { model.discard(file, in: checkout.top) })
-                }
+            if !staged.isEmpty {
+                fileList(staged, title: "Staged", action: "Unstage All") { model.unstageAll(checkout) }
             }
-            if shownFiles.count > 200 {
-                Text("and \(shownFiles.count - 200) more")
+            if !unstaged.isEmpty {
+                fileList(unstaged, title: staged.isEmpty ? nil : "Not Staged", action: "Stage All") { model.stageAll(checkout) }
+            }
+        }
+    }
+
+    /// One group of changed files, under a heading with its bulk action.
+    private func fileList(_ files: [AgentGit.FileChange], title: String?, action: String,
+                          perform: @escaping () -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 6) {
+                if let title {
+                    Text(title).font(Theme.captionFont.weight(.medium)).foregroundStyle(Theme.textSecondary)
+                    Text("\(files.count)").font(Theme.captionFont.monospacedDigit()).foregroundStyle(Theme.textTertiary)
+                }
+                Spacer()
+                Button(action, action: perform)
+                    .buttonStyle(.plain)
                     .font(Theme.captionFont)
                     .foregroundStyle(Theme.textTertiary)
+                    .disabled(model.busy[checkout.top] != nil)
+            }
+            .padding(.horizontal, 6)
+            .padding(.bottom, 2)
+            ForEach(files.prefix(200)) { file in
+                FileRow(file: file, editors: group.editors[file.path] ?? [],
+                        open: { model.review(checkout.top, path: file.path) },
+                        toggleStaged: { model.toggleStaged(file, in: checkout.top) },
+                        discard: { model.discard(file, in: checkout.top) })
+            }
+            if files.count > 200 {
+                Text("and \(files.count - 200) more")
+                    .font(Theme.captionFont)
+                    .foregroundStyle(Theme.textTertiary)
+                    .padding(.horizontal, 6)
             }
         }
     }
@@ -512,6 +544,138 @@ private struct EditorFilterRow: View {
     }
 }
 
+// MARK: - Sync and commit
+
+/// Fetch, pull, push and a pull request, with how far the branch is from
+/// its upstream on the buttons.
+private struct SyncRow: View {
+    @ObservedObject var model: GitPanelModel
+    let checkout: AgentGit.Checkout
+
+    var body: some View {
+        let busy = model.busy[checkout.top]
+        let branch = checkout.branch
+        HStack(spacing: 5) {
+            SyncButton(icon: "arrow.clockwise", title: "Fetch", help: "Fetch from every remote") { model.fetch(checkout) }
+            if branch.upstream != nil {
+                SyncButton(icon: "arrow.down", title: branch.behind > 0 ? "Pull \(branch.behind)" : "Pull",
+                           prominent: branch.behind > 0,
+                           help: "Pull from \(branch.upstream ?? "upstream"), only when it fast-forwards") { model.pull(checkout) }
+                SyncButton(icon: "arrow.up", title: branch.ahead > 0 ? "Push \(branch.ahead)" : "Push",
+                           prominent: branch.ahead > 0 && branch.behind == 0,
+                           help: "Push to \(branch.upstream ?? "upstream")") { model.push(checkout) }
+            } else if branch.name != nil {
+                SyncButton(icon: "arrow.up", title: "Publish", prominent: true,
+                           help: "Push this branch to the remote and track it") { model.push(checkout) }
+            }
+            if branch.name != nil, !checkout.onBase {
+                SyncButton(icon: "arrow.triangle.branch", title: "PR",
+                           help: "Open a pull request for this branch on its host") { model.openPullRequest(checkout) }
+            }
+            Spacer(minLength: 0)
+            if let busy {
+                ProgressView().controlSize(.mini)
+                Text(busy).font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
+            }
+        }
+        .disabled(busy != nil)
+    }
+}
+
+private struct SyncButton: View {
+    let icon: String
+    let title: String
+    var prominent = false
+    let help: String
+    let action: () -> Void
+    @Environment(\.isEnabled) private var enabled
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 3) {
+                OctetIcon(icon, size: 10)
+                Text(title).font(Theme.captionFont.weight(.medium).monospacedDigit())
+            }
+            .foregroundStyle(prominent ? Theme.accent : Theme.textSecondary)
+            .padding(.horizontal, 7)
+            .frame(height: 20)
+            .background(RoundedRectangle(cornerRadius: Theme.rowRadius).fill(hovered ? Theme.cardSelected : Theme.card))
+            .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius)
+                .strokeBorder(prominent ? Theme.accent.opacity(0.5) : Theme.border, lineWidth: 1))
+            .opacity(enabled ? 1 : 0.5)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 && enabled }
+        .help(help)
+    }
+}
+
+/// A message and Commit, right under the changes: what's staged, or
+/// everything when nothing is. The agent can write the message.
+private struct CommitBox: View {
+    @ObservedObject var model: GitPanelModel
+    let group: GitPanelModel.Group
+    @FocusState private var focused: Bool
+
+    private var checkout: AgentGit.Checkout { group.checkout }
+
+    var body: some View {
+        let plan = GitRemote.commitPlan(files: checkout.files)
+        let message = Binding(get: { model.drafts[checkout.top] ?? "" }, set: { model.drafts[checkout.top] = $0 })
+        let empty = message.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let busy = model.busy[checkout.top] != nil
+        VStack(alignment: .leading, spacing: 6) {
+            ZStack(alignment: .topLeading) {
+                if message.wrappedValue.isEmpty {
+                    Text("Commit message").font(Theme.uiFont).foregroundStyle(Theme.textTertiary)
+                        .padding(.horizontal, 8).padding(.vertical, 6).allowsHitTesting(false)
+                }
+                TextField("", text: message, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .font(Theme.uiFont)
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1...6)
+                    .focused($focused)
+                    .padding(.horizontal, 8).padding(.vertical, 6)
+                    .accessibilityLabel("Commit message")
+            }
+            .background(Theme.terminalBackground)
+            .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius + 1)
+                .strokeBorder(focused ? Theme.accent.opacity(0.7) : Theme.border, lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius + 1))
+            HStack(spacing: 6) {
+                OctetButton(title: plan.stageAll ? "Commit All" : "Commit", kind: .primary, compact: true) {
+                    model.commit(checkout)
+                }
+                .disabled(empty || busy || !checkout.conflicted.isEmpty)
+                .keyboardShortcut(.return, modifiers: .command)
+                if checkout.branch.name != nil {
+                    OctetButton(title: "Commit & Push", kind: .secondary, compact: true) { model.commit(checkout, push: true) }
+                        .disabled(empty || busy || !checkout.conflicted.isEmpty)
+                }
+                Spacer(minLength: 4)
+                if group.workers.contains(where: \.takesPrompts) {
+                    Button { model.handoff(.commit, in: group) } label: {
+                        HStack(spacing: 3) {
+                            OctetIcon("sparkles", size: 10)
+                            Text("Ask Agent").font(Theme.captionFont.weight(.medium))
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Theme.textSecondary)
+                    .help("Ask the agent to write the message and commit")
+                }
+            }
+            Text(checkout.conflicted.isEmpty
+                 ? (plan.stageAll ? "Nothing is staged, so this commits all \(Recap.count(plan.count, "change"))." : "Commits the \(Recap.count(plan.count, "staged file")).")
+                 : "Resolve the conflicts before committing.")
+                .font(Theme.captionFont)
+                .foregroundStyle(checkout.conflicted.isEmpty ? Theme.textTertiary : Theme.danger)
+        }
+    }
+}
+
 // MARK: - Timeline
 
 private enum TimelineEvent: Identifiable {
@@ -717,37 +881,5 @@ private struct WorktreeRow: View {
             .buttonStyle(.plain)
             .font(Theme.captionFont.weight(.medium))
             .foregroundStyle(Theme.accent)
-    }
-}
-
-/// The tab bar's Git button, with how many files the agents have changed.
-struct GitPanelButton: View {
-    @ObservedObject var model: GitPanelModel
-    @ObservedObject var ui: UIState
-    @State private var hovered = false
-
-    var body: some View {
-        if model.hasRepository {
-            Button { ui.showSidePanel(tab: .git) } label: {
-                HStack(spacing: 5) {
-                    LanguageLogo(language: "git", size: 11)
-                    Text("Git").font(Theme.uiFontMedium)
-                    if model.changedFiles > 0 {
-                        Text("\(model.changedFiles)")
-                            .font(Theme.captionFont.monospacedDigit())
-                            .foregroundStyle(Theme.textTertiary)
-                    }
-                }
-                .foregroundStyle(Theme.textSecondary)
-                .padding(.horizontal, 7)
-                .frame(height: 24)
-                .background(hovered ? Theme.hover : Color.clear)
-                .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
-            }
-            .buttonStyle(.plain)
-            .onHover { hovered = $0 }
-            .help("Show the agents' git: changes, commits, checkpoints and worktrees")
-            .accessibilityLabel("Show git")
-        }
     }
 }

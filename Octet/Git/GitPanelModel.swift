@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// The git panel's data, for the agent in front: its tab, the tabs of the
@@ -52,6 +53,11 @@ final class GitPanelModel: ObservableObject {
     /// Whether anything in front is in a repository, for the tab bar button.
     @Published private(set) var hasRepository = false
     @Published private(set) var loading = false
+    /// What's running in each checkout from the panel itself (Pushing…),
+    /// by its top level.
+    @Published private(set) var busy: [String: String] = [:]
+    /// The commit message being written for each checkout.
+    @Published var drafts: [String: String] = [:]
 
     private weak var window: WindowContext?
     private var timer: Timer?
@@ -357,6 +363,135 @@ final class GitPanelModel: ObservableObject {
         let listed = WorktreeCleanup.Worktree(path: worktree.path, branch: worktree.branch, isMain: worktree.isMain,
                                               merged: worktree.merged, dirty: worktree.dirty)
         WorktreeCleanupActions.confirm([listed], directory: top, window: window)
+    }
+
+    // MARK: - Commit, push, pull
+
+    /// Commits what's staged, or every change when nothing is, then pushes
+    /// when asked. Undo puts the commit's changes back, staged.
+    func commit(_ checkout: AgentGit.Checkout, push: Bool = false) {
+        let top = checkout.top
+        let message = (drafts[top] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty else {
+            ToastCenter.shared.info("Write a commit message first", detail: "Or Write Message asks the agent for one.")
+            return
+        }
+        let plan = GitRemote.commitPlan(files: checkout.files)
+        let pushArgs = push ? Self.pushArguments(checkout) : nil
+        perform(in: top, label: "Committing…", failure: "Couldn't commit") { git in
+            if plan.stageAll { try git.run(["add", "-A"], in: top) }
+            let sha = try ReviewDiff.commitStaged(message: message, in: top, git: git)
+            if push, let pushArgs { try git.run(pushArgs, in: top, environment: Self.remoteEnvironment) }
+            return sha
+        } done: { [weak self] sha in
+            self?.drafts[top] = nil
+            let what = Recap.count(plan.count, "file")
+            ToastCenter.shared.info("Committed \(sha)\(push ? " and pushed" : "")", detail: "\(what): \(message.split(separator: "\n").first ?? "")",
+                                    after: 8, action: push ? nil : .init(title: "Undo") { self?.undoCommit(sha, in: top) })
+        }
+    }
+
+    /// Takes the last commit back, keeping its changes staged, if it's
+    /// still the last one.
+    private func undoCommit(_ sha: String, in top: String) {
+        perform(in: top, label: "Undoing…", failure: "Couldn't undo the commit") { git in
+            let head = try git.run(["rev-parse", "--short", "HEAD"], in: top)
+            guard head == sha else { throw Checkpoints.GitError(description: "Something was committed after it; undo that first.") }
+            try git.run(["reset", "--soft", "HEAD~1"], in: top)
+        } done: { _ in ToastCenter.shared.info("Commit undone", detail: "Its changes are staged again.") }
+    }
+
+    func push(_ checkout: AgentGit.Checkout) {
+        guard let arguments = Self.pushArguments(checkout) else {
+            ToastCenter.shared.info("Nowhere to push", detail: checkout.branch.name == nil
+                ? "HEAD is detached; check out a branch first." : "This repository has no remote.")
+            return
+        }
+        let publishing = checkout.branch.upstream == nil
+        perform(in: checkout.top, label: publishing ? "Publishing…" : "Pushing…", failure: "Couldn't push") { git in
+            try git.run(arguments, in: checkout.top, environment: Self.remoteEnvironment)
+        } done: { _ in
+            ToastCenter.shared.info(publishing ? "Published \(checkout.branch.name ?? "the branch")" : "Pushed")
+        }
+    }
+
+    func pull(_ checkout: AgentGit.Checkout) {
+        perform(in: checkout.top, label: "Pulling…", failure: "Couldn't pull") { git in
+            try git.run(GitRemote.pullArguments, in: checkout.top, environment: Self.remoteEnvironment)
+        } done: { _ in ToastCenter.shared.info("Up to date with \(checkout.branch.upstream ?? "upstream")") }
+    }
+
+    func fetch(_ checkout: AgentGit.Checkout) {
+        perform(in: checkout.top, label: "Fetching…", failure: "Couldn't fetch") { git in
+            try git.run(GitRemote.fetchArguments, in: checkout.top, environment: Self.remoteEnvironment)
+        } done: { _ in }
+    }
+
+    func stageAll(_ checkout: AgentGit.Checkout) {
+        perform(in: checkout.top, label: "Staging…", failure: "Couldn't stage everything") { git in
+            try git.run(["add", "-A"], in: checkout.top)
+        } done: { _ in }
+    }
+
+    func unstageAll(_ checkout: AgentGit.Checkout) {
+        perform(in: checkout.top, label: "Unstaging…", failure: "Couldn't unstage") { git in
+            try git.run(["reset", "-q"], in: checkout.top)
+        } done: { _ in }
+    }
+
+    /// The branch's pull request page on its host, publishing the branch
+    /// first when it isn't on the remote yet.
+    func openPullRequest(_ checkout: AgentGit.Checkout) {
+        guard let branch = checkout.branch.name else {
+            ToastCenter.shared.info("Check out a branch first", detail: "HEAD is detached.")
+            return
+        }
+        let publish = checkout.branch.upstream == nil ? Self.pushArguments(checkout) : nil
+        let remoteName = checkout.branch.upstream.map { String($0.prefix { $0 != "/" }) }
+        perform(in: checkout.top, label: publish == nil ? "Opening…" : "Publishing…", failure: "Couldn't open a pull request") { git in
+            if let publish { try git.run(publish, in: checkout.top, environment: Self.remoteEnvironment) }
+            let remotes = (try? git.run(["remote"], in: checkout.top))?.split(separator: "\n").map(String.init) ?? []
+            guard let name = remoteName ?? (remotes.contains("origin") ? "origin" : remotes.first) else {
+                throw Checkpoints.GitError(description: "This repository has no remote.")
+            }
+            let url = try git.run(["remote", "get-url", name], in: checkout.top)
+            guard let page = GitRemote.pullRequestURL(remote: url, branch: branch, base: checkout.base) else {
+                throw Checkpoints.GitError(description: "\(url) isn't a web host Octet knows.")
+            }
+            return page
+        } done: { page in NSWorkspace.shared.open(page) }
+    }
+
+    private static func pushArguments(_ checkout: AgentGit.Checkout) -> [String]? {
+        let remotes = (try? Git().run(["remote"], in: checkout.top))?.split(separator: "\n").map(String.init) ?? []
+        return GitRemote.pushArguments(branch: checkout.branch.name, upstream: checkout.branch.upstream, remotes: remotes)
+    }
+
+    /// No prompt can be answered from the panel: ssh fails rather than asks.
+    nonisolated private static var remoteEnvironment: [String: String] {
+        ProcessInfo.processInfo.environment["GIT_SSH_COMMAND"] == nil ? ["GIT_SSH_COMMAND": "ssh -o BatchMode=yes"] : [:]
+    }
+
+    /// Runs `work` off the main thread with the checkout marked busy, then
+    /// `done` with its result, or a toast saying what went wrong.
+    private func perform<T>(in top: String, label: String, failure: String,
+                            _ work: @escaping (Git) throws -> T, done: @escaping (T) -> Void) {
+        guard busy[top] == nil else { return }
+        busy[top] = label
+        DispatchQueue.global(qos: .userInitiated).async {
+            let outcome = Result { try work(Git()) }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    self.busy[top] = nil
+                    switch outcome {
+                    case .success(let value): done(value)
+                    case .failure(let error):
+                        ToastCenter.shared.fail(nil, failure, detail: GitRemote.explain(String(describing: error)))
+                    }
+                    self.refresh()
+                }
+            }
+        }
     }
 
     /// Brings a worker's tab forward.

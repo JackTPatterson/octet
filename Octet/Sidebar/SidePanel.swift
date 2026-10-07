@@ -4,7 +4,7 @@ import SwiftUI
 /// a chevron, and folds away to just the header; which are folded is kept
 /// across launches. Plugins' panels are sections too, by plugin id.
 enum SidePanelSection: Hashable {
-    case files, todos, agents, tasks, monitors, shells
+    case files, todos, agents, tasks, monitors, shells, setup
     case plugin(String)
 
     var title: String {
@@ -15,6 +15,7 @@ enum SidePanelSection: Hashable {
         case .tasks: "Background Tasks"
         case .monitors: "Monitors"
         case .shells: "Shells"
+        case .setup: "Agent Setup"
         case .plugin(let id): id
         }
     }
@@ -28,6 +29,7 @@ enum SidePanelSection: Hashable {
         case .tasks: "tasks"
         case .monitors: "monitors"
         case .shells: "shells"
+        case .setup: "setup"
         case .plugin(let id): "plugin:\(id)"
         }
     }
@@ -224,6 +226,7 @@ struct SidePanel: View {
                 VStack(alignment: .leading, spacing: 6) {
                     RuntimePanel(store: store, ui: ui)
                     TodoPanel(model: window.todos, ui: ui)
+                    ProjectAgentSection(model: window.projectAgent)
                     PluginPanelSections(model: window.pluginPanels)
                 }
                 .padding(.vertical, 8)

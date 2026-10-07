@@ -280,6 +280,10 @@ struct RootView: View {
             }
             .id(settings.themeKey)
         }
+        .sheet(isPresented: $ui.usageBreakdownVisible) {
+            UsageBreakdownView { ui.usageBreakdownVisible = false }
+                .environmentObject(window)
+        }
         // Above the palette, so a confirm raised while it's open isn't buried.
         .overlay { ConfirmDialog(center: confirmations) }
         .overlay { PastePreviewDialog(center: PastePreviewCenter.shared, store: store) }
@@ -288,6 +292,7 @@ struct RootView: View {
         .animation(motion.animation(.sidebar), value: ui.sidePanelVisible)
         .onAppear {
             window.todos.attach(window)
+            window.projectAgent.attach(window)
             window.git.attach(window)
             window.pluginPanels.attach(window)
             window.terminalQuestions.attach(window)
@@ -853,6 +858,8 @@ final class UIState: ObservableObject {
     @Published var review: DiffReviewModel?
     /// Bumped to put the keyboard in the sidebar's search field.
     @Published var sidebarSearchRequest = 0
+    /// The usage breakdown sheet.
+    @Published var usageBreakdownVisible = false
     @Published var sidebarVisible = UserDefaults.standard.object(forKey: "octet.sidebarVisible") as? Bool ?? true {
         didSet { UserDefaults.standard.set(sidebarVisible, forKey: "octet.sidebarVisible") }
     }

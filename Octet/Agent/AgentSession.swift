@@ -118,6 +118,7 @@ final class AgentSession: ObservableObject, Identifiable {
     let cwd: String
     @Published var conversation = AgentConversation() {
         didSet {
+            if conversation.costUSD != oldValue.costUSD { UsageLedgerStore.shared.noteCost(of: self, from: oldValue.costUSD) }
             if conversation.isRunning != oldValue.isRunning {
                 AgentCenter.shared.objectWillChange.send()
                 // The turn that restarts carried work has had its chance;
@@ -1120,7 +1121,42 @@ final class AgentSession: ObservableObject, Identifiable {
         if process == nil { restart() }
     }
 
+    // MARK: - Resuming after a limit
+
+    /// When this conversation will send "continue" by itself: just after
+    /// its usage limit resets.
+    @Published private(set) var resumeAt: Date?
+    private var resumeTimer: Timer?
+
+    /// Sends "Continue where you left off." a moment after `reset`, if the
+    /// conversation is idle by then. Octet has to be running; a Mac asleep
+    /// at the time sends it on waking.
+    func scheduleResume(afterReset reset: Date, grace: TimeInterval = 30) {
+        resumeTimer?.invalidate()
+        let fire = reset.addingTimeInterval(grace)
+        resumeAt = fire
+        let timer = Timer(fire: fire, interval: 0, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.resumeNow() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        resumeTimer = timer
+    }
+
+    func cancelResume() {
+        resumeTimer?.invalidate()
+        resumeTimer = nil
+        resumeAt = nil
+    }
+
+    private func resumeNow() {
+        resumeTimer = nil
+        resumeAt = nil
+        guard !conversation.isRunning else { return }
+        send("Continue where you left off.")
+    }
+
     func close() {
+        cancelResume()
         denyAllPending(message: "The conversation was closed.")
         if engine == .opencode { closeOpenCode() }
         stopProcess()
@@ -1133,6 +1169,22 @@ final class AgentSession: ObservableObject, Identifiable {
     /// Answers allowed for the rest of this conversation: an exact Bash
     /// command, all file edits, or any other tool by name.
     private(set) var sessionAllows: Set<String> = []
+
+    /// Rules "Always Allow" saved from this conversation, applied here at once
+    /// (Claude Code reads the settings file itself on its next start).
+    private(set) var alwaysRules: [String] = []
+
+    /// The rule the "Always Allow" button would save for a request, if it
+    /// can be a narrow one. Claude Code only.
+    func alwaysRule(for request: AgentPermissionRequest) -> AgentPermissionRules.Rule? {
+        guard engine == .claude else { return nil }
+        return AgentPermissionRules.rule(forTool: request.toolName, input: request.inputObject)
+    }
+
+    /// Forgets a rule removed from the project's settings.
+    func forgetAlwaysRule(_ rule: String) {
+        alwaysRules.removeAll { $0 == rule }
+    }
 
     static func allowKey(_ request: AgentPermissionRequest) -> String {
         switch request.toolName {
@@ -1167,9 +1219,28 @@ final class AgentSession: ObservableObject, Identifiable {
         }
     }
 
-    func answerPermission(allow: Bool, note: String? = nil, forSession: Bool = false) {
+    func answerPermission(allow: Bool, note: String? = nil, forSession: Bool = false, always: Bool = false) {
         guard let request = pendingPermission, let reply = permissionReply else { return }
         if allow && forSession { sessionAllows.insert(Self.allowKey(request)) }
+        if allow && always, let rule = alwaysRule(for: request) {
+            alwaysRules.append(rule.text)
+            let folder = cwd
+            DispatchQueue.global(qos: .utility).async {
+                let outcome = Result { try ProjectRules.add(rule.text, cwd: folder) }
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        switch outcome {
+                        case .success:
+                            ToastCenter.shared.info("Always allowed in this project", detail: "\(rule.text) · saved in .claude/settings.local.json")
+                            ProjectAgentModel.noteRulesChanged()
+                        case .failure(let error):
+                            ToastCenter.shared.fail(nil, "Allowed for this conversation only",
+                                                    detail: "Couldn't save the rule: \(error.localizedDescription)")
+                        }
+                    }
+                }
+            }
+        }
         reply(AgentPermissionRequest.decision(allow: allow, input: request.inputObject, message: note))
         pendingPermission = nil
         permissionReply = nil
@@ -1509,7 +1580,8 @@ final class AgentSession: ObservableObject, Identifiable {
             reply(AgentPermissionRequest.decision(allow: false, input: [:], message: "Octet couldn't read this request."))
             return
         }
-        if sessionAllows.contains(Self.allowKey(request)) {
+        if sessionAllows.contains(Self.allowKey(request))
+            || AgentPermissionRules.allows(alwaysRules, tool: request.toolName, input: request.inputObject) {
             reply(AgentPermissionRequest.decision(allow: true, input: request.inputObject, message: nil))
             return
         }

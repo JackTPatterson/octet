@@ -1,18 +1,6 @@
 import AppKit
 import SwiftUI
 
-/// Plugins' buttons at the right of the tab bar, beside Todos and Git: the
-/// panel's title and badge, opening its rows and actions below.
-struct PluginPanelButtons: View {
-    @ObservedObject var model: PluginPanelModel
-
-    var body: some View {
-        ForEach(model.entries) { entry in
-            PluginPanelButton(model: model, entry: entry)
-        }
-    }
-}
-
 /// Each plugin's panel as a section of the right panel's Overview.
 struct PluginPanelSections: View {
     @ObservedObject var model: PluginPanelModel
@@ -27,40 +15,6 @@ struct PluginPanelSections: View {
                 PluginPanelBody(model: model, id: entry.id)
             }
         }
-    }
-}
-
-private struct PluginPanelButton: View {
-    @ObservedObject var model: PluginPanelModel
-    let entry: PluginPanelModel.Entry
-    @EnvironmentObject private var window: WindowContext
-    @State private var hovered = false
-
-    var body: some View {
-        let panel = entry.panel.panel
-        Button {
-            model.shown = entry.id
-            window.ui.showSidePanel(.plugin(entry.id))
-        } label: {
-            HStack(spacing: 5) {
-                PluginPanelIcon(entry: entry, size: 11)
-                Text(panel.title).font(Theme.uiFontMedium)
-                if let badge = entry.content.badge, !badge.isEmpty {
-                    Text(badge)
-                        .font(Theme.captionFont.monospacedDigit())
-                        .foregroundStyle(PluginPanelTone.color(entry.content.tone) ?? Theme.textTertiary)
-                }
-            }
-            .foregroundStyle(Theme.textSecondary)
-            .padding(.horizontal, 7)
-            .frame(height: 24)
-            .background(hovered ? Theme.hover : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
-        }
-        .buttonStyle(.plain)
-        .onHover { hovered = $0 }
-        .help("Show \(panel.title)")
-        .accessibilityLabel("Show \(panel.title)")
     }
 }
 
