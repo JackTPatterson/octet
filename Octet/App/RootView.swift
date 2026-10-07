@@ -280,11 +280,11 @@ struct RootView: View {
             }
             .id(settings.themeKey)
         }
-        // Above the palette, so a confirm raised while it's open isn't buried.
         .sheet(isPresented: $ui.usageBreakdownVisible) {
             UsageBreakdownView { ui.usageBreakdownVisible = false }
                 .environmentObject(window)
         }
+        // Above the palette, so a confirm raised while it's open isn't buried.
         .overlay { ConfirmDialog(center: confirmations) }
         .overlay { PastePreviewDialog(center: PastePreviewCenter.shared, store: store) }
         .animation(motion.animation(.palette, .smooth(duration: 0.16)), value: ui.paletteVisible)
