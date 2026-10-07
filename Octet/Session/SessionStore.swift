@@ -1274,6 +1274,33 @@ final class SessionStore: ObservableObject {
         return panes.count == 1 ? panes.first : nil
     }
 
+    /// A fresh pane beside `targetPane`, in `cwd`. With `keepingSide` the
+    /// pane already there takes that side and the new one the other, as when
+    /// the tab in front is dropped on its own edge; without, the new pane
+    /// takes `edge`'s side, as when a workspace card is dropped there.
+    func splitNewPane(beside targetPane: String, edge: SplitEdge, cwd: String?, keepingSide: Bool) {
+        let client = self.client
+        let multi = WindowRegistry.shared.isMulti
+        var params: [String: Any] = ["target_pane_id": targetPane, "direction": edge.split, "focus": !multi]
+        if let cwd { params["cwd"] = cwd }
+        let swaps = keepingSide ? edge.swapsToKeep : edge.swaps
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let outcome = Result {
+                let created = EngineCreated(result: try client.call("pane.split", params))
+                if swaps, let pane = created.paneId {
+                    try client.call("pane.swap", ["source_pane_id": pane, "target_pane_id": targetPane])
+                }
+            }
+            DispatchQueue.main.async {
+                if case .failure(let error) = outcome {
+                    ToastCenter.shared.fail(nil, "Couldn't split the pane", detail: String(describing: error))
+                }
+                self?.scheduleRefresh()
+                OctetTerminalRuntime.focusTerminal()
+            }
+        }
+    }
+
     /// Moves a single-pane tab into `targetTab`, beside `targetPane` on
     /// `edge`. The tab it leaves is empty and the engine closes it.
     func splitTab(_ tabId: String, into targetTab: String, beside targetPane: String, edge: SplitEdge) {

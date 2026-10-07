@@ -1582,6 +1582,49 @@ final class AgentSession: ObservableObject, Identifiable {
 
     // MARK: - Process
 
+    /// Whether the conversation can be moved to another folder: Claude
+    /// Code's can, between turns, by copying its transcript into the new
+    /// folder's project (`ConversationMove`). Codex, OpenCode, Pi and Qwen
+    /// tie a thread to the folder it started in.
+    var canMove: Bool { engine == .claude && hasTurns && !conversation.isRunning }
+
+    /// Moves the conversation to `folder`: the same session, resumed there.
+    /// The conversation shown is a new one in its place; this one is closed.
+    /// Shown in `workspaceId` when given, else where it was.
+    @discardableResult
+    func move(to folder: String, workspaceId newWorkspaceId: String? = nil) -> Result<AgentSession, Error> {
+        guard canMove else {
+            return .failure(ConversationMove.Problem(message: "Only a Claude Code conversation that isn't mid-turn can be moved."))
+        }
+        let folder = URL(fileURLWithPath: folder).standardizedFileURL.path
+        guard folder != cwd else { return .failure(ConversationMove.Problem(message: "It's already in \(abbreviateHome(folder)).")) }
+        guard let source = AgentConversation.findLog(sessionIds: [sessionId], cwd: cwd) else {
+            return .failure(ConversationMove.Problem(message: "Couldn't find the conversation's transcript to move."))
+        }
+        let destination = ConversationMove.claudeDestination(sessionId: sessionId, folder: folder)
+        do {
+            try ConversationMove.copyClaudeTranscript(from: source, to: destination, folder: folder)
+        } catch {
+            return .failure(error)
+        }
+        let moved = AgentSession(workspaceId: newWorkspaceId ?? workspaceId, cwd: folder, engine: engine, model: model,
+                                 permissionMode: permissionMode, sessionId: sessionId)
+        moved.effort = effort
+        moved.permissionProfile = permissionProfile
+        moved.title = title
+        var transcript = conversation
+        transcript.cwd = folder
+        transcript.isRunning = false
+        moved.conversation = transcript
+        moved.hasTurns = true
+        moved.policyHeld = policyHeld
+        // Its baseline was another folder's; changes count from here on.
+        AgentCenter.shared.close(self)
+        AgentCenter.shared.adopt(moved)
+        moved.prewarm()
+        return .success(moved)
+    }
+
     private func restart() {
         stopProcess()
         needsRestart = false

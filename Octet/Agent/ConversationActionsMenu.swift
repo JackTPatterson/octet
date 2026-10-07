@@ -18,6 +18,11 @@ struct ConversationActionsMenu: View {
         .help("Everything changed in the folder since this conversation's first message")
         Button("Fork Conversation") { session.fork() }
             .disabled(!session.canFork)
+        Button("Move To…") { ConversationMover.moveAfterPicking([session], from: session.cwd, window: window) }
+            .disabled(!session.canMove)
+            .help(session.engine == .claude
+                  ? "Carry on with this conversation in another folder; Claude Code resumes it there"
+                  : "Only Claude Code conversations can move: \(session.engine.displayName) ties a thread to its folder")
         if session.engine == .pi {
             Button("Session Tree…") {
                 session.piSessionTree { lines in

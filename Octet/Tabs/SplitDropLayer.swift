@@ -71,9 +71,17 @@ final class TabDrag: ObservableObject {
     /// A drop target took the tab.
     func landed() { didLand = true }
 
+    /// How far past a window's edge a release still counts as over it: a
+    /// drop aimed at the edge zone that overshoots by a little keeps the tab
+    /// in that window, rather than opening another.
+    static let edgeGrace: CGFloat = 48
+
     /// Whether `point` is over an Octet window, which takes the drop itself.
     private func overWindow(_ point: CGPoint) -> Bool {
-        NSApp.windows.contains { $0.isVisible && $0 !== TearOffPreview.shared.window && $0.frame.contains(point) }
+        NSApp.windows.contains {
+            $0.isVisible && $0 !== TearOffPreview.shared.window
+                && $0.frame.insetBy(dx: -Self.edgeGrace, dy: -Self.edgeGrace).contains(point)
+        }
     }
 
     private func tick() {
@@ -196,12 +204,16 @@ private struct SplitDropDelegate: DropDelegate {
 }
 
 /// Drop zones over a window's content while a workspace card is dragged: by
-/// an edge, the window splits in two with the workspace in a window on that
-/// side; in the middle, this window shows it. Present for every workspace
-/// drag, so the card's id never lands in the terminal as text.
+/// an edge, the screen splits there, with a shell in that workspace's
+/// folder on that side of the tab showing; in the middle, this window
+/// shows the workspace. Present for every workspace drag, so the card's
+/// id never lands in the terminal as text.
 struct WorkspaceDropLayer: View {
     let workspaceId: String
     let window: WindowContext
+    /// The terminal tab showing, which an edge drop splits; nil when a
+    /// conversation or board is in front, where the edges show it instead.
+    var splitsInto: String?
     let animation: Animation?
     @State private var target: WorkspaceDropTarget?
 
@@ -215,17 +227,32 @@ struct WorkspaceDropLayer: View {
                 }
             }
             .animation(animation, value: target)
-            .onDrop(of: [.text], delegate: WorkspaceDropDelegate(size: proxy.size, showsIt: showsIt, target: $target) { target in
+            .onDrop(of: [.text], delegate: WorkspaceDropDelegate(size: proxy.size, showsIt: showsIt, splits: splitsInto != nil,
+                                                                 target: $target) { target in
                 switch target {
                 case .here: window.focusWorkspace(workspaceId)
-                case .beside(let edge): WindowActions.openBeside(workspaceId, from: window, edge: edge)
+                case .beside(let edge): split(edge)
                 }
             })
         }
     }
 
+    /// A fresh pane in the workspace's folder, on `edge`'s side of the
+    /// focused pane of the tab showing.
+    private func split(_ edge: SplitEdge) {
+        let store = window.store
+        guard let tab = splitsInto,
+              let pane = store.snapshot.panes.first(where: { $0.tabId == tab && $0.focused })
+                  ?? store.snapshot.panes.first(where: { $0.tabId == tab }) else {
+            return window.focusWorkspace(workspaceId)
+        }
+        store.splitNewPane(beside: pane.paneId, edge: edge, cwd: store.snapshot.directory(ofWorkspace: workspaceId), keepingSide: false)
+    }
+
     /// Dropped on the window already showing it, the middle has nothing to do.
     private var showsIt: Bool { window.focusedWorkspace?.workspaceId == workspaceId }
+
+    private var label: String { window.store.snapshot.workspaces.first { $0.workspaceId == workspaceId }?.label ?? "" }
 
     private func zone(_ target: WorkspaceDropTarget, in size: CGSize) -> some View {
         let inset: CGFloat = 6
@@ -234,7 +261,7 @@ struct WorkspaceDropLayer: View {
             .fill(Theme.accent.opacity(0.14))
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.accent.opacity(0.7), lineWidth: 1.5))
             .overlay {
-                Text(target.title)
+                Text(target.title(workspace: label))
                     .font(Theme.uiFontMedium)
                     .foregroundStyle(Theme.textPrimary)
                     .padding(.horizontal, 10)
@@ -253,13 +280,17 @@ struct WorkspaceDropLayer: View {
 private struct WorkspaceDropDelegate: DropDelegate {
     let size: CGSize
     let showsIt: Bool
+    /// Whether the edges split the tab showing; without a terminal in
+    /// front they only show the workspace, as the middle does.
+    let splits: Bool
     @Binding var target: WorkspaceDropTarget?
     let drop: (WorkspaceDropTarget) -> Void
 
     func validateDrop(info: DropInfo) -> Bool { true }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
-        let found = WorkspaceDropTarget.at(info.location, in: size)
+        var found = WorkspaceDropTarget.at(info.location, in: size)
+        if !splits, found != nil { found = .here }
         target = showsIt && found == .here ? nil : found
         return DropProposal(operation: target == nil ? .forbidden : .move)
     }
