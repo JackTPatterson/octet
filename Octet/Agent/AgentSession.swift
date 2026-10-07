@@ -1120,7 +1120,42 @@ final class AgentSession: ObservableObject, Identifiable {
         if process == nil { restart() }
     }
 
+    // MARK: - Resuming after a limit
+
+    /// When this conversation will send "continue" by itself: just after
+    /// its usage limit resets.
+    @Published private(set) var resumeAt: Date?
+    private var resumeTimer: Timer?
+
+    /// Sends "Continue where you left off." a moment after `reset`, if the
+    /// conversation is idle by then. Octet has to be running; a Mac asleep
+    /// at the time sends it on waking.
+    func scheduleResume(afterReset reset: Date, grace: TimeInterval = 30) {
+        resumeTimer?.invalidate()
+        let fire = reset.addingTimeInterval(grace)
+        resumeAt = fire
+        let timer = Timer(fire: fire, interval: 0, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.resumeNow() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        resumeTimer = timer
+    }
+
+    func cancelResume() {
+        resumeTimer?.invalidate()
+        resumeTimer = nil
+        resumeAt = nil
+    }
+
+    private func resumeNow() {
+        resumeTimer = nil
+        resumeAt = nil
+        guard !conversation.isRunning else { return }
+        send("Continue where you left off.")
+    }
+
     func close() {
+        cancelResume()
         denyAllPending(message: "The conversation was closed.")
         if engine == .opencode { closeOpenCode() }
         stopProcess()

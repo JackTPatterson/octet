@@ -18,6 +18,22 @@ struct ConversationActionsMenu: View {
         .help("Everything changed in the folder since this conversation's first message")
         Button("Fork Conversation") { session.fork() }
             .disabled(!session.canFork)
+        Button("Start Fresh with a Summary") {
+            ConversationHandoff.continueConversation(session, in: session.engine, reason: .fresh, store: window.store)
+        }
+        .disabled(!ConversationHandoff.canHandOff(session) || session.conversation.isRunning)
+        .help("A new conversation here with a summary of this one: what was asked, the plan, the files changed. For when the context has grown long.")
+        let others = ConversationHandoff.otherEngines(than: session)
+        if !others.isEmpty {
+            Menu("Continue In…") {
+                ForEach(others, id: \.self) { engine in
+                    Button(engine.displayName) {
+                        ConversationHandoff.continueConversation(session, in: engine, store: window.store)
+                    }
+                }
+            }
+            .disabled(!ConversationHandoff.canHandOff(session) || session.conversation.isRunning)
+        }
         Button("Move To…") { ConversationMover.moveAfterPicking([session], from: session.cwd, window: window) }
             .disabled(!session.canMove)
             .help(session.engine == .claude
