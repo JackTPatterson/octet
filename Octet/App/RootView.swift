@@ -288,6 +288,7 @@ struct RootView: View {
         .animation(motion.animation(.sidebar), value: ui.sidePanelVisible)
         .onAppear {
             window.todos.attach(window)
+            window.projectAgent.attach(window)
             window.git.attach(window)
             window.pluginPanels.attach(window)
             window.terminalQuestions.attach(window)

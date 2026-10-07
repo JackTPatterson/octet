@@ -159,6 +159,10 @@ enum PaletteCatalog {
             action("sidePanel", "Toggle Panel", "sidebar.left",
                    keywords: ["panel", "overview", "git", "terminal", "right", "files changed"]) { ui.sidePanelVisible.toggle() },
             action("reloadConfig", "Reload Terminal Config", "arrow.clockwise", keywords: ["settings"]) { store.reloadSessionConfig() },
+            action("shareInstructions", "Share Instructions Across Agents", "sparkles",
+                   keywords: ["agents.md", "claude.md", "instructions", "rules", "codex", "claude", "share", "import", "memory", "context"]) {
+                window.projectAgent.shareInstructions()
+            },
             action("recap", "Show Recap", "clock",
                    keywords: ["recap", "away", "catch up", "summary", "while you were away", "what happened", "agents"]) {
                 RecapCenter.shared.showLatest()

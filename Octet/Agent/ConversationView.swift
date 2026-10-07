@@ -1419,6 +1419,16 @@ private struct PermissionCard: View {
                         }
                         .keyboardShortcut(.defaultAction)
                     }
+                    if let rule = session.alwaysRule(for: request) {
+                        HStack {
+                            Spacer()
+                            OctetButton(title: rule.title, icon: "checkmark", kind: .ghost, compact: true) {
+                                session.answerPermission(allow: true, always: true)
+                                note = ""
+                            }
+                            .help("Allow this now and don't ask again in this project. Saved to .claude/settings.local.json, where it can be removed.")
+                        }
+                    }
                 }
                 .padding(12)
             }
