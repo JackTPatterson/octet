@@ -281,6 +281,10 @@ struct RootView: View {
             .id(settings.themeKey)
         }
         // Above the palette, so a confirm raised while it's open isn't buried.
+        .sheet(isPresented: $ui.usageBreakdownVisible) {
+            UsageBreakdownView { ui.usageBreakdownVisible = false }
+                .environmentObject(window)
+        }
         .overlay { ConfirmDialog(center: confirmations) }
         .overlay { PastePreviewDialog(center: PastePreviewCenter.shared, store: store) }
         .animation(motion.animation(.palette, .smooth(duration: 0.16)), value: ui.paletteVisible)
@@ -854,6 +858,8 @@ final class UIState: ObservableObject {
     @Published var review: DiffReviewModel?
     /// Bumped to put the keyboard in the sidebar's search field.
     @Published var sidebarSearchRequest = 0
+    /// The usage breakdown sheet.
+    @Published var usageBreakdownVisible = false
     @Published var sidebarVisible = UserDefaults.standard.object(forKey: "octet.sidebarVisible") as? Bool ?? true {
         didSet { UserDefaults.standard.set(sidebarVisible, forKey: "octet.sidebarVisible") }
     }

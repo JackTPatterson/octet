@@ -118,6 +118,7 @@ final class AgentSession: ObservableObject, Identifiable {
     let cwd: String
     @Published var conversation = AgentConversation() {
         didSet {
+            if conversation.costUSD != oldValue.costUSD { UsageLedgerStore.shared.noteCost(of: self, from: oldValue.costUSD) }
             if conversation.isRunning != oldValue.isRunning {
                 AgentCenter.shared.objectWillChange.send()
                 // The turn that restarts carried work has had its chance;
