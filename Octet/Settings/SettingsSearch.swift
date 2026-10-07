@@ -89,6 +89,8 @@ enum SettingsSearchIndex {
         .init(.terminal, "Warn before pasting risky text", ["paste", "protection", "safe", "warn", "multi-line"]),
         .init(.terminal, "Programs reading the clipboard", ["clipboard", "osc 52", "osc52", "read", "permission"]),
         .init(.terminal, "Inline images", ["image", "picture", "kitty", "graphics"]),
+        .init(.terminal, "Let agents read the sidebar terminal", anchor: "Sidebar terminal",
+              ["agent", "claude", "codex", "mcp", "read", "output", "logs", "right panel", "octet-terminal", "privacy"]),
     ]
 
     private static let agents: [SettingsSearchEntry] = [

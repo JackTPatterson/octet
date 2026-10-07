@@ -24,6 +24,9 @@ final class AgentMCPInstaller {
         Feature(server: DelegationMCP.serverName, subcommand: "delegate-mcp", title: "the delegation tools") {
             SettingsStore.shared.values.delegationEnabled
         },
+        Feature(server: TerminalMCP.serverName, subcommand: "terminal-mcp", title: "the sidebar terminal tool") {
+            SettingsStore.shared.values.agentsReadSidebarTerminal
+        },
     ]
 
     private var subscriptions: Set<AnyCancellable> = []

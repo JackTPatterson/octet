@@ -472,3 +472,25 @@ See `docs/research/agent-pain-points-2026-10.md`.
   classifier for approvals, and checking whether Codex really resolves an
   unanswered question after 60 seconds (Codex #28969) in the app-server mode
   Octet uses.
+
+### The sidebar terminal, for every agent (2026-10-07)
+
+- [x] **55. Agents can read the sidebar terminal (med).** The shell in the right
+  panel is where servers, builds and tests run while an agent works, and the
+  agent couldn't see it. Settings › Terminal › Sidebar terminal › Let agents
+  read the sidebar terminal (off by default: a terminal can hold secrets) opens
+  a socket (`terminal.sock`, this user only) and puts one MCP server,
+  `octet-terminal`, in every installed agent that takes one (Claude Code, Codex,
+  Gemini, Qwen, OpenCode, Cursor, Copilot), taken out again when it's turned
+  off. Its tool `read_sidebar_terminal(lines)` returns the last lines (80, up
+  to 500) with scrollback, read only: nothing an agent sends is ever typed in.
+  Any other agent, or a script, runs `octet-cli terminal read [--lines n]`.
+  Works from agents in terminal panes and from Octet's own conversations
+  (their processes are given `OCTET_TERMINAL_SOCKET`), and offers no tool to an
+  agent running in another terminal app. A note shows over the terminal while
+  it's on, with Turn Off; the palette toggles it. The shell now lives on while
+  another page of the panel shows, so a server started there keeps running and
+  its output is still there. Which terminal: the window showing the agent's
+  workspace, else the one in front. Build-checked only; the protocol, the line
+  handling and the MCP server are unit-tested.
+

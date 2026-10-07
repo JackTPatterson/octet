@@ -159,6 +159,15 @@ enum PaletteCatalog {
             action("sidePanel", "Toggle Panel", "sidebar.left",
                    keywords: ["panel", "overview", "git", "terminal", "right", "files changed"]) { ui.sidePanelVisible.toggle() },
             action("reloadConfig", "Reload Terminal Config", "arrow.clockwise", keywords: ["settings"]) { store.reloadSessionConfig() },
+            action("agentsReadTerminal",
+                   SettingsStore.shared.values.agentsReadSidebarTerminal
+                       ? "Stop Agents Reading the Sidebar Terminal" : "Let Agents Read the Sidebar Terminal",
+                   "terminal",
+                   keywords: ["agent", "claude", "codex", "terminal", "sidebar", "read", "logs", "output", "mcp", "privacy"]) {
+                SettingsStore.shared.values.agentsReadSidebarTerminal.toggle()
+                ToastCenter.shared.info(SettingsStore.shared.values.agentsReadSidebarTerminal
+                                            ? "Agents can read the sidebar terminal" : "Agents can no longer read the sidebar terminal")
+            },
             action("usageBreakdown", "Where Did My Usage Go?", "clock",
                    keywords: ["usage", "limit", "cost", "spend", "tokens", "allowance", "burn", "expensive", "conversations"]) {
                 ui.usageBreakdownVisible = true

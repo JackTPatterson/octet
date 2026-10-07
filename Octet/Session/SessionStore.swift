@@ -210,6 +210,7 @@ final class SessionStore: ObservableObject {
         AttentionWatcher.shared.start(store: self)
         PeerCenter.shared.apply(store: self)
         DelegationCenter.shared.apply(store: self)
+        TerminalAccessCenter.shared.apply(store: self)
         let client = self.client
         let thread = Thread { [weak self] in
             while self != nil {

@@ -193,6 +193,8 @@ struct SidePanel: View {
     @ObservedObject var ui: UIState
     @ObservedObject private var folds = SidePanelFolds.shared
     @ObservedObject private var motion = MotionPreferences.shared
+    /// The Terminal page has been opened, so its shell is running.
+    @State private var terminalStarted = false
 
     static let width: CGFloat = 321
 
@@ -200,16 +202,40 @@ struct SidePanel: View {
         VStack(spacing: 0) {
             tabs
             Rectangle().fill(Theme.divider).frame(height: 1)
-            switch ui.sidePanelTab {
-            case .overview: overview
-            case .git:
-                ScrollView {
-                    GitPanel(model: window.git, ui: ui).padding(12)
+            ZStack {
+                switch ui.sidePanelTab {
+                case .overview: overview
+                case .git:
+                    ScrollView {
+                        GitPanel(model: window.git, ui: ui).padding(12)
+                    }
+                    .scrollIndicators(.hidden)
+                case .terminal:
+                    Color.clear
                 }
-                .scrollIndicators(.hidden)
-            case .terminal:
-                SidePanelTerminal(store: store, ui: ui)
+                // Once opened, the shell lives on behind the other pages, so
+                // a server started in it keeps running, its output is still
+                // there when you come back, and an agent that's been let in
+                // can still read it.
+                if terminalStarted || ui.sidePanelTab == .terminal {
+                    SidePanelTerminal(store: store, ui: ui)
+                        .opacity(ui.sidePanelTab == .terminal ? 1 : 0)
+                        .allowsHitTesting(ui.sidePanelTab == .terminal)
+                        .accessibilityHidden(ui.sidePanelTab != .terminal)
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .onChange(of: ui.sidePanelTab, initial: true) { _, tab in
+            if tab == .terminal {
+                terminalStarted = true
+            } else if terminalStarted {
+                // Keys belong to the main terminal again, not the one now hidden.
+                OctetTerminalRuntime.focusTerminal()
+            }
+        }
+        .onChange(of: ui.sidePanelVisible) { _, visible in
+            if !visible, terminalStarted { OctetTerminalRuntime.focusTerminal() }
         }
         .background(Theme.sidebar)
         .onHover { hovering in
@@ -300,6 +326,7 @@ private struct SidePanelTerminal: View {
     @ObservedObject var store: SessionStore
     @ObservedObject var ui: UIState
     @StateObject private var anchor = TerminalAnchor()
+    @ObservedObject private var settings = SettingsStore.shared
     @State private var generation = 0
     @State private var exited = false
 
@@ -310,13 +337,40 @@ private struct SidePanelTerminal: View {
     }
 
     var body: some View {
+        VStack(spacing: 0) {
+            if settings.values.agentsReadSidebarTerminal { readableNote }
+            shell
+        }
+    }
+
+    /// Said over the terminal for as long as agents can read it.
+    private var readableNote: some View {
+        HStack(spacing: 6) {
+            Circle().fill(Color.orange).frame(width: 6, height: 6)
+            Text("Agents can read this terminal").font(Theme.captionFont).foregroundStyle(Theme.textSecondary)
+            Spacer(minLength: 4)
+            Button("Turn Off") { settings.values.agentsReadSidebarTerminal = false }
+                .buttonStyle(.plain).font(Theme.captionFont.weight(.medium)).foregroundStyle(Theme.accent)
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 24)
+        .background(Theme.card)
+        .help("Read only. It's on in Settings › Terminal › Sidebar terminal.")
+    }
+
+    private var shell: some View {
         ZStack {
             OctetTerminalView(
                 command: Self.shellCommand,
                 environment: Self.environment,
                 workingDirectory: folder,
                 anchor: anchor,
-                onExit: { exited = true }
+                onTitleChange: { SidebarTerminals.shared.titleChanged(window: window.id, $0) },
+                onExit: {
+                    exited = true
+                    SidebarTerminals.shared.exited(window: window.id)
+                },
+                onSurface: { SidebarTerminals.shared.register(window: window.id, view: $0) }
             )
             .id(generation)
             .background(Theme.terminalBackground)

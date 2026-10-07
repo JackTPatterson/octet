@@ -80,6 +80,7 @@ final class OpenCodeServer {
         process.arguments = ["-l", "-c", "exec opencode serve --hostname 127.0.0.1 --port 0"]
         process.currentDirectoryURL = URL(fileURLWithPath: NSHomeDirectory())
         var environment = ProcessInfo.processInfo.environment
+        environment.merge(TerminalControl.environment(session: EngineSession.name)) { _, ours in ours }
         environment["OPENCODE_SERVER_PASSWORD"] = password
         environment["OPENCODE_SERVER_USERNAME"] = "opencode"
         process.environment = environment
