@@ -71,6 +71,7 @@ struct OctetApp: App {
                     CodexAgentsStore.shared.start()
                     AgentDiscoveryStore.shared.scanIfStale()
                     AgentMCPInstaller.shared.start()
+                    RecapCenter.shared.start()
                     repairInstalledSubagentHooks()
                     DebugSnapshot.start()
                 }
@@ -299,6 +300,7 @@ struct OctetCommands: Commands {
                 .keyboardShortcut(OctetShortcut.hints.keyboardShortcut)
             Button(OctetShortcut.toggleSidebar.title) { KeyWindow.act { $0.ui.sidebarVisible.toggle() } }
                 .keyboardShortcut(OctetShortcut.toggleSidebar.keyboardShortcut)
+            Button("Show Recap") { RecapCenter.shared.showLatest() }
             Button(OctetShortcut.searchWorkspaces.title) {
                 KeyWindow.act { context in
                     context.ui.sidebarVisible = true

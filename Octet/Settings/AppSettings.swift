@@ -80,6 +80,10 @@ struct OctetSettings: Codable, Equatable {
     // MARK: Agents & recovery (session server + Octet)
     var notifications: NotificationDelivery = .banner
     var notificationDelaySeconds: Double = 1
+    /// Recap: a card of what every agent did while you were away, when you
+    /// come back after at least `recapAfterMinutes`.
+    var recap = true
+    var recapAfterMinutes: Double = 5
     var agentSounds = true
     var resumeAgentsOnRestore = true
     /// Restart an agent in the repository its commands keep `cd`ing into,
@@ -331,6 +335,8 @@ struct OctetSettings: Codable, Equatable {
         }
         notificationDelaySeconds = value("notificationDelaySeconds", defaults.notificationDelaySeconds)
         agentSounds = value("agentSounds", defaults.agentSounds)
+        recap = value("recap", defaults.recap)
+        recapAfterMinutes = value("recapAfterMinutes", defaults.recapAfterMinutes)
         resumeAgentsOnRestore = value("resumeAgentsOnRestore", defaults.resumeAgentsOnRestore)
         relocateAgents = value("relocateAgents", defaults.relocateAgents)
         paneHistory = value("paneHistory", defaults.paneHistory)

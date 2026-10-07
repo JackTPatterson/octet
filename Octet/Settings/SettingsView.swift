@@ -709,6 +709,22 @@ private struct AgentSettings: View {
                 .accessibilityValue("\(Int(settings.values.notificationDelaySeconds)) seconds")
             }
             SettingsDivider()
+            SettingsRow(
+                title: "Recap when you come back",
+                detail: "After you've been away from Octet, one card says what every agent did meanwhile: what needs you, what's stuck, what finished, and what each changed and said last. View › Show Recap brings it back."
+            ) {
+                Toggle("Recap when you come back", isOn: $settings.values.recap).labelsHidden().toggleStyle(.switch)
+            }
+            SettingsDivider()
+            SettingsRow(title: "Away for at least", detail: "Shorter breaks don't get a recap.") {
+                Stepper(value: $settings.values.recapAfterMinutes, in: 1...120, step: 1) {
+                    Text("\(Int(settings.values.recapAfterMinutes)) min").font(Theme.uiFont).foregroundStyle(Theme.textSecondary)
+                }
+                .disabled(!settings.values.recap)
+                .accessibilityLabel("Away for at least")
+                .accessibilityValue("\(Int(settings.values.recapAfterMinutes)) minutes")
+            }
+            SettingsDivider()
             SettingsRow(title: "Play sounds", detail: "When agents in other workspaces change state.") {
                 Toggle("Play sounds", isOn: $settings.values.agentSounds).labelsHidden().toggleStyle(.switch)
             }

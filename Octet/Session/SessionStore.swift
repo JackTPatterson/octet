@@ -678,6 +678,7 @@ final class SessionStore: ObservableObject {
         var shown = WindowRegistry.shared.shownTabIds
         if shown.isEmpty, let tab = displayedFocusedTabId ?? snapshot.focusedTabId { shown.insert(tab) }
         let appActive = NSApp?.isActive == true
+        RecapCenter.shared.observe(snapshot)
         let events = activityWatcher.events(in: snapshot) { agent in
             appActive && agent.tabId.map(shown.contains) == true
         }
