@@ -49,6 +49,8 @@ struct Recap: Equatable {
         /// The last thing it said.
         var lastMessage: String?
         var workedFor: TimeInterval?
+        /// Whether what it edited was tested afterwards.
+        var verification: Verification?
 
         /// "Edited 4 files · ran 7 commands · worked 12m".
         var summary: String {
@@ -152,6 +154,8 @@ extension Recap {
         // stand in for the main agent's.
         let times = new.map(\.createdAt)
         if let first = times.min(), let last = times.max(), last > first { run.workedFor = last.timeIntervalSince(first) }
+        let verdict = Verification.assess(new)
+        if verdict != .noEdits { run.verification = verdict }
         let userTurns = new.filter { if case .user = $0.kind { return true } else { return false } }.count
         let ended = (mark.wasRunning ? 1 : 0) + userTurns - (now.isRunning ? 1 : 0)
         run.turns = max(ended, 0)

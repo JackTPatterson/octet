@@ -127,12 +127,17 @@ private struct ConversationHeader: View {
     @ObservedObject var session: AgentSession
     let client: EngineClient
     @ObservedObject private var accounts = AccountStore.shared
+    /// Read when a turn ends, not on every streamed word.
+    @State private var verification: Verification = .noEdits
 
     var body: some View {
         let conversation = session.conversation
         HStack(spacing: 10) {
             ProjectLocation(directory: session.cwd, branch: branch, worktree: workspace?.worktree)
             Spacer(minLength: 8)
+            if !conversation.isRunning, verification != .noEdits {
+                VerificationBadge(verification: verification, compact: true)
+            }
             if let used = conversation.contextUsed {
                 ContextMeter(used: used, window: conversation.contextWindow)
             }
@@ -159,6 +164,9 @@ private struct ConversationHeader: View {
         .padding(.horizontal, 16)
         .frame(height: 36)
         .background(Theme.chrome)
+        .onChange(of: conversation.isRunning, initial: true) { _, running in
+            if !running { verification = Verification.assess(session.conversation.items) }
+        }
     }
 
     private var workspace: EngineWorkspace? {
