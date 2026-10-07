@@ -77,18 +77,10 @@ struct TabBarView: View {
             Spacer(minLength: 0)
             // Every agent, from any tab: at the far right.
             AgentsHubButton(store: store).padding(.trailing, 8)
-            // Each panel's button shows only when it has something to show,
-            // or while its panel is open so it can still be closed.
-            HStack(spacing: 2) {
-                PluginPanelButtons(model: window.pluginPanels)
-                TodoPanelButton(model: window.todos, ui: ui)
-                GitPanelButton(model: window.git, ui: ui)
-                if ui.runtimeHasEntries {
-                    RuntimePanelButton(ui: ui)
-                }
-                SidePanelButton(ui: ui)
-            }
-            .padding(.trailing, 8)
+            // One button for the right panel: Todos, Git, the agents' runtime
+            // and plugins' panels are its tabs and sections, not buttons here.
+            SidePanelButton(ui: ui)
+                .padding(.trailing, 8)
         }
         .frame(height: Theme.tabBarHeight)
         // The rest of the strip takes a tab too, onto the end, as a
@@ -108,26 +100,6 @@ struct TabBarView: View {
         if visible {
             Rectangle().fill(Theme.accent).frame(width: 2).padding(.vertical, 5).allowsHitTesting(false)
         }
-    }
-}
-
-private struct RuntimePanelButton: View {
-    @ObservedObject var ui: UIState
-    @State private var hovered = false
-
-    var body: some View {
-        Button { ui.showSidePanel(.agents) } label: {
-            Text("Runtime").font(Theme.uiFontMedium)
-            .foregroundStyle(Theme.textSecondary)
-            .padding(.horizontal, 7)
-            .frame(height: 24)
-            .background(hovered ? Theme.hover : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
-        }
-        .buttonStyle(.plain)
-        .onHover { hovered = $0 }
-        .help("Show runtimes created by this tab's agent")
-        .accessibilityLabel("Show runtimes")
     }
 }
 
