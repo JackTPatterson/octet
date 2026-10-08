@@ -561,3 +561,14 @@ See `docs/research/agent-pain-points-2026-10.md`.
   way, one after another. Also: Tab with @-file suggestions open takes the
   file instead of cycling OpenCode agents. Build-checked only; the message
   shaping is unit-tested.
+- [x] **61. Usage as charts (med).** `/usage` (also `/cost`, `/context`,
+  `/stats`, and Codex's `/status`) is Octet's own for every agent now and
+  draws a card in the conversation instead of each agent's plain text: the
+  context as a number and a bar (amber and red near full, always with
+  words), what filled it (cache read and written, new input, output, from
+  each agent's own token report), context after each turn as columns, each
+  allowance window as a bar with a tick where an even pace would be and its
+  reset, the conversation's cost, turns and age as tiles, and the last 24
+  hours' spend across every conversation as hourly columns. Hover says the
+  value; Copy gives it as text. Build-checked only; the report and its
+  arithmetic are unit-tested.

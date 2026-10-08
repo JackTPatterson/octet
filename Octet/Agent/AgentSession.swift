@@ -124,6 +124,11 @@ final class AgentSession: ObservableObject, Identifiable {
                 // The turn that restarts carried work has had its chance;
                 // whatever it started again now shows up on its own.
                 if !conversation.isRunning, !carriedRuntimes.isEmpty { carriedRuntimes = [] }
+                // Context after each turn, for the usage card's history.
+                if !conversation.isRunning, let used = conversation.contextUsed, contextHistory.last != used {
+                    contextHistory.append(used)
+                    if contextHistory.count > 200 { contextHistory.removeFirst(contextHistory.count - 200) }
+                }
             }
         }
     }
@@ -575,7 +580,10 @@ final class AgentSession: ObservableObject, Identifiable {
                 ? conversation.slashCommands.map { SlashCommand(name: $0, summary: "", handling: .agent) }
                 : agentCommands
         }
-        return commands.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        // Usage is drawn by Octet for every agent; Codex's /status is its usage.
+        let usage = SlashCommands.usageCommand(alsoStatus: engine == .codex)
+        let kept = commands.filter { !SlashCommands.usageNames.contains($0.name) && !(engine == .codex && $0.name == "status") }
+        return (kept + [usage]).sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     // MARK: - Turns
@@ -2447,6 +2455,38 @@ final class AgentSession: ObservableObject, Identifiable {
 
     /// Output of `!` commands not yet seen by the agent; it goes with the
     /// next message.
+    // MARK: - Usage
+
+    /// Context in use after each turn, oldest first.
+    private(set) var contextHistory: [Int] = []
+    /// The usage cards in the transcript, by the item that stands for each.
+    @Published private(set) var usageReports: [String: UsageReport] = [:]
+
+    /// Draws a usage card into the conversation: `/usage`, `/cost`,
+    /// `/context`, `/stats`. Nothing goes to the agent.
+    func showUsage() {
+        let agentId = engine == .opencode ? "opencode" : engine.rawValue
+        let account = AccountStore.shared.accounts[agentId]
+        let windows = conversation.usageWindows.isEmpty ? (account?.live ?? []) : conversation.usageWindows
+        var history = contextHistory
+        if let used = conversation.contextUsed, history.last != used { history.append(used) }
+        let turns = conversation.items.filter { item in
+            if case .user(let text) = item.kind { return !item.queued && !text.hasPrefix("! ") }
+            return false
+        }.count
+        let report = UsageReport(
+            agent: engine.displayName, model: conversation.model ?? (engine == .claude ? model : nil),
+            contextUsed: conversation.contextUsed, contextWindow: conversation.contextWindow,
+            contextHistory: history, tokens: conversation.lastTokens, costUSD: conversation.costUSD,
+            paysPerToken: account?.kind == .apiKey || engine == .opencode,
+            plan: account?.plan, windows: windows, turns: turns,
+            startedAt: conversation.items.first?.createdAt,
+            lastDay: UsageLedgerStore.shared.ledger.hourly(), at: Date())
+        let id = UUID().uuidString
+        usageReports[id] = report
+        conversation.items.append(AgentItem(id: id, kind: .notice(report.summary)))
+    }
+
     /// Where the transcript was scrolled to when the view went away (the
     /// item at the top), nil when it was following the latest.
     var transcriptReadingAt: String?

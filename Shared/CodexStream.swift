@@ -50,6 +50,7 @@ extension AgentConversation {
             guard let usage = params["tokenUsage"] as? [String: Any] else { return }
             if let total = usage["total"] as? [String: Any], let used = total["totalTokens"] as? Int { contextUsed = used }
             if let window = params["contextWindow"] as? Int ?? usage["contextWindow"] as? Int { contextWindow = window }
+            if let last = (usage["last"] ?? usage["total"]) as? [String: Any], let tokens = TokenUsage.codex(last) { lastTokens = tokens }
         case "account/rateLimits/updated":
             guard let limits = params["rateLimits"] as? [String: Any] else { return }
             let windows = AgentAccounts.codexWindows(rateLimits: limits)

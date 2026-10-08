@@ -511,8 +511,14 @@ private struct Transcript: View {
                     }
                     if blocking == nil {
                         ForEach(items.filter(Self.isShown)) { item in
-                            ItemRow(item: item, running: session.conversation.isRunning)
-                                .equatable()
+                            Group {
+                                if let report = session.usageReports[item.id] {
+                                    UsageCard(report: report)
+                                } else {
+                                    ItemRow(item: item, running: session.conversation.isRunning)
+                                        .equatable()
+                                }
+                            }
                                 .contextMenu { MessageMenu(session: session, item: item) }
                                 .padding(.leading, item.parent == nil ? 0 : 18)
                                 .overlay(alignment: .leading) {
@@ -1763,6 +1769,7 @@ private struct Composer: View {
         switch command.name {
         case "model":
             if !arguments.isEmpty, let match = modelMatching(arguments) { session.model = match } else { dropdowns.openId = "model" }
+        case "usage": session.showUsage()
         case "effort": dropdowns.openId = "effort"
         case "permissions": dropdowns.openId = "mode"
         case "new", "clear": window.newConversation(engine: session.engine)
