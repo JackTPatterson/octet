@@ -291,6 +291,50 @@ enum PaletteCatalog {
             items.append(action("markIdle", "Move Workspace to Idle", "moon.zzz", keywords: ["stale", "archive", "hide"]) {
                 store.markIdle(workspace.workspaceId)
             })
+            if let morning = IdleUntilMenu.morning(daysAhead: 1) {
+                items.append(action("idleUntilTomorrow", "Keep Workspace in Idle Until Tomorrow", "clock",
+                                    keywords: ["snooze", "later", "idle", "tomorrow", "hide"]) {
+                    WaitCenter.shared.snooze(workspaceId: workspace.workspaceId, until: .date(morning), title: "tomorrow morning")
+                })
+            }
+            items.append(action("idleUntil", "Keep Workspace in Idle Until Something Happens…", "clock",
+                                keywords: ["snooze", "later", "idle", "pull request", "merged", "release"]) {
+                WaitCenter.shared.compose(workspaceId: workspace.workspaceId, snooze: true)
+            })
+            items.append(action("sleepWorkspace", "Sleep Workspace", "moon.zzz",
+                                keywords: ["hibernate", "close", "idle", "later", "resume", "suspend"]) {
+                IdleCenter.shared.sleep([workspace])
+            })
+            items.append(action("waitFor", "Wait for Something…", "clock",
+                                keywords: ["wait", "blocked", "later", "remind", "follow up", "pull request", "merged", "release", "deploy"]) {
+                WaitCenter.shared.compose(workspaceId: workspace.workspaceId,
+                                          session: AgentCenter.shared.active(in: workspace.workspaceId))
+            })
+        }
+        for wait in WaitCenter.shared.ready {
+            items.append(action("wait.continue.\(wait.id)", "Continue: \(wait.title)", "play.circle",
+                                keywords: ["wait", "ready", "continue", "next"] + [wait.next]) {
+                WaitCenter.shared.continueWait(wait.id, in: window)
+            })
+        }
+        for wait in WaitCenter.shared.waiting {
+            items.append(action("wait.check.\(wait.id)", "Check: \(wait.title)", "clock",
+                                keywords: ["wait", "waiting", "check", "status"] + [wait.condition.description]) {
+                WaitCenter.shared.checkNow(wait.id)
+            })
+        }
+        for entry in OctetPluginHost.shared.layouts {
+            let layout = entry.layout
+            items.append(action("layout.\(entry.plugin.id).\(layout.id)", "New Tab Split: \(layout.title)", "rectangle.split.2x1",
+                                keywords: ["layout", "split", "panes", "grid", "monitor", "\(layout.layout.paneCount) panes"]) {
+                PaneLayoutActions.open(layout, in: window)
+            })
+        }
+        for record in IdleCenter.shared.sleeping {
+            items.append(action("wake.\(record.id)", "Wake \(record.label)", "moon.zzz",
+                                keywords: ["sleeping", "asleep", "wake", "resume", "restore", record.branch ?? ""]) {
+                IdleCenter.shared.wake(record.id, in: window)
+            })
         }
         // Machines the engine can reach, each opening a session in a tab.
         for machine in store.remoteMachines where machine.enabled {
@@ -341,13 +385,11 @@ enum PaletteCatalog {
             let count = store.idleWorkspaces.count
             items.append(action("closeIdle", "Close \(count) Idle Workspace\(count == 1 ? "" : "s")…", "xmark.bin.fill",
                                 keywords: ["stale", "cleanup", "unused"]) {
-                ConfirmCenter.shared.ask(
-                    title: "Close \(count) idle workspace\(count == 1 ? "" : "s")?",
-                    message: "Their terminals and any processes running in them will end.",
-                    items: store.idleWorkspaces.map(\.label),
-                    confirmTitle: "Close",
-                    destructive: true
-                ) { _ in store.closeIdleWorkspaces() }
+                IdleCenter.shared.close(store.idleWorkspaces)
+            })
+            items.append(action("sleepIdle", "Sleep \(count) Idle Workspace\(count == 1 ? "" : "s")", "moon.zzz",
+                                keywords: ["stale", "cleanup", "unused", "hibernate"]) {
+                IdleCenter.shared.sleep(store.idleWorkspaces)
             })
         }
         items.append(PaletteItem(

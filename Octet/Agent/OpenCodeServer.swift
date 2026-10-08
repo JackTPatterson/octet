@@ -97,6 +97,7 @@ final class OpenCodeServer {
         process.currentDirectoryURL = URL(fileURLWithPath: NSHomeDirectory())
         var environment = ProcessInfo.processInfo.environment
         environment.merge(TerminalControl.environment(session: EngineSession.name)) { _, ours in ours }
+        environment.merge(WaitControl.environment(session: EngineSession.name)) { _, ours in ours }
         environment["OPENCODE_SERVER_PASSWORD"] = password
         environment["OPENCODE_SERVER_USERNAME"] = "opencode"
         // Inline config is merged over the user's own, which is left alone if

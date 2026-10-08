@@ -14,6 +14,8 @@ enum HandoffBrief {
         case switching(from: String)
         /// The same agent, a clean context.
         case fresh
+        /// Set aside until something outside it happened, which now has.
+        case waited(on: String)
     }
 
     struct Input {
@@ -77,6 +79,8 @@ enum HandoffBrief {
             "Carrying on work started in \(from) in \(place)."
         case .fresh:
             "Carrying on work in \(place). The conversation had grown long, so this one starts clean with a summary of it."
+        case .waited(let on):
+            "Carrying on work started in \(input.agentName) in \(place), set aside until \(on). That has happened, and the conversation it was in is gone, so this is a summary of it."
         }
     }
 

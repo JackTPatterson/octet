@@ -485,6 +485,15 @@ final class OctetPluginHost: ObservableObject {
         window.applyLayout(layout, failure: "Couldn't start \(label)")
     }
 
+    // MARK: - Layouts
+
+    typealias Layout = (layout: PaneLayoutContribution, plugin: OctetPlugin)
+
+    /// Enabled plugins' pane layouts, for the title bar's picker.
+    var layouts: [Layout] {
+        plugins.filter(isEnabled).flatMap { plugin in plugin.manifest.contributes.layouts.map { ($0, plugin) } }
+    }
+
     // MARK: - Panels
 
     typealias Panel = (panel: OctetPluginManifest.PanelContribution, plugin: OctetPlugin)

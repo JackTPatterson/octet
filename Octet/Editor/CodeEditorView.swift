@@ -98,16 +98,55 @@ struct CodeEditorView: View {
 private struct EditorDocumentView: View {
     @ObservedObject var document: EditorDocument
     let workspace: EditorWorkspace
+    /// How a Markdown file shows, kept for the next one opened.
+    @AppStorage("octet.editor.markdownMode") private var markdownMode = MarkdownMode.preview.rawValue
+
+    enum MarkdownMode: String, CaseIterable, Identifiable {
+        case edit, split, preview
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .edit: "Edit"
+            case .split: "Split"
+            case .preview: "Preview"
+            }
+        }
+    }
+
+    private var isMarkdown: Bool {
+        ["md", "markdown", "mdown", "mkd", "mdx"].contains(document.url.pathExtension.lowercased())
+    }
+
+    private var mode: MarkdownMode { isMarkdown ? MarkdownMode(rawValue: markdownMode) ?? .preview : .edit }
 
     var body: some View {
         VStack(spacing: 0) {
-            CodeEditorTextView(document: document, workspace: workspace)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .clipped()
+            HStack(spacing: 0) {
+                if mode != .preview {
+                    CodeEditorTextView(document: document, workspace: workspace)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .clipped()
+                }
+                if mode == .split { Rectangle().fill(Theme.divider).frame(width: 1) }
+                if mode != .edit {
+                    MarkdownPreview(text: document.text, baseURL: document.url.deletingLastPathComponent())
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
             HStack(spacing: 8) {
                 Text(document.url.path)
                     .lineLimit(1).truncationMode(.head)
                 Spacer()
+                if isMarkdown {
+                    Picker("Markdown", selection: $markdownMode) {
+                        ForEach(MarkdownMode.allCases) { Text($0.title).tag($0.rawValue) }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .controlSize(.mini)
+                    .frame(width: 170)
+                    .help("Edit the Markdown, see it rendered, or both side by side")
+                }
                 if let error = document.lastError {
                     OctetIcon("xmark.circle.fill", size: 12).foregroundStyle(Theme.danger)
                     Text(error).lineLimit(1)
@@ -124,6 +163,34 @@ private struct EditorDocumentView: View {
             .background(Theme.chrome)
             .overlay(alignment: .top) { Rectangle().fill(Theme.divider).frame(height: 1) }
         }
+    }
+}
+
+/// A Markdown file as it reads: headings, lists, quotes, code, tables and
+/// links, drawn with the same blocks as agents' replies. Links open in the
+/// browser; relative ones resolve against the file's folder.
+private struct MarkdownPreview: View {
+    let text: String
+    let baseURL: URL
+
+    var body: some View {
+        ScrollView {
+            MarkdownView(text: text)
+                .frame(maxWidth: 760, alignment: .leading)
+                .padding(.horizontal, 28)
+                .padding(.vertical, 22)
+                .frame(maxWidth: .infinity, alignment: .center)
+        }
+        .octetScrollIndicators()
+        .background(Theme.terminalBackground)
+        .environment(\.openURL, OpenURLAction { url in
+            if url.scheme == nil, let resolved = URL(string: url.relativeString, relativeTo: baseURL) {
+                NSWorkspace.shared.open(resolved.absoluteURL)
+            } else {
+                NSWorkspace.shared.open(url)
+            }
+            return .handled
+        })
     }
 }
 

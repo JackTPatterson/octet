@@ -33,6 +33,13 @@ import Foundation
 //                                      prompt for the person to run (never run
 //                                      for them; Settings › Terminal turns it on)
 //   octet-cli terminal-mcp              the same, as an MCP tool for any agent (stdio)
+//   octet-cli wait add --until <condition> --then <next step> [--title <words>]
+//                                      a wait: Octet checks the condition (a PR,
+//                                      a release, a package, a page, a date, …)
+//                                      and brings the work back with the next step
+//   octet-cli wait list                 the waits set, with where each stands
+//   octet-cli wait cancel <id>          remove one
+//   octet-cli wait-mcp                  the same, as MCP tools for any agent (stdio)
 //   octet-cli mcp-permission --socket <path>
 //                                      permission prompt tool for conversations
 //                                      Octet drives headless (stdio MCP server)
@@ -308,6 +315,49 @@ case "terminal":
     } catch {
         fail(String(describing: error))
     }
+case "wait-mcp":
+    // Waits, for agents in Octet (stdio MCP).
+    let socket = WaitControl.resolveSocket(environment: environment)
+    let origin = WaitControl.Origin.current(environment, cwd: FileManager.default.currentDirectoryPath)
+    while let line = readLine(strippingNewline: true) {
+        if let reply = WaitMCP.respond(to: line, origin: origin, call: { method, params in
+            try WaitControl.call(socketPath: socket, method: method, params: params)
+        }) {
+            print(reply)
+            fflush(stdout)
+        }
+    }
+case "wait":
+    // For an agent that can run a command but takes no MCP tools.
+    let rest = Array(arguments.dropFirst())
+    let usage = "usage: octet-cli wait add --until <condition> --then <next step> [--title <words>] | wait list | wait cancel <id>"
+    guard let verb = rest.first, ["add", "list", "cancel"].contains(verb) else { fail(usage + "\n\n" + WaitMCP.untilHelp) }
+    guard let origin = WaitControl.Origin.current(environment, cwd: FileManager.default.currentDirectoryPath) else {
+        fail(WaitControl.notInOctet)
+    }
+    var params = origin.params
+    let socket = WaitControl.resolveSocket(environment: environment)
+    do {
+        switch verb {
+        case "add":
+            guard let until = option("--until", in: rest), let then = option("--then", in: rest),
+                  !until.isEmpty, !then.isEmpty else { fail(usage + "\n\n" + WaitMCP.untilHelp) }
+            params["until"] = until
+            params["then"] = then
+            if let title = option("--title", in: rest) { params["title"] = title }
+            print(WaitMCP.formatAdded(try WaitControl.call(socketPath: socket, method: .add, params: params)))
+        case "list":
+            print(WaitMCP.formatList(try WaitControl.call(socketPath: socket, method: .list, params: params)))
+        default:
+            guard rest.count > 1 else { fail(usage) }
+            params["id"] = rest[1]
+            _ = try WaitControl.call(socketPath: socket, method: .cancel, params: params)
+            print("Removed.")
+        }
+        exit(0)
+    } catch {
+        fail(String(describing: error))
+    }
 case "mcp-permission":
     guard let socketPath = option("--socket", in: Array(arguments.dropFirst())) else {
         fail("usage: octet-cli mcp-permission --socket <path>")
@@ -319,5 +369,5 @@ case "mcp-permission":
     }
 
 default:
-    fail("usage: octet-cli <open [folder]|run <agent> [--in <folder>] [--prompt <text>]|send <text>|panes|read [--pane <id>] [--lines <n>]|peer …|peer-mcp|delegate-mcp|terminal read|terminal suggest|terminal-mcp|hook <agent>|agent-watch|install-subagent-hook [agent]|uninstall-subagent-hook [agent]|mcp-permission --socket <path>>")
+    fail("usage: octet-cli <open [folder]|run <agent> [--in <folder>] [--prompt <text>]|send <text>|panes|read [--pane <id>] [--lines <n>]|peer …|peer-mcp|delegate-mcp|terminal read|terminal suggest|terminal-mcp|wait add|wait list|wait cancel|wait-mcp|hook <agent>|agent-watch|install-subagent-hook [agent]|uninstall-subagent-hook [agent]|mcp-permission --socket <path>>")
 }

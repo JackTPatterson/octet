@@ -1753,6 +1753,8 @@ final class AgentSession: ObservableObject, Identifiable {
         process.arguments = ["-l", "-c", "exec \(shellQuote(claude)) \"$@\"", "claude"] + args
         process.currentDirectoryURL = URL(fileURLWithPath: cwd)
         var environment = Self.accountEnvironment(cwd: cwd)
+        // A wait this conversation sets comes back to it.
+        environment[WaitControl.conversationVariable] = id
         // Checkpoints each message's file edits, so a rewind can undo them.
         environment["CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING"] = "true"
         process.environment = environment
@@ -1920,7 +1922,9 @@ final class AgentSession: ObservableObject, Identifiable {
         process.executableURL = URL(fileURLWithPath: shell)
         process.arguments = ["-l", "-c", command] + arguments
         process.currentDirectoryURL = URL(fileURLWithPath: cwd)
-        process.environment = Self.accountEnvironment(cwd: cwd)
+        var environment = Self.accountEnvironment(cwd: cwd)
+        environment[WaitControl.conversationVariable] = id
+        process.environment = environment
         let input = Pipe(), output = Pipe(), errors = Pipe()
         process.standardInput = input
         process.standardOutput = output
@@ -1970,6 +1974,8 @@ final class AgentSession: ObservableObject, Identifiable {
             .merging(AccountProfiles.environment(for: cwd)) { _, account in account }
             // Where the sidebar terminal tool asks, for agents that have it.
             .merging(TerminalControl.environment(session: EngineSession.name)) { _, ours in ours }
+            // And where a wait is set, for the waits tool.
+            .merging(WaitControl.environment(session: EngineSession.name)) { _, ours in ours }
     }
 
     private func stopProcess() {

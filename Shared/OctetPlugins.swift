@@ -89,6 +89,8 @@ struct OctetPluginManifest: Codable, Equatable {
         /// Picks the model and effort a conversation's next turn runs on,
         /// from how much of the account's allowance is used.
         var modelPolicies: [ModelPolicyContribution] = []
+        /// Ways to split a tab into panes, in the title bar's layout picker.
+        var layouts: [PaneLayoutContribution] = []
 
         init(completions: [CompletionContribution] = [], runtimes: [RuntimeContribution] = [],
              runtimeIgnore: [String] = [], statusItems: [StatusItemContribution] = [],
@@ -111,10 +113,11 @@ struct OctetPluginManifest: Codable, Equatable {
             panels = try container.decodeIfPresent([PanelContribution].self, forKey: .panels) ?? []
             workspaceIcons = try container.decodeIfPresent([WorkspaceIconContribution].self, forKey: .workspaceIcons) ?? []
             modelPolicies = try container.decodeIfPresent([ModelPolicyContribution].self, forKey: .modelPolicies) ?? []
+            layouts = try container.decodeIfPresent([PaneLayoutContribution].self, forKey: .layouts) ?? []
         }
 
         enum CodingKeys: String, CodingKey {
-            case completions, runtimes, runtimeIgnore, statusItems, menuItems, panels, workspaceIcons, modelPolicies
+            case completions, runtimes, runtimeIgnore, statusItems, menuItems, panels, workspaceIcons, modelPolicies, layouts
         }
     }
 
@@ -545,6 +548,15 @@ enum OctetPlugins {
             if panel.title.trimmingCharacters(in: .whitespaces).isEmpty { return "panel \(panel.id) has no title" }
             if let problem = problem(panel.runs) { return "panel \(panel.id) \(problem)" }
             if let acts = panel.acts, let problem = problem(acts) { return "panel \(panel.id)'s act \(problem)" }
+        }
+        var layoutIds: Set<String> = []
+        for layout in manifest.contributes.layouts {
+            if layout.id.range(of: "^[a-z0-9][a-z0-9._-]*$", options: .regularExpression) == nil {
+                return "layout ids must be lowercase letters, digits, dots, dashes or underscores"
+            }
+            if !layoutIds.insert(layout.id).inserted { return "layout \(layout.id) appears twice" }
+            if layout.title.trimmingCharacters(in: .whitespaces).isEmpty { return "layout \(layout.id) has no title" }
+            if let problem = layout.layout.problem { return "layout \(layout.id) \(problem)" }
         }
         for completion in manifest.contributes.completions {
             if completion.command.isEmpty || completion.command.contains(where: \.isWhitespace) {

@@ -46,6 +46,7 @@ enum SettingsSearchIndex {
         .init(.general, "Shell", ["zsh", "bash", "fish", "login shell", "default shell", "path"]),
         .init(.general, "Shell startup mode", ["shell", "login", "non-login", "profile", "zprofile", "rc"]),
         .init(.general, "Move to Idle after", ["idle", "dock", "inactive", "unused", "workspace", "timeout"]),
+        .init(.general, "Sleep idle workspaces after", ["idle", "sleep", "hibernate", "close", "unused", "wake", "workspace"]),
         .init(.general, "Pinned workspaces", ["pin", "unpin", "workspace"]),
     ]
 
@@ -99,6 +100,9 @@ enum SettingsSearchIndex {
         .init(.agents, "Quick answers", ["question", "prompt", "permission", "corner", "choice", "reply"]),
         .init(.agents, "Visual twin", ["terminal", "conversation", "transcript"]),
         .init(.agents, "Open the twin for new agents", ["automatic", "terminal", "conversation"]),
+        .init(.agents, "Let agents set waits", anchor: "Waits",
+              ["wait", "waiting", "blocked", "pull request", "merged", "release", "later", "remind", "follow up", "octet-waits", "mcp"]),
+        .init(.agents, "Offer a wait from a reply", anchor: "Waits", ["wait", "suggest", "once", "after", "banner"]),
         .init(.agents, "Recap when you come back", ["recap", "away", "catch up", "summary", "while you were away", "back", "digest"]),
         .init(.agents, "Recap: away for at least", anchor: "Away for at least", ["recap", "away", "minutes", "threshold"]),
         .init(.agents, "Agent notifications", anchor: "When an agent finishes or needs you",
