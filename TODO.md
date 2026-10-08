@@ -544,3 +544,9 @@ See `docs/research/agent-pain-points-2026-10.md`.
   server won't take ratios). Ships with the Pane Layouts plugin: 2, 3 and 4
   panes side by side, stacked, main-plus-stack and a 2 × 2 grid.
   Build-checked only; the layout model and the bundled plugin are unit-tested.
+- [x] **59. Editor fixes (med).** Files opened with their line numbers but
+  no text: the editor took AppKit's TextKit 2 text view, and the line ruler
+  and highlighter asking for its layout manager switched it to TextKit 1
+  mid-draw. It's built as a TextKit 1 view from the start now. Markdown files
+  open rendered (Preview), with Edit and Split (source beside the live
+  preview) in the status bar; the choice is kept. Build-checked only.

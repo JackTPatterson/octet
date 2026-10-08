@@ -12,13 +12,20 @@ struct CodeEditorTextView: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(document: document, workspace: workspace) }
 
     func makeNSView(context: Context) -> NSScrollView {
-        // Start from AppKit's canonical text-system stack. Hand-assembling an
-        // NSTextView and then installing it as an NSScrollView document view
-        // can leave TextKit laying out glyphs in a stale, offscreen container.
-        let scroll = EditorNSTextView.scrollableTextView()
-        guard let textView = scroll.documentView as? EditorNSTextView else {
-            preconditionFailure("NSTextView.scrollableTextView returned an unexpected document view")
-        }
+        // A TextKit 1 view, built the way Apple's text system guide does it.
+        // `scrollableTextView()` hands back a TextKit 2 view, and the line
+        // ruler and the highlighter both ask for its `layoutManager`, which
+        // makes AppKit switch it to TextKit 1 at runtime; done during a
+        // draw, that leaves the line numbers laid out and the text blank.
+        let scroll = NSScrollView()
+        let textView = EditorNSTextView(usingTextLayoutManager: false)
+        textView.minSize = NSSize(width: 0, height: 0)
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
+        textView.textContainer?.widthTracksTextView = true
+        scroll.documentView = textView
         textView.delegate = context.coordinator
         textView.isRichText = false
         textView.usesAdaptiveColorMappingForDarkAppearance = false
