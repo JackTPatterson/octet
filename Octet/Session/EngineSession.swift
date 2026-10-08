@@ -77,6 +77,7 @@ struct EngineSession {
         }
         env[PeerControl.socketVariable] = Self.supportDirectory.appendingPathComponent(PeerControl.socketName).path
         env[TerminalControl.socketVariable] = Self.supportDirectory.appendingPathComponent(TerminalControl.socketName).path
+        env[WaitControl.socketVariable] = Self.supportDirectory.appendingPathComponent(WaitControl.socketName).path
         return env
     }
 

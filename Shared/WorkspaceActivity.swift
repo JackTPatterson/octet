@@ -54,8 +54,19 @@ struct WorkspaceActivity: Equatable {
             .map { "\($0.paneId)=\($0.stateChangeSeq ?? 0):\($0.agentStatus.rawValue)" }
         let titles = snapshot.panes.filter { $0.workspaceId == workspaceId }
             .sorted { $0.paneId < $1.paneId }
-            .map { "\($0.paneId)=\($0.terminalTitle ?? "")" }
+            .map { "\($0.paneId)=\(titleKey($0.terminalTitle))" }
         return (agents + titles).joined(separator: "|")
+    }
+
+    /// A title as far as use goes: its words only. A spinner, a clock or a
+    /// counter in a title changes it all the time with nobody there (an
+    /// agent's animated title, `watch`, a prompt showing the time), which
+    /// would keep a workspace out of Idle for good; a new program or a new
+    /// task still changes the words.
+    static func titleKey(_ title: String?) -> String {
+        guard let title else { return "" }
+        let words = title.lowercased().unicodeScalars.map { CharacterSet.letters.contains($0) ? Character($0) : " " }
+        return String(words).split(separator: " ").joined(separator: " ")
     }
 
     /// Splits workspaces into those kept in view and those gone idle. Never

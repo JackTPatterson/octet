@@ -8,6 +8,8 @@ struct SidebarView: View {
     @ObservedObject var store: SessionStore
     var width: CGFloat = Theme.sidebarWidth
     @ObservedObject private var motion = MotionPreferences.shared
+    @ObservedObject private var waits = WaitCenter.shared
+    @ObservedObject private var idle = IdleCenter.shared
     @State private var collapsedGroups: Set<String> = []
     @State private var query = ""
     @FocusState private var searchFocused: Bool
@@ -22,6 +24,7 @@ struct SidebarView: View {
                     if searching {
                         searchResults
                     } else {
+                        ReadyWaits()
                         ForEach(store.activeGroups) { group in
                             groupSection(group)
                         }
@@ -55,12 +58,17 @@ struct SidebarView: View {
             if !searching {
                 TipCard(store: store)
             }
-            if !searching, !store.idleWorkspaces.isEmpty {
+            if !searching, !waits.waiting.isEmpty {
+                WaitsDock()
+                    .transition(motion.animates(.sidebar) ? .move(edge: .bottom).combined(with: .opacity) : .identity)
+            }
+            if !searching, !store.idleWorkspaces.isEmpty || !idle.sleeping.isEmpty {
                 IdleDock(store: store)
                     .transition(motion.animates(.sidebar) ? .move(edge: .bottom).combined(with: .opacity) : .identity)
             }
         }
         .animation(motion.animation(.sidebar), value: store.idleWorkspaces.isEmpty)
+        .animation(motion.animation(.sidebar), value: waits.waiting.isEmpty)
         .frame(width: width)
         .background(Theme.sidebar)
         // Peeks come back once the pointer has left the sidebar.
@@ -652,11 +660,19 @@ struct WorkspaceOrganizeMenu: View {
         }
         if store.idleWorkspaces.contains(where: { $0.workspaceId == id }) {
             Button("Keep in View Now") {
+                WaitCenter.shared.cancelSnooze(of: id)
                 store.keepInView(id)
                 window.focusWorkspace(id)
             }
         } else {
             Button("Move to Idle") { store.markIdle(id) }
+        }
+        IdleUntilMenu(workspaceId: id)
+        Button("Wait for Something…") { WaitCenter.shared.compose(workspaceId: id) }
+        Button("Sleep") { IdleCenter.shared.sleep([workspace]) }
+            .help("Closes its terminals and keeps a note to bring it back as it was, agents resumed")
+        if IdleCenter.shared.work[id]?.mergedWorktree == true {
+            Button("Close and Remove Worktree…") { IdleCenter.shared.removeMergedWorktree(workspace, window: window) }
         }
         // The workspace's Claude Code conversations, carried on in another
         // folder; see ConversationMover.
@@ -696,12 +712,45 @@ struct WorkspaceOrganizeMenu: View {
     }
 }
 
+/// "Keep in Idle Until": out of the way until a time, or until something
+/// happens (a wait with no step, that only brings it back).
+struct IdleUntilMenu: View {
+    let workspaceId: String
+
+    var body: some View {
+        let center = WaitCenter.shared
+        Menu("Keep in Idle Until") {
+            Button("In an Hour") { center.snooze(workspaceId: workspaceId, until: .date(Date().addingTimeInterval(3600)), title: "in an hour") }
+            if let morning = Self.morning(daysAhead: 1) {
+                Button("Tomorrow Morning") { center.snooze(workspaceId: workspaceId, until: .date(morning), title: "tomorrow morning") }
+            }
+            if let monday = Calendar.current.nextDate(after: Date(), matching: DateComponents(hour: 9, minute: 0, weekday: 2),
+                                                       matchingPolicy: .nextTime) {
+                Button("Monday Morning") { center.snooze(workspaceId: workspaceId, until: .date(monday), title: "Monday morning") }
+            }
+            Divider()
+            Button("Something Happens…") { center.compose(workspaceId: workspaceId, snooze: true) }
+        }
+    }
+
+    static func morning(daysAhead: Int) -> Date? {
+        Calendar.current.date(byAdding: .day, value: daysAhead, to: Date())
+            .flatMap { Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: $0) }
+    }
+}
+
 /// Bottom dock of workspaces that haven't been used in a while: compact
-/// one-line rows so active work stays in view.
+/// one-line rows so active work stays in view, what each still holds, and
+/// those put to sleep.
 struct IdleDock: View {
     @ObservedObject var store: SessionStore
     @ObservedObject private var motion = MotionPreferences.shared
+    @ObservedObject private var idle = IdleCenter.shared
+    @EnvironmentObject private var window: WindowContext
     @AppStorage("octet.idleDock.collapsed") private var collapsed = false
+
+    /// Past this many rows, idle workspaces are grouped by project.
+    private static let groupAfter = 6
 
     var body: some View {
         VStack(spacing: 0) {
@@ -726,24 +775,43 @@ struct IdleDock: View {
                 }
                 .buttonStyle(.plain)
                 Spacer()
-                Button {
-                    confirmCloseAll()
+                if !idle.selection.isEmpty {
+                    Text("\(idle.selection.count) picked").font(Theme.captionFont).foregroundStyle(Theme.accent)
+                }
+                Menu {
+                    actions
                 } label: {
                     OctetIcon("xmark.bin", size: 14)
                 }
+                .menuStyle(.button)
                 .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+                .fixedSize()
                 .foregroundStyle(Theme.textTertiary)
-                .help("Close all idle workspaces")
+                .help("Close, sleep or stop idle workspaces")
             }
             .padding(.horizontal, 12)
             .frame(height: 30)
 
             if !collapsed {
                 ScrollView {
-                    LazyVStack(spacing: 1) {
-                        ForEach(store.idleWorkspaces) { workspace in
-                            IdleRow(store: store, workspace: workspace)
-                                .transition(motion.animates(.sidebar) ? .move(edge: .top).combined(with: .opacity) : .identity)
+                    LazyVStack(alignment: .leading, spacing: 1) {
+                        ForEach(sections) { section in
+                            if !section.name.isEmpty {
+                                Text(section.name.uppercased()).font(Theme.captionFont.weight(.semibold)).kerning(0.3)
+                                    .foregroundStyle(Theme.textTertiary)
+                                    .padding(.horizontal, 8).padding(.top, 4)
+                            }
+                            ForEach(section.workspaces) { workspace in
+                                IdleRow(store: store, workspace: workspace)
+                                    .transition(motion.animates(.sidebar) ? .move(edge: .top).combined(with: .opacity) : .identity)
+                            }
+                        }
+                        if !idle.sleeping.isEmpty {
+                            Text("ASLEEP").font(Theme.captionFont.weight(.semibold)).kerning(0.3)
+                                .foregroundStyle(Theme.textTertiary)
+                                .padding(.horizontal, 8).padding(.top, 6)
+                            ForEach(idle.sleeping) { record in SleepingRow(record: record) }
                         }
                     }
                     .animation(motion.animation(.sidebar), value: store.idleWorkspaces)
@@ -751,22 +819,63 @@ struct IdleDock: View {
                     .padding(.bottom, 6)
                 }
                 .scrollIndicators(.hidden)
-                .frame(height: min(CGFloat(store.idleWorkspaces.count) * 25 + 6, 200))
+                .frame(height: min(CGFloat(rowCount) * 25 + 6, 240))
                 .transition(motion.animates(.sidebar) ? .opacity : .identity)
             }
         }
         .background(Theme.chrome)
+        .onAppear { idle.refresh() }
     }
 
-    private func confirmCloseAll() {
-        let count = store.idleWorkspaces.count
-        ConfirmCenter.shared.ask(
-            title: "Close \(count) idle workspace\(count == 1 ? "" : "s")?",
-            message: "Their terminals and any processes running in them will end.",
-            items: store.idleWorkspaces.map(\.label),
-            confirmTitle: "Close",
-            destructive: true
-        ) { _ in store.closeIdleWorkspaces() }
+    private var rowCount: Int {
+        let headers = sections.filter { !$0.name.isEmpty }.count
+        return store.idleWorkspaces.count + headers + (idle.sleeping.isEmpty ? 0 : idle.sleeping.count + 1)
+    }
+
+    private struct Section: Identifiable {
+        let name: String
+        let workspaces: [EngineWorkspace]
+        var id: String { name }
+    }
+
+    /// One unnamed section, or one per project once there are many.
+    private var sections: [Section] {
+        let all = store.idleWorkspaces
+        let projects = Dictionary(grouping: all) { store.projectName(of: $0.workspaceId) ?? "Other" }
+        guard all.count > Self.groupAfter, projects.count > 1 else { return [Section(name: "", workspaces: all)] }
+        // In the order their newest workspace went idle.
+        var order: [String] = []
+        for workspace in all {
+            let name = store.projectName(of: workspace.workspaceId) ?? "Other"
+            if !order.contains(name) { order.append(name) }
+        }
+        return order.map { Section(name: $0, workspaces: projects[$0] ?? []) }
+    }
+
+    @ViewBuilder private var actions: some View {
+        let picked = store.idleWorkspaces.filter { idle.selection.contains($0.workspaceId) }
+        if !picked.isEmpty {
+            Button("Close \(picked.count) Picked…") { idle.close(picked) }
+            Button("Sleep \(picked.count) Picked") { idle.sleep(picked) }
+            Button("Clear Picks") { idle.selection = [] }
+            Divider()
+        }
+        Button("Close All Idle…") { idle.close(store.idleWorkspaces) }
+            .disabled(store.idleWorkspaces.isEmpty)
+        Button("Sleep All Idle") { idle.sleep(store.idleWorkspaces) }
+            .disabled(store.idleWorkspaces.isEmpty)
+        let ports = idle.idlePorts
+        if !ports.isEmpty {
+            Button("Stop \(ports.count == 1 ? "the Server" : "\(ports.count) Servers") in Idle…") { idle.stopIdleServers() }
+        }
+        if !idle.sleeping.isEmpty {
+            Divider()
+            Button("Forget \(Recap.count(idle.sleeping.count, "Sleeping Workspace"))") {
+                for record in idle.sleeping { idle.forget(record.id) }
+            }
+        }
+        Divider()
+        Text("⌘-click rows to pick several")
     }
 
     static func thresholdLabel(_ seconds: TimeInterval) -> String {
@@ -780,12 +889,19 @@ private struct IdleRow: View {
     @EnvironmentObject private var window: WindowContext
     @ObservedObject var store: SessionStore
     let workspace: EngineWorkspace
+    @ObservedObject private var idle = IdleCenter.shared
+    @ObservedObject private var waits = WaitCenter.shared
     @State private var hovered = false
     @State private var renaming = false
+    @StateObject private var peek = HoverIntent()
 
     var body: some View {
-        let agent = store.primaryAgent(in: store.snapshot.agents(inWorkspace: workspace.workspaceId))
+        let id = workspace.workspaceId
+        let agent = store.primaryAgent(in: store.snapshot.agents(inWorkspace: id))
         let brand = AgentBrand.forAgent(agent?.agent)
+        let work = idle.work[id]
+        let picked = idle.selection.contains(id)
+        let snooze = waits.snooze(of: id)
         HStack(spacing: 6) {
             Group {
                 if let brand {
@@ -799,15 +915,15 @@ private struct IdleRow: View {
             if renaming {
                 InlineRenameField(initial: workspace.label, placeholder: "Workspace name") { label in
                     renaming = false
-                    store.renameWorkspace(workspace.workspaceId, to: label, from: workspace.label)
+                    store.renameWorkspace(id, to: label, from: workspace.label)
                 }
             } else {
                 Text(workspace.label)
                     .font(.system(size: 11.5))
-                    .foregroundStyle(hovered ? Theme.textPrimary : Theme.textSecondary)
+                    .foregroundStyle(hovered || picked ? Theme.textPrimary : Theme.textSecondary)
                     .lineLimit(1)
             }
-            if !renaming, let project = store.projectName(of: workspace.workspaceId),
+            if !renaming, let project = store.projectName(of: id),
                project.caseInsensitiveCompare(workspace.label) != .orderedSame {
                 Text(project)
                     .font(.system(size: 10.5))
@@ -815,15 +931,35 @@ private struct IdleRow: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 4)
+            if !renaming {
+                if snooze != nil {
+                    OctetIcon("clock", size: 11).foregroundStyle(Theme.textTertiary)
+                        .help("Comes back " + (snooze.map { $0.isManual ? "when you say" : "when " + $0.condition.description } ?? ""))
+                }
+                if work?.mergedWorktree == true {
+                    Text("merged").font(.system(size: 9.5, weight: .medium)).foregroundStyle(Theme.textTertiary)
+                        .padding(.horizontal, 4).frame(height: 14)
+                        .background(Capsule().fill(Theme.cardSelected))
+                        .help("A worktree whose branch is merged; its menu can remove it")
+                }
+                if let port = work?.ports.first {
+                    Text(":\(String(port))").font(.system(size: 10, design: .monospaced)).foregroundStyle(Theme.textTertiary)
+                        .help("A server is still listening here")
+                }
+                if let work, work.uncommitted > 0 || work.unpushed > 0 {
+                    Circle().fill(Color.orange.opacity(0.85)).frame(width: 6, height: 6)
+                        .help(work.risks.map { "Not saved anywhere else: " + $0 } ?? "")
+                }
+            }
             // The age and the close button share a spot; the button floats
             // over it, so swapping them never changes the row.
             let showsClose = hovered && !renaming
-            Text(WorkspaceActivity.ageLabel(since: store.activity.lastActive(workspace.workspaceId)))
+            Text(WorkspaceActivity.ageLabel(since: store.activity.lastActive(id)))
                 .font(.system(size: 10.5, design: .monospaced))
                 .foregroundStyle(Theme.textTertiary)
                 .opacity(showsClose ? 0 : 1)
                 .overlay(alignment: .trailing) {
-                    WorkspaceCloseButton { store.closeWorkspace(workspace.workspaceId) }
+                    WorkspaceCloseButton { idle.close([workspace]) }
                         .opacity(showsClose ? 1 : 0)
                         .allowsHitTesting(showsClose)
                         .accessibilityHidden(!showsClose)
@@ -831,17 +967,144 @@ private struct IdleRow: View {
         }
         .padding(.horizontal, 8)
         .frame(height: 24)
+        .background(RoundedRectangle(cornerRadius: Theme.rowRadius)
+            .fill(picked ? Theme.cardSelected : hovered ? Theme.hover : Color.clear))
+        .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius).strokeBorder(picked ? Theme.accent.opacity(0.5) : .clear, lineWidth: 1))
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            hovered = hovering
+            peek.source(hovering && !renaming)
+        }
+        .onTapGesture {
+            peek.close()
+            if NSEvent.modifierFlags.contains(.command) {
+                if picked { idle.selection.remove(id) } else { idle.selection.insert(id) }
+            } else {
+                idle.selection = []
+                window.focusWorkspace(id)
+            }
+        }
+        .simultaneousGesture(TapGesture(count: 2).onEnded { renaming = true })
+        .onDrag {
+            TabDrag.shared.begin(workspace: id, from: window)
+            return NSItemProvider(object: id as NSString)
+        }
+        .popover(isPresented: $peek.isShown, arrowEdge: .trailing) {
+            IdlePeek(store: store, workspace: workspace) { peek.close() }
+                .onHover { peek.card($0) }
+        }
+        .contextMenu { WorkspaceOrganizeMenu(store: store, workspace: workspace) { renaming = true } }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(workspace.label), idle, last used \(WorkspaceActivity.ageLabel(since: store.activity.lastActive(id))) ago"
+                            + (work?.risks.map { ", holds \($0)" } ?? ""))
+    }
+}
+
+/// What an idle workspace was doing and still holds, on hover: where it
+/// left off, so it needn't be opened to find out.
+private struct IdlePeek: View {
+    @EnvironmentObject private var window: WindowContext
+    @ObservedObject var store: SessionStore
+    let workspace: EngineWorkspace
+    let close: () -> Void
+    @ObservedObject private var idle = IdleCenter.shared
+
+    var body: some View {
+        let id = workspace.workspaceId
+        let work = idle.work[id]
+        let sessions = AgentCenter.shared.sessions(in: id)
+        let latest = sessions.max { ($0.conversation.items.last?.createdAt ?? .distantPast) < ($1.conversation.items.last?.createdAt ?? .distantPast) }
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(workspace.label).font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary)
+                Text(place).font(Theme.captionFont).foregroundStyle(Theme.textTertiary).lineLimit(1).truncationMode(.middle)
+            }
+            if let latest, let reply = HandoffBrief.lastReply(in: latest.conversation.items) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("\(latest.engine.displayName) last said").font(Theme.captionFont.weight(.medium)).foregroundStyle(Theme.textTertiary)
+                    Text(HandoffBrief.clip(reply, 280)).font(Theme.captionFont).foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    let files = HandoffBrief.changedFiles(in: latest.conversation.items, cwd: latest.cwd)
+                    if !files.isEmpty {
+                        Text("Changed " + Recap.count(files.count, "file")).font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
+                    }
+                    if let check = Verification.assess(latest.conversation.items).message {
+                        Text(check).font(Theme.captionFont).foregroundStyle(Color.orange)
+                    }
+                }
+            } else if let agent = store.primaryAgent(in: store.snapshot.agents(inWorkspace: id)) {
+                Text("\(AgentBrand.forAgent(agent.agent)?.displayName ?? "Agent") · \(agent.agentStatus.rawValue)")
+                    .font(Theme.captionFont).foregroundStyle(Theme.textSecondary)
+            }
+            if let wait = WaitCenter.shared.waits.first(where: { $0.origin.workspaceId == id && $0.state == .waiting }) {
+                Text((wait.isSnooze ? "Back when " : "Waiting for ") + wait.title)
+                    .font(Theme.captionFont).foregroundStyle(Theme.accent).lineLimit(2)
+            }
+            if let risks = work?.risks {
+                Text("Not saved anywhere else: " + risks).font(Theme.captionFont).foregroundStyle(Color.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if work != nil {
+                Text("Nothing unsaved").font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
+            }
+            HStack(spacing: 6) {
+                OctetButton(title: "Open", kind: .primary, compact: true) {
+                    close()
+                    window.focusWorkspace(id)
+                }
+                OctetButton(title: "Sleep", kind: .secondary, compact: true) {
+                    close()
+                    idle.sleep([workspace])
+                }
+                if work?.mergedWorktree == true {
+                    OctetButton(title: "Remove Worktree…", kind: .secondary, compact: true) {
+                        close()
+                        idle.removeMergedWorktree(workspace, window: window)
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .frame(width: 280, alignment: .leading)
+        .background(Theme.chrome)
+    }
+
+    private var place: String {
+        let id = workspace.workspaceId
+        var parts: [String] = []
+        if let directory = store.snapshot.directory(ofWorkspace: id) { parts.append(HandoffBrief.abbreviate(directory)) }
+        if let branch = idle.work[id]?.branch ?? store.branches[id] { parts.append(branch) }
+        parts.append("used " + WorkspaceActivity.ageLabel(since: store.activity.lastActive(id)) + " ago")
+        return parts.joined(separator: " · ")
+    }
+}
+
+/// A workspace put to sleep: click to wake it as it was.
+private struct SleepingRow: View {
+    @EnvironmentObject private var window: WindowContext
+    let record: SleepingWorkspace
+    @State private var hovered = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            OctetIcon("moon.zzz", size: 12).foregroundStyle(Theme.textTertiary).frame(width: 12)
+            Text(record.label).font(.system(size: 11.5)).foregroundStyle(hovered ? Theme.textPrimary : Theme.textTertiary).lineLimit(1)
+            Spacer(minLength: 4)
+            Text(hovered ? "Wake" : WorkspaceActivity.ageLabel(since: record.sleptAt))
+                .font(hovered ? Theme.captionFont.weight(.medium) : .system(size: 10.5, design: .monospaced))
+                .foregroundStyle(hovered ? Theme.accent : Theme.textTertiary)
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 24)
         .background(RoundedRectangle(cornerRadius: Theme.rowRadius).fill(hovered ? Theme.hover : Color.clear))
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
-        .onTapGesture { window.focusWorkspace(workspace.workspaceId) }
-        .simultaneousGesture(TapGesture(count: 2).onEnded { renaming = true })
-        .onDrag {
-            TabDrag.shared.begin(workspace: workspace.workspaceId, from: window)
-            return NSItemProvider(object: workspace.workspaceId as NSString)
+        .onTapGesture { IdleCenter.shared.wake(record.id, in: window) }
+        .contextMenu {
+            Button("Wake") { IdleCenter.shared.wake(record.id, in: window) }
+            Button("Forget") { IdleCenter.shared.forget(record.id) }
         }
-        .contextMenu { WorkspaceOrganizeMenu(store: store, workspace: workspace) { renaming = true } }
-        .help("\(workspace.label) · last used \(WorkspaceActivity.ageLabel(since: store.activity.lastActive(workspace.workspaceId))) ago")
+        .help("\(record.summary)\n" + HandoffBrief.abbreviate(record.cwd) + (record.branch.map { " on \($0)" } ?? "")
+              + "\nAsleep since \(WaitSchedule.dateLabel(record.sleptAt)). Click to wake it as it was.")
     }
 }
 

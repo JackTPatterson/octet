@@ -23,6 +23,10 @@ final class ConfirmCenter: ObservableObject {
         var suppressTitle: String?
         var onConfirm: (_ suppress: Bool) -> Void
         var onCancel: () -> Void = {}
+        /// A second way to go ahead, between Cancel and the main button
+        /// ("Close the Clean Ones" beside "Close All").
+        var alternateTitle: String?
+        var onAlternate: () -> Void = {}
         /// The window that was in front when this was asked; it draws the
         /// dialog. nil (or closed since) falls back to the terminal window.
         weak var window: NSWindow? = NSApp.keyWindow
@@ -79,6 +83,12 @@ final class ConfirmCenter: ObservableObject {
         let answered = request
         advance()
         answered?.onCancel()
+    }
+
+    func alternate() {
+        let answered = request
+        advance()
+        answered?.onAlternate()
     }
 
     private func advance() {
@@ -162,6 +172,9 @@ struct ConfirmDialog: View {
                 if !request.cancelTitle.isEmpty {
                     DialogButton(title: request.cancelTitle, kind: .secondary) { center.cancel() }
                         .keyboardShortcut(.cancelAction)
+                }
+                if let alternateTitle = request.alternateTitle {
+                    DialogButton(title: alternateTitle, kind: .secondary) { center.alternate() }
                 }
                 DialogButton(title: request.confirmTitle, kind: request.destructive ? .destructive : .primary) {
                     center.confirm()

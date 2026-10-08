@@ -106,6 +106,16 @@ struct OctetSettings: Codable, Equatable {
     /// while this is on. Off by default: a terminal can hold secrets.
     var agentsReadSidebarTerminal = false
     var agentsSuggestSidebarCommands = false
+    /// Waits: agents can set one (an MCP tool and `octet-cli wait`) when work
+    /// can't go on until something outside it happens. On by default: it
+    /// only writes a note Octet checks, and is shown in the sidebar.
+    var agentsSetWaits = true
+    /// Offer to turn "once X happens, we can Y" in an agent's reply into a wait.
+    var suggestWaits = true
+    /// Put Idle workspaces to sleep (terminals closed, brought back as they
+    /// were) after this many days unused; zero never does. Only those where
+    /// nothing would be lost: no agent working, nothing running, no server.
+    var sleepIdleAfterDays = 14
     /// When to ask before a delegation starts: `DelegationCenter.Approval`.
     var delegationApproval = "reviews"
     /// What other Macs call this one; empty is the computer's name.
@@ -350,6 +360,9 @@ struct OctetSettings: Codable, Equatable {
         delegationEnabled = value("delegationEnabled", defaults.delegationEnabled)
         agentsReadSidebarTerminal = value("agentsReadSidebarTerminal", defaults.agentsReadSidebarTerminal)
         agentsSuggestSidebarCommands = value("agentsSuggestSidebarCommands", defaults.agentsSuggestSidebarCommands)
+        agentsSetWaits = value("agentsSetWaits", defaults.agentsSetWaits)
+        suggestWaits = value("suggestWaits", defaults.suggestWaits)
+        sleepIdleAfterDays = value("sleepIdleAfterDays", defaults.sleepIdleAfterDays)
         delegationApproval = value("delegationApproval", defaults.delegationApproval)
         peerName = value("peerName", defaults.peerName)
         offerRecovery = value("offerRecovery", defaults.offerRecovery)
@@ -770,6 +783,10 @@ final class SettingsStore: ObservableObject {
         if values.delegationEnabled != old.delegationEnabled {
             DelegationCenter.shared.apply()
             AgentMCPInstaller.shared.sync(server: DelegationMCP.serverName)
+        }
+        if values.agentsSetWaits != old.agentsSetWaits {
+            WaitCenter.shared.applyServer()
+            AgentMCPInstaller.shared.sync(server: WaitMCP.serverName)
         }
         if values.agentsReadSidebarTerminal != old.agentsReadSidebarTerminal
             || values.agentsSuggestSidebarCommands != old.agentsSuggestSidebarCommands {

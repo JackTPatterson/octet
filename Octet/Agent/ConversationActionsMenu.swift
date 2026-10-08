@@ -34,6 +34,8 @@ struct ConversationActionsMenu: View {
             }
             .disabled(!ConversationHandoff.canHandOff(session) || session.conversation.isRunning)
         }
+        Button("Wait for Something…") { WaitCenter.shared.compose(workspaceId: session.workspaceId, session: session) }
+            .help("Set this aside until something happens (a PR merged, a release, a date), and have it brought back with the next step")
         Button("Move To…") { ConversationMover.moveAfterPicking([session], from: session.cwd, window: window) }
             .disabled(!session.canMove)
             .help(session.engine == .claude
