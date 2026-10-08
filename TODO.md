@@ -550,3 +550,14 @@ See `docs/research/agent-pain-points-2026-10.md`.
   mid-draw. It's built as a TextKit 1 view from the start now. Markdown files
   open rendered (Preview), with Edit and Split (source beside the live
   preview) in the status bar; the choice is kept. Build-checked only.
+- [x] **60. `!` in Octet UI (med).** A line starting with `!` runs in the
+  conversation's folder through the login shell, as Claude Code's own `!`
+  does: shown as `! command` with its output streaming into a Bash card, and
+  sent to the agent with your next message (in Claude Code's `<bash-input>` /
+  `<bash-stdout>` tags, long output kept to its start and end) without
+  starting a turn. Every agent but OpenCode, which runs `!` itself. A strip
+  over the composer says what's running (Esc stops it) and what output will
+  go along, with Don't Send. Suggested commands from a reply run the same
+  way, one after another. Also: Tab with @-file suggestions open takes the
+  file instead of cycling OpenCode agents. Build-checked only; the message
+  shaping is unit-tested.

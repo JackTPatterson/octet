@@ -650,6 +650,12 @@ final class AgentSession: ObservableObject, Identifiable {
             let name = trimmed.dropFirst("/rename ".count).trimmingCharacters(in: .whitespaces)
             if !name.isEmpty { title = name }
         }
+        // `!command` runs here, as Claude Code's own `!` does; OpenCode runs
+        // its own.
+        if engine != .opencode, attachments.isEmpty, let command = ShellPassthrough.command(in: trimmed) {
+            runShell(command)
+            return
+        }
         if engine == .opencode, ["/undo", "/redo"].contains(trimmed), attachments.isEmpty {
             // Carried out on the session, not sent to the model.
             if trimmed == "/undo" { undoOpenCode() } else { redoOpenCode() }
@@ -677,9 +683,13 @@ final class AgentSession: ObservableObject, Identifiable {
                                                 kind: .notice("Compacting the conversation to free context…")))
         }
         if title == engine.displayName, !trimmed.hasPrefix("/") { title = String(trimmed.prefix(40)) }
+        // What `!` commands printed goes along, so the agent knows what you saw.
+        let outgoing = ShellPassthrough.outgoing(trimmed, runs: shellRuns)
+        if outgoing.usedRuns { shellRuns = [] }
+        let sent = outgoing.text
         switch engine {
         case .claude, .qwen:
-            var text = trimmed
+            var text = sent
             var attachments = attachments
             if engine == .qwen {
                 // Qwen's command for it is /compress.
@@ -711,7 +721,7 @@ final class AgentSession: ObservableObject, Identifiable {
                 }
             }
         case .codex:
-            let input = Self.codexInput(trimmed, attachments)
+            let input = Self.codexInput(sent, attachments)
             // The thread may still be opening, and a turn needs its id.
             guard let threadId else { queuedTurns.append(trimmed); queuedInputs[trimmed] = input; return }
             // Mid-turn, it goes into the running turn, as Codex's own
@@ -726,7 +736,7 @@ final class AgentSession: ObservableObject, Identifiable {
         case .opencode:
             break
         case .pi:
-            var message: [String: Any] = ["type": "prompt", "message": trimmed]
+            var message: [String: Any] = ["type": "prompt", "message": sent]
             if !attachments.isEmpty {
                 message["images"] = attachments.map {
                     ["type": "image", "data": $0.data.base64EncodedString(), "mimeType": $0.mediaType]
@@ -2433,6 +2443,108 @@ final class AgentSession: ObservableObject, Identifiable {
         conversation.items.append(AgentItem(id: UUID().uuidString, kind: .notice(text)))
     }
 
+    // MARK: - `!` commands
+
+    /// Output of `!` commands not yet seen by the agent; it goes with the
+    /// next message.
+    @Published private(set) var shellRuns: [ShellPassthrough.Run] = []
+    /// The `!` command running now.
+    @Published private(set) var shellRunning: String?
+    private var shellProcess: Process?
+
+    /// Runs `command` in the conversation's folder through the login shell,
+    /// showing what it prints as it prints it. The agent isn't told until
+    /// the next message.
+    func runShell(_ command: String) {
+        guard shellProcess == nil else {
+            return notice("A command is still running. Stop it (Esc) before starting another.")
+        }
+        conversation.appendUser("! " + command)
+        let itemId = UUID().uuidString
+        let input = ["command": command]
+        let inputData = try? JSONSerialization.data(withJSONObject: input)
+        let call = AgentToolCall(name: "Bash", summary: command, input: AgentConversation.prettyJSON(input) ?? command,
+                                 inputData: inputData, liveOutput: "")
+        conversation.items.append(AgentItem(id: itemId, kind: .tool(call)))
+
+        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: shell)
+        process.arguments = ["-l", "-c", command]
+        process.currentDirectoryURL = URL(fileURLWithPath: cwd)
+        var environment = Self.accountEnvironment(cwd: cwd)
+        environment["TERM"] = "dumb"
+        environment["NO_COLOR"] = "1"
+        process.environment = environment
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        process.standardInput = FileHandle.nullDevice
+        let buffer = ShellOutputBuffer()
+        pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            let text = buffer.append(data)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.updateShell(itemId, live: text) }
+            }
+        }
+        process.terminationHandler = { [weak self] ended in
+            pipe.fileHandleForReading.readabilityHandler = nil
+            let rest = pipe.fileHandleForReading.readDataToEndOfFile()
+            let output = buffer.append(rest)
+            let status = ended.terminationStatus
+            let killed = ended.terminationReason == .uncaughtSignal
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    self?.finishShell(itemId, command: command, output: output, status: status, stopped: killed)
+                }
+            }
+        }
+        do {
+            try process.run()
+            shellProcess = process
+            shellRunning = command
+        } catch {
+            finishShell(itemId, command: command, output: error.localizedDescription, status: 127, stopped: false)
+        }
+    }
+
+    /// Stops the `!` command running now.
+    func stopShell() {
+        shellProcess?.interrupt()
+        let process = shellProcess
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            if process?.isRunning == true { process?.terminate() }
+        }
+    }
+
+    /// Drops the output waiting to go to the agent.
+    func dropShellRuns() { shellRuns = [] }
+
+    private func updateShell(_ itemId: String, live: String) {
+        guard let index = conversation.items.firstIndex(where: { $0.id == itemId }),
+              case .tool(var call) = conversation.items[index].kind, call.result == nil else { return }
+        call.liveOutput = ShellPassthrough.clip(live, limit: 200_000)
+        conversation.items[index].kind = .tool(call)
+    }
+
+    private func finishShell(_ itemId: String, command: String, output: String, status: Int32, stopped: Bool) {
+        shellProcess = nil
+        shellRunning = nil
+        let trimmed = output.trimmingCharacters(in: .newlines)
+        if let index = conversation.items.firstIndex(where: { $0.id == itemId }),
+           case .tool(var call) = conversation.items[index].kind {
+            call.liveOutput = nil
+            let footer = stopped ? "(stopped)" : status == 0 ? nil : "(exit \(status))"
+            call.result = [trimmed.isEmpty ? "(no output)" : ShellPassthrough.clip(trimmed, limit: 200_000), footer]
+                .compactMap { $0 }.joined(separator: "\n")
+            call.isError = status != 0
+            conversation.items[index].kind = .tool(call)
+        }
+        shellRuns.append(ShellPassthrough.Run(command: command, output: trimmed, status: stopped ? nil : status))
+    }
+
     // MARK: - Model policy
 
     /// The model and effort the person chose, whatever a policy has the
@@ -2706,5 +2818,18 @@ final class AgentCenter: ObservableObject {
         if activeIds[session.workspaceId] == session.id { activeIds[session.workspaceId] = nil }
         sessions.removeAll { $0.id == session.id }
         save()
+    }
+}
+
+/// What a `!` command has printed so far, gathered off the main thread.
+private final class ShellOutputBuffer: @unchecked Sendable {
+    private var data = Data()
+    private let lock = NSLock()
+
+    func append(_ more: Data) -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        data.append(more)
+        return String(decoding: data, as: UTF8.self)
     }
 }
