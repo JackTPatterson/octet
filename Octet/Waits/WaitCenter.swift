@@ -294,7 +294,8 @@ final class WaitCenter: ObservableObject {
         guard let store else { return }
         let id = session?.workspaceId ?? workspaceId
         let cwd = session?.cwd ?? id.flatMap { store.snapshot.directory(ofWorkspace: $0) } ?? NSHomeDirectory()
-        var draft = WaitDraft(origin: origin(workspaceId: id, session: session, cwd: cwd), conversation: session)
+        var draft = WaitDraft(origin: origin(workspaceId: id, session: session, cwd: cwd),
+                              windowId: WindowRegistry.shared.key?.id)
         draft.snooze = snooze && id != nil
         if let prefill {
             draft.title = prefill.waitingFor

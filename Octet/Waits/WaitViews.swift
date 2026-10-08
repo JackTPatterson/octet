@@ -35,7 +35,7 @@ struct WaitDraft: Identifiable {
         }
     }
 
-    init(origin: Wait.Origin, conversation: AgentSession? = nil, windowId: UUID? = WindowRegistry.shared.key?.id) {
+    init(origin: Wait.Origin, windowId: UUID? = nil) {
         self.origin = origin
         self.windowId = windowId
     }
