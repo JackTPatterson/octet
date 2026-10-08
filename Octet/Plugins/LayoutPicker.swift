@@ -28,7 +28,7 @@ struct LayoutPickerButton: View {
             .popover(isPresented: $open, arrowEdge: .bottom) {
                 LayoutPickerGrid(layouts: layouts) { layout in
                     open = false
-                    PaneLayoutActions.open(layout.layout, in: window)
+                    PaneLayoutActions.open(layout, in: window)
                 }
             }
         }
@@ -90,19 +90,7 @@ struct LayoutThumbnail: View {
 
     var body: some View {
         Button(action: pick) {
-            GeometryReader { proxy in
-                let size = proxy.size
-                ZStack(alignment: .topLeading) {
-                    ForEach(Array(layout.layout.rects().enumerated()), id: \.offset) { _, rect in
-                        RoundedRectangle(cornerRadius: 1.5)
-                            .fill(hovered ? Theme.accent.opacity(0.35) : Theme.cardSelected)
-                            .overlay(RoundedRectangle(cornerRadius: 1.5)
-                                .strokeBorder(hovered ? Theme.accent : Theme.textTertiary.opacity(0.6), lineWidth: 1))
-                            .frame(width: max(rect.width * size.width - 2, 2), height: max(rect.height * size.height - 2, 2))
-                            .offset(x: rect.x * size.width + 1, y: rect.y * size.height + 1)
-                    }
-                }
-            }
+            LayoutPicture(rects: layout.layout.rects(), highlighted: hovered)
             .frame(width: 46, height: 32)
             .padding(3)
             .background(RoundedRectangle(cornerRadius: 4).fill(hovered ? Theme.hover : .clear))
@@ -112,6 +100,27 @@ struct LayoutThumbnail: View {
         .onHover { hovered = $0 }
         .help(layout.title)
         .accessibilityLabel(layout.title)
+    }
+}
+
+/// A layout's panes, drawn to fit.
+private struct LayoutPicture: View {
+    let rects: [PaneLayoutNode.Rect]
+    let highlighted: Bool
+
+    var body: some View {
+        let fill = highlighted ? Theme.accent.opacity(0.35) : Theme.cardSelected
+        let stroke = highlighted ? Theme.accent : Theme.textTertiary.opacity(0.6)
+        Canvas { context, size in
+            for rect in rects {
+                let frame = CGRect(x: CGFloat(rect.x) * size.width + 1, y: CGFloat(rect.y) * size.height + 1,
+                                   width: max(CGFloat(rect.width) * size.width - 2, 2),
+                                   height: max(CGFloat(rect.height) * size.height - 2, 2))
+                let shape = Path(roundedRect: frame, cornerRadius: 1.5)
+                context.fill(shape, with: .color(fill))
+                context.stroke(shape, with: .color(stroke), lineWidth: 1)
+            }
+        }
     }
 }
 
