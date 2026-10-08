@@ -13,6 +13,13 @@ final class OpenCodeCatalogStore: ObservableObject {
     @Published private(set) var errors: [String: String] = [:]
     private var loading: Set<String> = []
 
+    /// Forgets what was fetched, so the next load asks the (new) server again.
+    func reset() {
+        catalogs = [:]
+        configuredModels = [:]
+        everything = nil
+    }
+
     func catalog(for cwd: String) -> OpenCodeCatalog { catalogs[cwd] ?? OpenCodeCatalog() }
 
     /// Every model OpenCode knows, from every provider, and which providers

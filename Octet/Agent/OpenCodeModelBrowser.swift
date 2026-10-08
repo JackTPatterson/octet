@@ -44,6 +44,11 @@ struct OpenCodeModelBrowser: View {
                     addingFromHuggingFace = true
                 }
                 .help("Download a GGUF model through Ollama and use it here")
+                OctetButton(title: "Rescan local models", kind: .secondary, compact: true) {
+                    OpenCodeServer.shared.restartForLocalModels()
+                    store.loadEverything(cwd: session.cwd)
+                }
+                .help("Looks for Ollama, LM Studio and llama.cpp on this Mac and adds their models. Restarts OpenCode's server.")
                 OctetButton(title: "Done", kind: .secondary, compact: true) { close() }
                     .keyboardShortcut(.cancelAction)
             }

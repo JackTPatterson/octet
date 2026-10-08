@@ -72,6 +72,22 @@ final class OpenCodeServer {
     private func start() {
         starting = true
         output = ""
+        // Local models are found first, so they're in the config the server
+        // boots with. Nothing running locally costs about a second at most.
+        Task { @MainActor in
+            let local = await LocalModels.openCodeConfig()
+            launch(localConfig: local)
+        }
+    }
+
+    /// Stops the server so the next conversation starts a fresh one, which
+    /// rescans for local models. A turn in flight is lost.
+    func restartForLocalModels() {
+        shutDown()
+        OpenCodeCatalogStore.shared.reset()
+    }
+
+    private func launch(localConfig: String?) {
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
         let process = Process()
         process.executableURL = URL(fileURLWithPath: shell)
@@ -83,6 +99,11 @@ final class OpenCodeServer {
         environment.merge(TerminalControl.environment(session: EngineSession.name)) { _, ours in ours }
         environment["OPENCODE_SERVER_PASSWORD"] = password
         environment["OPENCODE_SERVER_USERNAME"] = "opencode"
+        // Inline config is merged over the user's own, which is left alone if
+        // they already set one.
+        if let localConfig, environment["OPENCODE_CONFIG_CONTENT"] == nil {
+            environment["OPENCODE_CONFIG_CONTENT"] = localConfig
+        }
         process.environment = environment
         let pipe = Pipe()
         process.standardOutput = pipe
