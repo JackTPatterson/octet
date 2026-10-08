@@ -27,6 +27,7 @@ struct RootView: View {
     @State private var dropLayout: PaneLayout?
     @ObservedObject private var agents = AgentCenter.shared
     @ObservedObject private var offers = AgentOfferCenter.shared
+    @ObservedObject private var waitCenter = WaitCenter.shared
     /// This window: what it shows, and how it moves.
     @EnvironmentObject private var window: WindowContext
 
@@ -283,6 +284,13 @@ struct RootView: View {
         }
         .sheet(isPresented: $ui.usageBreakdownVisible) {
             UsageBreakdownView { ui.usageBreakdownVisible = false }
+                .environmentObject(window)
+        }
+        // A wait being written, in the window that asked for it.
+        .sheet(item: Binding(
+            get: { waitCenter.draft.flatMap { $0.windowId == nil || $0.windowId == window.id ? $0 : nil } },
+            set: { if $0 == nil { waitCenter.draft = nil } })) { draft in
+            WaitEditorSheet(draft: draft) { waitCenter.draft = nil }
                 .environmentObject(window)
         }
         // Above the palette, so a confirm raised while it's open isn't buried.

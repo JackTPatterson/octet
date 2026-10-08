@@ -295,6 +295,20 @@ private struct GeneralSettings: View {
                 .labelsHidden().frame(width: 190)
             }
             SettingsDivider()
+            SettingsRow(
+                title: "Sleep idle workspaces after",
+                detail: "A sleeping workspace's terminals are closed, so it uses nothing, and it comes back as it was when you wake it from Idle: its tabs, its folders, and its agents' conversations resumed. Only workspaces where nothing would be lost sleep by themselves: no agent working or asking, nothing running in a terminal, no server listening, not pinned. Files are never touched."
+            ) {
+                Picker("Sleep idle workspaces after", selection: $settings.values.sleepIdleAfterDays) {
+                    Text("Never").tag(0)
+                    Text("3 days").tag(3)
+                    Text("1 week").tag(7)
+                    Text("2 weeks").tag(14)
+                    Text("1 month").tag(30)
+                }
+                .labelsHidden().frame(width: 190)
+            }
+            SettingsDivider()
             SettingsRow(title: "Pinned workspaces", detail: "Pin from a workspace's context menu or the command palette.") {
                 HStack(spacing: 8) {
                     Text("\(store.pinnedWorkspaceIds.count)").font(Theme.uiFont).foregroundStyle(Theme.textSecondary)
@@ -768,6 +782,30 @@ private struct AgentSettings: View {
                         NSSound(contentsOf: URL(fileURLWithPath: path), byReference: true)?.play()
                     }
                 }
+            }
+        }
+        SettingsGroup(title: "Waits") {
+            SettingsRow(
+                title: "Let agents set waits",
+                detail: "When work can't go on until something outside it happens (a pull request merged, a release, a deploy, a date, someone's answer), an agent writes down what it waits for and the next step. Octet checks it with nothing running and brings the work back when it happens. Claude Code, Codex, Gemini, Qwen, OpenCode, Cursor and Copilot get a wait_for tool through the octet-waits MCP server; any other agent can run octet-cli wait add. Waits show in the sidebar."
+            ) {
+                Toggle("Let agents set waits", isOn: $settings.values.agentsSetWaits).labelsHidden().toggleStyle(.switch)
+            }
+            if settings.values.agentsSetWaits {
+                SettingsDivider()
+                SettingsRow(
+                    title: "Tool in your agents",
+                    detail: "Adds the octet-waits MCP server to each installed agent's own settings, and takes it out when this is off. Use Add Again if you installed an agent since."
+                ) {
+                    Button("Add Again") { AgentMCPInstaller.shared.sync(server: WaitMCP.serverName, force: true) }
+                }
+            }
+            SettingsDivider()
+            SettingsRow(
+                title: "Offer a wait from a reply",
+                detail: "When an agent ends with something like \"once the PR is merged, we can remove the old endpoint\", a banner over its composer offers to set a wait for it."
+            ) {
+                Toggle("Offer a wait from a reply", isOn: $settings.values.suggestWaits).labelsHidden().toggleStyle(.switch)
             }
         }
         SettingsGroup(title: "Recovery") {

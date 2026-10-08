@@ -557,6 +557,28 @@ final class WorkspaceActivityTests: XCTestCase {
         XCTAssertFalse(activity.isIdle(ws[0], snapshot: busy, pinned: [], parked: [], idleAfter: 3600, now: t0))
     }
 
+    func testTitlesThatOnlyTickDontCountAsUse() {
+        XCTAssertEqual(WorkspaceActivity.titleKey("✳ Fix the login bug"), WorkspaceActivity.titleKey("⠂ Fix the login bug"))
+        XCTAssertEqual(WorkspaceActivity.titleKey("watch: 12:03:04"), WorkspaceActivity.titleKey("watch: 12:03:05"))
+        XCTAssertEqual(WorkspaceActivity.titleKey("build 41%"), WorkspaceActivity.titleKey("build 42%"))
+        XCTAssertNotEqual(WorkspaceActivity.titleKey("zsh"), WorkspaceActivity.titleKey("vim main.swift"))
+        XCTAssertEqual(WorkspaceActivity.titleKey(nil), "")
+
+        let t0 = Date(timeIntervalSince1970: 4_000_000)
+        func titled(_ title: String) -> EngineSnapshot {
+            EngineSnapshot(workspaces: [workspace("w1")], tabs: [],
+                           panes: [EnginePane(paneId: "w1:p1", tabId: "w1:t1", workspaceId: "w1", focused: false, cwd: "/r",
+                                              foregroundCwd: nil, agentStatus: .idle, terminalTitle: title)],
+                           agents: [], focusedWorkspaceId: nil, focusedTabId: nil, focusedPaneId: nil)
+        }
+        var activity = WorkspaceActivity()
+        activity.observe(titled("⠋ Thinking"), viewedWorkspaceId: nil, now: t0)
+        activity.observe(titled("⠙ Thinking"), viewedWorkspaceId: nil, now: t0.addingTimeInterval(3600))
+        XCTAssertEqual(activity.lastActive("w1"), t0)
+        activity.observe(titled("npm test"), viewedWorkspaceId: nil, now: t0.addingTimeInterval(7200))
+        XCTAssertEqual(activity.lastActive("w1"), t0.addingTimeInterval(7200))
+    }
+
     func testClosedWorkspacesArePrunedAndAgeLabels() {
         var activity = WorkspaceActivity(stamps: ["gone": Date()])
         activity.observe(snapshot([workspace("w1")]), viewedWorkspaceId: nil)

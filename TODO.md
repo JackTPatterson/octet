@@ -500,3 +500,36 @@ See `docs/research/agent-pain-points-2026-10.md`.
   line. A strip over the terminal shows it with Run and Clear; it is never run
   for the person.
 
+- [x] **56. Idle that loses nothing, and sleep (med).** A title that only
+  ticks (an agent's spinner, `watch`, a clock in a prompt) no longer counts
+  as use, which kept workspaces out of Idle for good: only a title's words
+  do. Each idle row says what the workspace still holds (uncommitted files,
+  commits no remote has, a listening port, a merged worktree), read off the
+  main thread every few minutes (`IdleWork`), and its hover card says where
+  it left off: the agent's last reply, files changed, whether it was tested,
+  any wait. Closing idle workspaces names those with unsaved work and offers
+  to close only the clean ones. Sleep closes a workspace's terminals and
+  keeps a note (`SleepingWorkspace`): its tabs, each agent's session to
+  resume with its own `--resume`, and Octet's conversations; Wake brings it
+  back as it was. Idle workspaces sleep by themselves after Settings ›
+  General › Sleep idle workspaces after (two weeks by default), only when
+  nothing would be lost. Keep in Idle Until (an hour, tomorrow, Monday, or
+  something happening), Close and Remove Worktree for merged ones, Stop
+  Servers in Idle, grouping by project past six rows, ⌘-click to pick
+  several. Build-checked only; the logic is unit-tested.
+- [x] **57. Waits (high).** Work left waiting days or months on something
+  outside it (a PR merged, a release, a deploy, an answer) was forgotten
+  with its next step. A wait writes both down: the condition and the next
+  step, plus a summary of the conversation. Octet checks it itself, often at
+  first then less (pull requests and releases with `gh`, npm and PyPI
+  versions, a page up/changed/showing text, a file, a command succeeding, a
+  date; anything else asks the person every few days), catching up on
+  launch. When met: a notice, the Dock badge and a Ready card at the top of
+  the sidebar; Continue sends the next step to the conversation that set it,
+  or the agent still at its prompt, or resumes the agent's session, or
+  starts a new conversation from the summary. Agents set them through the
+  `octet-waits` MCP server (`wait_for`, `list_waits`, `cancel_wait`) or
+  `octet-cli wait`; people from a workspace, a conversation's menu or the
+  palette; and a reply like "once the PR is merged, we can…" offers one.
+  Long waits ask whether they're still wanted. Build-checked only; parsing,
+  evaluation, scheduling and the MCP server are unit-tested.

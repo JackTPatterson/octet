@@ -211,6 +211,8 @@ final class SessionStore: ObservableObject {
         PeerCenter.shared.apply(store: self)
         DelegationCenter.shared.apply(store: self)
         TerminalAccessCenter.shared.apply(store: self)
+        WaitCenter.shared.start(store: self)
+        IdleCenter.shared.start(store: self)
         let client = self.client
         let thread = Thread { [weak self] in
             while self != nil {
@@ -1036,10 +1038,16 @@ final class SessionStore: ObservableObject {
     }
 
     func closeIdleWorkspaces() {
-        let targets = idleWorkspaces
+        closeWorkspaces(idleWorkspaces)
+    }
+
+    /// Closes several workspaces at once. `quietly` skips the toasts, for
+    /// callers that say what happened themselves.
+    func closeWorkspaces(_ targets: [EngineWorkspace], quietly: Bool = false) {
         guard !targets.isEmpty else { return }
         let client = self.client
-        let handle = toasts.progress("Closing \(targets.count) idle workspace\(targets.count == 1 ? "" : "s")…")
+        let handle: ToastCenter.Handle? = quietly ? nil
+            : toasts.progress("Closing \(targets.count) idle workspace\(targets.count == 1 ? "" : "s")…")
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             var failures: [String] = []
             for workspace in targets {
@@ -1053,7 +1061,7 @@ final class SessionStore: ObservableObject {
                 guard let self else { return }
                 let closed = targets.count - failures.count
                 if failures.isEmpty {
-                    self.toasts.succeed(handle, "Closed \(closed) idle workspace\(closed == 1 ? "" : "s")")
+                    if !quietly { self.toasts.succeed(handle, "Closed \(closed) idle workspace\(closed == 1 ? "" : "s")") }
                 } else {
                     self.toasts.fail(handle, "Closed \(closed) of \(targets.count) idle workspaces",
                                      detail: failures.prefix(3).joined(separator: "\n"))
