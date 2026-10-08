@@ -106,7 +106,7 @@ final class WorkspaceSleepTests: XCTestCase {
         XCTAssertEqual(slept.tabs[0].agent?.sessionId, "s1")
         XCTAssertNil(slept.tabs[1].agent)
         XCTAssertEqual(slept.tabs[1].cwd, "/repo/web")
-        XCTAssertEqual(slept.summary, "2 tabs · Claude, Codex · 2 uncommitted")
+        XCTAssertEqual(slept.summary, "2 tabs · Claude Code, Codex · 2 uncommitted")
 
         // An agent with no known session is a plain tab.
         let unknown = WorkspaceSleep.capture(workspace, snapshot: snapshot(), records: [:], conversations: [],
