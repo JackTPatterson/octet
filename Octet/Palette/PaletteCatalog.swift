@@ -323,6 +323,13 @@ enum PaletteCatalog {
                 WaitCenter.shared.checkNow(wait.id)
             })
         }
+        for entry in OctetPluginHost.shared.layouts {
+            let layout = entry.layout
+            items.append(action("layout.\(entry.plugin.id).\(layout.id)", "New Tab Split: \(layout.title)", "rectangle.split.2x1",
+                                keywords: ["layout", "split", "panes", "grid", "monitor", "\(layout.layout.paneCount) panes"]) {
+                PaneLayoutActions.open(layout, in: window)
+            })
+        }
         for record in IdleCenter.shared.sleeping {
             items.append(action("wake.\(record.id)", "Wake \(record.label)", "moon.zzz",
                                 keywords: ["sleeping", "asleep", "wake", "resume", "restore", record.branch ?? ""]) {

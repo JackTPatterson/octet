@@ -1046,6 +1046,8 @@ private struct TitleBar: View {
             // A connected engine is the normal state and says nothing worth a
             // badge; only the wait for one does.
             if !store.isConnected { connectingIndicator }
+            // Pane layouts from plugins (Pane Layouts ships with Octet).
+            LayoutPickerButton()
             AccountChips(runningAgents: runningAgents)
                 .padding(.trailing, 12)
         }

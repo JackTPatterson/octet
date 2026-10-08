@@ -142,3 +142,64 @@ final class WorkspaceSleepTests: XCTestCase {
         XCTAssertEqual(SleepingWorkspacesFile.load(from: url).workspaces, [slept])
     }
 }
+
+final class PaneLayoutTests: XCTestCase {
+    private func decode(_ json: String) throws -> PaneLayoutNode {
+        try JSONDecoder().decode(PaneLayoutNode.self, from: Data(json.utf8))
+    }
+
+    func testLayoutsReadFromAPluginsJSON() throws {
+        let node = try decode(#"{"columns": ["pane", {"rows": ["pane", "pane"]}], "weights": [2, 1]}"#)
+        XCTAssertEqual(node, .split(axis: .columns, children: [.pane, .split(axis: .rows, children: [.pane, .pane], weights: [1, 1])],
+                                    weights: [2, 1]))
+        XCTAssertEqual(node.paneCount, 3)
+        XCTAssertNil(node.problem)
+        XCTAssertEqual(try JSONDecoder().decode(PaneLayoutNode.self, from: JSONEncoder().encode(node)), node)
+        XCTAssertThrowsError(try decode(#""window""#))
+        XCTAssertThrowsError(try decode(#"{"grid": []}"#))
+    }
+
+    func testWhatALayoutCantBe() throws {
+        XCTAssertNotNil(try decode(#"{"columns": ["pane"]}"#).problem)
+        XCTAssertNotNil(try decode(#"{"columns": ["pane", "pane"], "weights": [1]}"#).problem)
+        XCTAssertNotNil(try decode(#"{"columns": ["pane", "pane"], "weights": [1, 0]}"#).problem)
+        XCTAssertNotNil(try decode(#"{"columns": ["pane","pane","pane","pane","pane","pane","pane","pane","pane","pane"]}"#).problem)
+    }
+
+    func testPanesShareTheRoomByWeight() throws {
+        let rects = try decode(#"{"rows": ["pane", {"columns": ["pane", "pane", "pane"]}], "weights": [2, 1]}"#).rects()
+        XCTAssertEqual(rects.count, 4)
+        XCTAssertEqual(rects[0].height, 2.0 / 3, accuracy: 1e-9)
+        XCTAssertEqual(rects[1].y, 2.0 / 3, accuracy: 1e-9)
+        XCTAssertEqual(rects[2].x, 1.0 / 3, accuracy: 1e-9)
+        XCTAssertEqual(rects[3].width, 1.0 / 3, accuracy: 1e-9)
+    }
+
+    func testTheSessionServerGetsBinarySplitsThatKeepEachShare() throws {
+        let tree = try decode(#"{"columns": ["pane", "pane", "pane"]}"#).engineTree(cwd: "/r")
+        XCTAssertEqual(tree["type"] as? String, "split")
+        XCTAssertEqual(tree["direction"] as? String, "right")
+        XCTAssertEqual(tree["ratio"] as? Double, 0.333)
+        let second = try XCTUnwrap(tree["second"] as? [String: Any])
+        XCTAssertEqual(second["ratio"] as? Double, 0.5)
+        XCTAssertEqual((second["first"] as? [String: Any])?["cwd"] as? String, "/r")
+        let rows = try decode(#"{"rows": ["pane", "pane"]}"#).engineTree(cwd: "/r")
+        XCTAssertEqual(rows["direction"] as? String, "down")
+
+        let request = try decode(#"{"rows": ["pane", "pane"]}"#).request(title: "2 stacked", cwd: "/r", workspaceId: "w1")
+        XCTAssertEqual(request["tab_label"] as? String, "2 stacked")
+        XCTAssertEqual(request["workspace_id"] as? String, "w1")
+    }
+
+    func testTheBundledPluginIsValid() throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Plugins/pane-layouts/plugin.json")
+        let manifest = try JSONDecoder().decode(OctetPluginManifest.self, from: Data(contentsOf: url))
+        XCTAssertNil(OctetPlugins.validate(manifest))
+        let counts = Set(manifest.contributes.layouts.map(\.layout.paneCount))
+        XCTAssertEqual(counts, [2, 3, 4])
+        // No two draw the same.
+        let pictures = manifest.contributes.layouts.map { $0.layout.rects().map { "\($0.x),\($0.y),\($0.width),\($0.height)" } }
+        XCTAssertEqual(Set(pictures).count, pictures.count)
+    }
+}

@@ -1,0 +1,31 @@
+{
+  "id": "pane-layouts",
+  "name": "Pane Layouts",
+  "version": "1.0.0",
+  "description": "A layout picker in the title bar, like a trading app's: pick two, three or four panes side by side, stacked or in a grid, and a new tab opens split that way, every pane a shell in the folder you're in. Add your own layouts by writing a plugin with a layouts contribution.",
+  "author": "Octet",
+  "octet": 1,
+  "contributes": {
+    "layouts": [
+      { "id": "two-columns", "title": "2 side by side", "layout": { "columns": ["pane", "pane"] } },
+      { "id": "two-rows", "title": "2 stacked", "layout": { "rows": ["pane", "pane"] } },
+      { "id": "two-wide-left", "title": "Wide left, narrow right", "layout": { "columns": ["pane", "pane"], "weights": [2, 1] } },
+      { "id": "two-tall-top", "title": "Tall top, short bottom", "layout": { "rows": ["pane", "pane"], "weights": [2, 1] } },
+
+      { "id": "three-columns", "title": "3 side by side", "layout": { "columns": ["pane", "pane", "pane"] } },
+      { "id": "three-rows", "title": "3 stacked", "layout": { "rows": ["pane", "pane", "pane"] } },
+      { "id": "three-left-main", "title": "1 left, 2 right", "layout": { "columns": ["pane", { "rows": ["pane", "pane"] }] } },
+      { "id": "three-right-main", "title": "2 left, 1 right", "layout": { "columns": [{ "rows": ["pane", "pane"] }, "pane"] } },
+      { "id": "three-top-main", "title": "1 top, 2 bottom", "layout": { "rows": ["pane", { "columns": ["pane", "pane"] }] } },
+      { "id": "three-bottom-main", "title": "2 top, 1 bottom", "layout": { "rows": [{ "columns": ["pane", "pane"] }, "pane"] } },
+
+      { "id": "four-grid", "title": "2 × 2 grid", "layout": { "rows": [{ "columns": ["pane", "pane"] }, { "columns": ["pane", "pane"] }] } },
+      { "id": "four-columns", "title": "4 side by side", "layout": { "columns": ["pane", "pane", "pane", "pane"] } },
+      { "id": "four-rows", "title": "4 stacked", "layout": { "rows": ["pane", "pane", "pane", "pane"] } },
+      { "id": "four-left-main", "title": "1 large left, 3 right", "layout": { "columns": ["pane", { "rows": ["pane", "pane", "pane"] }], "weights": [2, 1] } },
+      { "id": "four-top-main", "title": "1 large top, 3 bottom", "layout": { "rows": ["pane", { "columns": ["pane", "pane", "pane"] }], "weights": [2, 1] } },
+      { "id": "four-middle-stack", "title": "1 left, 2 stacked, 1 right", "layout": { "columns": ["pane", { "rows": ["pane", "pane"] }, "pane"] } },
+      { "id": "four-three-top", "title": "3 top, 1 bottom", "layout": { "rows": [{ "columns": ["pane", "pane", "pane"] }, "pane"], "weights": [1, 2] } }
+    ]
+  }
+}

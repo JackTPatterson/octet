@@ -533,3 +533,14 @@ See `docs/research/agent-pain-points-2026-10.md`.
   palette; and a reply like "once the PR is merged, we can…" offers one.
   Long waits ask whether they're still wanted. Build-checked only; parsing,
   evaluation, scheduling and the MCP server are unit-tested.
+- [x] **58. Pane layouts (med).** A layout picker in the title bar, like a
+  trading app's: a monitor button opens every layout enabled plugins offer,
+  grouped by pane count and drawn as their panes; picking one opens a new tab
+  split that way, each pane a shell in the folder in front (also in the
+  palette as New Tab Split). Plugins add layouts with a `layouts`
+  contribution: a tree of `"pane"`s in `{"columns": [...]}` / `{"rows":
+  [...]}` with optional `weights`, turned into the session server's binary
+  splits with ratios that keep each part its share (even splits if the
+  server won't take ratios). Ships with the Pane Layouts plugin: 2, 3 and 4
+  panes side by side, stacked, main-plus-stack and a 2 × 2 grid.
+  Build-checked only; the layout model and the bundled plugin are unit-tested.
