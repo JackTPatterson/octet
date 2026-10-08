@@ -2447,6 +2447,10 @@ final class AgentSession: ObservableObject, Identifiable {
 
     /// Output of `!` commands not yet seen by the agent; it goes with the
     /// next message.
+    /// Where the transcript was scrolled to when the view went away (the
+    /// item at the top), nil when it was following the latest.
+    var transcriptReadingAt: String?
+
     @Published private(set) var shellRuns: [ShellPassthrough.Run] = []
     /// The `!` command running now.
     @Published private(set) var shellRunning: String?

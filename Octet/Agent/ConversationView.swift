@@ -495,6 +495,8 @@ private struct MessageMenu: View {
 private struct Transcript: View {
     @ObservedObject var session: AgentSession
     @State private var atBottom = true
+    /// The item at the top of the view, to come back to it.
+    @State private var position: String?
 
     var body: some View {
         let items = session.conversation.items
@@ -529,8 +531,30 @@ private struct Transcript: View {
                 .padding(.horizontal, 20)
                 .padding(.vertical, 16)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .scrollTargetLayout()
             }
+            .scrollPosition(id: $position, anchor: .top)
+            // Opens at the latest, not the first message.
+            .defaultScrollAnchor(.bottom)
             .octetScrollIndicators()
+            // Coming back to the conversation: where you were reading, or
+            // the latest if you were following it.
+            .onAppear {
+                let saved = session.transcriptReadingAt
+                DispatchQueue.main.async {
+                    if let saved, session.conversation.items.contains(where: { $0.id == saved }) {
+                        proxy.scrollTo(saved, anchor: .top)
+                    } else {
+                        proxy.scrollTo("bottom", anchor: .bottom)
+                    }
+                }
+            }
+            .onChange(of: position) { _, id in
+                session.transcriptReadingAt = atBottom ? nil : id
+            }
+            .onChange(of: atBottom) { _, bottom in
+                if bottom { session.transcriptReadingAt = nil }
+            }
             // Follow the stream only while at the end, so reading back isn't
             // yanked away; a button jumps to the latest instead.
             .onChange(of: items) { _, _ in
