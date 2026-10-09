@@ -495,6 +495,8 @@ private struct MessageMenu: View {
 private struct Transcript: View {
     @ObservedObject var session: AgentSession
     @State private var atBottom = true
+    /// The item at the top of the view, to come back to it.
+    @State private var position: String?
 
     var body: some View {
         let items = session.conversation.items
@@ -509,8 +511,14 @@ private struct Transcript: View {
                     }
                     if blocking == nil {
                         ForEach(items.filter(Self.isShown)) { item in
-                            ItemRow(item: item, running: session.conversation.isRunning)
-                                .equatable()
+                            Group {
+                                if let report = session.usageReports[item.id] {
+                                    UsageCard(report: report)
+                                } else {
+                                    ItemRow(item: item, running: session.conversation.isRunning)
+                                        .equatable()
+                                }
+                            }
                                 .contextMenu { MessageMenu(session: session, item: item) }
                                 .padding(.leading, item.parent == nil ? 0 : 18)
                                 .overlay(alignment: .leading) {
@@ -529,8 +537,30 @@ private struct Transcript: View {
                 .padding(.horizontal, 20)
                 .padding(.vertical, 16)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .scrollTargetLayout()
             }
+            .scrollPosition(id: $position, anchor: .top)
+            // Opens at the latest, not the first message.
+            .defaultScrollAnchor(.bottom)
             .octetScrollIndicators()
+            // Coming back to the conversation: where you were reading, or
+            // the latest if you were following it.
+            .onAppear {
+                let saved = session.transcriptReadingAt
+                DispatchQueue.main.async {
+                    if let saved, session.conversation.items.contains(where: { $0.id == saved }) {
+                        proxy.scrollTo(saved, anchor: .top)
+                    } else {
+                        proxy.scrollTo("bottom", anchor: .bottom)
+                    }
+                }
+            }
+            .onChange(of: position) { _, id in
+                session.transcriptReadingAt = atBottom ? nil : id
+            }
+            .onChange(of: atBottom) { _, bottom in
+                if bottom { session.transcriptReadingAt = nil }
+            }
             // Follow the stream only while at the end, so reading back isn't
             // yanked away; a button jumps to the latest instead.
             .onChange(of: items) { _, _ in
@@ -722,12 +752,55 @@ private struct SuggestedCommandsPanel: View {
     private func confirmRun() {
         ConfirmCenter.shared.ask(
             title: commands.count == 1 ? "Run this command?" : "Run these commands?",
-            message: "The commands will run through \(session.engine.displayName) in \(abbreviateHome(session.cwd)).",
+            message: session.engine == .opencode
+                ? "The commands will run through OpenCode in \(abbreviateHome(session.cwd))."
+                : "They run in \(abbreviateHome(session.cwd)), one after another, stopping at the first that fails; \(session.engine.displayName) sees the output with your next message.",
             detail: commands.joined(separator: "\n"),
             confirmTitle: "Run"
         ) { _ in
             dismissed = true
-            for command in commands { session.send("!" + command) }
+            if session.engine == .opencode {
+                for command in commands { session.send("!" + command) }
+            } else {
+                session.send("!" + commands.joined(separator: " && "))
+            }
+        }
+    }
+}
+
+/// Over the message field: that a line starting with `!` runs as a shell
+/// command, what's running now (Esc stops it), and output still to go to
+/// the agent with the next message.
+private struct ShellModeStrip: View {
+    @ObservedObject var session: AgentSession
+    let typingCommand: Bool
+
+    var body: some View {
+        if typingCommand || session.shellRunning != nil || !session.shellRuns.isEmpty {
+            HStack(spacing: 7) {
+                OctetIcon("terminal", size: 12).foregroundStyle(Theme.accent)
+                if let running = session.shellRunning {
+                    LoadingLine(width: 14)
+                    Text("Running `\(running)`").lineLimit(1).truncationMode(.middle)
+                    Spacer(minLength: 4)
+                    Button("Stop") { session.stopShell() }.buttonStyle(.plain).foregroundStyle(Theme.accent)
+                    Keycap(text: "esc")
+                } else if typingCommand {
+                    Text("Runs in \(abbreviateHome(session.cwd)); its output goes to \(session.engine.displayName) with your next message")
+                        .lineLimit(1).truncationMode(.middle)
+                    Spacer(minLength: 0)
+                } else {
+                    let count = session.shellRuns.count
+                    Text(count == 1 ? "1 command's output goes with your next message"
+                                    : "\(count) commands' output goes with your next message")
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    Button("Don't Send") { session.dropShellRuns() }.buttonStyle(.plain).foregroundStyle(Theme.accent)
+                }
+            }
+            .font(Theme.captionFont)
+            .foregroundStyle(Theme.textSecondary)
+            .padding(.horizontal, 4)
         }
     }
 }
@@ -1696,6 +1769,7 @@ private struct Composer: View {
         switch command.name {
         case "model":
             if !arguments.isEmpty, let match = modelMatching(arguments) { session.model = match } else { dropdowns.openId = "model" }
+        case "usage": session.showUsage()
         case "effort": dropdowns.openId = "effort"
         case "permissions": dropdowns.openId = "mode"
         case "new", "clear": window.newConversation(engine: session.engine)
@@ -1757,9 +1831,10 @@ private struct Composer: View {
             if !attachments.isEmpty {
                 AttachmentStrip(images: attachments.map(\.data)) { index in attachments.remove(at: index) }
             }
+            ShellModeStrip(session: session, typingCommand: text.hasPrefix("!") && session.engine != .opencode)
             ZStack(alignment: .topLeading) {
                 if text.isEmpty {
-                    Text("Message \(session.engine.displayName)")
+                    Text("Message \(session.engine.displayName), or ! to run a command")
                         .font(.system(size: 13))
                         .foregroundStyle(Theme.textTertiary)
                         .padding(.leading, 5)
@@ -1787,7 +1862,7 @@ private struct Composer: View {
                     }
                     .onKeyPress(.tab) {
                         // Tab cycles OpenCode's agents, as in its own interface.
-                        guard session.engine == .opencode, suggestions.isEmpty else { return .ignored }
+                        guard session.engine == .opencode, suggestions.isEmpty, referenceSuggestions.isEmpty else { return .ignored }
                         let agents = OpenCodeCatalogStore.shared.catalog(for: session.cwd).agents
                         guard agents.count > 1 else { return .ignored }
                         let current = agents.firstIndex { $0.name == (session.agentName ?? agents[0].name) } ?? 0
@@ -1849,6 +1924,11 @@ private struct Composer: View {
                             dismissedFor = text
                             referenceSuggestions = []
                             refreshSuggestions()
+                            return .handled
+                        }
+                        // A `!` command running stops first, with no question.
+                        if session.shellRunning != nil {
+                            session.stopShell()
                             return .handled
                         }
                         guard running else { return .ignored }

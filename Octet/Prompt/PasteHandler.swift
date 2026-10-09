@@ -28,6 +28,9 @@ enum PasteHandler {
            let file = files.first, file.isFileURL, isImage(file) {
             return send(path: file.path, store: store, copied: false)
         }
+        // A copied link comes with a preview picture; paste the link.
+        if ImagePaste.isCopiedLink(text: pasteboard.string(forType: .string),
+                                   html: pasteboard.string(forType: .html)) { return false }
         guard let (data, ext) = imageData(from: pasteboard) else { return false }
         do {
             let path = try ImagePaste.save(data, extension: ext)

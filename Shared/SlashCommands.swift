@@ -258,6 +258,16 @@ extension SlashCommands {
         }
     }
 
+    /// `/usage` for every agent: context, allowance and cost drawn as a
+    /// card, in place of each agent's own plain-text summaries, which these
+    /// names would otherwise print.
+    static let usageNames: Set<String> = ["usage", "cost", "context", "stats"]
+
+    static func usageCommand(alsoStatus: Bool) -> SlashCommand {
+        SlashCommand(name: "usage", summary: "Context, allowance and cost, as charts",
+                     aliases: ["cost", "context", "stats"] + (alsoStatus ? ["status"] : []), handling: .octet)
+    }
+
     /// Codex's app server carries out these; Octet offers them under the
     /// names Codex's own menu uses.
     static let codexOctetCommands: [SlashCommand] = [

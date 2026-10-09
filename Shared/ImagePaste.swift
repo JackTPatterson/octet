@@ -26,6 +26,22 @@ enum ImagePaste {
             : "'" + path.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
     }
 
+    /// Whether a clipboard holding an image is really a copied link. Browsers
+    /// and Messages put a preview picture (a favicon, a page thumbnail) next
+    /// to a copied link, and that picture isn't what was meant: the link is.
+    /// "Copy Image" also carries a web address, the image's own, so a link
+    /// to an image file, or one copied with an `<img>` in its HTML, still
+    /// pastes as the image.
+    static func isCopiedLink(text: String?, html: String? = nil) -> Bool {
+        guard let text = text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty,
+              !text.contains(where: \.isWhitespace),
+              let url = URL(string: text), let scheme = url.scheme?.lowercased(),
+              ["http", "https"].contains(scheme), url.host?.isEmpty == false else { return false }
+        if let html, html.range(of: "<img", options: .caseInsensitive) != nil { return false }
+        let imageExtensions: Set = ["png", "jpg", "jpeg", "gif", "webp", "heic", "bmp", "tif", "tiff", "svg", "avif"]
+        return !imageExtensions.contains(url.pathExtension.lowercased())
+    }
+
     /// Writes image data and returns the path to paste.
     static func save(_ data: Data, extension ext: String = "png", home: String = NSHomeDirectory(), at date: Date = Date()) throws -> String {
         let folder = directory(home: home)

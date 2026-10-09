@@ -154,7 +154,7 @@ enum TerminalMCP {
     static let tools: [[String: Any]] = [
         [
             "name": toolName,
-            "description": "Reads the latest output of the terminal in Octet's right-hand panel (the sidebar terminal), where the person runs things like dev servers, builds and tests. Read only: this can't type into it. Use it when the person points at what's in that terminal, or to see the logs or test output of something they started there.",
+            "description": "Reads the latest output of the terminal in Octet's right-hand panel (the sidebar terminal) for your workspace; each workspace has its own. It's where the person runs things like dev servers, builds and tests. Read only: this can't type into it. Use it when the person points at what's in that terminal, or to see the logs or test output of something they started there.",
             "inputSchema": [
                 "type": "object",
                 "properties": ["lines": ["type": "integer",
@@ -164,7 +164,7 @@ enum TerminalMCP {
         ],
         [
             "name": suggestToolName,
-            "description": "Opens Octet's sidebar terminal and puts a command at its prompt WITHOUT running it, so the person can read it and run it with Return (or Octet's Run button). Use it when the person should run something themselves: a command that needs their credentials or a password, a long-running server they should watch, or anything you shouldn't run for them. One line only. It fails if the terminal is busy running something. Afterwards, read_sidebar_terminal shows what happened.",
+            "description": "Opens your workspace's sidebar terminal in Octet and puts a command at its prompt WITHOUT running it, so the person can read it and run it with Return (or Octet's Run button). Use it when the person should run something themselves: a command that needs their credentials or a password, a long-running server they should watch, or anything you shouldn't run for them. One line only. It fails if the terminal is busy running something. Afterwards, read_sidebar_terminal shows what happened.",
             "inputSchema": [
                 "type": "object",
                 "properties": ["command": ["type": "string", "description": "The command, on one line, up to \(TerminalControl.maxCommandLength) characters."]],

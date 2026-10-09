@@ -158,6 +158,7 @@ struct OpenCodeStream: Equatable {
         let cache = tokens["cache"] as? [String: Any] ?? [:]
         let read = [tokens["input"], cache["read"], cache["write"]].compactMap { ($0 as? NSNumber)?.intValue }.reduce(0, +)
         if read > 0 { conversation.contextUsed = read }
+        if let usage = TokenUsage.openCode(tokens) { conversation.lastTokens = usage }
     }
 
     // MARK: - Parts
