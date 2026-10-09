@@ -1771,6 +1771,20 @@ final class ImagePasteTests: XCTestCase {
         XCTAssertEqual(ImagePaste.insertion(for: "/tmp/it's.png"), #"'/tmp/it'"'"'s.png'"#)
     }
 
+    func testACopiedLinkPastesAsTheLinkNotItsPreviewPicture() {
+        XCTAssertTrue(ImagePaste.isCopiedLink(text: "https://example.com/article"))
+        XCTAssertTrue(ImagePaste.isCopiedLink(text: "  https://github.com/a/b/pull/35\n"))
+        XCTAssertTrue(ImagePaste.isCopiedLink(text: "http://example.com", html: "<a href=\"http://example.com\">x</a>"))
+        // "Copy Image": the address is the image's own, or the HTML is an <img>.
+        XCTAssertFalse(ImagePaste.isCopiedLink(text: "https://cdn.example.com/photo.JPG"))
+        XCTAssertFalse(ImagePaste.isCopiedLink(text: "https://cdn.example.com/p?id=1", html: "<IMG src=\"x\">"))
+        // Not a link at all.
+        XCTAssertFalse(ImagePaste.isCopiedLink(text: nil))
+        XCTAssertFalse(ImagePaste.isCopiedLink(text: "some words https://example.com"))
+        XCTAssertFalse(ImagePaste.isCopiedLink(text: "/Users/me/shot.png"))
+        XCTAssertFalse(ImagePaste.isCopiedLink(text: "file:///Users/me/notes"))
+    }
+
     func testSavingWritesTheFileAndPruningKeepsTheRecentOnes() throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
         defer { try? FileManager.default.removeItem(atPath: home) }
