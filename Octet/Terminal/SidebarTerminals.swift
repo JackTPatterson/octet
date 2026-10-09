@@ -2,9 +2,10 @@ import AppKit
 import Darwin
 import GhosttyKit
 
-/// The terminal in each window's right panel, so an agent that's been let
-/// in can read what it shows (`TerminalAccessCenter`). Each window has its
-/// own; the registry holds the surface weakly and learns when its shell exits.
+/// The terminal in the right panel, one per workspace, so an agent that's
+/// been let in can read what it shows (`TerminalAccessCenter`). The registry
+/// holds each surface weakly, keyed by workspace, and learns when its shell
+/// exits.
 /// It also puts a command an agent suggests at the prompt, never running it.
 @MainActor
 final class SidebarTerminals {
@@ -16,25 +17,29 @@ final class SidebarTerminals {
         var exited = false
     }
 
-    private var entries: [UUID: Entry] = [:]
+    /// The key for a workspace's terminal; a window with no workspace in
+    /// front still gets one.
+    static func key(_ workspaceId: String?) -> String { workspaceId ?? "" }
 
-    func register(window: UUID, view: TerminalEngine.SurfaceView) {
-        entries[window] = Entry(view: view)
+    private var entries: [String: Entry] = [:]
+
+    func register(workspace: String, view: TerminalEngine.SurfaceView) {
+        entries[workspace] = Entry(view: view)
     }
 
-    func titleChanged(window: UUID, _ title: String) {
-        entries[window]?.title = title
+    func titleChanged(workspace: String, _ title: String) {
+        entries[workspace]?.title = title
     }
 
-    func exited(window: UUID) {
-        entries[window]?.exited = true
+    func exited(workspace: String) {
+        entries[workspace]?.exited = true
     }
 
-    /// The terminal in `window`, else the only one there is. With several
-    /// windows open and none in the one asked about, there is no good guess,
+    /// The terminal of `workspace`, else the only one there is. With several
+    /// open and none in the workspace asked about, there is no good guess,
     /// so none is made.
-    func entry(for window: UUID?) -> Entry? {
-        if let window, let entry = entries[window], entry.view != nil { return entry }
+    func entry(for workspace: String?) -> Entry? {
+        if let workspace, let entry = entries[workspace], entry.view != nil { return entry }
         let live = entries.values.filter { $0.view != nil }
         return live.count == 1 ? live.first : nil
     }
@@ -99,12 +104,12 @@ final class SidebarTerminals {
         view.window?.makeFirstResponder(view)
     }
 
-    func view(for window: UUID) -> TerminalEngine.SurfaceView? {
-        entries[window]?.view
+    func view(for workspace: String) -> TerminalEngine.SurfaceView? {
+        entries[workspace]?.view
     }
 }
 
-/// The command an agent has put at a window's sidebar terminal, shown over it
+/// The command an agent has put at a workspace's sidebar terminal, shown over it
 /// with Run and Clear until the person acts or it goes stale.
 @MainActor
 final class SidebarSuggestions: ObservableObject {
@@ -117,18 +122,18 @@ final class SidebarSuggestions: ObservableObject {
 
     static let lifetime: TimeInterval = 120
 
-    @Published private(set) var pending: [UUID: Suggestion] = [:]
+    @Published private(set) var pending: [String: Suggestion] = [:]
 
-    func set(_ command: String, window: UUID) {
+    func set(_ command: String, workspace: String) {
         let suggestion = Suggestion(command: command, at: Date())
-        pending[window] = suggestion
+        pending[workspace] = suggestion
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.lifetime) { [weak self] in
-            guard self?.pending[window] == suggestion else { return }
-            self?.pending[window] = nil
+            guard self?.pending[workspace] == suggestion else { return }
+            self?.pending[workspace] = nil
         }
     }
 
-    func dismiss(window: UUID) {
-        pending[window] = nil
+    func dismiss(workspace: String) {
+        pending[workspace] = nil
     }
 }
