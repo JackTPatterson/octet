@@ -1315,15 +1315,22 @@ final class SessionStore: ObservableObject {
     /// `edge`. The tab it leaves is empty and the engine closes it.
     func splitTab(_ tabId: String, into targetTab: String, beside targetPane: String, edge: SplitEdge) {
         guard tabId != targetTab, let moving = onlyPane(ofTab: tabId) else { return }
+        movePane(moving.paneId, into: targetTab, beside: targetPane, edge: edge)
+    }
+
+    /// Moves `paneId`, still running, into `targetTab`, beside `targetPane`
+    /// on `edge`. A tab it leaves empty is closed by the engine.
+    func movePane(_ paneId: String, into targetTab: String, beside targetPane: String, edge: SplitEdge) {
+        guard paneId != targetPane else { return }
         let client = self.client
         let multi = WindowRegistry.shared.isMulti
         let destination: [String: Any] = ["type": "tab", "tab_id": targetTab, "target_pane_id": targetPane, "split": edge.split]
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let outcome = Result {
                 // Several windows: `focus` would move every one of them.
-                try client.call("pane.move", ["pane_id": moving.paneId, "destination": destination, "focus": !multi])
+                try client.call("pane.move", ["pane_id": paneId, "destination": destination, "focus": !multi])
                 if edge.swaps {
-                    try client.call("pane.swap", ["source_pane_id": moving.paneId, "target_pane_id": targetPane])
+                    try client.call("pane.swap", ["source_pane_id": paneId, "target_pane_id": targetPane])
                 }
             }
             DispatchQueue.main.async {
