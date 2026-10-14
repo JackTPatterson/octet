@@ -751,12 +751,12 @@ private struct AgentSettings: View {
             SettingsDivider()
             SettingsRow(
                 title: "Recap when you come back",
-                detail: "After you've been away from Octet, one card says what every agent did meanwhile: what needs you, what's stuck, what finished, and what each changed and said last. View › Show Recap brings it back."
+                detail: "When you come back after being away (the screen locked, Octet out of sight, or the Mac untouched), a strip at the top says what every agent did meanwhile. It opens by itself only when something needs you or is stuck. View › Show Recap brings it back."
             ) {
                 Toggle("Recap when you come back", isOn: $settings.values.recap).labelsHidden().toggleStyle(.switch)
             }
             SettingsDivider()
-            SettingsRow(title: "Away for at least", detail: "Shorter breaks don't get a recap.") {
+            SettingsRow(title: "Away for at least", detail: "Shorter breaks don't get a recap. Not touching the Mac this long counts as away too.") {
                 Stepper(value: $settings.values.recapAfterMinutes, in: 1...120, step: 1) {
                     Text("\(Int(settings.values.recapAfterMinutes)) min").font(Theme.uiFont).foregroundStyle(Theme.textSecondary)
                 }

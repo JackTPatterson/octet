@@ -227,12 +227,13 @@ struct RootView: View {
         .overlay(alignment: .top) {
             // Only the window in front shows it, once.
             if let recap = recapCenter.shown, recapCenter.showsIn(window) {
-                RecapCard(recap: recap)
-                    .padding(.top, contentTop + 24)
+                RecapStrip(recap: recap)
+                    .padding(.top, contentTop + 10)
                     .transition(motion.animates(.toasts) ? .move(edge: .top).combined(with: .opacity) : .identity)
             }
         }
         .animation(motion.animation(.toasts, .smooth(duration: 0.22)), value: recapCenter.shown)
+        .animation(motion.animation(.toasts, .smooth(duration: 0.18)), value: recapCenter.expanded)
         .onAppear { appeared() }
         .modifier(TerminalWatchers(
             anchor: terminalAnchor, tabDrag: tabDrag,
