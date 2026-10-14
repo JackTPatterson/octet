@@ -116,11 +116,11 @@ final class AgentRuntimeHandoffTests: XCTestCase {
         let list = [runtime("a"), runtime("b"), runtime("a1", parent: "a"), runtime("b1", parent: "b"),
                     runtime("a1x", parent: "a1"), runtime("orphan", parent: "gone")]
         let nested = HandoffRuntime.nested(list)
-        XCTAssertEqual(nested.map(\.runtime.id), ["a", "a1", "a1x", "b", "b1", "orphan"])
-        XCTAssertEqual(nested.map(\.depth), [0, 1, 2, 0, 1, 0])
+        XCTAssertEqual(nested.map { $0.runtime.id }, ["a", "a1", "a1x", "b", "b1", "orphan"])
+        XCTAssertEqual(nested.map { $0.depth }, [0, 1, 2, 0, 1, 0])
         // A cycle still shows every item, once.
         let cycle = RuntimeTree.order([("x", "y"), ("y", "x")], id: { $0.0 }, parent: { $0.1 })
-        XCTAssertEqual(cycle.map(\.0.0).sorted(), ["x", "y"])
+        XCTAssertEqual(cycle.map { $0.0.0 }.sorted(), ["x", "y"])
     }
 
     func testProcessStartOfThisProcess() {
