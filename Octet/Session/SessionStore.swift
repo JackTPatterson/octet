@@ -1811,16 +1811,52 @@ final class RuntimeLogTails: @unchecked Sendable {
 
     private var tails: [String: Tail] = [:]
 
+    /// What the session has running, and what its live subagents have
+    /// running in turn, read from each one's own log beside the session's,
+    /// however deep they go. A subagent's entries name it as their parent.
     func live(sessionId: String, cwds: [String], processStart: Date?) -> [HandoffRuntime] {
         var tail = tails[sessionId] ?? {
             let path = cwds.lazy.compactMap { AgentConversation.findLog(sessionIds: [sessionId], cwd: $0) }.first
             return path.map { Tail(path: $0) }
         }() ?? Tail(path: "")
+        var result = read(&tail, processStart: processStart)
+        tails[sessionId] = tail
+        guard !tail.path.isEmpty else { return result }
+
+        // Each subagent's log names the call that launched it; follow the
+        // live ones down, so a subagent's own subagents show under it.
+        let records = AgentEdits.claudeSubagents(ofTranscript: tail.path)
+        let byLaunch = Dictionary(records.compactMap { record in record.toolUseId.map { ($0, record) } },
+                                  uniquingKeysWith: { first, _ in first })
+        var frontier = result.filter { $0.kind == .agent }.map(\.id)
+        var followed = Set<String>()
+        while let launch = frontier.popLast() {
+            guard followed.insert(launch).inserted, let record = byLaunch[launch] else { continue }
+            let key = sessionId + "|" + record.transcript
+            var sub = tails[key] ?? {
+                var fresh = Tail(path: record.transcript)
+                fresh.ledger.parentId = launch
+                return fresh
+            }()
+            let found = read(&sub, processStart: processStart)
+            tails[key] = sub
+            result += found
+            frontier += found.filter { $0.kind == .agent }.map(\.id)
+        }
+        return result
+    }
+
+    /// Reads what `tail`'s log has added since last time.
+    private func read(_ tail: inout Tail, processStart: Date?) -> [HandoffRuntime] {
         guard !tail.path.isEmpty, let handle = FileHandle(forReadingAtPath: tail.path) else { return [] }
         defer { try? handle.close() }
         let size = (try? handle.seekToEnd()) ?? 0
         // A log rewritten shorter is read again from the start.
-        if size < tail.offset { tail = Tail(path: tail.path) }
+        if size < tail.offset {
+            let parent = tail.ledger.parentId
+            tail = Tail(path: tail.path)
+            tail.ledger.parentId = parent
+        }
         if size > tail.offset {
             try? handle.seek(toOffset: tail.offset)
             var data = tail.partial
@@ -1836,11 +1872,11 @@ final class RuntimeLogTails: @unchecked Sendable {
                 tail.partial = data
             }
         }
-        tails[sessionId] = tail
         return tail.ledger.live(processStart: processStart)
     }
 
     func forget(except sessionIds: Set<String>) {
-        tails = tails.filter { sessionIds.contains($0.key) }
+        // A subagent's log is kept under its session's id and its path.
+        tails = tails.filter { sessionIds.contains(String($0.key.split(separator: "|", maxSplits: 1).first ?? "")) }
     }
 }

@@ -510,7 +510,9 @@ private struct Transcript: View {
                         EmptyConversation(session: session)
                     }
                     if blocking == nil {
+                        let depths = Self.depths(items)
                         ForEach(items.filter(Self.isShown)) { item in
+                            let depth = depths[item.id] ?? 0
                             Group {
                                 if let report = session.usageReports[item.id] {
                                     UsageCard(report: report)
@@ -520,10 +522,18 @@ private struct Transcript: View {
                                 }
                             }
                                 .contextMenu { MessageMenu(session: session, item: item) }
-                                .padding(.leading, item.parent == nil ? 0 : 18)
+                                // A subagent's work is indented under the call that
+                                // started it, a rail per level, so a subagent's own
+                                // subagents sit one step further in.
+                                .padding(.leading, CGFloat(depth) * 18)
                                 .overlay(alignment: .leading) {
-                                    if item.parent != nil {
-                                        Rectangle().fill(Theme.border).frame(width: 2).padding(.leading, 6)
+                                    if depth > 0 {
+                                        HStack(spacing: 16) {
+                                            ForEach(0..<depth, id: \.self) { _ in
+                                                Rectangle().fill(Theme.border).frame(width: 2)
+                                            }
+                                        }
+                                        .padding(.leading, 6)
                                     }
                                 }
                                 .id(item.id)
@@ -586,6 +596,25 @@ private struct Transcript: View {
                 }
             }
         }
+    }
+
+    /// How deep each item sits: 0 for the conversation's own, 1 for a
+    /// subagent's, 2 for that subagent's own subagent's, and so on, by
+    /// following each item's parent call up.
+    static func depths(_ items: [AgentItem]) -> [String: Int] {
+        let parents = Dictionary(items.map { ($0.id, $0.parent) }, uniquingKeysWith: { first, _ in first })
+        var depths: [String: Int] = [:]
+        for item in items where item.parent != nil {
+            var depth = 0
+            var parent = item.parent
+            var seen = Set<String>()
+            while let id = parent, seen.insert(id).inserted {
+                depth += 1
+                parent = parents[id] ?? nil
+            }
+            depths[item.id] = depth
+        }
+        return depths
     }
 
     private var blockingState: AgentBlockState? {
