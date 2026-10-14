@@ -494,9 +494,21 @@ private struct MessageMenu: View {
 
 private struct Transcript: View {
     @ObservedObject var session: AgentSession
-    @State private var atBottom = true
+    @State private var atBottom: Bool
     /// The item at the top of the view, to come back to it.
     @State private var position: String?
+
+    /// Starts where it should on its very first layout: where you were
+    /// reading, else the latest (`defaultScrollAnchor`). Scrolling there
+    /// after it appears showed the wrong place for a moment first.
+    init(session: AgentSession) {
+        _session = ObservedObject(wrappedValue: session)
+        let saved = session.transcriptReadingAt.flatMap { id in
+            session.conversation.items.contains { $0.id == id } ? id : nil
+        }
+        _position = State(initialValue: saved)
+        _atBottom = State(initialValue: saved == nil)
+    }
 
     var body: some View {
         let items = session.conversation.items
@@ -553,17 +565,13 @@ private struct Transcript: View {
             // Opens at the latest, not the first message.
             .defaultScrollAnchor(.bottom)
             .octetScrollIndicators()
-            // Coming back to the conversation: where you were reading, or
-            // the latest if you were following it.
+            // Coming back to where you were reading: the position above
+            // takes it there on first layout; this settles it once the lazy
+            // rows above it have their real heights. Following the latest
+            // needs nothing: the bottom anchor opens there.
             .onAppear {
-                let saved = session.transcriptReadingAt
-                DispatchQueue.main.async {
-                    if let saved, session.conversation.items.contains(where: { $0.id == saved }) {
-                        proxy.scrollTo(saved, anchor: .top)
-                    } else {
-                        proxy.scrollTo("bottom", anchor: .bottom)
-                    }
-                }
+                guard let saved = position else { return }
+                DispatchQueue.main.async { proxy.scrollTo(saved, anchor: .top) }
             }
             .onChange(of: position) { _, id in
                 session.transcriptReadingAt = atBottom ? nil : id
