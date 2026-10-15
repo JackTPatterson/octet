@@ -25,11 +25,11 @@ struct SidebarView: View {
                         searchResults
                     } else {
                         ReadyWaits()
-                        ForEach(store.activeGroups) { group in
+                        ForEach(window.activeGroups) { group in
                             groupSection(group)
                         }
                     }
-                    if store.snapshot.workspaces.isEmpty {
+                    if window.ownWorkspaces.isEmpty {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(store.isConnected ? "No workspaces" : "Starting the terminal…")
                                 .font(Theme.uiFont)
@@ -45,7 +45,7 @@ struct SidebarView: View {
                     }
                 }
                 .padding(.vertical, 8)
-                .animation(motion.animation(.sidebar), value: store.activeGroups)
+                .animation(motion.animation(.sidebar), value: window.activeGroups)
             }
             .scrollIndicators(.hidden)
             // Double-click empty sidebar space for a new workspace.
@@ -62,12 +62,12 @@ struct SidebarView: View {
                 WaitsDock()
                     .transition(motion.animates(.sidebar) ? .move(edge: .bottom).combined(with: .opacity) : .identity)
             }
-            if !searching, !store.idleWorkspaces.isEmpty || !idle.sleeping.isEmpty {
+            if !searching, !window.idleWorkspaces.isEmpty || !idle.sleeping.isEmpty {
                 IdleDock(store: store)
                     .transition(motion.animates(.sidebar) ? .move(edge: .bottom).combined(with: .opacity) : .identity)
             }
         }
-        .animation(motion.animation(.sidebar), value: store.idleWorkspaces.isEmpty)
+        .animation(motion.animation(.sidebar), value: window.idleWorkspaces.isEmpty)
         .animation(motion.animation(.sidebar), value: waits.waiting.isEmpty)
         .frame(width: width)
         .background(Theme.sidebar)
@@ -120,11 +120,11 @@ struct SidebarView: View {
     /// The workspaces the query finds, under their groups' names, then the
     /// idle ones it finds; groups aren't collapsed while searching.
     private var matches: (groups: [ProjectGroup], idle: [EngineWorkspace]) {
-        let groups = store.activeGroups.compactMap { group -> ProjectGroup? in
+        let groups = window.activeGroups.compactMap { group -> ProjectGroup? in
             let hits = group.workspaces.filter { found($0, group: group.name) }
             return hits.isEmpty ? nil : ProjectGroup(id: group.id, name: group.name, workspaces: hits)
         }
-        return (groups, store.idleWorkspaces.filter { found($0, group: nil) })
+        return (groups, window.idleWorkspaces.filter { found($0, group: nil) })
     }
 
     private func found(_ workspace: EngineWorkspace, group: String?) -> Bool {
@@ -153,7 +153,7 @@ struct SidebarView: View {
                 }
             }
         }
-        if matches.groups.isEmpty, matches.idle.isEmpty, !store.snapshot.workspaces.isEmpty {
+        if matches.groups.isEmpty, matches.idle.isEmpty, !window.ownWorkspaces.isEmpty {
             Text("No workspace matches “\(query.trimmingCharacters(in: .whitespaces))”")
                 .font(Theme.captionFont)
                 .foregroundStyle(Theme.textTertiary)
@@ -658,7 +658,7 @@ struct WorkspaceOrganizeMenu: View {
         } else {
             Button("Pin to Keep in View") { store.setPinned(id, true) }
         }
-        if store.idleWorkspaces.contains(where: { $0.workspaceId == id }) {
+        if window.idleWorkspaces.contains(where: { $0.workspaceId == id }) {
             Button("Keep in View Now") {
                 WaitCenter.shared.cancelSnooze(of: id)
                 store.keepInView(id)
@@ -763,7 +763,7 @@ struct IdleDock: View {
                         OctetIcon("chevron.down", size: 12)
                             .rotationEffect(.degrees(collapsed ? -90 : 0))
                         Text("IDLE").font(Theme.headerFont).kerning(0.4)
-                        Text("\(store.idleWorkspaces.count)")
+                        Text("\(window.idleWorkspaces.count)")
                             .font(Theme.uiFont)
                             .foregroundStyle(Theme.textTertiary)
                         Text("· unused \(IdleDock.thresholdLabel(store.idleAfter))+")
@@ -814,7 +814,7 @@ struct IdleDock: View {
                             ForEach(idle.sleeping) { record in SleepingRow(record: record) }
                         }
                     }
-                    .animation(motion.animation(.sidebar), value: store.idleWorkspaces)
+                    .animation(motion.animation(.sidebar), value: window.idleWorkspaces)
                     .padding(.horizontal, 6)
                     .padding(.bottom, 6)
                 }
@@ -829,7 +829,7 @@ struct IdleDock: View {
 
     private var rowCount: Int {
         let headers = sections.filter { !$0.name.isEmpty }.count
-        return store.idleWorkspaces.count + headers + (idle.sleeping.isEmpty ? 0 : idle.sleeping.count + 1)
+        return window.idleWorkspaces.count + headers + (idle.sleeping.isEmpty ? 0 : idle.sleeping.count + 1)
     }
 
     private struct Section: Identifiable {
@@ -840,7 +840,7 @@ struct IdleDock: View {
 
     /// One unnamed section, or one per project once there are many.
     private var sections: [Section] {
-        let all = store.idleWorkspaces
+        let all = window.idleWorkspaces
         let projects = Dictionary(grouping: all) { store.projectName(of: $0.workspaceId) ?? "Other" }
         guard all.count > Self.groupAfter, projects.count > 1 else { return [Section(name: "", workspaces: all)] }
         // In the order their newest workspace went idle.
@@ -853,17 +853,17 @@ struct IdleDock: View {
     }
 
     @ViewBuilder private var actions: some View {
-        let picked = store.idleWorkspaces.filter { idle.selection.contains($0.workspaceId) }
+        let picked = window.idleWorkspaces.filter { idle.selection.contains($0.workspaceId) }
         if !picked.isEmpty {
             Button("Close \(picked.count) Picked…") { idle.close(picked) }
             Button("Sleep \(picked.count) Picked") { idle.sleep(picked) }
             Button("Clear Picks") { idle.selection = [] }
             Divider()
         }
-        Button("Close All Idle…") { idle.close(store.idleWorkspaces) }
-            .disabled(store.idleWorkspaces.isEmpty)
-        Button("Sleep All Idle") { idle.sleep(store.idleWorkspaces) }
-            .disabled(store.idleWorkspaces.isEmpty)
+        Button("Close All Idle…") { idle.close(window.idleWorkspaces) }
+            .disabled(window.idleWorkspaces.isEmpty)
+        Button("Sleep All Idle") { idle.sleep(window.idleWorkspaces) }
+            .disabled(window.idleWorkspaces.isEmpty)
         let ports = idle.idlePorts
         if !ports.isEmpty {
             Button("Stop \(ports.count == 1 ? "the Server" : "\(ports.count) Servers") in Idle…") { idle.stopIdleServers() }
