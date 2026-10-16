@@ -480,6 +480,7 @@ struct RootView: View {
                     case "prs": ui.showPlane(.pullRequests)
                     case "diff": ui.showPlane(.diff)
                     case "files": ui.showPlane(.files)
+                    case "browser": ui.showPlane(.browser)
                     case "device": ui.showPlane(.device)
                     default: break
                     }

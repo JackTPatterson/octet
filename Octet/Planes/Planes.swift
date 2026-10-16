@@ -5,7 +5,7 @@ import SwiftUI
 /// The kinds of plane the right panel can show. A plane is one tab in the
 /// panel's strip; the "+" picker adds them, after T3 Code's surfaces.
 enum PlaneKind: String, Codable, CaseIterable, Identifiable {
-    case overview, diff, files, git, pullRequest, pullRequests, device
+    case overview, diff, files, git, pullRequest, pullRequests, browser, device
     var id: String { rawValue }
 
     var title: String {
@@ -16,6 +16,7 @@ enum PlaneKind: String, Codable, CaseIterable, Identifiable {
         case .git: "Git"
         case .pullRequest: "Pull Request"
         case .pullRequests: "Pull Requests"
+        case .browser: "Browser"
         case .device: "Device"
         }
     }
@@ -28,6 +29,7 @@ enum PlaneKind: String, Codable, CaseIterable, Identifiable {
         case .git: "branch"
         case .pullRequest: "pull.request"
         case .pullRequests: "list"
+        case .browser: "safari"
         case .device: "iphone"
         }
     }
@@ -41,6 +43,7 @@ enum PlaneKind: String, Codable, CaseIterable, Identifiable {
         case .git: "g"
         case .pullRequest: "p"
         case .pullRequests: "l"
+        case .browser: "b"
         case .device: "m"
         }
     }
@@ -53,6 +56,7 @@ enum PlaneKind: String, Codable, CaseIterable, Identifiable {
         case .git: "Changes, commits and worktrees"
         case .pullRequest: "This branch's pull request"
         case .pullRequests: "The repository's open pull requests"
+        case .browser: "A page beside the terminal, like your dev server"
         case .device: "Watch and drive an iOS Simulator or Android Emulator"
         }
     }

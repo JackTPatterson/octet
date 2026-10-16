@@ -172,6 +172,7 @@ struct OctetIcon: View {
         "circle.dot": .symbol("circle.dotted"),
         "list": .symbol("list.bullet"),
         "iphone": .symbol("iphone"),
+        "lock": .symbol("lock"),
     ]
 
     var body: some View {
