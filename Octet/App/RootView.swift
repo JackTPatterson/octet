@@ -452,6 +452,10 @@ struct RootView: View {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { window.search?.debugFind(String(open.dropFirst(5))) }
                 }
             }
+            // "palette" opens the command palette as ⌘P does.
+            if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "palette" {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { ui.paletteVisible = true }
+            }
             // "broadcast" opens the broadcast prompt as ⌘⇧I does.
             if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "broadcast" {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 4) {

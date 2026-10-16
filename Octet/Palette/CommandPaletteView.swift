@@ -131,11 +131,8 @@ struct CommandPaletteView: View {
                 footer
             }
         }
-        .frame(width: 640)
-        .background(Theme.sidebar)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.border, lineWidth: 1))
-        .shadow(color: .black.opacity(0.5), radius: 24, y: 12)
+        .frame(width: 576)
+        .octetGlass(cornerRadius: 18)
     }
 
     // MARK: Search
@@ -193,8 +190,9 @@ struct CommandPaletteView: View {
                     .padding(.horizontal, 8)
                     .frame(height: 22)
                     .background(active ? Theme.accent.opacity(0.22) : Theme.card)
-                    .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(active ? Theme.accent.opacity(0.6) : Theme.border, lineWidth: 1))
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius)
+                        .strokeBorder(active ? Theme.accent.opacity(0.5) : Color.clear, lineWidth: 1))
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.controlRadius))
                 }
                 .buttonStyle(.plain)
             }
@@ -429,11 +427,8 @@ private struct PaletteRow: View {
         .frame(height: item.subtitle.isEmpty ? 32 : 42)
         .background {
             if selected {
-                RoundedRectangle(cornerRadius: 4)
+                RoundedRectangle(cornerRadius: Theme.controlRadius)
                     .fill(Theme.cardSelected)
-                    .overlay(alignment: .leading) {
-                        Rectangle().fill(Theme.accent).frame(width: 2).padding(.vertical, 6)
-                    }
                     .matchedGeometryEffect(id: "paletteSelection", in: selectionSpace)
             }
         }

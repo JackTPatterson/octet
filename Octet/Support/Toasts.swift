@@ -187,10 +187,7 @@ private struct ToastCard: View {
                 endPoint: .trailing
             )
         )
-        .background(Theme.card)
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.border, lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .shadow(color: .black.opacity(0.4), radius: 12, y: 6)
+        .octetGlass(cornerRadius: Theme.popoverRadius, fill: Theme.card)
     }
 
     private var accent: Color {

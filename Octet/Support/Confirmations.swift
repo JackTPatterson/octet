@@ -185,10 +185,7 @@ struct ConfirmDialog: View {
         }
         .padding(16)
         .frame(width: request.detail.isEmpty ? 380 : 560)
-        .background(Theme.card)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.border, lineWidth: 1))
-        .shadow(color: .black.opacity(0.45), radius: 30, y: 12)
+        .octetGlass(cornerRadius: 18, fill: Theme.card)
     }
 }
 

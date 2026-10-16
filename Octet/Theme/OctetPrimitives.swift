@@ -337,3 +337,27 @@ struct OctetSelect<Value: Hashable>: View {
         .accessibilityValue(current)
     }
 }
+
+// MARK: - Glass
+
+extension View {
+    /// T3 Code's floating surfaces (dialogs, the palette, toasts): frosted
+    /// glass tinted by the theme, a hairline border, a faint lit top edge
+    /// and a deep, soft shadow beneath rather than around.
+    func octetGlass(cornerRadius: CGFloat, fill: Color = Theme.sidebar) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        return self
+            .background {
+                ZStack {
+                    shape.fill(.ultraThinMaterial)
+                    shape.fill(fill.opacity(0.86))
+                }
+            }
+            .clipShape(shape)
+            .overlay(shape.strokeBorder(Theme.border, lineWidth: 1))
+            .overlay(alignment: .top) {
+                Rectangle().fill(Color.white.opacity(0.05)).frame(height: 1).padding(.horizontal, cornerRadius)
+            }
+            .shadow(color: .black.opacity(0.55), radius: 34, y: 18)
+    }
+}
