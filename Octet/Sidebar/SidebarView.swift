@@ -365,7 +365,7 @@ struct SidebarView: View {
                 // Workspaces on the same branch stack together under one chip.
                 ForEach(BranchRuns.make(shown, branch: { store.branches[$0.workspaceId] },
                                         worktree: { $0.worktree })) { run in
-                    VStack(spacing: 4) {
+                    VStack(spacing: 2) {
                         ForEach(run.workspaces) { workspace in
                             WorkspaceCard(store: store, workspace: workspace)
                         }
@@ -440,12 +440,11 @@ private struct BranchChip: View {
                     .help("\(run.workspaces.count) workspaces on this branch")
             }
         }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 4)
+        // A quiet line under its workspaces, as T3 Code puts the branch.
+        .padding(.horizontal, 10)
+        .padding(.vertical, 3)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(hovered ? Theme.hover : Theme.card.opacity(0.75))
-        .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
-        .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius).strokeBorder(Theme.border.opacity(0.5), lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: 6).fill(hovered ? Theme.hover : .clear))
         .onHover { hovered = $0 }
         .help(run.worktreePath.map { "Worktree at \($0)" } ?? "Branch \(run.branch ?? "")")
     }
@@ -558,33 +557,39 @@ private struct WorkspaceCard: View {
             : session.map(Self.status) ?? agent?.agentStatus ?? workspace.agentStatus
         let directory = snapshot.directory(ofWorkspace: workspace.workspaceId)
 
-        VStack(alignment: .leading, spacing: 4) {
+        let receded = !isSelected && (status == .idle || status == .unknown)
+        // A plugin's picture of the project (its favicon or app icon), with
+        // the agent's state as a dot on its corner. With no agent here, a
+        // running server's logo takes the empty state's place.
+        let mark = Group {
+            if let projectIcon = workspaceIcons.image(for: directory) {
+                WorkspaceProjectIcon(image: projectIcon, status: status, size: 16)
+            } else if status == .unknown,
+               let logo = LanguageLogo(service: portsWatcher.service(inWorkspace: workspace.workspaceId, snapshot: snapshot), size: 13) {
+                logo.help("Serving on localhost")
+            } else {
+                AgentStateGlyph(status: status)
+            }
+        }
+        .frame(width: 16)
+        // With nothing to say about agents or tabs, the mark sits beside
+        // the title rather than alone on a line of its own.
+        let hasMeta = brand != nil || workspace.tabCount > 1
+        // T3 Code's card row: a line of who and how, the title, then where.
+        VStack(alignment: .leading, spacing: 3) {
+            if hasMeta {
             HStack(spacing: 6) {
-                // With no agent here, a running server's logo takes the
-                // empty state's place.
-                // A plugin's picture of the project (its favicon or app
-                // icon), with the agent's state as a dot on its corner.
-                if let projectIcon = workspaceIcons.image(for: directory) {
-                    WorkspaceProjectIcon(image: projectIcon, status: status)
-                        .frame(width: 12)
-                } else if status == .unknown,
-                   let logo = LanguageLogo(service: portsWatcher.service(inWorkspace: workspace.workspaceId, snapshot: snapshot), size: 11) {
-                    logo.frame(width: 12)
-                        .help("Serving on localhost")
-                } else {
-                    AgentStateGlyph(status: status)
-                        .frame(width: 12)
-                }
-                if renaming {
-                    InlineRenameField(initial: workspace.label, placeholder: "Workspace name") { label in
-                        renaming = false
-                        store.renameWorkspace(workspace.workspaceId, to: label, from: workspace.label)
-                    }
-                } else {
-                    Text(workspace.label)
-                        .font(Theme.uiFontMedium)
-                        .foregroundStyle(Theme.textPrimary)
+                mark
+                if let brand {
+                    AgentLogo(brand: brand, size: 11)
+                    Text(brand.displayName)
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(Theme.textTertiary)
                         .lineLimit(1)
+                } else if workspace.tabCount > 1 {
+                    Text("\(workspace.tabCount) tabs")
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(Theme.textTertiary)
                 }
                 let agentCount = session == nil ? agents.count : 1
                 if !renaming, agentCount > 1 {
@@ -592,25 +597,60 @@ private struct WorkspaceCard: View {
                 }
                 if store.isPinned(workspace.workspaceId) {
                     OctetIcon("pin.fill", size: 11)
-                        .foregroundStyle(Theme.textTertiary)
+                        .foregroundStyle(Theme.textMuted)
                         .help("Pinned: never moves to Idle")
                 }
-                Spacer(minLength: 0)
+                Spacer(minLength: 4)
                 if elsewhere {
                     OctetIcon("rectangle.on.rectangle", size: 12)
                         .foregroundStyle(Theme.textTertiary)
                         .help("Open in another window. Click to bring it forward.")
                         .accessibilityLabel("Open in another window")
                 }
-                // Room for the close button, which floats over the card so
-                // its appearing can never move or resize anything.
-                Color.clear.frame(width: 18, height: 1)
+                // How full this agent's context is, before it bites.
+                if let usage = store.usageTracker.usage(forTerminal: agent?.terminalId), !usage.label.isEmpty {
+                    ContextChip(usage: usage)
+                        .opacity(hovered && !renaming ? 0 : 1)
+                }
+                // The status, which gives way to the close button on hover.
+                if brand != nil, status != .unknown {
+                    Text(Self.statusTitle(status))
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(Self.statusColor(status))
+                        .lineLimit(1)
+                        .opacity(hovered && !renaming ? 0 : 1)
+                }
             }
             .frame(minHeight: 18)
+            }
+            HStack(spacing: 6) {
+            if !hasMeta { mark }
+            if renaming {
+                InlineRenameField(initial: workspace.label, placeholder: "Workspace name") { label in
+                    renaming = false
+                    store.renameWorkspace(workspace.workspaceId, to: label, from: workspace.label)
+                }
+            } else {
+                Text(workspace.label)
+                    .font(.system(size: 13, weight: receded ? .regular : .medium))
+                    .foregroundStyle(receded ? Theme.textSecondary : Theme.textPrimary)
+                    .lineLimit(1)
+            }
+            if !hasMeta {
+                Spacer(minLength: 4)
+                if store.isPinned(workspace.workspaceId) {
+                    OctetIcon("pin.fill", size: 11).foregroundStyle(Theme.textMuted).help("Pinned: never moves to Idle")
+                }
+                if elsewhere {
+                    OctetIcon("rectangle.on.rectangle", size: 12).foregroundStyle(Theme.textTertiary)
+                        .help("Open in another window. Click to bring it forward.")
+                }
+            }
+            }
             // Always shown: the folder is what decides the card's group.
             if let directory {
                 Text(abbreviateHome(directory))
-                    .font(Theme.monoFont)
+                    .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(Theme.textTertiary)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -626,27 +666,6 @@ private struct WorkspaceCard: View {
                 .help("Its tab's folder is now in this project, so the workspace moved with it.")
                 .transition(.opacity)
             }
-            HStack(spacing: 5) {
-                if let brand {
-                    AgentLogo(brand: brand, size: 11)
-                    Text(agentLine(status: status, brand: brand))
-                        .font(Theme.uiFont)
-                        .foregroundStyle(Theme.textSecondary)
-                        .lineLimit(1)
-                    // How full this agent's context is, before it bites.
-                    if let usage = store.usageTracker.usage(forTerminal: agent?.terminalId),
-                       !usage.label.isEmpty {
-                        Spacer(minLength: 4)
-                        ContextChip(usage: usage)
-                    }
-                } else if workspace.tabCount > 1 {
-                    OctetIcon("terminal", size: 12)
-                        .foregroundStyle(Theme.textTertiary)
-                    Text("\(workspace.tabCount) tabs")
-                        .font(Theme.uiFont)
-                        .foregroundStyle(Theme.textTertiary)
-                }
-            }
             // Subagents that left for a worktree, repo or folder of their own.
             let locations = store.agentLocations(inWorkspace: workspace.workspaceId)
             if !locations.isEmpty {
@@ -659,17 +678,13 @@ private struct WorkspaceCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(cardBackground(isSelected: isSelected,
                                    hue: store.workspaceColor(workspace.workspaceId)?.hex ?? brand?.hueHex))
-        .overlay(
-            RoundedRectangle(cornerRadius: Theme.rowRadius)
-                .strokeBorder(isSelected ? Theme.textTertiary.opacity(0.55)
-                    : (hovered ? Theme.border : Theme.border.opacity(0.6)), lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.controlRadius))
+        .animation(.easeOut(duration: 0.15), value: hovered)
         .overlay(alignment: .topTrailing) {
             let showsClose = hovered && !renaming
             WorkspaceCloseButton { store.closeWorkspace(workspace.workspaceId) }
-                .padding(.top, 8)
-                .padding(.trailing, 10)
+                .padding(.top, 7)
+                .padding(.trailing, 8)
                 .opacity(showsClose ? 1 : 0)
                 .allowsHitTesting(showsClose)
                 .accessibilityHidden(!showsClose)
@@ -709,12 +724,33 @@ private struct WorkspaceCard: View {
         .accessibilityAction(named: "Close") { store.closeWorkspace(workspace.workspaceId) }
     }
 
+    /// Nothing at rest, a fill under the pointer and a stronger one for the
+    /// workspace in front, as T3 Code's rows; a workspace's colour tints it.
     private func cardBackground(isSelected: Bool, hue: String?) -> some View {
         ZStack {
-            (isSelected ? Theme.cardSelected : (hovered ? Theme.hover : Theme.card))
+            (isSelected ? Theme.cardSelected : (hovered ? Theme.hover : Color.clear))
             if let hue {
-                Color(hex: hue).opacity(hovered ? Theme.tabColorHoverOpacity : Theme.tabColorOpacity)
+                Color(hex: hue).opacity(hovered || isSelected ? Theme.tabColorHoverOpacity : Theme.tabColorOpacity * 0.6)
             }
+        }
+    }
+
+    static func statusTitle(_ status: EngineAgentStatus) -> String {
+        switch status {
+        case .working: "Working"
+        case .blocked: "Needs input"
+        case .done: "Done"
+        case .idle: "Idle"
+        case .unknown: ""
+        }
+    }
+
+    static func statusColor(_ status: EngineAgentStatus) -> Color {
+        switch status {
+        case .working: Theme.accent
+        case .blocked: Color(hex: AgentStateColor.blocked)
+        case .done: Color(hex: AgentStateColor.done)
+        case .idle, .unknown: Theme.textTertiary
         }
     }
 
@@ -1361,14 +1397,15 @@ struct WorkspaceCloseButton: View {
 private struct WorkspaceProjectIcon: View {
     let image: NSImage
     let status: EngineAgentStatus
+    var size: CGFloat = 12
 
     var body: some View {
         Image(nsImage: image)
             .resizable()
             .interpolation(.high)
             .aspectRatio(contentMode: .fit)
-            .frame(width: 12, height: 12)
-            .clipShape(RoundedRectangle(cornerRadius: 2.5))
+            .frame(width: size, height: size)
+            .clipShape(RoundedRectangle(cornerRadius: size * 0.22))
             .overlay(alignment: .bottomTrailing) {
                 if let color = dot {
                     Circle().fill(color)
@@ -1420,10 +1457,9 @@ private struct ProjectGroupHeader: View {
                     } else {
                         ProjectMonogram(name: group.name)
                     }
-                    Text(group.name.uppercased())
-                        .font(Theme.headerFont)
-                        .kerning(0.4)
-                        .foregroundStyle(Theme.textSecondary)
+                    Text(group.name)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(hovered ? Theme.textPrimary : Theme.textSecondary)
                         .lineLimit(1)
                     if isRepository {
                         OctetIcon("arrow.triangle.branch", size: 10).foregroundStyle(Theme.textMuted)
@@ -1435,26 +1471,34 @@ private struct ProjectGroupHeader: View {
                             .foregroundStyle(Theme.textTertiary)
                             .help(group.workspaces.count == 1 ? "1 workspace" : "\(group.workspaces.count) workspaces")
                     }
-                    OctetIcon("chevron.down", size: 12)
+                    OctetIcon("chevron.right", size: 11)
                         .foregroundStyle(Theme.textTertiary)
-                        .rotationEffect(.degrees(collapsed ? -90 : 0))
+                        .rotationEffect(.degrees(collapsed ? 0 : 90))
+                        .animation(.easeOut(duration: 0.15), value: collapsed)
                 }
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help(help)
-            if let newWorkspace, hovered {
+            if let newWorkspace {
                 Button(action: newWorkspace) {
-                    OctetIcon("plus", size: 11).foregroundStyle(Theme.textSecondary)
-                        .frame(width: 18, height: 18).contentShape(Rectangle())
+                    OctetIcon("pencil", size: 13).foregroundStyle(Theme.textSecondary)
+                        .frame(width: 22, height: 22)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(Theme.hover.opacity(0.6)))
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .opacity(hovered ? 1 : 0)
+                .animation(.easeOut(duration: 0.15), value: hovered)
                 .help("New workspace in \(group.name)")
                 .accessibilityLabel("New workspace in \(group.name)")
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 4)
+        // T3 Code's project row: 32pt, a fill under the pointer.
+        .padding(.horizontal, 10)
+        .frame(height: 30)
+        .background(RoundedRectangle(cornerRadius: Theme.controlRadius).fill(hovered ? Theme.hover : .clear))
+        .padding(.horizontal, 8)
         .onHover { hovered = $0 }
         .accessibilityElement(children: .contain)
     }
