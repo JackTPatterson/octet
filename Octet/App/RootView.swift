@@ -313,12 +313,6 @@ struct RootView: View {
             }
             .id(settings.themeKey)
         }
-        .sheet(isPresented: $ui.usageBreakdownVisible) {
-            let size = UsagePage.size(in: NSApp.keyWindow?.frame.size)
-            UsagePage { ui.usageBreakdownVisible = false }
-                .environmentObject(window)
-                .frame(width: size.width, height: size.height)
-        }
         // A wait being written, in the window that asked for it.
         .sheet(item: Binding(
             get: { waitCenter.draft.flatMap { $0.windowId == nil || $0.windowId == window.id ? $0 : nil } },
@@ -623,6 +617,14 @@ struct RootView: View {
         ZStack {
                     if let agent = window.agentUIHandoff {
                         AgentUIHandoffView(agent: agent)
+                    } else if ui.usageBreakdownVisible {
+                        // Usage is a page over the content area, not a sheet.
+                        UsagePage {
+                            ui.usageBreakdownVisible = false
+                            OctetTerminalRuntime.focusTerminal()
+                        }
+                        .onAppear { DebugSnapshot.overlay("usage", true) }
+                        .onDisappear { DebugSnapshot.overlay("usage", false) }
                     } else if let review = ui.review {
                         DiffReviewView(model: review, store: store) { window.toggleReview() }
                             .id(review.directory)

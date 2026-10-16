@@ -18,6 +18,9 @@ struct UsageRecord: Codable, Equatable {
     var model: String
     /// The folder the conversation ran in, when the log says.
     var cwd: String?
+    /// The account profile whose config folder held the log (Settings ›
+    /// Accounts); nil for the agent's default folder.
+    var account: String? = nil
     var tokens: TokenUsage
     var cost: UsageCost
     /// What the cached input would have cost at the uncached rate, less
@@ -91,12 +94,12 @@ enum UsageRecords {
     /// Folds records into one per provider, conversation, model and hour.
     /// Run after `dedupe`, since the keys go.
     static func compact(_ records: [UsageRecord]) -> [UsageRecord] {
-        struct Group: Hashable { let provider: String, session: String, model: String, hour: Date }
+        struct Group: Hashable { let provider: String, account: String?, session: String, model: String, hour: Date }
         var groups: [Group: Int] = [:]
         var result: [UsageRecord] = []
         for record in records {
             let hour = hourStart(record.date)
-            let group = Group(provider: record.provider, session: record.sessionId, model: record.model, hour: hour)
+            let group = Group(provider: record.provider, account: record.account, session: record.sessionId, model: record.model, hour: hour)
             if let index = groups[group] {
                 result[index].tokens = result[index].tokens + record.tokens
                 result[index].cost = result[index].cost + record.cost
@@ -257,8 +260,15 @@ enum UsageMeasure: String, CaseIterable, Identifiable {
 }
 
 enum UsageSummary {
-    static func filter(_ records: [UsageRecord], provider: String?, since: Date, until: Date = .distantFuture) -> [UsageRecord] {
-        records.filter { ($0.provider == provider || provider == nil) && $0.date >= since && $0.date <= until }
+    /// Records from `provider` (nil for all) and `account` (nil for all,
+    /// "" for the default folders, else a profile id) in the time range.
+    static func filter(_ records: [UsageRecord], provider: String?, account: String? = nil,
+                       since: Date, until: Date = .distantFuture) -> [UsageRecord] {
+        records.filter { record in
+            (provider == nil || record.provider == provider)
+                && (account == nil || (record.account ?? "") == account)
+                && record.date >= since && record.date <= until
+        }
     }
 
     struct Totals: Equatable {

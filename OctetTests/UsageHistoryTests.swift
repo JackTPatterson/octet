@@ -238,6 +238,20 @@ final class UsageHistoryTests: XCTestCase {
         XCTAssertEqual(UsageSummary.filter(records, provider: nil, since: .distantPast).count, 3)
     }
 
+    func testAccountFilterSeparatesDefaultFoldersFromProfiles() {
+        var work = record("claude", "w", hoursAgo: 1)
+        work.account = "work"
+        let personal = record("claude", "p", hoursAgo: 1)
+        let records = [work, personal]
+        XCTAssertEqual(UsageSummary.filter(records, provider: nil, account: nil, since: .distantPast).count, 2)
+        XCTAssertEqual(UsageSummary.filter(records, provider: nil, account: "", since: .distantPast).map(\.sessionId), ["p"])
+        XCTAssertEqual(UsageSummary.filter(records, provider: nil, account: "work", since: .distantPast).map(\.sessionId), ["w"])
+        // The same conversation id under two accounts stays two records.
+        var twin = personal
+        twin.account = "work"
+        XCTAssertEqual(UsageRecords.compact([personal, twin]).count, 2)
+    }
+
     // MARK: Formatting
 
     func testFormatting() {

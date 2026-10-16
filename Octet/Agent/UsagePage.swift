@@ -4,8 +4,8 @@ import SwiftUI
 /// Where usage went, after T3 Code's Usage page: what every Claude Code,
 /// Codex and OpenCode session on this Mac spent over a period, by provider,
 /// day, kind of token and model; or, in Limits, how much of each account's
-/// allowance is left. Opened from the account chips' "Where did it go?" and
-/// the palette, in place of the old per-conversation list.
+/// allowance is left. A page over the content area, like the diff review,
+/// opened from the account chips' "Where did it go?" and the palette.
 struct UsagePage: View {
     let close: () -> Void
     @EnvironmentObject private var window: WindowContext
@@ -16,6 +16,10 @@ struct UsagePage: View {
     @State private var period: UsagePeriod = .month
     @State private var provider: String?
     @State private var breakdown: Breakdown = .model
+    @State private var account: String?
+    @StateObject private var dropdowns = OctetDropdownState()
+    @ObservedObject private var settings = SettingsStore.shared
+    @FocusState private var focused: Bool
 
     enum Mode: String, CaseIterable, Identifiable {
         case cost, tokens, limits
@@ -42,30 +46,47 @@ struct UsagePage: View {
                 report
             }
         }
-        .background(Theme.chrome)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.terminalBackground)
+        .octetDropdownHost(dropdowns)
+        // A page over the terminal, not a sheet: it takes keyboard focus so
+        // Esc reaches it rather than the shell underneath.
+        .focusable()
+        .focusEffectDisabled()
+        .focused($focused)
+        .onExitCommand {
+            if dropdowns.openId != nil { dropdowns.openId = nil } else { close() }
+        }
         .onAppear {
-            history.refresh()
+            focused = true
+            history.refresh(profiles: settings.values.accountProfiles)
             #if DEBUG
             applyDebugOptions()
             #endif
         }
     }
 
-    /// Large, like T3 Code's page: most of the window it opens over, within
-    /// reason on a big display.
-    static func size(in window: CGSize?) -> CGSize {
-        let window = window ?? CGSize(width: 1280, height: 860)
-        return CGSize(width: min(1320, max(900, window.width - 80)), height: min(920, max(620, window.height - 80)))
-    }
-
     #if DEBUG
-    /// Verification hook: OCTET_OPEN_WINDOW=usage:<mode>:<period>.
+    /// Verification hook: OCTET_OPEN_WINDOW=usage:<mode>:<period>:<breakdown>.
     private func applyDebugOptions() {
         guard let open = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], open.hasPrefix("usage") else { return }
         for part in open.split(separator: ":").dropFirst().map(String.init) {
             if let value = Mode(rawValue: part) { mode = value }
             if let value = UsagePeriod(rawValue: part) { period = value }
             if let value = Breakdown(rawValue: part) { breakdown = value }
+            if UsagePalette.order(part) < 10 { provider = part }
+            if part == "menu" { DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { dropdowns.openId = "usage.provider" } }
+            // Presses Esc through the window's normal key dispatch, to check
+            // the page, not the terminal under it, takes it.
+            if part == "esc" {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                    guard let window = NSApp.windows.first(where: { $0.isVisible && $0.canBecomeMain }),
+                          let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                                       windowNumber: window.windowNumber, context: nil, characters: "\u{1b}",
+                                                       charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53) else { return }
+                    window.sendEvent(event)
+                }
+            }
         }
     }
     #endif
@@ -73,57 +94,57 @@ struct UsagePage: View {
     // MARK: Header
 
     private var header: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 6) {
-                Text("Usage").font(Theme.interfaceFont(13, weight: .semibold)).foregroundStyle(Theme.textPrimary)
-                Text("/").font(Theme.interfaceFont(13)).foregroundStyle(Theme.textMuted)
-                providerPicker
-            }
+        PageHeader(crumbs: crumbs, dropdowns: dropdowns, close: close) {
             if history.scanning {
                 ProgressView().controlSize(.small).help("Reading the agents' logs")
             }
-            Spacer(minLength: 12)
             OctetSegmented(selection: $mode, items: Mode.allCases.map { ($0, $0.title) })
             if mode != .limits {
                 OctetSegmented(selection: $period, items: UsagePeriod.allCases.map { ($0, $0.title) })
             }
             OctetIconButton(icon: "arrow.clockwise", help: "Refresh") {
-                history.refresh(force: true)
+                history.refresh(force: true, profiles: settings.values.accountProfiles)
                 accounts.refresh(force: true)
             }
             .disabled(history.scanning)
-            OctetIconButton(icon: "xmark", help: "Close", action: close)
-                .keyboardShortcut(.cancelAction)
         }
-        .padding(.horizontal, 20)
-        .frame(height: 52)
     }
 
-    /// Only providers with something recorded, Claude first as T3 orders them.
+    /// "Usage / All providers", with an account crumb between them once a
+    /// second Claude or Codex account is set up (Settings › Accounts).
+    private var crumbs: [Breadcrumb] {
+        var crumbs: [Breadcrumb] = [.title("Usage")]
+        let profiles = settings.values.accountProfiles
+        if !profiles.isEmpty, mode != .limits {
+            var options = [OctetDropdownOption(id: Self.all, title: "All accounts"),
+                           OctetDropdownOption(id: Self.defaultAccount, title: "Default accounts")]
+            options += profiles.map {
+                OctetDropdownOption(id: $0.id, title: $0.name, detail: UsagePalette.name($0.agent))
+            }
+            let label = account.map { id in id == Self.defaultAccount ? "Default accounts"
+                : profiles.first { $0.id == id }?.name ?? "All accounts" } ?? "All accounts"
+            crumbs.append(.picker(spec: OctetDropdownSpec(id: "usage.account", options: options, selected: account ?? Self.all) { id in
+                account = id == Self.all ? nil : id
+            }, label: label))
+        }
+        let options = [OctetDropdownOption(id: Self.all, title: "All providers")]
+            + providers.map { OctetDropdownOption(id: $0, title: UsagePalette.name($0)) }
+        let mark = provider.flatMap(AgentBrand.forAgent).map { AnyView(AgentLogo(brand: $0, size: 13)) }
+        crumbs.append(.picker(spec: OctetDropdownSpec(id: "usage.provider", options: options, selected: provider ?? Self.all) { id in
+            provider = id == Self.all ? nil : id
+        }, label: provider.map(UsagePalette.name) ?? "All providers", mark: mark))
+        return crumbs
+    }
+
+    private static let all = "all"
+    /// The agents' own config folders, as against a profile's.
+    private static let defaultAccount = "default"
+
+    /// Every provider Octet knows, Claude first as T3 orders them, plus any
+    /// other with something recorded.
     private var providers: [String] {
-        let present = Set(history.records.map(\.provider)).union(accounts.accounts.keys.filter { accounts.accounts[$0]?.live.isEmpty == false })
+        let present = Set(history.records.map(\.provider)).union(["claude", "codex", "opencode"])
         return present.sorted { UsagePalette.order($0) < UsagePalette.order($1) }
-    }
-
-    private var providerPicker: some View {
-        Menu {
-            Button("All providers") { provider = nil }
-            Divider()
-            ForEach(providers, id: \.self) { id in
-                Button(UsagePalette.name(id)) { provider = id }
-            }
-        } label: {
-            HStack(spacing: 5) {
-                if let provider, let brand = AgentBrand.forAgent(provider) { AgentLogo(brand: brand, size: 12) }
-                Text(provider.map(UsagePalette.name) ?? "All providers")
-                    .font(Theme.interfaceFont(13, weight: .medium)).foregroundStyle(Theme.textSecondary)
-                OctetIcon("chevron.down", size: 10).foregroundStyle(Theme.textTertiary)
-            }
-            .contentShape(Rectangle())
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
     }
 
     private var placeholder: some View {
@@ -146,7 +167,8 @@ struct UsagePage: View {
     private var report: some View {
         let now = Date()
         let measure = mode.measure
-        let records = UsageSummary.filter(history.records, provider: provider, since: period.start(now: now), until: now)
+        let records = UsageSummary.filter(history.records, provider: provider, account: account.map { $0 == Self.defaultAccount ? "" : $0 },
+                                          since: period.start(now: now), until: now)
         let totals = UsageSummary.totals(records)
         return ScrollView {
             VStack(alignment: .leading, spacing: 34) {
@@ -315,7 +337,6 @@ struct UsagePage: View {
         case .day: UsageSummary.byDay(records, measure: measure)
         case .conversation: Array(UsageSummary.bySession(records, measure: measure).prefix(100))
         }
-        let peak = rows.map(\.share).max() ?? 1
         return VStack(alignment: .leading, spacing: 10) {
             HStack {
                 sectionTitle("Breakdown")
@@ -327,13 +348,14 @@ struct UsagePage: View {
                     .padding(.vertical, 6)
                 ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                     Rectangle().fill(Theme.divider).frame(height: 1)
-                    breakdownRow(index: index + 1, row: row, peak: peak)
+                    breakdownRow(index: index + 1, row: row)
                 }
             }
         }
     }
 
-    private func breakdownRow(index: Int, row: UsageSummary.BreakdownRow, peak: Double) -> some View {
+    /// The underline's length is the row's share of the whole period.
+    private func breakdownRow(index: Int, row: UsageSummary.BreakdownRow) -> some View {
         let session = breakdown == .conversation ? liveSession(row) : nil
         let title = session?.title ?? row.title
         return tableRow(
@@ -355,7 +377,7 @@ struct UsagePage: View {
                 .lineLimit(1)
                 GeometryReader { proxy in
                     Capsule().fill(row.provider.map(UsagePalette.color) ?? Theme.textSecondary)
-                        .frame(width: max(2, proxy.size.width * row.share / max(peak, .leastNonzeroMagnitude)))
+                        .frame(width: max(2, proxy.size.width * min(1, row.share)))
                 }
                 .frame(height: 2)
             },
@@ -535,7 +557,7 @@ private struct UsageLimitsView: View {
             } else {
                 ForEach(account.live, id: \.name) { window($0) }
                 if let updatedAt = account.updatedAt {
-                    Text("As of \(UsageMeter.relative(updatedAt))").font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
+                    Text("As of \(UsageMeter.relative(min(updatedAt, Date())))").font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
                 }
             }
         }

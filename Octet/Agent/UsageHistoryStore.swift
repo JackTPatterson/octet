@@ -18,12 +18,13 @@ final class UsageHistoryStore: ObservableObject {
     private init() {}
 
     /// Reads the logs again unless a read finished in the last minute.
-    func refresh(force: Bool = false) {
+    /// `profiles` are the extra accounts whose config folders hold logs too.
+    func refresh(force: Bool = false, profiles: [AccountProfile] = []) {
         guard !scanning else { return }
         if !force, let updatedAt, Date().timeIntervalSince(updatedAt) < 60 { return }
         scanning = true
         DispatchQueue.global(qos: .userInitiated).async {
-            let records = UsageLogScanner(cacheURL: Self.cacheURL).scan(now: Date())
+            let records = UsageLogScanner(cacheURL: Self.cacheURL, profiles: profiles).scan(now: Date())
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     let store = UsageHistoryStore.shared
@@ -44,11 +45,12 @@ final class UsageHistoryStore: ObservableObject {
 /// file held for next time.
 struct UsageLogScanner {
     let cacheURL: URL
+    var profiles: [AccountProfile] = []
     var home = FileManager.default.homeDirectoryForCurrentUser
     var environment = ProcessInfo.processInfo.environment
 
     /// Bumped when parsing or pricing changes, so cached records are read again.
-    static let cacheVersion = 1
+    static let cacheVersion = 2
     /// A little past the longest period, so a file touched 90 days ago still counts.
     static let keepDays = 91
 
@@ -71,7 +73,7 @@ struct UsageLogScanner {
         let files = logFiles(modifiedAfter: cutoff)
 
         // Unchanged files come from the cache; changed ones are read in parallel.
-        var stale: [(path: String, kind: Kind, size: Int, modified: Date)] = []
+        var stale: [LogFile] = []
         var fresh: [String: CachedFile] = [:]
         for file in files {
             if let cached = cache.files[file.path], cached.size == file.size, cached.modified == file.modified {
@@ -86,7 +88,7 @@ struct UsageLogScanner {
         DispatchQueue.concurrentPerform(iterations: stale.count) { index in
             let file = stale[index]
             guard let data = try? Data(contentsOf: URL(fileURLWithPath: file.path), options: .mappedIfSafe) else { return }
-            let records: [UsageRecord]
+            var records: [UsageRecord]
             switch file.kind {
             case .claude:
                 records = UsageRecords.dedupe(UsageLogParsers.claude(data))
@@ -94,6 +96,7 @@ struct UsageLogScanner {
                 let name = (file.path as NSString).lastPathComponent
                 records = UsageRecords.compact(UsageLogParsers.codex(data, fallbackSession: name))
             }
+            if let account = file.account { for i in records.indices { records[i].account = account } }
             parsed[index] = CachedFile(size: file.size, modified: file.modified, records: records)
         }
         for (index, file) in stale.enumerated() {
@@ -110,12 +113,34 @@ struct UsageLogScanner {
 
     // MARK: Files
 
-    private var claudeRoot: URL {
-        environment["CLAUDE_CONFIG_DIR"].map { URL(fileURLWithPath: $0) } ?? home.appendingPathComponent(".claude")
+    private struct LogFile {
+        let path: String
+        let kind: Kind
+        /// The profile whose folder it's in; nil for the default folder.
+        let account: String?
+        let size: Int
+        let modified: Date
     }
 
-    private var codexRoot: URL {
-        environment["CODEX_HOME"].map { URL(fileURLWithPath: $0) } ?? home.appendingPathComponent(".codex")
+    /// The default folders, then each account profile's. Octet itself
+    /// runs agents with the profile's folder in their environment, never
+    /// its own, so its CLAUDE_CONFIG_DIR and CODEX_HOME are the defaults.
+    private var roots: [(url: URL, kind: Kind, account: String?)] {
+        let claude = environment["CLAUDE_CONFIG_DIR"].map { URL(fileURLWithPath: $0) } ?? home.appendingPathComponent(".claude")
+        let codex = environment["CODEX_HOME"].map { URL(fileURLWithPath: $0) } ?? home.appendingPathComponent(".codex")
+        var roots: [(url: URL, kind: Kind, account: String?)] = [
+            (claude.appendingPathComponent("projects"), .claude, nil),
+            (codex.appendingPathComponent("sessions"), .codex, nil),
+        ]
+        var seen = Set(roots.map { $0.url.standardizedFileURL.path })
+        for profile in profiles {
+            let base = URL(fileURLWithPath: profile.expandedHome(userHome: home.path))
+            let root = profile.agent == "codex" ? (base.appendingPathComponent("sessions"), Kind.codex)
+                : (base.appendingPathComponent("projects"), Kind.claude)
+            guard seen.insert(root.0.standardizedFileURL.path).inserted else { continue }
+            roots.append((root.0, root.1, profile.id))
+        }
+        return roots
     }
 
     private var openCodeDatabase: String {
@@ -123,18 +148,16 @@ struct UsageLogScanner {
         return data.appendingPathComponent("opencode/opencode.db").path
     }
 
-    private func logFiles(modifiedAfter cutoff: Date) -> [(path: String, kind: Kind, size: Int, modified: Date)] {
-        let roots: [(URL, Kind)] = [(claudeRoot.appendingPathComponent("projects"), .claude),
-                                    (codexRoot.appendingPathComponent("sessions"), .codex)]
-        var files: [(path: String, kind: Kind, size: Int, modified: Date)] = []
+    private func logFiles(modifiedAfter cutoff: Date) -> [LogFile] {
+        var files: [LogFile] = []
         let keys: [URLResourceKey] = [.fileSizeKey, .contentModificationDateKey, .isRegularFileKey]
-        for (root, kind) in roots {
+        for (root, kind, account) in roots {
             guard let walker = FileManager.default.enumerator(at: root, includingPropertiesForKeys: keys,
                                                               options: [.skipsHiddenFiles]) else { continue }
             for case let url as URL in walker where url.pathExtension == "jsonl" {
                 guard let values = try? url.resourceValues(forKeys: Set(keys)), values.isRegularFile == true,
                       let modified = values.contentModificationDate, modified >= cutoff else { continue }
-                files.append((url.path, kind, values.fileSize ?? 0, modified))
+                files.append(LogFile(path: url.path, kind: kind, account: account, size: values.fileSize ?? 0, modified: modified))
             }
         }
         return files
