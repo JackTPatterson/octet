@@ -512,6 +512,14 @@ struct OctetSettings: Codable, Equatable {
         [theme]
         name = "terminal"
 
+        # Split borders and dividers: quiet mixes of the background toward
+        # the text, like Octet's own hairlines, not the palette's near-white.
+        [theme.custom]
+        surface0 = "#\(TerminalTheme.mix(theme.background, theme.foreground, 0.08))"
+        surface1 = "#\(TerminalTheme.mix(theme.background, theme.foreground, 0.12))"
+        overlay0 = "#\(TerminalTheme.mix(theme.background, theme.foreground, 0.18))"
+        overlay1 = "#\(TerminalTheme.mix(theme.background, theme.foreground, 0.26))"
+
         [terminal]
         default_shell = \(tomlString(paneShell))
         shell_mode = "\(shellMode.rawValue)"

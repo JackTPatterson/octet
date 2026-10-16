@@ -29,4 +29,10 @@ final class FileTreeTests: XCTestCase {
         XCTAssertEqual(turns[0].base, .turn(from: "c3", to: nil, name: "turn 3"))
         XCTAssertEqual(turns[2].base, .turn(from: "c1", to: "c2", name: "turn 1"))
     }
+
+    func testThemeMixMovesTowardTheOtherColour() {
+        XCTAssertEqual(TerminalTheme.mix("000000", "ffffff", 0), "000000")
+        XCTAssertEqual(TerminalTheme.mix("#000000", "#ffffff", 0.5), "80808" + "0")
+        XCTAssertEqual(TerminalTheme.mix("101010", "202020", 1), "202020")
+    }
 }

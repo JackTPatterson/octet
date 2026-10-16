@@ -71,3 +71,16 @@ struct TerminalTheme: Identifiable, Equatable, Codable {
         ], isLight: false),
     ]
 }
+
+extension TerminalTheme {
+    /// `from` moved `amount` of the way toward `to`, as six hex digits.
+    static func mix(_ from: String, _ to: String, _ amount: Double) -> String {
+        func channels(_ hex: String) -> [Double] {
+            let digits = hex.hasPrefix("#") ? String(hex.dropFirst()) : hex
+            let value = UInt32(digits.prefix(6), radix: 16) ?? 0
+            return [Double((value >> 16) & 0xFF), Double((value >> 8) & 0xFF), Double(value & 0xFF)]
+        }
+        let a = channels(from), b = channels(to)
+        return zip(a, b).map { String(format: "%02x", Int((($0 + ($1 - $0) * amount)).rounded())) }.joined()
+    }
+}
