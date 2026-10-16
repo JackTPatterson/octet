@@ -12,18 +12,18 @@ struct DelegationSettingsGroup: View {
                 title: "Ask before delegating",
                 detail: "A review only reads, so it can go ahead on its own. A task changes files, in a worktree of its own."
             ) {
-                Picker("Ask before delegating", selection: $settings.values.delegationApproval) {
-                    ForEach(DelegationCenter.Approval.allCases) { Text($0.title).tag($0.rawValue) }
-                }
-                .labelsHidden()
-                .frame(width: 250)
+                OctetSelect(selection: $settings.values.delegationApproval,
+                            options: DelegationCenter.Approval.allCases.map { ($0.rawValue, $0.title) }, width: 250)
+                    .accessibilityLabel("Ask before delegating")
             }
             SettingsDivider()
             SettingsRow(
                 title: "Tools in your agents",
                 detail: "While this is on, Claude Code, Codex, Gemini, Qwen, OpenCode, Cursor and Copilot get delegate_to_agent, wait_for_delegate and list_delegates through the octet-delegate MCP server. A delegate can't delegate again."
             ) {
-                Button("Add Again") { AgentMCPInstaller.shared.sync(server: DelegationMCP.serverName, force: true) }
+                OctetButton(title: "Add Again", compact: true) {
+                    AgentMCPInstaller.shared.sync(server: DelegationMCP.serverName, force: true)
+                }
             }
             let running = center.delegations.values.filter { $0.result == nil }.sorted { $0.started > $1.started }
             if !running.isEmpty {

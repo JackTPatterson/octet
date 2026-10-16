@@ -12,7 +12,7 @@ struct PluginSettings: View {
                 title: "Find, add and turn off plugins",
                 detail: "Plugins for your agents and for the terminal are in one place, the Marketplace. Filter by Agents or Terminal there."
             ) {
-                Button("Open Marketplace") {
+                OctetButton(title: "Open Marketplace", compact: true) {
                     MarketplaceWindow.open()
                     MarketplaceWindow.showPlugins()
                 }
@@ -23,8 +23,8 @@ struct PluginSettings: View {
                 detail: "Each terminal plugin is a folder here with a plugin.json manifest. One you add by hand starts turned off, because what it contributes runs as shell commands."
             ) {
                 HStack(spacing: 6) {
-                    Button("Reveal") { host.revealUserDirectory() }
-                    Button("Reload") { host.reload() }
+                    OctetButton(title: "Reveal", compact: true) { host.revealUserDirectory() }
+                    OctetButton(title: "Reload", compact: true) { host.reload() }
                 }
             }
             SettingsDivider()
@@ -33,7 +33,7 @@ struct PluginSettings: View {
                 detail: "Installs new versions of plugins from the Marketplace as they're published, checked at launch and every few hours. Off, Octet says when there's an update."
             ) {
                 HStack(spacing: 8) {
-                    Button("Check Now") { host.checkForUpdates(manual: true) }
+                    OctetButton(title: "Check Now", compact: true) { host.checkForUpdates(manual: true) }
                         .disabled(host.registryLoading)
                     Toggle("Update plugins automatically", isOn: $settings.values.autoUpdatePlugins)
                         .labelsHidden().toggleStyle(OctetSwitchStyle())
