@@ -27,7 +27,7 @@ struct PullRequestCodeTab: View {
                 }
             } else {
                 HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
+                    LoadingLine(width: 18)
                     Text("Reading the diff…").font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
                 }
                 .padding(.vertical, 12)

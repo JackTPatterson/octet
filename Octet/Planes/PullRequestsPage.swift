@@ -382,7 +382,7 @@ private struct PullRequestsList: View {
                         .font(Theme.interfaceFont(17, weight: .semibold))
                         .foregroundStyle(Theme.textPrimary)
                     if model.loading {
-                        ProgressView().controlSize(.mini).accessibilityLabel("Refreshing")
+                        LoadingLine(width: 12).accessibilityLabel("Refreshing")
                     }
                     Spacer()
                     OctetIconButton(icon: "xmark", help: "Close (Esc)", action: close)

@@ -64,7 +64,7 @@ private struct PluginPanelBody: View {
     private func content(_ entry: PluginPanelModel.Entry) -> some View {
         let busy = model.busy.contains(entry.id)
         return VStack(alignment: .leading, spacing: 8) {
-            if busy { ProgressView().controlSize(.small) }
+            if busy { LoadingLine(width: 18) }
             if entry.content.rows.isEmpty {
                 Text(entry.content.message ?? "Nothing to show here now")
                     .font(Theme.captionFont).foregroundStyle(Theme.textTertiary)

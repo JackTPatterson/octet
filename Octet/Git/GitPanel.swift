@@ -55,7 +55,7 @@ struct GitPanel: View {
     @ViewBuilder
     private var empty: some View {
         if model.loading {
-            ProgressView().controlSize(.small)
+            LoadingLine(width: 18)
         } else {
             Text("Not in a repository. When the agent in this tab, or a subagent it started, works in a git repository, its changes, commits and worktrees show here.")
                 .font(Theme.captionFont)
@@ -566,7 +566,7 @@ private struct SyncRow: View {
             }
             Spacer(minLength: 0)
             if let busy {
-                ProgressView().controlSize(.mini)
+                LoadingLine(width: 12)
                 Text(busy).font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
             }
         }

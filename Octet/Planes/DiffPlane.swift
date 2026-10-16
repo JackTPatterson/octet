@@ -151,7 +151,7 @@ private struct DiffPlaneBody: View {
                 DiffStatLabel(added: diff.added, removed: diff.removed)
             }
             Spacer(minLength: 4)
-            if model.loading { ProgressView().controlSize(.mini) }
+            if model.loading { LoadingLine(width: 12) }
             OctetIconButton(icon: "pilcrow", help: model.ignoreWhitespace ? "Show whitespace changes" : "Hide whitespace changes",
                             active: model.ignoreWhitespace) {
                 model.ignoreWhitespace.toggle()

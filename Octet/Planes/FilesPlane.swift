@@ -49,7 +49,7 @@ struct FilesPlane: View {
                         .monospacedDigit()
                 }
                 Spacer(minLength: 4)
-                if model.loading { ProgressView().controlSize(.mini) }
+                if model.loading { LoadingLine(width: 12) }
                 OctetIconButton(icon: "chevron.up.square", help: "Collapse all folders") {
                     MotionPreferences.shared.perform(.sidebar) { open = [] }
                 }

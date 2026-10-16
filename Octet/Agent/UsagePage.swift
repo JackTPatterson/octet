@@ -96,7 +96,7 @@ struct UsagePage: View {
     private var header: some View {
         PageHeader(crumbs: crumbs, dropdowns: dropdowns, close: close) {
             if history.scanning {
-                ProgressView().controlSize(.small).help("Reading the agents' logs")
+                LoadingLine(width: 18).help("Reading the agents' logs")
             }
             OctetSegmented(selection: $mode, items: Mode.allCases.map { ($0, $0.title) })
             if mode != .limits {
@@ -148,10 +148,13 @@ struct UsagePage: View {
     }
 
     private var placeholder: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 10) {
             if history.scanning {
-                ProgressView().controlSize(.small)
-                Text("Reading Claude Code, Codex and OpenCode logs…")
+                LoadingLine(width: 48, thickness: 3)
+                Text("Reading usage")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                Text("Going through Claude Code, Codex and OpenCode logs…")
             } else {
                 OctetIcon("clock", size: 22)
                 Text("No usage recorded in the last 90 days.")

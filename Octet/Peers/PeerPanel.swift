@@ -166,7 +166,7 @@ struct PeerPanel: View {
                             .lineLimit(1)
                     }
                     Spacer(minLength: 4)
-                    if model.loading.contains(peer.name) { ProgressView().controlSize(.mini) }
+                    if model.loading.contains(peer.name) { LoadingLine(width: 12) }
                     OctetIcon("chevron.right", size: 10)
                         .foregroundStyle(Theme.textTertiary)
                         .rotationEffect(.degrees(isOpen ? 90 : 0))
@@ -318,7 +318,7 @@ struct PeerPanel: View {
             }
             HStack(spacing: 8) {
                 if starting {
-                    ProgressView().controlSize(.mini)
+                    LoadingLine(width: 12)
                     Text("Waiting for \(machine) to take it…").font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
                 } else {
                     Text("It runs in a tab there; the answer comes back here.")
@@ -433,7 +433,7 @@ private struct PeerTaskRow: View {
             HStack(spacing: 8) {
                 Group {
                     if task.status == "working" {
-                        ProgressView().controlSize(.mini)
+                        LoadingLine(width: 12)
                     } else {
                         PeerStatusDot(tone: status.tone, size: 6)
                     }

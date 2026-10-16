@@ -282,7 +282,7 @@ struct PeerPairingDialog: View {
             VStack(spacing: 0) {
                 if center.nearby.isEmpty {
                     HStack(spacing: 8) {
-                        ProgressView().controlSize(.small)
+                        LoadingLine(width: 18)
                         Text("Looking for Macs on this network…").font(Theme.uiFont).foregroundStyle(Theme.textSecondary)
                         Spacer()
                     }
@@ -332,7 +332,7 @@ struct PeerPairingDialog: View {
     private func connecting(_ machine: String) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 10) {
-                ProgressView().controlSize(.small)
+                LoadingLine(width: 18)
                 Text("Connecting to \(machine)…").font(Theme.uiFont).foregroundStyle(Theme.textSecondary)
             }
             .frame(maxWidth: .infinity, minHeight: 120)
@@ -364,7 +364,7 @@ struct PeerPairingDialog: View {
     private func waiting(_ machine: String) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 10) {
-                ProgressView().controlSize(.small)
+                LoadingLine(width: 18)
                 Text("Waiting for \(machine) to confirm the code…").font(Theme.uiFont).foregroundStyle(Theme.textSecondary)
             }
             .frame(maxWidth: .infinity, minHeight: 120)
