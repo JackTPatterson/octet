@@ -1,9 +1,10 @@
 import AppKit
 import SwiftUI
 
-/// The title bar's layout picker: a window-with-panes button that opens
-/// every layout enabled plugins offer, grouped by how many panes they make.
-/// It lays out this window's panes, not your displays, so it's drawn as one. Picking one opens a new tab split that way, each pane a shell
+/// The title bar's layout picker, like a trading app's: a monitor button
+/// that opens every layout enabled plugins offer, grouped by how many
+/// windows they make. Picking one arranges Octet windows on this screen in
+/// that shape: this window in the first place, a new window in each other. Picking one opens a new tab split that way, each pane a shell
 /// in the folder in front.
 struct LayoutPickerButton: View {
     @EnvironmentObject private var window: WindowContext
@@ -15,7 +16,7 @@ struct LayoutPickerButton: View {
         let layouts = host.layouts
         if !layouts.isEmpty {
             Button { open.toggle() } label: {
-                WindowLayoutGlyph()
+                MonitorGlyph()
                     .foregroundStyle(open || hovered ? Theme.textPrimary : Theme.textSecondary)
                     .frame(width: 28, height: 24)
                     .background(RoundedRectangle(cornerRadius: Theme.rowRadius).fill(open || hovered ? Theme.hover : .clear))
@@ -23,12 +24,12 @@ struct LayoutPickerButton: View {
             }
             .buttonStyle(.plain)
             .onHover { hovered = $0 }
-            .help("Window layouts: split a new tab into panes")
+            .help("Arrange windows on this screen")
             .accessibilityLabel("Window layouts")
             .popover(isPresented: $open, arrowEdge: .bottom) {
                 LayoutPickerGrid(layouts: layouts) { layout in
                     open = false
-                    PaneLayoutActions.open(layout, in: window)
+                    PaneLayoutActions.arrangeWindows(layout, from: window)
                 }
             }
         }
@@ -85,10 +86,10 @@ struct LayoutPickerGrid: View {
     var body: some View {
         let groups = Dictionary(grouping: layouts) { $0.layout.layout.paneCount }
         VStack(alignment: .leading, spacing: 10) {
-            Text("Split a new tab in this window into").font(Theme.captionFont.weight(.semibold)).foregroundStyle(Theme.textTertiary)
+            Text("Arrange windows on this screen").font(Theme.captionFont.weight(.semibold)).foregroundStyle(Theme.textTertiary)
             ForEach(groups.keys.sorted(), id: \.self) { count in
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(count == 1 ? "1 pane" : "\(count) panes").font(Theme.captionFont).foregroundStyle(Theme.textSecondary)
+                    Text(count == 1 ? "1 window" : "\(count) windows").font(Theme.captionFont).foregroundStyle(Theme.textSecondary)
                     LazyVGrid(columns: Array(repeating: GridItem(.fixed(46), spacing: 6), count: 6), alignment: .leading, spacing: 6) {
                         ForEach((groups[count] ?? []).map { $0.layout }) { layout in
                             LayoutThumbnail(layout: layout) { pick(layout) }
@@ -147,6 +148,30 @@ private struct LayoutPicture: View {
 
 @MainActor
 enum PaneLayoutActions {
+    /// Arranges Octet windows on the screen in `layout`'s shape: the window
+    /// it was picked from takes the first place, and each other place gets a
+    /// new window with a workspace of its own in the same folder.
+    static func arrangeWindows(_ layout: PaneLayoutContribution, from window: WindowContext) {
+        guard let nsWindow = window.nsWindow,
+              let visible = (nsWindow.screen ?? NSScreen.main)?.visibleFrame else { return }
+        // A full-screen window can't share its space.
+        if nsWindow.styleMask.contains(.fullScreen) { nsWindow.toggleFullScreen(nil) }
+        let frames = layout.layout.rects().map { $0.windowFrame(in: visible) }
+        guard let first = frames.first else { return }
+        nsWindow.setFrame(first, display: true, animate: true)
+        let store = window.store
+        let snapshot = store.snapshot
+        let cwd = window.focusedPaneId.flatMap { snapshot.workingDirectory(ofPane: $0) }
+            ?? window.focusedWorkspace.flatMap { snapshot.directory(ofWorkspace: $0.workspaceId) }
+            ?? NSHomeDirectory()
+        for frame in frames.dropFirst() {
+            store.call("workspace.create", ["focus": false, "cwd": cwd], failure: "Couldn't open a window") { created in
+                guard let workspace = created.workspaceId else { return }
+                WindowOpener.open?(OctetWindowSpec(workspaceId: workspace, frame: frame))
+            }
+        }
+    }
+
     /// Opens `layout` as a new tab in the window's workspace. If the session
     /// server won't take the split ratios it opens with even splits instead.
     static func open(_ layout: PaneLayoutContribution, in window: WindowContext) {

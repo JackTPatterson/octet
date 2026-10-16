@@ -345,7 +345,7 @@ enum PaletteCatalog {
             let layout = entry.layout
             items.append(action("layout.\(entry.plugin.id).\(layout.id)", "New Tab Split: \(layout.title)", "rectangle.split.2x1",
                                 keywords: ["layout", "split", "panes", "grid", "monitor", "\(layout.layout.paneCount) panes"]) {
-                PaneLayoutActions.open(layout, in: window)
+                PaneLayoutActions.arrangeWindows(layout, from: window)
             })
         }
         for record in IdleCenter.shared.sleeping {

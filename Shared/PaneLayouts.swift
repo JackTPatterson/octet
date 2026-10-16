@@ -158,3 +158,14 @@ struct PaneLayoutContribution: Codable, Equatable, Identifiable {
     let title: String
     let layout: PaneLayoutNode
 }
+
+extension PaneLayoutNode.Rect {
+    /// This unit rect (top-left origin, as the picture draws it) as a window
+    /// frame on a screen's visible area (AppKit's bottom-left origin).
+    func windowFrame(in visible: CGRect) -> CGRect {
+        CGRect(x: (visible.minX + x * visible.width).rounded(),
+               y: (visible.maxY - (y + height) * visible.height).rounded(),
+               width: (width * visible.width).rounded(),
+               height: (height * visible.height).rounded())
+    }
+}
