@@ -382,6 +382,7 @@ struct RootView: View {
             PluginSettingsOpener.opener = { openSettings() }
             SettingsOpener.fallback = { openSettings() }
             ClipboardWatcher.shared.start()
+            OctetContextMenu.installAppWide()
             #if DEBUG
             // Verification hook: "conversation" opens a native conversation;
             // "conversation:model" also opens that dropdown.
@@ -447,6 +448,22 @@ struct RootView: View {
                 }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 7) {
                     NotificationCenter.default.post(name: WorkspacePeek.debugOpen, object: nil)
+                }
+            }
+            // "rclick:<x>:<y>" right-clicks that point of the window (from
+            // its top left), through the same path a real right-click takes.
+            if let open = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], open.hasPrefix("rclick:") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                    let parts = open.split(separator: ":").dropFirst().compactMap { Double($0) }
+                    guard parts.count == 2, let nsWindow = window.nsWindow,
+                          let content = nsWindow.contentView else { return }
+                    let location = NSPoint(x: parts[0], y: content.bounds.height - parts[1])
+                    let screen = nsWindow.convertPoint(toScreen: location)
+                    guard let event = NSEvent.mouseEvent(with: .rightMouseDown, location: location, modifierFlags: [],
+                                                         timestamp: ProcessInfo.processInfo.systemUptime,
+                                                         windowNumber: nsWindow.windowNumber, context: nil,
+                                                         eventNumber: 0, clickCount: 1, pressure: 1) else { return }
+                    OctetContextMenu.openSystemMenu(for: event, at: screen)
                 }
             }
             // "context-menu" opens the focused workspace's menu beside the

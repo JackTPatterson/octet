@@ -15,6 +15,8 @@ struct OctetMenuItem: Identifiable {
     let id = UUID()
     var title = ""
     var icon: String?
+    /// A system menu item's own image, drawn where an icon goes.
+    var image: NSImage?
     var shortcut: String?
     var destructive = false
     var enabled = true
@@ -69,8 +71,12 @@ struct OctetMenuSwatches {
     struct Option: Identifiable {
         let id: String
         let name: String
-        let color: Color
+        var color: Color = .clear
+        /// Drawn instead of the colour: a system palette item's image.
+        var image: NSImage? = nil
     }
+    /// Draws the "none" swatch first.
+    var offersNone = true
     let options: [Option]
     let selected: String?
     let select: (String?) -> Void
@@ -169,6 +175,47 @@ enum OctetContextMenu {
         DebugSnapshot.overlay("context-menu", true)
     }
 
+    private static var installed = false
+
+    /// Every right-click and Control-click in the app opens an Octet menu:
+    /// whatever menu the clicked view would have shown (SwiftUI's
+    /// contextMenu, a text field's, the terminal's) is drawn as Octet's
+    /// instead, its items running the same actions.
+    static func installAppWide() {
+        guard !installed else { return }
+        installed = true
+        NSEvent.addLocalMonitorForEvents(matching: [.rightMouseDown, .leftMouseDown]) { event in
+            guard event.type == .rightMouseDown
+                    || (event.type == .leftMouseDown && event.modifierFlags.contains(.control)) else { return event }
+            return MainActor.assumeIsolated { openSystemMenu(for: event) } ? nil : event
+        }
+    }
+
+    /// Finds the menu the view under the click would show and shows it as
+    /// Octet's. False when there's none, so the click carries on as usual.
+    @discardableResult
+    static func openSystemMenu(for event: NSEvent, at location: NSPoint = NSEvent.mouseLocation) -> Bool {
+        guard let window = event.window, !(window is MenuPanel), let content = window.contentView else { return false }
+        let point = content.superview?.convert(event.locationInWindow, from: nil) ?? event.locationInWindow
+        var view = content.hitTest(point)
+        // Views with an Octet menu of their own handle the click themselves.
+        if view is RightClickCatcher.CatcherView { return false }
+        while let current = view {
+            if let menu = current.menu(for: event), !menu.items.isEmpty {
+                let items = OctetMenuItem.converting(menu)
+                guard !items.isEmpty else { return false }
+                present(items, at: location)
+                retained = menu
+                return true
+            }
+            view = current.superview
+        }
+        return false
+    }
+
+    /// The system menu being shown, kept alive while its items may run.
+    private static var retained: NSMenu?
+
     static func close() {
         monitors.forEach(NSEvent.removeMonitor)
         monitors = []
@@ -176,6 +223,10 @@ enum OctetContextMenu {
         observers = []
         panel?.orderOut(nil)
         panel = nil
+        let menu = retained
+        retained = nil
+        // Released after any action it's running has been sent.
+        DispatchQueue.main.async { _ = menu }
         DebugSnapshot.overlay("context-menu", false)
     }
 
@@ -413,7 +464,13 @@ private struct MenuRow: View {
             : item.destructive ? Theme.danger : Theme.textPrimary
         HStack(spacing: 8) {
             Group {
-                if let icon = item.icon {
+                if let image = item.image {
+                    Image(nsImage: image)
+                        .renderingMode(image.isTemplate ? .template : .original)
+                        .resizable().scaledToFit()
+                        .frame(width: 14, height: 14)
+                        .foregroundStyle(lit ? Theme.textPrimary : Theme.textSecondary)
+                } else if let icon = item.icon {
                     OctetIcon(icon, size: 13).foregroundStyle(item.destructive && item.enabled ? Theme.danger
                                                               : lit ? Theme.textPrimary : Theme.textSecondary)
                 } else {
@@ -456,14 +513,24 @@ private struct SwatchRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(Theme.interfaceFont(11, weight: .medium)).foregroundStyle(Theme.textTertiary)
+            if !title.isEmpty {
+                Text(title).font(Theme.interfaceFont(11, weight: .medium)).foregroundStyle(Theme.textTertiary)
+            }
             HStack(spacing: 6) {
-                swatch(id: nil, name: "None") {
-                    Circle().strokeBorder(Theme.textTertiary, lineWidth: 1)
-                        .overlay(Rectangle().fill(Theme.textTertiary).frame(width: 1.2).rotationEffect(.degrees(45)))
+                if swatches.offersNone {
+                    swatch(id: nil, name: "None") {
+                        Circle().strokeBorder(Theme.textTertiary, lineWidth: 1)
+                            .overlay(Rectangle().fill(Theme.textTertiary).frame(width: 1.2).rotationEffect(.degrees(45)))
+                    }
                 }
                 ForEach(swatches.options) { option in
-                    swatch(id: option.id, name: option.name) { Circle().fill(option.color) }
+                    swatch(id: option.id, name: option.name) {
+                        if let image = option.image {
+                            Image(nsImage: image).resizable().scaledToFit()
+                        } else {
+                            Circle().fill(option.color)
+                        }
+                    }
                 }
             }
         }
@@ -485,5 +552,72 @@ private struct SwatchRow: View {
             .help(name)
             .accessibilityLabel(name)
             .accessibilityAddTraits(chosen ? [.isButton, .isSelected] : .isButton)
+    }
+}
+
+extension OctetMenuItem {
+    /// A system menu's items as Octet's, each running the original item.
+    @MainActor
+    static func converting(_ menu: NSMenu) -> [OctetMenuItem] {
+        menu.delegate?.menuNeedsUpdate?(menu)
+        menu.update()
+        var result: [OctetMenuItem] = []
+        for (index, item) in menu.items.enumerated() where !item.isHidden && !item.isAlternate {
+            if item.isSeparatorItem {
+                result.append(.divider)
+                continue
+            }
+            if item.isSectionHeader {
+                result.append(.header(item.title))
+                continue
+            }
+            if let submenu = item.submenu {
+                // A palette (SwiftUI's palette picker) is a row of swatches.
+                if submenu.presentationStyle == .palette {
+                    submenu.update()
+                    let entries = submenu.items.enumerated().filter { !$0.element.isHidden }
+                    let options = entries.map { offset, entry in
+                        OctetMenuSwatches.Option(id: String(offset), name: entry.title.isEmpty ? (entry.toolTip ?? "") : entry.title,
+                                                 image: entry.image)
+                    }
+                    let selected = entries.first { $0.element.state == .on }.map { String($0.offset) }
+                    if !item.title.isEmpty { result.append(.header(item.title)) }
+                    result.append(.swatches("", OctetMenuSwatches(offersNone: false, options: options, selected: selected, select: { id in
+                        guard let id, let offset = Int(id) else { return }
+                        submenu.performActionForItem(at: offset)
+                    })))
+                    continue
+                }
+                var entry = OctetMenuItem.submenu(item.title, enabled: item.isEnabled, converting(submenu))
+                entry.image = item.image
+                result.append(entry)
+                continue
+            }
+            var entry = OctetMenuItem.action(item.title, shortcut: shortcut(of: item), enabled: item.isEnabled,
+                                             help: item.toolTip) {
+                menu.performActionForItem(at: index)
+            }
+            if item.state == .on { entry.icon = "checkmark" } else { entry.image = item.image }
+            result.append(entry)
+        }
+        return tidy(result)
+    }
+
+    /// "⇧⌘N" for a key equivalent.
+    static func shortcut(of item: NSMenuItem) -> String? {
+        let key = item.keyEquivalent
+        guard !key.isEmpty else { return nil }
+        let flags = item.keyEquivalentModifierMask
+        var text = ""
+        if flags.contains(.control) { text += "⌃" }
+        if flags.contains(.option) { text += "⌥" }
+        if flags.contains(.shift) || (key.uppercased() == key && key.lowercased() != key) { text += "⇧" }
+        if flags.contains(.command) { text += "⌘" }
+        let named: [String: String] = ["\r": "↩", "\u{8}": "⌫", "\u{7f}": "⌫", "\u{1b}": "⎋", "\t": "⇥", " ": "Space",
+                                       String(UnicodeScalar(NSUpArrowFunctionKey)!): "↑",
+                                       String(UnicodeScalar(NSDownArrowFunctionKey)!): "↓",
+                                       String(UnicodeScalar(NSLeftArrowFunctionKey)!): "←",
+                                       String(UnicodeScalar(NSRightArrowFunctionKey)!): "→"]
+        return text + (named[key] ?? key.uppercased())
     }
 }
