@@ -186,17 +186,31 @@ enum SidePanelTab: String, CaseIterable, Identifiable {
 /// The right panel: three pages behind icon tabs. Overview is everything
 /// about the tab in front as sections down one page (what was the Runtime
 /// and Todos panels, and the plugins' popovers); Git is the old Git panel;
-/// Terminal is a shell of the panel's own, in the tab's folder.
+/// Terminal is a shell of the panel's own for each workspace, in its folder.
 struct SidePanel: View {
     @EnvironmentObject private var window: WindowContext
     @ObservedObject var store: SessionStore
     @ObservedObject var ui: UIState
     @ObservedObject private var folds = SidePanelFolds.shared
     @ObservedObject private var motion = MotionPreferences.shared
-    /// The Terminal page has been opened, so its shell is running.
-    @State private var terminalStarted = false
+    /// The workspaces whose Terminal page has been opened, so whose shells
+    /// are running, oldest first.
+    @State private var startedTerminals: [String] = []
+
+    private var currentTerminal: String { SidebarTerminals.key(window.focusedWorkspace?.workspaceId) }
 
     static let width: CGFloat = 321
+
+    /// The shells to keep: every one started, and the one in front if the
+    /// Terminal page is showing it for the first time.
+    private var terminalsShown: [String] {
+        ui.sidePanelTab == .terminal && !startedTerminals.contains(currentTerminal)
+            ? startedTerminals + [currentTerminal] : startedTerminals
+    }
+
+    private func startTerminal(_ key: String) {
+        if !startedTerminals.contains(key) { startedTerminals.append(key) }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -213,29 +227,43 @@ struct SidePanel: View {
                 case .terminal:
                     Color.clear
                 }
-                // Once opened, the shell lives on behind the other pages, so
+                // Each workspace has its own shell. Once opened, it lives on
+                // behind the other pages and the other workspaces' shells, so
                 // a server started in it keeps running, its output is still
                 // there when you come back, and an agent that's been let in
                 // can still read it.
-                if terminalStarted || ui.sidePanelTab == .terminal {
-                    SidePanelTerminal(store: store, ui: ui)
-                        .opacity(ui.sidePanelTab == .terminal ? 1 : 0)
-                        .allowsHitTesting(ui.sidePanelTab == .terminal)
-                        .accessibilityHidden(ui.sidePanelTab != .terminal)
+                ForEach(terminalsShown, id: \.self) { key in
+                    let shown = ui.sidePanelTab == .terminal && key == currentTerminal
+                    SidePanelTerminal(store: store, ui: ui, workspace: key)
+                        .opacity(shown ? 1 : 0)
+                        .allowsHitTesting(shown)
+                        .accessibilityHidden(!shown)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .onChange(of: ui.sidePanelTab, initial: true) { _, tab in
             if tab == .terminal {
-                terminalStarted = true
-            } else if terminalStarted {
+                startTerminal(currentTerminal)
+            } else if !startedTerminals.isEmpty {
                 // Keys belong to the main terminal again, not the one now hidden.
                 OctetTerminalRuntime.focusTerminal()
             }
         }
+        .onChange(of: currentTerminal) { _, key in
+            // Keys mustn't stay with the last workspace's shell, now hidden.
+            if !startedTerminals.isEmpty { OctetTerminalRuntime.focusTerminal() }
+            if ui.sidePanelTab == .terminal { startTerminal(key) }
+        }
+        .onChange(of: store.snapshot.workspaces.map(\.workspaceId)) { _, ids in
+            // A closed workspace's shell goes with it. An empty list is a
+            // reconnect in progress, not every workspace closing.
+            guard !ids.isEmpty else { return }
+            let open = Set(ids)
+            startedTerminals.removeAll { !$0.isEmpty && !open.contains($0) }
+        }
         .onChange(of: ui.sidePanelVisible) { _, visible in
-            if !visible, terminalStarted { OctetTerminalRuntime.focusTerminal() }
+            if !visible, !startedTerminals.isEmpty { OctetTerminalRuntime.focusTerminal() }
         }
         .background(Theme.sidebar)
         .onHover { hovering in
@@ -318,13 +346,15 @@ private struct SidePanelTabButton: View {
     }
 }
 
-/// A shell in the panel, started in the tab's folder the first time the
-/// Terminal page is shown and kept for the window's life. Restart starts a
-/// fresh one in whatever folder is in front now.
+/// A workspace's shell in the panel, started in its folder the first time
+/// the Terminal page is shown for it and kept while the workspace is open.
+/// Start Again starts a fresh one in whatever folder is in front now.
 private struct SidePanelTerminal: View {
     @EnvironmentObject private var window: WindowContext
     @ObservedObject var store: SessionStore
     @ObservedObject var ui: UIState
+    /// The workspace this shell belongs to (`SidebarTerminals.key`).
+    let workspace: String
     @StateObject private var anchor = TerminalAnchor()
     @ObservedObject private var settings = SettingsStore.shared
     @ObservedObject private var suggestions = SidebarSuggestions.shared
@@ -332,14 +362,15 @@ private struct SidePanelTerminal: View {
     @State private var exited = false
 
     private var folder: String {
-        window.focusedPaneId.flatMap { store.snapshot.workingDirectory(ofPane: $0) }
-            ?? window.focusedWorkspace.flatMap { store.snapshot.directory(ofWorkspace: $0.workspaceId) }
+        let inFront = window.focusedWorkspace?.workspaceId == workspace
+        return (inFront ? window.focusedPaneId.flatMap { store.snapshot.workingDirectory(ofPane: $0) } : nil)
+            ?? (workspace.isEmpty ? nil : store.snapshot.directory(ofWorkspace: workspace))
             ?? NSHomeDirectory()
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            if let suggestion = suggestions.pending[window.id] { suggestionStrip(suggestion.command) }
+            if let suggestion = suggestions.pending[workspace] { suggestionStrip(suggestion.command) }
             if settings.values.agentsReadSidebarTerminal { readableNote }
             shell
         }
@@ -356,12 +387,12 @@ private struct SidePanelTerminal: View {
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
             OctetButton(title: "Run", kind: .primary, compact: true) {
-                if let view = SidebarTerminals.shared.view(for: window.id) { SidebarTerminals.shared.run(in: view) }
-                suggestions.dismiss(window: window.id)
+                if let view = SidebarTerminals.shared.view(for: workspace) { SidebarTerminals.shared.run(in: view) }
+                suggestions.dismiss(workspace: workspace)
             }
             OctetButton(title: "Clear", kind: .secondary, compact: true) {
-                if let view = SidebarTerminals.shared.view(for: window.id) { SidebarTerminals.shared.clearLine(in: view) }
-                suggestions.dismiss(window: window.id)
+                if let view = SidebarTerminals.shared.view(for: workspace) { SidebarTerminals.shared.clearLine(in: view) }
+                suggestions.dismiss(workspace: workspace)
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 6)
@@ -391,12 +422,12 @@ private struct SidePanelTerminal: View {
                 environment: Self.environment,
                 workingDirectory: folder,
                 anchor: anchor,
-                onTitleChange: { SidebarTerminals.shared.titleChanged(window: window.id, $0) },
+                onTitleChange: { SidebarTerminals.shared.titleChanged(workspace: workspace, $0) },
                 onExit: {
                     exited = true
-                    SidebarTerminals.shared.exited(window: window.id)
+                    SidebarTerminals.shared.exited(workspace: workspace)
                 },
-                onSurface: { SidebarTerminals.shared.register(window: window.id, view: $0) }
+                onSurface: { SidebarTerminals.shared.register(workspace: workspace, view: $0) }
             )
             .id(generation)
             .background(Theme.terminalBackground)

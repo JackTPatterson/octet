@@ -1,21 +1,32 @@
 import AppKit
 import Combine
+import CoreGraphics
 import SwiftUI
 
-/// Recap: when you come back to Octet after a while, one card says what
-/// every agent did meanwhile. What needs you, what's stuck, what finished
-/// and what's still working, each with what it changed and said last.
+/// Recap: when you come back after being away, a strip at the top of the
+/// window says what every agent did meanwhile: what needs you, what's
+/// stuck, what finished and what's still working, each with what it changed
+/// and said last.
 ///
-/// You're away while Octet isn't the app in front, or the screen is locked
-/// or asleep. Leaving marks where every conversation stood; agents in
-/// terminals are followed snapshot by snapshot until you're back.
+/// You're away while the screen is locked or asleep, while no Octet window
+/// can be seen, or while you haven't touched the Mac for the set time
+/// (`RecapPresence`). Another app in front with Octet still on screen isn't
+/// away. Leaving marks where every conversation stood; agents in terminals
+/// are followed snapshot by snapshot until you're back.
+///
+/// The strip stays out of the way: it opens itself only when something
+/// needs you or is stuck, and otherwise sits as a chip that fades after a
+/// while. Opening an entry takes you there and crosses it off; once
+/// everything has been looked at, the strip goes.
 @MainActor
 final class RecapCenter: ObservableObject {
     static let shared = RecapCenter()
 
-    /// The recap on screen, if one is.
+    /// What's still to look at, if anything.
     @Published private(set) var shown: Recap?
-    /// The latest recap, for Show Recap after it's dismissed.
+    /// Whether the strip's list is open.
+    @Published var expanded = false
+    /// The latest recap in full, for Show Recap after it's gone.
     @Published private(set) var latest: Recap?
     /// The window it shows in: the one in front when it came up.
     private weak var target: WindowContext?
@@ -24,61 +35,112 @@ final class RecapCenter: ObservableObject {
         (target ?? WindowRegistry.shared.key ?? WindowRegistry.shared.windows.first) === window
     }
 
-    private func show(_ recap: Recap) {
-        target = WindowRegistry.shared.key ?? WindowRegistry.shared.windows.first
-        shown = recap
-    }
-
     private var leftAt: Date?
     private var marks: [String: Recap.ConversationMark] = [:]
     private var terminals = Recap.TerminalLog()
     private var locked = false
     private var observers: [NSObjectProtocol] = []
+    private var timer: Timer?
+    private var fade: DispatchWorkItem?
+
+    /// A chip with nothing urgent fades after this long back.
+    static let fadeAfter: TimeInterval = 120
 
     func start() {
         guard observers.isEmpty else { return }
         let center = NotificationCenter.default
-        observers.append(center.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { _ in
-            MainActor.assumeIsolated { RecapCenter.shared.leave() }
-        })
-        observers.append(center.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
-            MainActor.assumeIsolated { RecapCenter.shared.returned() }
-        })
+        let changes: [Notification.Name] = [
+            NSApplication.didResignActiveNotification, NSApplication.didBecomeActiveNotification,
+            NSApplication.didHideNotification, NSApplication.didUnhideNotification,
+            NSWindow.didChangeOcclusionStateNotification, NSWindow.didMiniaturizeNotification,
+            NSWindow.didDeminiaturizeNotification,
+        ]
+        for name in changes {
+            observers.append(center.addObserver(forName: name, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { RecapCenter.shared.evaluate() }
+            })
+        }
         let workspace = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.screensDidSleepNotification, NSWorkspace.willSleepNotification, NSWorkspace.sessionDidResignActiveNotification] {
             observers.append(workspace.addObserver(forName: name, object: nil, queue: .main) { _ in
-                MainActor.assumeIsolated {
-                    RecapCenter.shared.locked = true
-                    RecapCenter.shared.leave()
-                }
+                MainActor.assumeIsolated { RecapCenter.shared.setLocked(true) }
             })
         }
         for name in [NSWorkspace.screensDidWakeNotification, NSWorkspace.didWakeNotification, NSWorkspace.sessionDidBecomeActiveNotification] {
             observers.append(workspace.addObserver(forName: name, object: nil, queue: .main) { _ in
-                MainActor.assumeIsolated { RecapCenter.shared.unlocked() }
+                MainActor.assumeIsolated { RecapCenter.shared.setLocked(false) }
             })
         }
         let distributed = DistributedNotificationCenter.default()
         observers.append(distributed.addObserver(forName: .init("com.apple.screenIsLocked"), object: nil, queue: .main) { _ in
-            MainActor.assumeIsolated {
-                RecapCenter.shared.locked = true
-                RecapCenter.shared.leave()
-            }
+            MainActor.assumeIsolated { RecapCenter.shared.setLocked(true) }
         })
         observers.append(distributed.addObserver(forName: .init("com.apple.screenIsUnlocked"), object: nil, queue: .main) { _ in
-            MainActor.assumeIsolated { RecapCenter.shared.unlocked() }
+            MainActor.assumeIsolated { RecapCenter.shared.setLocked(false) }
         })
+        schedule()
     }
 
     // MARK: - Away and back
 
-    private func leave() {
-        guard leftAt == nil else { return }
-        leftAt = Date()
+    private func setLocked(_ value: Bool) {
+        locked = value
+        evaluate()
+    }
+
+    /// Whether any Octet window can be seen right now.
+    private var octetVisible: Bool {
+        if NSApp.isActive { return true }
+        guard !NSApp.isHidden else { return false }
+        return WindowRegistry.shared.windows.contains { context in
+            guard let window = context.nsWindow else { return false }
+            return window.isVisible && !window.isMiniaturized && window.occlusionState.contains(.visible)
+        }
+    }
+
+    /// Seconds since the last keyboard, mouse or trackpad input anywhere.
+    private var idleSeconds: TimeInterval {
+        guard let any = CGEventType(rawValue: UInt32.max) else { return 0 }
+        return CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: any)
+    }
+
+    private var threshold: TimeInterval { SettingsStore.shared.values.recapAfterMinutes * 60 }
+
+    /// Works out whether you're here or away, and acts on a change.
+    private func evaluate() {
+        let signals = RecapPresence.Signals(locked: locked, octetVisible: octetVisible, idleSeconds: idleSeconds)
+        let now = Date()
+        if let since = RecapPresence.awaySince(signals, now: now, idleAfter: threshold) {
+            if leftAt == nil { leave(at: since) }
+        } else if leftAt != nil {
+            returned(now: now)
+        }
+        schedule()
+    }
+
+    /// Checks again soon: often while away for being idle, so coming back
+    /// to the keyboard is noticed at once; now and then otherwise, to
+    /// notice when you've stepped away from it.
+    private func schedule() {
+        timer?.invalidate()
+        let interval: TimeInterval = leftAt != nil ? 1 : 15
+        let next = Timer(timeInterval: interval, repeats: false) { _ in
+            MainActor.assumeIsolated { RecapCenter.shared.evaluate() }
+        }
+        RunLoop.main.add(next, forMode: .common)
+        timer = next
+    }
+
+    private func leave(at since: Date) {
+        leftAt = since
+        // Gone idle is noticed late: what happened after you last touched
+        // the Mac is still news, so the mark is where things stood then.
         marks = Dictionary(AgentCenter.shared.sessions.map { session in
-            (session.id, Recap.ConversationMark(itemIds: Set(session.conversation.items.map(\.id)),
-                                                wasRunning: session.conversation.isRunning,
-                                                lastError: session.conversation.lastError))
+            let items = session.conversation.items
+            let before = items.filter { $0.createdAt < since }
+            return (session.id, Recap.ConversationMark(itemIds: Set(before.map(\.id)),
+                                                       wasRunning: session.conversation.isRunning || before.count < items.count,
+                                                       lastError: session.conversation.lastError))
         }, uniquingKeysWith: { first, _ in first })
         terminals = Recap.TerminalLog()
         if let snapshot = WindowRegistry.shared.key?.store.snapshot ?? WindowRegistry.shared.windows.first?.store.snapshot {
@@ -86,23 +148,15 @@ final class RecapCenter: ObservableObject {
         }
     }
 
-    private func unlocked() {
-        locked = false
-        // Unlocked into Octet: that's coming back. Into another app, the
-        // app's own activation says when.
-        if NSApp.isActive { returned() }
-    }
-
-    private func returned() {
-        guard !locked, let leftAt else { return }
+    private func returned(now: Date) {
+        guard let leftAt else { return }
         self.leftAt = nil
-        let now = Date()
-        let settings = SettingsStore.shared.values
-        guard now.timeIntervalSince(leftAt) >= settings.recapAfterMinutes * 60 else { return }
+        guard now.timeIntervalSince(leftAt) >= threshold else { return }
         let recap = build(leftAt: leftAt, now: now)
         guard recap.isWorthShowing else { return }
         latest = recap
-        if settings.recap { show(recap) }
+        guard SettingsStore.shared.values.recap else { return }
+        show(recap.merged(unread: shown), opening: recap.isUrgent)
     }
 
     /// Every snapshot while you're away.
@@ -137,17 +191,53 @@ final class RecapCenter: ObservableObject {
 
     // MARK: - Showing it
 
-    func dismiss() { shown = nil }
+    private func show(_ recap: Recap, opening: Bool) {
+        target = WindowRegistry.shared.key ?? WindowRegistry.shared.windows.first
+        shown = recap
+        expanded = opening
+        fadeLater()
+    }
+
+    /// A chip with nothing urgent goes by itself after a while; an open
+    /// list, or one with something waiting on you, stays until handled.
+    private func fadeLater() {
+        fade?.cancel()
+        let work = DispatchWorkItem {
+            MainActor.assumeIsolated {
+                let center = RecapCenter.shared
+                guard let shown = center.shown, !shown.isUrgent, !center.expanded else { return }
+                center.dismiss()
+            }
+        }
+        fade = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.fadeAfter, execute: work)
+    }
+
+    func toggle() {
+        expanded.toggle()
+        if !expanded { fadeLater() }
+    }
+
+    func dismiss() {
+        fade?.cancel()
+        shown = nil
+        expanded = false
+    }
 
     /// Show Recap: the latest one again, or a note that there's none yet.
     func showLatest() {
-        if let latest { show(latest) } else {
+        if let latest { show(latest, opening: true) } else {
             ToastCenter.shared.info("No recap yet", detail: "Octet writes one when you come back after being away, if any agent did something meanwhile.")
         }
     }
 
-    /// Goes to a run: its conversation, or its terminal tab.
+    /// Goes to a run, its conversation or its terminal tab, and crosses it
+    /// off; the strip goes once nothing's left.
     func open(_ run: Recap.Run, in window: WindowContext) {
+        if var recap = shown {
+            recap.runs.removeAll { $0.id == run.id }
+            if recap.runs.isEmpty { dismiss() } else { shown = recap }
+        }
         switch run.source {
         case .conversation(let id):
             guard let session = AgentCenter.shared.sessions.first(where: { $0.id == id }) else {
@@ -163,68 +253,96 @@ final class RecapCenter: ObservableObject {
     }
 }
 
-// MARK: - The card
+// MARK: - The strip
 
-/// The recap, over the window's content: a heading with how long you were
-/// away, then each run under what it needs from you.
-struct RecapCard: View {
+/// The recap at the top of the window: a chip saying how long you were
+/// away and what happened, opening into the list of runs under what each
+/// needs from you.
+struct RecapStrip: View {
     let recap: Recap
     @EnvironmentObject private var window: WindowContext
     @ObservedObject private var center = RecapCenter.shared
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Rectangle().fill(Theme.divider).frame(height: 1)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
+            chip
+            if center.expanded {
+                Rectangle().fill(Theme.divider).frame(height: 1)
+                list
+            }
+        }
+        .frame(width: center.expanded ? 520 : nil)
+        .background(Theme.chrome)
+        .clipShape(RoundedRectangle(cornerRadius: center.expanded ? 12 : 16))
+        .overlay(RoundedRectangle(cornerRadius: center.expanded ? 12 : 16).strokeBorder(Theme.border, lineWidth: 1))
+        .shadow(color: .black.opacity(center.expanded ? 0.3 : 0.18), radius: center.expanded ? 20 : 8, y: center.expanded ? 8 : 3)
+        .onExitCommand { center.expanded ? center.toggle() : center.dismiss() }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Recap: \(recap.headline)")
+    }
+
+    /// "Away 42m · 2 finished · 1 needs you", with the outcomes as dots.
+    private var chip: some View {
+        HStack(spacing: 8) {
+            Button(action: center.toggle) {
+                HStack(spacing: 8) {
+                    OctetIcon("clock", size: 12).foregroundStyle(Theme.textTertiary)
+                    Text("Away \(AgentActivityWatcher.durationLabel(recap.away) ?? "a while")")
+                        .font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary)
                     ForEach(Recap.Outcome.allCases, id: \.self) { outcome in
-                        let runs = recap.runs(outcome)
-                        if !runs.isEmpty {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(outcome.title.uppercased())
-                                    .font(Theme.headerFont).kerning(0.4)
-                                    .foregroundStyle(Self.color(outcome))
-                                ForEach(runs) { run in
-                                    RecapRow(run: run, workspace: workspaceName(run.workspaceId)) {
-                                        center.open(run, in: window)
-                                        center.dismiss()
-                                    }
+                        let count = recap.runs(outcome).count
+                        if count > 0 {
+                            HStack(spacing: 4) {
+                                Circle().fill(RecapStrip.color(outcome)).frame(width: 6, height: 6)
+                                Text("\(count) \(outcome.title.lowercased())")
+                                    .font(Theme.captionFont).foregroundStyle(Theme.textSecondary)
+                            }
+                        }
+                    }
+                    Image(systemName: center.expanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.textTertiary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(center.expanded ? "Hide what happened" : "What every agent did while you were away")
+            if center.expanded { Spacer(minLength: 4) }
+            Button { center.dismiss() } label: {
+                Image(systemName: "xmark").font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.textTertiary)
+                    .frame(width: 18, height: 18).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Dismiss. View › Show Recap brings it back.")
+            .accessibilityLabel("Dismiss recap")
+        }
+        .padding(.leading, 12).padding(.trailing, 8)
+        .frame(height: 32)
+    }
+
+    private var list: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(Recap.Outcome.allCases, id: \.self) { outcome in
+                    let runs = recap.runs(outcome)
+                    if !runs.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(outcome.title.uppercased())
+                                .font(Theme.headerFont).kerning(0.4)
+                                .foregroundStyle(Self.color(outcome))
+                            ForEach(runs) { run in
+                                RecapRow(run: run, workspace: workspaceName(run.workspaceId)) {
+                                    center.open(run, in: window)
                                 }
                             }
                         }
                     }
                 }
-                .padding(16)
             }
-            .scrollIndicators(.hidden)
+            .padding(12)
         }
-        .frame(width: 560)
-        .frame(maxHeight: 560)
+        .scrollIndicators(.hidden)
+        .frame(maxHeight: 460)
         .fixedSize(horizontal: false, vertical: true)
-        .background(Theme.chrome)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.border, lineWidth: 1))
-        .shadow(color: .black.opacity(0.35), radius: 24, y: 10)
-        .onExitCommand { center.dismiss() }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Recap: \(recap.headline)")
-    }
-
-    private var header: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("While you were away")
-                    .font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.textPrimary)
-                Text("\(AgentActivityWatcher.durationLabel(recap.away) ?? "A moment") away · \(recap.headline)")
-                    .font(Theme.uiFont).foregroundStyle(Theme.textTertiary)
-            }
-            Spacer()
-            OctetButton(title: "Done", kind: .secondary, compact: true) { center.dismiss() }
-                .keyboardShortcut(.cancelAction)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
     }
 
     private func workspaceName(_ id: String?) -> String? {
@@ -272,7 +390,7 @@ private struct RecapRow: View {
                     VerificationBadge(verification: verification)
                 }
                 if let reason = run.reason {
-                    Text(reason).font(Theme.uiFont).foregroundStyle(RecapCard.color(run.outcome)).lineLimit(3)
+                    Text(reason).font(Theme.uiFont).foregroundStyle(RecapStrip.color(run.outcome)).lineLimit(3)
                 }
                 if let message = run.lastMessage {
                     Text(message).font(Theme.uiFont).foregroundStyle(Theme.textSecondary).lineLimit(3)
@@ -284,6 +402,8 @@ private struct RecapRow: View {
         .padding(10)
         .background(hovered ? Theme.hover : Theme.card.opacity(0.6))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+        .contentShape(RoundedRectangle(cornerRadius: 8))
+        .onTapGesture(perform: open)
         .onHover { hovered = $0 }
         .accessibilityElement(children: .combine)
     }

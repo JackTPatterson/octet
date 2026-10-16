@@ -261,8 +261,11 @@ struct DiffReviewView: View {
                                 Text("\(notes)").font(Theme.captionFont.weight(.semibold)).foregroundStyle(Theme.onAccent)
                                     .padding(.horizontal, 5).background(Capsule().fill(Theme.accent))
                             }
-                            Text(file.binary ? "bin" : "+\(file.added) −\(file.removed)")
-                                .font(Theme.captionFont.monospacedDigit()).foregroundStyle(Theme.textTertiary)
+                            if file.binary {
+                                Text("bin").font(Theme.captionFont.monospacedDigit()).foregroundStyle(Theme.textTertiary)
+                            } else {
+                                DiffStatLabel(added: file.added, removed: file.removed)
+                            }
                         }
                         .padding(.horizontal, 10).padding(.vertical, 6)
                         .background(selected ? Theme.cardSelected : Color.clear)

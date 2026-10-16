@@ -64,12 +64,11 @@ final class TerminalAccessCenter {
     private func read(_ params: [String: Any], reply: @escaping ([String: Any]) -> Void, fail: (String) -> Void) {
         let lines = TerminalControl.clampLines(params["lines"])
 
-        // The window the agent works in: the one showing its pane's
-        // workspace, else the one in front.
-        let target = windowShowing(params)
-        guard let entry = SidebarTerminals.shared.entry(for: target?.id), let view = entry.view else {
+        // The agent's own workspace's terminal, else the one in front.
+        let workspace = agentWorkspace(params) ?? WindowRegistry.shared.key?.focusedWorkspace?.workspaceId
+        guard let entry = SidebarTerminals.shared.entry(for: SidebarTerminals.key(workspace)), let view = entry.view else {
             return fail(SidebarTerminals.shared.hasAny
-                ? "Couldn't tell which window's sidebar terminal you mean. Ask the person to bring that window forward."
+                ? "This workspace's sidebar terminal isn't open. Ask the person to open it: the Terminal tab in Octet's right-hand panel."
                 : "The sidebar terminal isn't open. Ask the person to open it: the Terminal tab in Octet's right-hand panel.")
         }
         guard let text = SidebarTerminals.shared.text(of: view) else {
@@ -90,12 +89,19 @@ final class TerminalAccessCenter {
         guard let target = windowShowing(params) else {
             return fail("Octet has no window open.")
         }
+        // Each workspace has its own terminal: bring the agent's forward, so
+        // the command lands where the person will look.
+        let workspace = agentWorkspace(params) ?? target.focusedWorkspace?.workspaceId
+        if let workspace, target.focusedWorkspace?.workspaceId != workspace {
+            target.steer(toWorkspace: workspace, tab: nil)
+        }
+        let key = SidebarTerminals.key(workspace)
         target.ui.showSidePanel(tab: .terminal)
         NSApp.requestUserAttention(.informationalRequest)
         Task { @MainActor in
             var view: TerminalEngine.SurfaceView?
             for _ in 0..<30 {
-                view = SidebarTerminals.shared.view(for: target.id)
+                view = SidebarTerminals.shared.view(for: key)
                 if view?.surfaceModel != nil { break }
                 try? await Task.sleep(nanoseconds: 100_000_000)
             }
@@ -107,17 +113,20 @@ final class TerminalAccessCenter {
             } catch {
                 return fail(String(describing: error))
             }
-            SidebarSuggestions.shared.set(command, window: target.id)
+            SidebarSuggestions.shared.set(command, workspace: key)
             reply(["result": ["command": command]])
         }
     }
 
+    /// The workspace the asking agent runs in, from its pane or workspace.
+    private func agentWorkspace(_ params: [String: Any]) -> String? {
+        if let workspace = params["from_workspace"] as? String, !workspace.isEmpty { return workspace }
+        guard let pane = params["from_pane"] as? String else { return nil }
+        return store?.snapshot.panes.first { $0.paneId == pane }?.workspaceId
+    }
+
     private func windowShowing(_ params: [String: Any]) -> WindowContext? {
         let registry = WindowRegistry.shared
-        var workspace = params["from_workspace"] as? String
-        if workspace == nil, let pane = params["from_pane"] as? String {
-            workspace = store?.snapshot.panes.first { $0.paneId == pane }?.workspaceId
-        }
-        return workspace.flatMap { registry.window(showing: $0) } ?? registry.key
+        return agentWorkspace(params).flatMap { registry.window(showing: $0) } ?? registry.key
     }
 }

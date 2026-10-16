@@ -163,6 +163,31 @@ final class WindowContext: ObservableObject, Identifiable {
 
     var isKey: Bool { nsWindow?.isKeyWindow ?? false }
 
+    // MARK: - This window's workspaces
+
+    /// With several windows, each has workspaces of its own, the way each
+    /// browser window has its own tabs: its sidebar lists only those.
+    func owns(_ workspaceId: String) -> Bool { registry.belongs(workspaceId, to: self) }
+
+    /// The sidebar's groups, with only this window's workspaces.
+    var activeGroups: [ProjectGroup] {
+        guard steers else { return store.activeGroups }
+        return store.activeGroups.compactMap { group in
+            let mine = group.workspaces.filter { owns($0.workspaceId) }
+            return mine.isEmpty ? nil : ProjectGroup(id: group.id, name: group.name, workspaces: mine)
+        }
+    }
+
+    var idleWorkspaces: [EngineWorkspace] {
+        guard steers else { return store.idleWorkspaces }
+        return store.idleWorkspaces.filter { owns($0.workspaceId) }
+    }
+
+    /// This window's workspaces in sidebar order.
+    var ownWorkspaces: [EngineWorkspace] {
+        activeGroups.flatMap(\.workspaces) + idleWorkspaces
+    }
+
     // MARK: - Moving this window
 
     func focusTab(_ id: String) {
@@ -182,12 +207,17 @@ final class WindowContext: ObservableObject, Identifiable {
     func focusWorkspace(_ id: String) {
         guard steers else { return store.focusWorkspace(id) }
         if let other = registry.window(showing: id), other !== self { return other.bringForward() }
+        // Another window's workspace is shown there, in that window.
+        if let home = registry.home(of: id), home !== self {
+            home.bringForward()
+            return home.steer(toWorkspace: id, tab: nil)
+        }
         steer(toWorkspace: id, tab: nil)
     }
 
     func focusTabAnywhere(_ tab: EngineTab) {
         guard steers else { return store.focusTabAnywhere(tab) }
-        if let other = registry.window(showing: tab.workspaceId), other !== self {
+        if let other = registry.window(showing: tab.workspaceId) ?? registry.home(of: tab.workspaceId), other !== self {
             other.bringForward()
             return other.steer(toWorkspace: tab.workspaceId, tab: tab.tabId)
         }
@@ -225,13 +255,10 @@ final class WindowContext: ObservableObject, Identifiable {
         focusTab(tabs[(current + offset + tabs.count) % tabs.count].tabId)
     }
 
-    /// Next or previous workspace in sidebar order, passing over any another
-    /// window already shows.
+    /// Next or previous of this window's workspaces, in sidebar order.
     func selectAdjacentWorkspace(offset: Int) {
         guard steers else { return store.selectAdjacentWorkspace(offset: offset) }
-        let shownElsewhere = registry.shownWorkspaceIds(except: self)
-        let ordered = (store.activeGroups.flatMap(\.workspaces) + store.idleWorkspaces)
-            .filter { $0.workspaceId == workspaceId || !shownElsewhere.contains($0.workspaceId) }
+        let ordered = ownWorkspaces
         guard !ordered.isEmpty else { return }
         let current = ordered.firstIndex { $0.workspaceId == workspaceId } ?? 0
         focusWorkspace(ordered[(current + offset + ordered.count) % ordered.count].workspaceId)
@@ -741,6 +768,8 @@ final class WindowContext: ObservableObject, Identifiable {
         workspaceId = workspace
         tabId = tab ?? store.snapshot.workspaces[workspaceIndex].activeTabId
         expected = (workspace, tab)
+        // What a window shows is its own.
+        if steers { registry.claim(workspace, for: self) }
         send(strokes)
     }
 
@@ -795,19 +824,19 @@ final class WindowContext: ObservableObject, Identifiable {
         guard workspaces.contains(where: { $0.workspaceId == workspace }) else { return }
         guard steers else { return store.focusWorkspace(workspace) }
         steer(toWorkspace: workspace, tab: nil)
+        registry.claimRestoredMembers(of: workspace, for: self)
         // A workspace moved into this window leaves the one that showed it.
         registry.windows.filter { $0 !== self }.forEach { $0.yield(workspace) }
     }
 
     /// Another window took `workspace`: if this one shows it, it moves to the
-    /// nearest workspace in sidebar order that no other window shows.
+    /// nearest of its own workspaces in sidebar order.
     fileprivate func yield(_ workspace: String) {
         guard workspaceId == workspace else { return }
-        let shown = registry.shownWorkspaceIds(except: self)
         let ordered = store.activeGroups.flatMap(\.workspaces) + store.idleWorkspaces
         guard let index = ordered.firstIndex(where: { $0.workspaceId == workspace }) else { return }
         let candidates = Array(ordered[(index + 1)...]) + ordered[..<index].reversed()
-        guard let next = candidates.first(where: { !shown.contains($0.workspaceId) }) else { return }
+        guard let next = candidates.first(where: { owns($0.workspaceId) && $0.workspaceId != workspace }) else { return }
         steer(toWorkspace: next.workspaceId, tab: nil)
     }
 
@@ -817,8 +846,10 @@ final class WindowContext: ObservableObject, Identifiable {
         let snapshot = store.snapshot
         guard !snapshot.workspaces.isEmpty else { return }
         if let workspaceId, !snapshot.workspaces.contains(where: { $0.workspaceId == workspaceId }) {
+            // Its own next, else one no window shows, else any.
             let shown = registry.shownWorkspaceIds(except: self)
-            let next = snapshot.workspaces.first { !shown.contains($0.workspaceId) } ?? snapshot.workspaces[0]
+            let next = ownWorkspaces.first { $0.workspaceId != workspaceId }
+                ?? snapshot.workspaces.first { !shown.contains($0.workspaceId) } ?? snapshot.workspaces[0]
             return steer(toWorkspace: next.workspaceId, tab: nil)
         }
         guard let workspaceId else { return adoptEngineFocus() }
@@ -855,6 +886,68 @@ final class WindowRegistry: ObservableObject {
     private var lastFocus: (workspace: String?, tab: String?)
 
     var isMulti: Bool { windows.count > 1 }
+
+    // MARK: Which window each workspace belongs to
+
+    /// Workspace id to the window it belongs to. Set when a window shows a
+    /// workspace or one is made while a window is in front; a workspace with
+    /// none, or whose window closed, goes to the window in front.
+    @Published private(set) var homes: [String: UUID] = [:] {
+        // Each window's sidebar reads it through the window.
+        didSet { if homes != oldValue { windows.forEach { $0.objectWillChange.send() } } }
+    }
+
+    /// The window in front among those open, never one that's closing.
+    private var front: WindowContext? {
+        windows.first { $0.isKey && !$0.closing } ?? windows.first { !$0.closing }
+    }
+
+    func home(of workspaceId: String) -> WindowContext? {
+        guard isMulti, let id = homes[workspaceId] else { return nil }
+        return windows.first { $0.id == id && !$0.closing }
+    }
+
+    func belongs(_ workspaceId: String, to window: WindowContext) -> Bool {
+        guard isMulti else { return true }
+        return (home(of: workspaceId) ?? front) === window
+    }
+
+    fileprivate func claim(_ workspaceId: String, for window: WindowContext) {
+        guard homes[workspaceId] != window.id else { return }
+        homes[workspaceId] = window.id
+        save()
+    }
+
+    /// Workspaces with no window yet go to the one in front; ones gone are
+    /// forgotten.
+    private func settleHomes() {
+        guard isMulti, let store = windows.first?.store, !store.snapshot.workspaces.isEmpty else { return }
+        let live = Set(windows.filter { !$0.closing }.map(\.id))
+        let ids = Set(store.snapshot.workspaces.map(\.workspaceId))
+        var next = homes.filter { ids.contains($0.key) }
+        if let front {
+            for id in ids where next[id].map(live.contains) != true { next[id] = front.id }
+        }
+        if next != homes { homes = next }
+    }
+
+    /// Saved with each window: the workspaces that were its own, so a
+    /// window reopened at launch gets them back.
+    private var restoredMembers: [String: [String]] = {
+        let saved = UserDefaults.standard.array(forKey: WindowRegistry.savedKey) as? [[String: Any]] ?? []
+        var members: [String: [String]] = [:]
+        for entry in saved {
+            guard let workspace = entry["workspace"] as? String else { continue }
+            members[workspace] = entry["members"] as? [String] ?? []
+        }
+        return members
+    }()
+
+    fileprivate func claimRestoredMembers(of workspace: String, for window: WindowContext) {
+        guard let members = restoredMembers.removeValue(forKey: workspace) else { return }
+        // Its own again, unless another window is showing one of them now.
+        for member in members where self.window(showing: member) == nil || member == workspace { homes[member] = window.id }
+    }
 
     // MARK: Restoring across launches
     // macOS brings the windows back, frames and all, but not what each one
@@ -917,7 +1010,8 @@ final class WindowRegistry: ObservableObject {
         let entries: [[String: Any]] = windows.compactMap { window in
             guard !window.closing, let workspace = window.focusedWorkspace?.workspaceId,
                   let frame = window.nsWindow?.frame else { return nil }
-            return ["workspace": workspace, "frame": NSStringFromRect(frame)]
+            let members = homes.filter { $0.value == window.id }.map(\.key).sorted()
+            return ["workspace": workspace, "frame": NSStringFromRect(frame), "members": members]
         }
         guard !entries.isEmpty else { return }
         UserDefaults.standard.set(entries, forKey: Self.savedKey)
@@ -935,8 +1029,16 @@ final class WindowRegistry: ObservableObject {
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.reopenRest() }
         }
         // Going from one window to two: the one already open keeps what the
-        // engine shows, which from now on is its own to keep.
-        if windows.count == 1 { windows[0].adoptEngineFocus() }
+        // engine shows, which from now on is its own to keep, and every
+        // workspace so far is its own; the new window takes only what it's
+        // opened for.
+        if windows.count == 1 {
+            windows[0].adoptEngineFocus()
+            let first = windows[0]
+            for workspace in first.store.snapshot.workspaces where homes[workspace.workspaceId] == nil {
+                homes[workspace.workspaceId] = first.id
+            }
+        }
         windows.append(window)
         if windows.count > 1 { window.adoptEngineFocus() }
         if watch == nil {
@@ -951,6 +1053,10 @@ final class WindowRegistry: ObservableObject {
 
     func remove(_ window: WindowContext) {
         windows.removeAll { $0 === window }
+        // Its workspaces go to the window in front, where they're listed.
+        if let front {
+            for (workspace, id) in homes where id == window.id { homes[workspace] = front.id }
+        }
         // A window closed by hand is gone next launch too; quitting keeps all.
         if window.closing { save() }
         // Back to one: its view becomes the engine's focus again, and the
@@ -998,6 +1104,7 @@ final class WindowRegistry: ObservableObject {
     /// for was made in the engine itself, in the window in front.
     private func snapshotChanged() {
         windows.forEach { $0.goToPendingWorkspace() }
+        settleHomes()
         guard isMulti, let store = windows.first?.store else { return }
         windows.forEach { $0.reconcile() }
         let focus = (store.snapshot.focusedWorkspaceId, store.snapshot.focusedTabId)

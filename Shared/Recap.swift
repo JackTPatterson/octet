@@ -51,6 +51,8 @@ struct Recap: Equatable {
         var workedFor: TimeInterval?
         /// Whether what it edited was tested afterwards.
         var verification: Verification?
+        /// When it last did something, for reading the latest first.
+        var lastActivity: Date?
 
         /// "Edited 4 files · ran 7 commands · worked 12m".
         var summary: String {
@@ -95,10 +97,50 @@ struct Recap: Equatable {
 
     static func count(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
 
-    /// Runs in the order to read them: what needs you first, then by when
-    /// each last did something.
+    /// Runs in the order to read them: what needs you first, then the one
+    /// that did something most recently.
     static func ordered(_ runs: [Run]) -> [Run] {
-        runs.sorted { a, b in a.outcome != b.outcome ? a.outcome < b.outcome : a.title.localizedCaseInsensitiveCompare(b.title) == .orderedAscending }
+        runs.sorted { a, b in
+            if a.outcome != b.outcome { return a.outcome < b.outcome }
+            let at = a.lastActivity ?? .distantPast, bt = b.lastActivity ?? .distantPast
+            if at != bt { return at > bt }
+            return a.title.localizedCaseInsensitiveCompare(b.title) == .orderedAscending
+        }
+    }
+
+    /// What's new in `self` next to what's still unread in `older`: runs
+    /// from this time, then the older ones not looked at yet that this
+    /// time has nothing new on. Coming back twice before reading the first
+    /// recap keeps both.
+    func merged(unread older: Recap?) -> Recap {
+        guard let older else { return self }
+        let ids = Set(runs.map(\.id))
+        let kept = older.runs.filter { !ids.contains($0.id) }
+        return Recap(leftAt: min(leftAt, older.leftAt), cameBackAt: cameBackAt, runs: Recap.ordered(runs + kept))
+    }
+
+    /// Whether it should open itself: something needs you or is stuck.
+    var isUrgent: Bool { runs.contains { $0.outcome == .needsYou || $0.outcome == .stuck } }
+}
+
+/// When you count as away from Octet, for the recap: the screen is locked
+/// or asleep, no Octet window can be seen (hidden, minimised or covered;
+/// another app in front with Octet still on screen is you still there), or
+/// you haven't touched the Mac for `idleAfter`, which counts from when you
+/// last did.
+enum RecapPresence {
+    struct Signals: Equatable {
+        var locked = false
+        var octetVisible = true
+        /// Seconds since the last keyboard, mouse or trackpad input.
+        var idleSeconds: TimeInterval = 0
+    }
+
+    /// Since when you've been away, or nil while you're here.
+    static func awaySince(_ signals: Signals, now: Date, idleAfter: TimeInterval) -> Date? {
+        if signals.locked || !signals.octetVisible { return now }
+        if signals.idleSeconds >= idleAfter { return now.addingTimeInterval(-signals.idleSeconds) }
+        return nil
     }
 }
 
@@ -154,6 +196,7 @@ extension Recap {
         // stand in for the main agent's.
         let times = new.map(\.createdAt)
         if let first = times.min(), let last = times.max(), last > first { run.workedFor = last.timeIntervalSince(first) }
+        run.lastActivity = times.max()
         let verdict = Verification.assess(new)
         if verdict != .noEdits { run.verification = verdict }
         let userTurns = new.filter { if case .user = $0.kind { return true } else { return false } }.count
@@ -213,12 +256,27 @@ extension Recap {
     /// One or two lines of what it said: the first paragraph, cut short.
     static func excerpt(_ text: String, limit: Int = 220) -> String {
         let paragraph = text.components(separatedBy: "\n\n").first { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? text
-        let flat = paragraph.split(whereSeparator: \.isNewline).joined(separator: " ")
+        let flat = paragraph.split(whereSeparator: \.isNewline).map { plain(String($0)) }.joined(separator: " ")
             .replacingOccurrences(of: "  ", with: " ").trimmingCharacters(in: .whitespaces)
         guard flat.count > limit else { return flat }
         let cut = flat.prefix(limit)
         let end = cut.lastIndex(of: " ") ?? cut.endIndex
         return cut[..<end].trimmingCharacters(in: .punctuationCharacters.union(.whitespaces)) + "…"
+    }
+
+    /// A line of Markdown as it reads: no heading, quote or bullet marks,
+    /// no emphasis or code ticks, links as their text.
+    static func plain(_ line: String) -> String {
+        var text = line.trimmingCharacters(in: .whitespaces)
+        for marker in ["###### ", "##### ", "#### ", "### ", "## ", "# ", "> ", "- ", "* ", "+ "] where text.hasPrefix(marker) {
+            text = String(text.dropFirst(marker.count))
+            break
+        }
+        if let regex = try? NSRegularExpression(pattern: #"\[([^\]]+)\]\([^)]*\)"#) {
+            text = regex.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text), withTemplate: "$1")
+        }
+        for mark in ["**", "__", "`"] { text = text.replacingOccurrences(of: mark, with: "") }
+        return text
     }
 }
 
@@ -237,6 +295,8 @@ extension Recap {
             var finishedTimes = 0
             var worked: TimeInterval = 0
             var workingSince: Date?
+            /// When its status last changed.
+            var changedAt: Date?
         }
 
         private(set) var panes: [String: Pane] = [:]
@@ -264,6 +324,7 @@ extension Recap {
                     }
                     if status == .working { pane.workingSince = now }
                     pane.last = status
+                    pane.changedAt = now
                 }
                 panes[agent.paneId] = pane
             }
@@ -291,6 +352,7 @@ extension Recap {
                               title: pane.title, workspaceId: pane.workspaceId, outcome: outcome)
                 run.turns = pane.finishedTimes
                 run.workedFor = worked > 0 ? worked : nil
+                run.lastActivity = pane.changedAt
                 if outcome == .needsYou { run.reason = "Waiting on you in its terminal" }
                 return run
             }

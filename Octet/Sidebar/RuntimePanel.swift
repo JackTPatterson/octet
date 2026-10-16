@@ -174,8 +174,9 @@ struct RuntimePanel: View {
             let spawned = store.spawnedRuntimeAgents.filter { $0.paneId == pane.paneId }
             result += processAgents(spawned, location: location, sessionId: nil)
             // Claude Code in the terminal: its log says what it has running.
-            result += (store.terminalRuntimes[pane.paneId] ?? []).map { runtime in
-                entry(runtime, location: location, paneId: pane.paneId, session: nil)
+            // Its subagents' own subagents, and what they run, sit under them.
+            result += HandoffRuntime.nested(store.terminalRuntimes[pane.paneId] ?? []).map { node in
+                entry(node.runtime, location: location, paneId: pane.paneId, session: nil, depth: node.depth)
             }
         }
         // Subagents the Subagent Tabs hook opened as tabs of their own,
@@ -325,7 +326,7 @@ struct RuntimePanel: View {
     /// A row for work a Claude Code session log reports: live in a terminal
     /// pane, or carried into a conversation that is starting it again.
     private func entry(_ runtime: HandoffRuntime, location: String, paneId: String?,
-                       session: AgentSession?, carried: Bool = false) -> RuntimeEntry {
+                       session: AgentSession?, carried: Bool = false, depth: Int = 0) -> RuntimeEntry {
         let now = Date()
         let kind: RuntimeKind
         let detail: String
@@ -347,11 +348,12 @@ struct RuntimePanel: View {
         return RuntimeEntry(id: (carried ? "carried-" : "log-") + runtime.id, kind: kind, title: runtime.title,
                             detail: carried ? "Restarting" : detail, location: location, command: runtime.command,
                             prompt: runtime.kind == .agent ? runtime.prompt : runtime.title, output: nil,
-                            process: carried ? "Moving from the terminal" : process, depth: 0,
+                            process: carried ? "Moving from the terminal" : process, depth: depth,
                             accentSeed: Self.seed(runtime.id),
                             agentID: runtime.kind == .agent ? "claude" : nil,
                             modelName: runtime.kind == .agent ? session.map(modelName(for:)) : nil,
-                            paneId: paneId, sessionId: session?.id, autoReveal: true)
+                            paneId: paneId, sessionId: session?.id, autoReveal: true,
+                            liveSince: carried || runtime.kind == .monitor ? nil : runtime.startedAt)
     }
 
     private func activeMonitors(in session: AgentSession) -> [RuntimeEntry] {
@@ -440,10 +442,14 @@ struct RuntimePanel: View {
             frontier.append(parent)
         }
 
-        return calls.compactMap { pair in
+        // Each subagent with the ones it started under it, however deep.
+        let shown = RuntimeTree.order(calls.filter { visible.contains($0.item.id) },
+                                      id: { $0.item.id }, parent: { $0.item.parent })
+        return shown.compactMap { node -> RuntimeEntry? in
+            let (pair, depth) = node
             let item = pair.item
             let call = pair.call
-            guard visible.contains(item.id), let input = call.inputObject else { return nil }
+            guard let input = call.inputObject else { return nil }
             let title = input["name"] as? String
                 ?? input["description"] as? String
                 ?? call.summary
@@ -466,13 +472,6 @@ struct RuntimePanel: View {
                 }
             }.first ?? call.result
             let elapsed = max(0, Int(now.timeIntervalSince(item.createdAt)))
-            var depth = 0
-            var parent = item.parent
-            var visited = Set<String>()
-            while let id = parent, let ancestor = byId[id], visited.insert(id).inserted {
-                depth += 1
-                parent = ancestor.item.parent
-            }
             return RuntimeEntry(id: "agent-\(item.id)", kind: .agent,
                                 title: title.isEmpty ? "Subagent" : title,
                                 detail: call.result == nil ? "\(elapsed)s" : "Parent",
@@ -480,7 +479,8 @@ struct RuntimePanel: View {
                                 prompt: prompt, output: output, process: process,
                                 depth: depth, accentSeed: Self.seed(item.id),
                                 agentID: session.engine.agent, modelName: modelName(for: session),
-                                paneId: nil, sessionId: session.id, autoReveal: true)
+                                paneId: nil, sessionId: session.id, autoReveal: true,
+                                liveSince: call.result == nil ? item.createdAt : nil)
         }
     }
 
@@ -562,6 +562,9 @@ private struct RuntimeEntry: Identifiable {
     /// Discovery can add account-wide background work to the requested panel,
     /// but only a child/event created by this tab's agent may open it.
     var autoReveal = false
+    /// Still running since then: the row counts up each second in place of
+    /// `detail`.
+    var liveSince: Date? = nil
 
     var tint: Color {
         guard kind == .agent else {
@@ -631,7 +634,10 @@ private struct RuntimeRow: View {
                                 .lineLimit(1)
                         }
                         Spacer(minLength: 4)
-                        Text(entry.detail).font(Theme.captionFont).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                        Group {
+                            if let since = entry.liveSince { ElapsedLabel(since: since) } else { Text(entry.detail) }
+                        }
+                        .font(Theme.captionFont).foregroundStyle(Theme.textTertiary).lineLimit(1)
                     }
                     Text(entry.location)
                         .font(Theme.captionFont)

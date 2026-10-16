@@ -420,15 +420,7 @@ private struct LineCounts: View {
     let removed: Int?
 
     var body: some View {
-        HStack(spacing: 4) {
-            if let added, added > 0 {
-                Text("+\(added)").foregroundStyle(Color(hex: AgentStateColor.done))
-            }
-            if let removed, removed > 0 {
-                Text("−\(removed)").foregroundStyle(Theme.danger)
-            }
-        }
-        .font(Theme.captionFont.monospacedDigit())
+        DiffStatLabel(added: added ?? 0, removed: removed ?? 0)
     }
 }
 

@@ -19,6 +19,45 @@ struct HandoffRuntime: Equatable, Identifiable {
     let startedAt: Date?
     /// When a monitor would have stopped on its own.
     let expiresAt: Date?
+    /// The subagent that started it (the tool call that launched that
+    /// subagent), when it came from a subagent's own log; nil for the
+    /// session's own.
+    var parentId: String? = nil
+
+    /// `runtimes` as a tree: each one after the subagent that started it,
+    /// with how deep it is. One whose subagent isn't among them is a root.
+    static func nested(_ runtimes: [HandoffRuntime]) -> [(runtime: HandoffRuntime, depth: Int)] {
+        RuntimeTree.order(runtimes, id: \.id, parent: \.parentId)
+    }
+}
+
+/// Puts items that start one another in tree order: each parent, then its
+/// children under it, depth first, keeping the given order among siblings.
+/// An item whose parent isn't in the list is a root; cycles are cut.
+enum RuntimeTree {
+    static func order<T>(_ items: [T], id: (T) -> String, parent: (T) -> String?) -> [(T, Int)] {
+        let ids = Set(items.map(id))
+        var children: [String: [Int]] = [:]
+        var roots: [Int] = []
+        for (index, item) in items.enumerated() {
+            if let parent = parent(item), parent != id(item), ids.contains(parent) {
+                children[parent, default: []].append(index)
+            } else {
+                roots.append(index)
+            }
+        }
+        var result: [(T, Int)] = []
+        var placed = Set<Int>()
+        func visit(_ index: Int, _ depth: Int) {
+            guard placed.insert(index).inserted else { return }
+            result.append((items[index], depth))
+            for child in children[id(items[index])] ?? [] { visit(child, depth + 1) }
+        }
+        for root in roots { visit(root, 0) }
+        // Anything only reachable through a cycle still shows, as a root.
+        for index in items.indices where !placed.contains(index) { visit(index, 0) }
+        return result
+    }
 }
 
 enum AgentRuntimeHandoff {
@@ -170,6 +209,10 @@ enum AgentRuntimeHandoff {
 /// The runtimes a Claude Code session log has started and not yet seen end,
 /// built up one line at a time so a growing log is only read once.
 struct RuntimeLedger {
+    /// Set for a subagent's own log: the tool call that launched it, given
+    /// to everything it starts. Its records are sidechain ones, so they're
+    /// read; in the session's own log those are skipped.
+    var parentId: String? = nil
     private var calls: [String: (name: String, input: [String: Any], at: Date?)] = [:]
     private var order: [String] = []
     private var started: [String: HandoffRuntime] = [:]
@@ -181,7 +224,7 @@ struct RuntimeLedger {
         guard line.contains("tool_use") || line.contains("task-notification"),
               let data = line.data(using: .utf8),
               let record = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-              record["isSidechain"] as? Bool != true else { return }
+              parentId != nil || record["isSidechain"] as? Bool != true else { return }
         let at = (record["timestamp"] as? String).flatMap(AgentRuntimeHandoff.date)
         for text in AgentRuntimeHandoff.notificationTexts(record) {
             for notice in AgentRuntimeHandoff.notifications(in: text) {
@@ -229,7 +272,8 @@ struct RuntimeLedger {
     /// process started: anything older belonged to an earlier process and
     /// ended with it.
     func live(processStart: Date?, now: Date = Date()) -> [HandoffRuntime] {
-        order.compactMap { id -> HandoffRuntime? in
+        let parentId = self.parentId
+        return order.compactMap { id -> HandoffRuntime? in
             if let runtime = started[id] {
                 if finishedTools.contains(id) || taskIds[id].map(finishedTasks.contains) == true { return nil }
                 return runtime
@@ -245,6 +289,10 @@ struct RuntimeLedger {
             // Log and process clocks are the same machine's; allow for the
             // log line landing a moment before the process table updates.
             return started >= processStart.addingTimeInterval(-2)
+        }.map { runtime in
+            var runtime = runtime
+            runtime.parentId = parentId
+            return runtime
         }
     }
 }

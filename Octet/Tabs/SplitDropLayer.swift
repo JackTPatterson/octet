@@ -204,9 +204,9 @@ private struct SplitDropDelegate: DropDelegate {
 }
 
 /// Drop zones over a window's content while a workspace card is dragged: by
-/// an edge, the screen splits there, with a shell in that workspace's
-/// folder on that side of the tab showing; in the middle, this window
-/// shows the workspace. Present for every workspace drag, so the card's
+/// an edge, the screen splits there and the workspace's terminal, still
+/// running, moves in on that side of the tab showing; in the middle, this
+/// window shows the workspace. Present for every workspace drag, so the card's
 /// id never lands in the terminal as text.
 struct WorkspaceDropLayer: View {
     let workspaceId: String
@@ -237,8 +237,10 @@ struct WorkspaceDropLayer: View {
         }
     }
 
-    /// A fresh pane in the workspace's folder, on `edge`'s side of the
-    /// focused pane of the tab showing.
+    /// The workspace's terminal, on `edge`'s side of the focused pane of the
+    /// tab showing: the pane in front in its active tab moves in as it is,
+    /// output and running programs included. Dropped on its own tab, there's
+    /// nothing to move, so a fresh shell in its folder splits in instead.
     private func split(_ edge: SplitEdge) {
         let store = window.store
         guard let tab = splitsInto,
@@ -246,7 +248,19 @@ struct WorkspaceDropLayer: View {
                   ?? store.snapshot.panes.first(where: { $0.tabId == tab }) else {
             return window.focusWorkspace(workspaceId)
         }
+        if let moving = terminal(of: workspaceId, in: store.snapshot), moving.tabId != tab {
+            return store.movePane(moving.paneId, into: tab, beside: pane.paneId, edge: edge)
+        }
         store.splitNewPane(beside: pane.paneId, edge: edge, cwd: store.snapshot.directory(ofWorkspace: workspaceId), keepingSide: false)
+    }
+
+    /// The pane a workspace shows: the focused one of its active tab.
+    private func terminal(of workspaceId: String, in snapshot: EngineSnapshot) -> EnginePane? {
+        let tabs = snapshot.tabs(inWorkspace: workspaceId)
+        let active = snapshot.workspaces.first { $0.workspaceId == workspaceId }?.activeTabId
+        guard let tab = tabs.first(where: { $0.tabId == active }) ?? tabs.first(where: \.focused) ?? tabs.first else { return nil }
+        let panes = snapshot.panes.filter { $0.tabId == tab.tabId }
+        return panes.first(where: \.focused) ?? panes.first
     }
 
     /// Dropped on the window already showing it, the middle has nothing to do.
