@@ -111,7 +111,7 @@ struct PlaneStrip: View {
                 }
                 .padding(.vertical, 2)
             }
-            .scrollIndicators(.hidden)
+            .scrollIndicators(.never)
             Spacer(minLength: 0)
             if ui.sidePanelVisible {
                 OctetIconButton(icon: ui.sidePanelMaximized ? "arrow.down.right.and.arrow.up.left"

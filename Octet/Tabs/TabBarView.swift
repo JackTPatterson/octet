@@ -27,7 +27,7 @@ struct TabBarView: View {
 
         HStack(spacing: 0) {
             ScrollViewReader { proxy in
-                ScrollView(.horizontal, showsIndicators: false) {
+                ScrollView(.horizontal) {
                     HStack(spacing: 0) {
                         ForEach(orderedIds, id: \.self) { id in
                             if id.hasPrefix("terminal:"),
@@ -69,6 +69,8 @@ struct TabBarView: View {
                                      teleport: { window.teleportCloudSession($0) })
                     }
                 }
+                // Never a scroller, even with "Always show scroll bars".
+                .scrollIndicators(.never)
                 .onChange(of: focusedId) { _, id in
                     guard let id else { return }
                     proxy.scrollTo(id)
