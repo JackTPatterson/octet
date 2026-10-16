@@ -496,7 +496,16 @@ struct RootView: View {
                     case "browser": ui.showPlane(.browser)
                     case "terminal": ui.showPlane(.terminal)
                     case "details": ui.detailsVisible = true
-                    case "device": ui.showPlane(.device)
+                    case "device":
+                        // "planes:device:<id>" opens straight onto that device.
+                        if parts.count > 2 {
+                            let plane = Plane.make(.device, deviceId: parts[2...].joined(separator: ":"))
+                            ui.planes.append(plane)
+                            ui.activePlaneId = plane.id
+                            ui.sidePanelVisible = true
+                        } else {
+                            ui.showPlane(.device)
+                        }
                     default: break
                     }
                 }

@@ -416,12 +416,35 @@ final class DeviceHubModel: ObservableObject {
                 }
             }
             dark = appearanceOut.flatMap { DeviceCommands.parseDark($0.text) }
+            #if DEBUG
+            runDebugInputs()
+            #endif
             if let sizeOut, sizeOut.ok {
                 textSize = device.platform == .ios ? DeviceTextSize(iosCategory: sizeOut.text)
                     : DeviceTextSize.allCases.first { Double($0.androidScale) == Double(sizeOut.text) }
             }
         }
     }
+
+    #if DEBUG
+    private static var debugInputsRan = false
+
+    /// OCTET_DEVICE_INPUT=all: once the screen's size is known, sends one of
+    /// every input through the real path, to check a platform's commands.
+    private func runDebugInputs() {
+        guard ProcessInfo.processInfo.environment["OCTET_DEVICE_INPUT"] == "all", !Self.debugInputsRan,
+              screen != nil else { return }
+        Self.debugInputsRan = true
+        // Points are normalized to the screen, as the view sends them.
+        send(.tap(CGPoint(x: 0.5, y: 0.5)))
+        send(.swipe(from: CGPoint(x: 0.5, y: 0.8), to: CGPoint(x: 0.5, y: 0.3), duration: 0.3))
+        send(.text("hi there"))
+        flushTyping()
+        send(.key(.enter))
+        send(.key(.delete))
+        for button in [DeviceButton.home, .back, .recents] { send(.button(button)) }
+    }
+    #endif
 
     // MARK: Input
 
