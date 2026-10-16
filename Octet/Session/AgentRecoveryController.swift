@@ -2,14 +2,14 @@ import AppKit
 import Foundation
 
 /// Journals every Claude/Codex (and integration-reported) agent session and,
-/// when a shutdown or session server restart kills them, offers to resume them in
-/// their workspaces with `claude --resume <id>` / `codex resume <id>`.
+/// when a shutdown or session server restart kills them, hands them to the
+/// recovery panel to resume in their workspaces with `claude --resume <id>`
+/// / `codex resume <id>`.
 @MainActor
 final class AgentRecoveryController: ObservableObject {
-    /// Sessions offered for recovery; the panel shows while non-empty.
-    @Published private(set) var offered: [AgentSessionRecord] = []
-    /// True when the panel was opened by hand (history), not after a restart.
-    @Published private(set) var showingHistory = false
+    /// Told of sessions a shutdown or server restart killed; the recovery
+    /// panel lists them.
+    var onLost: (([AgentSessionRecord]) -> Void)?
 
     private let client: EngineClient
     private let url: URL
@@ -19,6 +19,9 @@ final class AgentRecoveryController: ObservableObject {
     private var lastInference = Date.distantPast
     private var lastSave = Date.distantPast
     private var lastSnapshot: EngineSnapshot = .empty
+    /// Agents running out of sight (closed tabs kept running): not in the
+    /// snapshot Octet draws, but not to be offered back either.
+    private var hiddenTerminals: Set<String> = []
     /// The session server's native resume needs a few seconds to relaunch agents.
     static let gracePeriod: TimeInterval = 8
     static let inferenceInterval: TimeInterval = 10
@@ -46,8 +49,11 @@ final class AgentRecoveryController: ObservableObject {
         return Dictionary(journal.records.map { ($0.terminalId, $0.firstSeen) }, uniquingKeysWith: { first, _ in first })
     }
 
-    func observe(_ snapshot: EngineSnapshot, inferred: [String: String], now: Date = Date()) {
+    /// `allTerminals` holds every running agent's terminal, those in closed
+    /// tabs too, which `snapshot` leaves out.
+    func observe(_ snapshot: EngineSnapshot, inferred: [String: String], allTerminals: Set<String> = [], now: Date = Date()) {
         lastSnapshot = snapshot
+        hiddenTerminals = allTerminals.subtracting(snapshot.agents.compactMap(\.terminalId))
         let before = journal.records
         // Record against the pre-restart journal only after the check has
         // captured which sessions were alive.
@@ -70,11 +76,13 @@ final class AgentRecoveryController: ObservableObject {
 
     private func offerLost(_ candidates: [AgentSessionRecord], lastObserved: Date) {
         let liveSessions = Set(journal.records.filter { $0.lastSeen >= journal.lastObserved.addingTimeInterval(-2) }.compactMap(\.sessionId))
-        let lost = AgentRecovery.lostSessions(journal: candidates, lastObserved: lastObserved,
-                                              current: lastSnapshot, liveSessionIds: liveSessions)
+        // Handled in the meantime (resumed or dismissed from the palette's list).
+        let handled = Set(journal.records.filter(\.handled).map(\.id))
+        let lost = AgentRecovery.lostSessions(
+            journal: candidates.filter { !handled.contains($0.id) && !hiddenTerminals.contains($0.terminalId) },
+            lastObserved: lastObserved, current: lastSnapshot, liveSessionIds: liveSessions)
         guard !lost.isEmpty else { return }
-        showingHistory = false
-        offered = lost
+        onLost?(lost)
     }
 
     /// What Octet knows about the agent in one terminal.
@@ -88,26 +96,10 @@ final class AgentRecoveryController: ObservableObject {
         journal.records.first { $0.terminalId == terminalId }?.sessionId
     }
 
-    /// Past sessions with a known id, newest first, for a resume menu.
+    /// Past sessions with a known id that aren't running, newest first, for
+    /// a resume menu or the recovery panel's history.
     func resumableSessions() -> [AgentSessionRecord] {
-        AgentRecovery.history(journal: journal.records, current: lastSnapshot)
-    }
-
-    /// Opens the panel with recent sessions that aren't running.
-    func showHistory() {
-        let history = AgentRecovery.history(journal: journal.records, current: lastSnapshot)
-        guard !history.isEmpty else {
-            ToastCenter.shared.info("No agent sessions to recover",
-                                    detail: "Octet records Claude and Codex sessions while they run")
-            return
-        }
-        showingHistory = true
-        offered = Array(history.prefix(30))
-    }
-
-    func dismiss() {
-        if !showingHistory { markHandled(offered) }
-        offered = []
+        AgentRecovery.history(journal: journal.records, current: lastSnapshot, liveTerminals: hiddenTerminals)
     }
 
     func copyCommand(_ record: AgentSessionRecord) {
@@ -120,34 +112,29 @@ final class AgentRecoveryController: ObservableObject {
         ToastCenter.shared.info("Copied resume command", detail: text)
     }
 
-    /// Resumes each session in a new tab of its workspace (recreated when gone).
-    func resume(_ records: [AgentSessionRecord]) {
-        let targets = records.filter { $0.resumeCommand != nil }
-        guard !targets.isEmpty else { return }
-        offered.removeAll { record in targets.contains { $0.id == record.id } }
-        markHandled(targets)
-        let noun = targets.count == 1 ? "\(Self.displayName(targets[0])) session" : "\(targets.count) agent sessions"
-        let toast = ToastCenter.shared.progress("Resuming \(noun)…")
+    /// Resumes each session in its workspace (recreated when gone): in the
+    /// tab the server brought back in its place when one is sitting at a
+    /// prompt, else a new tab. `report` hears of each as it lands, with the
+    /// error when it failed. A session that resumed isn't offered again.
+    func resume(_ records: [AgentSessionRecord], report: @escaping @MainActor (AgentSessionRecord, String?) -> Void) {
+        guard !records.isEmpty else { return }
         let client = self.client
         let snapshot = lastSnapshot
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-        DispatchQueue.global(qos: .userInitiated).async {
-            var failures: [String] = []
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             var createdWorkspaces: [String: String] = [:]
-            for record in targets {
+            var usedTabs: Set<String> = []
+            for record in records {
+                var failure: String?
                 do {
-                    try Self.resume(record, client: client, snapshot: snapshot, shell: shell, created: &createdWorkspaces)
+                    try Self.resume(record, client: client, snapshot: snapshot, shell: shell,
+                                    created: &createdWorkspaces, used: &usedTabs)
                 } catch {
-                    failures.append("\(record.tabLabel.isEmpty ? record.agent : record.tabLabel): \(error)")
+                    failure = RecoveryError.describe(error)
                 }
-            }
-            DispatchQueue.main.async {
-                let resumed = targets.count - failures.count
-                if failures.isEmpty {
-                    ToastCenter.shared.succeed(toast, "Resumed \(noun)")
-                } else {
-                    ToastCenter.shared.fail(toast, "Resumed \(resumed) of \(targets.count) sessions",
-                                            detail: failures.prefix(3).joined(separator: "\n"))
+                DispatchQueue.main.async {
+                    if failure == nil { self?.markHandled([record]) }
+                    report(record, failure)
                 }
             }
         }
@@ -158,14 +145,16 @@ final class AgentRecoveryController: ObservableObject {
         client: EngineClient,
         snapshot: EngineSnapshot,
         shell: String,
-        created: inout [String: String]
+        created: inout [String: String],
+        used: inout Set<String>
     ) throws {
-        guard record.resumeCommand != nil else { return }
+        guard record.resumeCommand != nil else { throw RecoveryError.notResumable }
+        // A shell started in a missing folder lands in ~, and the agent
+        // there can't find the conversation.
+        guard FileManager.default.fileExists(atPath: record.cwd) else { throw RecoveryError.folderGone }
         let key = record.workspaceLabel + "\u{0}" + record.cwd
         var tabId: String?
-        var workspaceId = created[key]
-            ?? snapshot.workspaces.first { $0.label == record.workspaceLabel && snapshot.directory(ofWorkspace: $0.workspaceId) == record.cwd }?.workspaceId
-            ?? snapshot.workspaces.first { snapshot.directory(ofWorkspace: $0.workspaceId) == record.cwd }?.workspaceId
+        var workspaceId = created[key] ?? RecoveryList.workspace(label: record.workspaceLabel, cwd: record.cwd, in: snapshot)
         if workspaceId == nil {
             let label = record.workspaceLabel.isEmpty ? URL(fileURLWithPath: record.cwd).lastPathComponent : record.workspaceLabel
             let result = try client.call("workspace.create", ["cwd": record.cwd, "label": label, "focus": false])
@@ -173,7 +162,16 @@ final class AgentRecoveryController: ObservableObject {
             // Fill the new workspace's empty first tab instead of adding one.
             tabId = (result["tab"] as? [String: Any])?["tab_id"] as? String
             if let workspaceId { created[key] = workspaceId }
+        } else if let workspaceId {
+            // The tab the server restored in its place, left at a prompt.
+            tabId = RecoveryList.reusableTabs(named: record.tabLabel, cwd: record.cwd, workspaceId: workspaceId,
+                                              in: snapshot, excluding: used, displayName: false)
+                .first { candidate in
+                    (try? client.call("pane.process_info", ["pane_id": candidate.pane.paneId]))
+                        .flatMap(ShellRecovery.job(in:)) == nil
+                }?.tab.tabId
         }
+        if let tabId { used.insert(tabId) }
         try client.call("layout.apply", AgentRecovery.resumeRequest(
             record, shell: shell, workspaceId: workspaceId, tabId: tabId
         ))
@@ -243,7 +241,8 @@ final class AgentRecoveryController: ObservableObject {
         AgentBrand.forAgent(record.agent)?.displayName ?? record.agent
     }
 
-    private func markHandled(_ records: [AgentSessionRecord]) {
+    /// Not offered again after a restart: resumed, or dismissed.
+    func markHandled(_ records: [AgentSessionRecord]) {
         let ids = Set(records.map(\.id))
         for index in journal.records.indices where ids.contains(journal.records[index].id) {
             journal.records[index].handled = true
@@ -260,5 +259,24 @@ final class AgentRecoveryController: ObservableObject {
     private func shellPath(_ path: String) -> String {
         path.range(of: "^[A-Za-z0-9_./~-]+$", options: .regularExpression) != nil
             ? path : "'" + path.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
+    }
+}
+
+/// Why an item couldn't be brought back.
+enum RecoveryError: LocalizedError {
+    case notResumable
+    case folderGone
+
+    var errorDescription: String? {
+        switch self {
+        case .notResumable: "Octet doesn't know how to resume this session"
+        case .folderGone: "Its folder no longer exists"
+        }
+    }
+
+    /// An error as a line a row can show.
+    nonisolated static func describe(_ error: Error) -> String {
+        if let error = error as? LocalizedError, let text = error.errorDescription { return text }
+        return String(describing: error)
     }
 }

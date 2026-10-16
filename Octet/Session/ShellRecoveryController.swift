@@ -9,8 +9,12 @@ import Foundation
 /// named so it can be run again. It never reruns anything by itself.
 @MainActor
 final class ShellRecoveryController: ObservableObject {
-    /// Terminals lost with the session server; the recovery panel lists them.
-    @Published private(set) var offered: [ShellSessionRecord] = []
+    /// Told of terminals lost with the session server; the recovery panel
+    /// lists them.
+    var onLost: (([ShellSessionRecord]) -> Void)?
+    /// Lost terminals not yet restored, offered or set aside: their output
+    /// is kept on disk until they're restored or Octet quits.
+    private var pending: [ShellSessionRecord] = []
 
     private let client: EngineClient
     private let url: URL
@@ -64,7 +68,12 @@ final class ShellRecoveryController: ObservableObject {
         let live = Set(lastSnapshot.panes.compactMap(\.terminalId))
         let lost = ShellRecovery.lost(records, lastObserved: lastObserved, liveTerminals: live)
         guard !lost.isEmpty, SettingsStore.shared.values.offerRecovery else { return }
-        offered = lost
+        pending.removeAll { record in lost.contains { $0.id == record.id } }
+        pending += lost
+        // Offered now: the journal's next look shouldn't offer them twice.
+        journal.records.removeAll { record in lost.contains { $0.id == record.id } }
+        save()
+        onLost?(lost)
     }
 
     // MARK: - Journaling
@@ -80,7 +89,7 @@ final class ShellRecoveryController: ObservableObject {
         // Agents are resumed from their own sessions, not replayed.
         let agentPanes = Set(snapshot.agents.map(\.paneId))
         let panes = snapshot.panes.filter { $0.terminalId != nil && !agentPanes.contains($0.paneId) }
-        let keepDumps = Set(offered.map(\.terminalId))
+        let keepDumps = Set(pending.map(\.terminalId))
         DispatchQueue.global(qos: .utility).async { [weak self] in
             var busy: [(pane: EnginePane, job: ShellJob)] = []
             var wrote: [String: Int] = [:]
@@ -122,48 +131,48 @@ final class ShellRecoveryController: ObservableObject {
 
     /// Reopens each terminal in its workspace: in the tab the server brought
     /// back for it when there is one sitting at a prompt, else a new tab.
-    func restore(_ records: [ShellSessionRecord]) {
+    /// `report` hears of each as it lands, with the error when it failed.
+    func restore(_ records: [ShellSessionRecord], report: @escaping @MainActor (ShellSessionRecord, String?) -> Void) {
         guard !records.isEmpty else { return }
-        offered.removeAll { record in records.contains { $0.id == record.id } }
-        let noun = records.count == 1 ? "1 terminal" : "\(records.count) terminals"
-        let toast = ToastCenter.shared.progress("Restoring \(noun)…")
         let client = self.client
         let snapshot = lastSnapshot
         let dumps = self.dumps
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-        DispatchQueue.global(qos: .userInitiated).async {
-            var failures: [String] = []
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             var createdWorkspaces: [String: String] = [:]
             var usedTabs: Set<String> = []
             for record in records {
+                var failure: String?
                 do {
                     try Self.restore(record, client: client, snapshot: snapshot, dumps: dumps, shell: shell,
                                      created: &createdWorkspaces, used: &usedTabs)
                 } catch {
-                    failures.append("\(record.tabLabel.isEmpty ? record.command : record.tabLabel): \(error)")
+                    failure = RecoveryError.describe(error)
                 }
-            }
-            DispatchQueue.main.async {
-                if failures.isEmpty {
-                    ToastCenter.shared.succeed(toast, "Restored \(noun)",
-                                               detail: "Their output is back. Nothing was rerun.")
-                } else {
-                    ToastCenter.shared.fail(toast, "Restored \(records.count - failures.count) of \(records.count) terminals",
-                                            detail: failures.prefix(3).joined(separator: "\n"))
+                DispatchQueue.main.async {
+                    // Back on screen: its kept output can go with the next look.
+                    if failure == nil { self?.forget([record]) }
+                    report(record, failure)
                 }
             }
         }
+    }
+
+    /// The output kept for a lost terminal, for its row's preview.
+    func dumpURL(for record: ShellSessionRecord) -> URL {
+        ShellRecovery.dumpURL(for: record.terminalId, in: dumps)
     }
 
     private nonisolated static func restore(
         _ record: ShellSessionRecord, client: EngineClient, snapshot: EngineSnapshot, dumps: URL, shell: String,
         created: inout [String: String], used: inout Set<String>
     ) throws {
+        guard FileManager.default.fileExists(atPath: record.cwd) else { throw RecoveryError.folderGone }
         let key = record.workspaceLabel + "\u{0}" + record.cwd
         var tabId: String?
-        var workspaceId = created[key]
-            ?? snapshot.workspaces.first { $0.label == record.workspaceLabel }?.workspaceId
-            ?? snapshot.workspaces.first { snapshot.directory(ofWorkspace: $0.workspaceId) == record.cwd }?.workspaceId
+        // By name and folder: a name alone took the first workspace of that
+        // name, wherever it was.
+        var workspaceId = created[key] ?? RecoveryList.workspace(label: record.workspaceLabel, cwd: record.cwd, in: snapshot)
         if workspaceId == nil {
             let label = record.workspaceLabel.isEmpty ? URL(fileURLWithPath: record.cwd).lastPathComponent : record.workspaceLabel
             let result = try client.call("workspace.create", ["cwd": record.cwd, "label": label, "focus": false])
@@ -173,14 +182,12 @@ final class ShellRecoveryController: ObservableObject {
         } else if let workspaceId {
             // The tab the server restored in its place: same name, one pane,
             // in the same folder, with nothing running.
-            tabId = snapshot.tabs(inWorkspace: workspaceId).first { tab in
-                guard !used.contains(tab.tabId), tab.paneCount == 1,
-                      TabAutoName.display(label: tab.label, number: tab.number) == record.tabLabel,
-                      let pane = snapshot.panes.first(where: { $0.tabId == tab.tabId }),
-                      pane.effectiveCwd == record.cwd else { return false }
-                let job = (try? client.call("pane.process_info", ["pane_id": pane.paneId])).flatMap(ShellRecovery.job(in:))
-                return job == nil
-            }?.tabId
+            tabId = RecoveryList.reusableTabs(named: record.tabLabel, cwd: record.cwd, workspaceId: workspaceId,
+                                              in: snapshot, excluding: used, displayName: true)
+                .first { candidate in
+                    (try? client.call("pane.process_info", ["pane_id": candidate.pane.paneId]))
+                        .flatMap(ShellRecovery.job(in:)) == nil
+                }?.tab.tabId
         }
         if let tabId { used.insert(tabId) }
         let dump = ShellRecovery.dumpURL(for: record.terminalId, in: dumps)
@@ -196,11 +203,12 @@ final class ShellRecoveryController: ObservableObject {
         }
     }
 
-    /// Lets the offered terminals go, and the output kept for them.
-    func dismiss() {
-        let dropped = offered
-        offered = []
-        journal.records.removeAll { record in dropped.contains { $0.id == record.id } }
+    /// Lets lost terminals go for good, and the output kept for them (on
+    /// the next look). Dismissing from the panel doesn't: the palette can
+    /// still bring the list back until Octet quits.
+    func forget(_ records: [ShellSessionRecord]) {
+        pending.removeAll { record in records.contains { $0.id == record.id } }
+        journal.records.removeAll { record in records.contains { $0.id == record.id } }
         save()
     }
 
