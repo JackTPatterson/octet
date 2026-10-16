@@ -14,6 +14,9 @@ final class AgentUpdatePrompter {
 
     func check(_ agents: [DiscoveredAgent], force: Bool = false) {
         guard SettingsStore.shared.values.checkForAgentUpdates, !checking else { return }
+        // A throwaway copy (a build being checked from a temporary folder or
+        // a worktree) never offers to update the real agent tools.
+        guard AgentConfigWrites.allowedHere || force else { return }
         #if DEBUG
         // The preview hook's sample dialog must not be replaced by real
         // updates, whose buttons would run real commands.
