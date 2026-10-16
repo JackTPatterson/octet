@@ -443,10 +443,16 @@ final class WindowContext: ObservableObject, Identifiable {
             OctetTerminalRuntime.focusTerminal()
             return
         }
-        let snapshot = store.snapshot
-        guard let directory = focusedPaneId.flatMap({ snapshot.workingDirectory(ofPane: $0) })
-                ?? focusedWorkspace.flatMap({ snapshot.directory(ofWorkspace: $0.workspaceId) }) else { return }
+        guard let directory = focusedDirectory else { return }
         ui.review = DiffReviewModel(directory: directory)
+    }
+
+    /// The folder of the pane in front, else of its workspace: where the
+    /// review, the Diff plane and pull requests look.
+    var focusedDirectory: String? {
+        let snapshot = store.snapshot
+        return focusedPaneId.flatMap({ snapshot.workingDirectory(ofPane: $0) })
+            ?? focusedWorkspace.flatMap({ snapshot.directory(ofWorkspace: $0.workspaceId) })
     }
 
     func runInFocusedPane(_ line: String) {

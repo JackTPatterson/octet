@@ -10,3 +10,6 @@ Spikes/TerminalSpike/*.xcodeproj/
 Vendor/engine/
 .firecrawl/
 octet-plugins/
+
+# Agent worktrees made by Claude Code
+.claude/worktrees/

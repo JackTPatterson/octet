@@ -5,24 +5,28 @@ import SwiftUI
 /// The kinds of plane the right panel can show. A plane is one tab in the
 /// panel's strip; the "+" picker adds them, after T3 Code's surfaces.
 enum PlaneKind: String, Codable, CaseIterable, Identifiable {
-    case overview, git, pullRequest, pullRequests
+    case overview, diff, git, pullRequest, pullRequests, device
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .overview: "Overview"
+        case .diff: "Diff"
         case .git: "Git"
         case .pullRequest: "Pull Request"
         case .pullRequests: "Pull Requests"
+        case .device: "Device"
         }
     }
 
     var icon: String {
         switch self {
         case .overview: "list.bullet.rectangle"
+        case .diff: "doc.diff"
         case .git: "branch"
         case .pullRequest: "pull.request"
         case .pullRequests: "list"
+        case .device: "iphone"
         }
     }
 
@@ -30,23 +34,27 @@ enum PlaneKind: String, Codable, CaseIterable, Identifiable {
     var key: Character {
         switch self {
         case .overview: "o"
+        case .diff: "d"
         case .git: "g"
         case .pullRequest: "p"
         case .pullRequests: "l"
+        case .device: "m"
         }
     }
 
     var detail: String {
         switch self {
         case .overview: "Agents, tasks, todos and plugins for the tab in front"
+        case .diff: "What changed, file by file, with notes for the agent"
         case .git: "Changes, commits and worktrees"
         case .pullRequest: "This branch's pull request"
         case .pullRequests: "The repository's open pull requests"
+        case .device: "Watch and drive an iOS Simulator or Android Emulator"
         }
     }
 
     /// Kinds that are one per panel: adding another shows the one there.
-    var single: Bool { self != .pullRequest }
+    var single: Bool { self != .pullRequest && self != .device }
 }
 
 /// One tab in the panel. Pull requests carry their number (none means the
@@ -55,10 +63,13 @@ struct Plane: Codable, Identifiable, Equatable {
     let id: String
     let kind: PlaneKind
     var number: Int?
+    /// The simulator or emulator a device plane shows; none is its picker.
+    var deviceId: String?
 
-    static func make(_ kind: PlaneKind, number: Int? = nil) -> Plane {
+    static func make(_ kind: PlaneKind, number: Int? = nil, deviceId: String? = nil) -> Plane {
         switch kind {
         case .pullRequest: Plane(id: "pr:" + (number.map(String.init) ?? "branch"), kind: kind, number: number)
+        case .device: Plane(id: "device:" + (deviceId ?? "pick"), kind: kind, deviceId: deviceId)
         default: Plane(id: kind.rawValue, kind: kind)
         }
     }

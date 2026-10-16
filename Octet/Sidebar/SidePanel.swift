@@ -209,7 +209,8 @@ struct SidePanel: View {
                 GitPanel(model: window.git, ui: ui).padding(12)
             }
             .scrollIndicators(.hidden)
-        case .pullRequest, .pullRequests:
+        case .diff: DiffPlane(store: store, ui: ui)
+        case .pullRequest, .pullRequests, .device:
             PlaneUnavailable(kind: plane.kind)
         }
     }

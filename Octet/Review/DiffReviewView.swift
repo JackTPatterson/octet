@@ -376,15 +376,21 @@ struct DiffReviewView: View {
     // MARK: - Sending
 
     /// Agents working in this project, the one in front first.
-    private var agents: [EngineAgent] {
-        let top = AccountProfiles.projectRoot(of: model.directory) ?? model.directory
+    private var agents: [EngineAgent] { Self.agents(in: store, directory: model.directory) }
+
+    private func name(_ agent: EngineAgent) -> String { Self.name(agent, in: store) }
+
+    /// Agents working in the project `directory` is in.
+    static func agents(in store: SessionStore, directory: String) -> [EngineAgent] {
+        let top = AccountProfiles.projectRoot(of: directory) ?? directory
         return store.snapshot.agents.filter { agent in
             guard agent.agent != nil, !agent.isSubagentViewer, let cwd = agent.effectiveCwd else { return false }
             return AccountProfiles.contains(top, cwd) || AccountProfiles.projectRoot(of: cwd) == top
         }
     }
 
-    private func name(_ agent: EngineAgent) -> String {
+    /// "Claude Code in api", or just the brand when its tab has no name.
+    static func name(_ agent: EngineAgent, in store: SessionStore) -> String {
         let brand = AgentBrand.forAgent(agent.agent)?.displayName ?? agent.agent ?? "Agent"
         let tab = agent.tabId.flatMap { id in store.snapshot.tabs.first { $0.tabId == id } }
             .map { TabAutoName.display(label: $0.label, number: $0.number) }
@@ -442,11 +448,13 @@ struct DiffReviewView: View {
 }
 
 /// One line of the diff: numbers, the text, and its note. Click to write one.
-private struct DiffReviewLine: View {
+struct DiffReviewLine: View {
     let line: ReviewDiff.Line
     let path: String
     var text: AttributedString?
     @ObservedObject var model: DiffReviewModel
+    /// Long lines wrap rather than run off, for a narrow pane.
+    var wraps = false
     @State private var hovered = false
 
     var body: some View {
@@ -462,7 +470,7 @@ private struct DiffReviewLine: View {
                         if let text { Text(text) } else { Text(line.text.isEmpty ? " " : line.text) }
                     }
                     .opacity(line.kind == .context ? 0.8 : 1)
-                    .fixedSize(horizontal: true, vertical: false)
+                    .fixedSize(horizontal: !wraps, vertical: false)
                     Spacer(minLength: 0)
                 }
                 .font(Theme.monoFont)

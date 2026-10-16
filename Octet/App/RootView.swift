@@ -478,6 +478,8 @@ struct RootView: View {
                     case "max": ui.sidePanelVisible = true; ui.sidePanelMaximized = true
                     case "pr": ui.showPlane(.pullRequest, number: parts.count > 2 ? Int(parts[2]) : nil)
                     case "prs": ui.showPlane(.pullRequests)
+                    case "diff": ui.showPlane(.diff)
+                    case "device": ui.showPlane(.device)
                     default: break
                     }
                 }
