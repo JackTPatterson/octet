@@ -257,8 +257,7 @@ struct KeyboardShortcutsMenuItem: View {
     var body: some View {
         Button("Keyboard Shortcuts") {
             section = .keyboard
-            NSApp.activate(ignoringOtherApps: true)
-            openSettings()
+            SettingsOpener.open(.keyboard)
         }
     }
 }

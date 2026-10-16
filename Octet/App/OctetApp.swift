@@ -254,7 +254,10 @@ struct OctetCommands: Commands {
             Button("Save All") { KeyWindow.act { $0.editor.saveAll() } }
                 .keyboardShortcut("s", modifiers: [.command, .option])
         }
-        CommandGroup(after: .appSettings) {
+        // Settings is a page in the window, as T3 Code's is.
+        CommandGroup(replacing: .appSettings) {
+            Button("Settings…") { SettingsOpener.open() }
+                .keyboardShortcut(",", modifiers: .command)
             Button(OctetShortcut.marketplace.title) { MarketplaceWindow.open() }
                 .keyboardShortcut(OctetShortcut.marketplace.keyboardShortcut)
             SecureKeyboardEntryToggle()

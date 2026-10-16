@@ -8,10 +8,8 @@ enum PluginSettingsOpener {
     static var opener: (() -> Void)?
 
     static func show(pluginId: String) {
-        UserDefaults.standard.set(SettingsView.Section.plugins.rawValue, forKey: SettingsView.sectionKey)
         PluginSettingsFocus.shared.pluginId = pluginId
-        NSApp.activate(ignoringOtherApps: true)
-        opener?()
+        SettingsOpener.open(.plugins)
     }
 }
 

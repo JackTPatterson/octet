@@ -248,6 +248,19 @@ struct RootView: View {
                     .accessibilityHidden(!ui.sidePanelVisible)
                 }
             }
+            // Settings as a page over the sidebar and content, as T3 Code's.
+            .overlay {
+                if ui.settingsVisible {
+                    SettingsView(store: store, onClose: {
+                        MotionPreferences.shared.perform(.palette, .easeOut(duration: 0.15)) { ui.settingsVisible = false }
+                        OctetTerminalRuntime.focusTerminal()
+                    })
+                    .background(Theme.terminalBackground)
+                    .transition(motion.animates(.palette) ? .opacity : .identity)
+                    .onAppear { DebugSnapshot.overlay("settings", true) }
+                    .onDisappear { DebugSnapshot.overlay("settings", false) }
+                }
+            }
         }
         .overlay(alignment: .topTrailing) {
             AgentBannerStack(center: AgentBannerCenter.shared) { event in
@@ -361,6 +374,7 @@ struct RootView: View {
             MarketplaceWindow.opener = { openWindow(id: MarketplaceWindow.id) }
             HuggingFaceWindow.opener = { openWindow(id: HuggingFaceWindow.id) }
             PluginSettingsOpener.opener = { openSettings() }
+            SettingsOpener.fallback = { openSettings() }
             ClipboardWatcher.shared.start()
             #if DEBUG
             // Verification hook: "conversation" opens a native conversation;
@@ -540,7 +554,7 @@ struct RootView: View {
                 if open.hasPrefix("settings:") {
                     UserDefaults.standard.set(String(open.dropFirst(9)), forKey: SettingsView.sectionKey)
                 }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { openSettings() }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { ui.settingsVisible = true }
             }
             if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "agents" {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) { AgentCenter.shared.showingBoard = true }
@@ -725,7 +739,7 @@ struct RootView: View {
     @ViewBuilder
     /// The maximized panel lies over the terminal; what's drawn on the
     /// terminal from the root would show through it.
-    private var panelCoversTerminal: Bool { ui.sidePanelVisible && ui.sidePanelMaximized }
+    private var panelCoversTerminal: Bool { (ui.sidePanelVisible && ui.sidePanelMaximized) || ui.settingsVisible }
 
     private var promptOverlay: some View {
         ZStack(alignment: .topLeading) {
@@ -1113,6 +1127,9 @@ final class UIState: ObservableObject {
         showPlane(section == .files ? .git : .overview)
         sidePanelJump = SidePanelJump(section: section)
     }
+
+    /// Settings as a page over the window's content, as T3 Code's are.
+    @Published var settingsVisible = false
 
     /// The details card over the terminal (⌘⇧B), after T3 Code's thread details.
     @Published var detailsVisible = UserDefaults.standard.bool(forKey: "octet.detailsVisible") {

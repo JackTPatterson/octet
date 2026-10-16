@@ -1,8 +1,13 @@
 import SwiftUI
 
-/// Octet's Settings window (⌘,), styled like the rest of the app.
+/// Octet's Settings (⌘,), styled like the rest of the app. A page in the
+/// window, as T3 Code's settings are, with `onClose`; on its own, the
+/// Settings window it falls back to with no main window open.
 struct SettingsView: View {
     @ObservedObject var store: SessionStore
+    /// Set when it's a page in the window: its close button and Esc.
+    var onClose: (() -> Void)?
+    private var embedded: Bool { onClose != nil }
     @ObservedObject var motion = MotionPreferences.shared
     @ObservedObject var settings = SettingsStore.shared
     @ObservedObject var integrations = AgentIntegrations.shared
@@ -110,18 +115,10 @@ struct SettingsView: View {
                 }
             }
         }
-        .frame(minWidth: 720, idealWidth: 820, maxWidth: .infinity)
-        .frame(minHeight: 560, maxHeight: .infinity)
-        // Errors and confirmations raised here show here, not behind it.
-        .overlay(alignment: .bottomTrailing) { ToastStack(center: ToastCenter.shared) }
-        .overlay { ConfirmDialog(center: ConfirmCenter.shared) }
+        .modifier(SettingsChrome(embedded: embedded, themeKey: settings.themeKey))
         .onAppear { settings.refreshConfigProblems() }
         .defaultFocus($focus, .sidebar)
-        .ignoresSafeArea()
-        .background(DarkTransparentTitleBar())
-        .id(settings.themeKey)
-        .preferredColorScheme(Theme.colorScheme)
-        .background(ThemedWindow(themeName: settings.themeKey))
+        .onExitCommand { if query.isEmpty { onClose?() } else { query = "" } }
     }
 
     private var sidebar: some View {
@@ -150,7 +147,7 @@ struct SettingsView: View {
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Settings sections")
         }
-        .padding(.top, 44)
+        .padding(.top, embedded ? 12 : 44)
         .frame(width: 220)
         .frame(maxHeight: .infinity)
         .background(Theme.sidebar)
@@ -165,6 +162,9 @@ struct SettingsView: View {
                 .foregroundStyle(Theme.textPrimary)
                 .accessibilityAddTraits(.isHeader)
             Spacer()
+            if let onClose {
+                OctetIconButton(icon: "xmark", help: "Close Settings (Esc)", action: onClose)
+            }
         }
         .font(.system(size: 13, weight: .medium))
         .padding(.horizontal, 24)
@@ -1463,5 +1463,48 @@ private struct SettingsNavRow: View {
         .buttonStyle(.plain)
         .onHover { hovered = $0 }
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+    }
+}
+
+/// The Settings window's own chrome, which a page in the main window
+/// doesn't want: its size, its title bar and theme, and its own toasts and
+/// confirmations (the main window already shows those).
+private struct SettingsChrome: ViewModifier {
+    let embedded: Bool
+    let themeKey: String
+
+    func body(content: Content) -> some View {
+        if embedded {
+            content
+        } else {
+            content
+                .frame(minWidth: 720, idealWidth: 820, maxWidth: .infinity)
+                .frame(minHeight: 560, maxHeight: .infinity)
+                // Errors and confirmations raised here show here, not behind it.
+                .overlay(alignment: .bottomTrailing) { ToastStack(center: ToastCenter.shared) }
+                .overlay { ConfirmDialog(center: ConfirmCenter.shared) }
+                .ignoresSafeArea()
+                .background(DarkTransparentTitleBar())
+                .id(themeKey)
+                .preferredColorScheme(Theme.colorScheme)
+                .background(ThemedWindow(themeName: themeKey))
+        }
+    }
+}
+
+/// Opens Settings as a page in the front window, on a section if given.
+/// Falls back to the Settings window when no main window is open.
+@MainActor
+enum SettingsOpener {
+    static var fallback: (() -> Void)?
+
+    static func open(_ section: SettingsView.Section? = nil) {
+        if let section { UserDefaults.standard.set(section.rawValue, forKey: SettingsView.sectionKey) }
+        NSApp.activate(ignoringOtherApps: true)
+        if let window = WindowRegistry.shared.key ?? WindowRegistry.shared.windows.first {
+            MotionPreferences.shared.perform(.palette, .easeOut(duration: 0.15)) { window.ui.settingsVisible = true }
+        } else {
+            fallback?()
+        }
     }
 }
