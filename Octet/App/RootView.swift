@@ -336,7 +336,7 @@ struct RootView: View {
                     frontTabId: window.displayedFocusedTabId,
                     workspaceId: window.focusedWorkspace?.workspaceId
                 )
-                RecoveryOverlay(recovery: store.recovery, shells: store.shellRecovery)
+                RecoveryOverlay(center: store.recoveryCenter)
             }
             .id(settings.themeKey)
         }
@@ -591,6 +591,14 @@ struct RootView: View {
             if let open = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], open.hasPrefix("agent-updates-preview") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                     AgentUpdateCenter.shared.showPreview(stage: open.split(separator: ":").dropFirst().first.map(String.init))
+                }
+            }
+            // "recovery-preview" shows the recovery panel with sample rows
+            // (":restoring", ":done", ":history" or ":empty" for that state).
+            // Restoring them only pretends: nothing is run or reopened.
+            if let open = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], open.hasPrefix("recovery-preview") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    store.recoveryCenter.showPreview(stage: open.split(separator: ":").dropFirst().first.map(String.init))
                 }
             }
             // "status-preview" fills the status bar with sample items;
@@ -1457,27 +1465,24 @@ private struct TitleBar: View {
     }
 }
 
-/// Shows the recovery panel under the title bar while sessions are offered.
+/// Shows the recovery panel in the window's corner while it's presented.
 private struct RecoveryOverlay: View {
-    @ObservedObject var recovery: AgentRecoveryController
-    @ObservedObject var shells: ShellRecoveryController
+    @ObservedObject var center: RecoveryCenter
     @ObservedObject private var motion = MotionPreferences.shared
-
-    private var isEmpty: Bool { recovery.offered.isEmpty && shells.offered.isEmpty }
 
     var body: some View {
         ZStack {
-            if !isEmpty {
-                RecoveryPanel(recovery: recovery, shells: shells)
+            if center.isPresented {
+                RecoveryPanel(center: center)
                     .padding([.trailing, .bottom], 12)
                     .transition(motion.animates(.palette)
-                        ? .opacity.combined(with: .move(edge: .bottom))
+                        ? .opacity.combined(with: .offset(y: 8))
                         : .identity)
             }
         }
-        .animation(motion.animation(.palette, .smooth(duration: 0.18)), value: isEmpty)
-        .onChange(of: isEmpty) { _, empty in
-            DebugSnapshot.overlay("recovery", !empty)
+        .animation(motion.animation(.palette, .smooth(duration: 0.18)), value: center.isPresented)
+        .onChange(of: center.isPresented, initial: true) { _, shown in
+            DebugSnapshot.overlay("recovery", shown)
         }
     }
 }

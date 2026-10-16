@@ -958,7 +958,7 @@ private struct AgentSettings: View {
             SettingsDivider()
             SettingsRow(
                 title: "Offer to recover lost sessions",
-                detail: "Octet records every agent's session, and every terminal that's running something with its recent output. If the terminal server stops and they end with it, Octet lists them so you can bring them back. A command is put back on the prompt, never rerun.",
+                detail: "Octet records every agent's session, and every terminal that's running something with its recent output. If the terminal server stops and they end with it, Octet lists them so you can bring them back. A command is put back on the prompt, never rerun. File › Recover Sessions… reopens the list.",
                 setting: \.offerRecovery
             ) {
                 Toggle("Offer to recover lost sessions", isOn: $settings.values.offerRecovery).labelsHidden().toggleStyle(OctetSwitchStyle())

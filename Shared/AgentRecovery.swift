@@ -103,13 +103,14 @@ enum AgentRecovery {
     ) -> [AgentSessionRecord] {
         let liveTerminals = Set(snapshot.agents.compactMap(\.terminalId))
         let live = liveSessionIds.union(snapshot.agents.compactMap(\.sessionReference))
-        return journal.filter { record in
+        // Sessions Octet can't resume are kept: the panel says so rather
+        // than leaving them to vanish without a word.
+        return RecoveryList.dedupe(journal.filter { record in
             !record.handled
                 && record.lastSeen >= lastObserved.addingTimeInterval(-2)
                 && !liveTerminals.contains(record.terminalId)
-                && record.resumeCommand != nil
                 && !(record.sessionId.map(live.contains) ?? false)
-        }
+        })
     }
 
     /// `layout.apply` request that reopens a session in its workspace: the
@@ -138,12 +139,20 @@ enum AgentRecovery {
     }
 
     /// Past sessions that aren't running now, for recovering by hand.
-    static func history(journal: [AgentSessionRecord], current snapshot: EngineSnapshot) -> [AgentSessionRecord] {
-        let liveTerminals = Set(snapshot.agents.compactMap(\.terminalId))
+    /// `liveTerminals` adds terminals running out of sight (a closed tab
+    /// kept running), which aren't in `snapshot`.
+    static func history(journal: [AgentSessionRecord], current snapshot: EngineSnapshot,
+                        liveTerminals hidden: Set<String> = []) -> [AgentSessionRecord] {
+        let liveTerminals = Set(snapshot.agents.compactMap(\.terminalId)).union(hidden)
+        // A session running again in another terminal is still running: its
+        // old record mustn't offer a second copy of it.
+        let liveSessions = Set(snapshot.agents.compactMap(\.sessionReference))
+            .union(journal.filter { liveTerminals.contains($0.terminalId) }.compactMap(\.sessionId))
         var seen = Set<String>()
         return journal.filter { record in
             guard let id = record.sessionId, record.resumeCommand != nil,
-                  !liveTerminals.contains(record.terminalId), seen.insert(id).inserted else { return false }
+                  !liveTerminals.contains(record.terminalId), !liveSessions.contains(id),
+                  seen.insert(id).inserted else { return false }
             return true
         }
     }

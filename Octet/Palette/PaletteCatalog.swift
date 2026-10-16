@@ -395,9 +395,14 @@ enum PaletteCatalog {
                 window.reopenClosedTab(record)
             })
         }
-        items.append(action("recoverSessions", "Recover Agent Sessions…", "arrow.counterclockwise.circle",
-                            keywords: ["resume", "restore", "claude", "codex", "crash", "restart", "history"]) {
-            store.recovery.showHistory()
+        // What a crash took, when its panel was dismissed; else recent agent
+        // sessions that aren't running.
+        items.append(action("recoverSessions",
+                            store.recoveryCenter.hasSetAside ? "Recover Lost Sessions…" : "Recover Agent Sessions…",
+                            "arrow.counterclockwise.circle",
+                            keywords: ["resume", "restore", "recover", "recovery", "claude", "codex", "terminal",
+                                       "crash", "restart", "history", "lost"]) {
+            store.recoveryCenter.reopen()
         })
         if !store.idleWorkspaces.isEmpty {
             let count = store.idleWorkspaces.count

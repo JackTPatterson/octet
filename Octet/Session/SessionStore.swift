@@ -140,6 +140,8 @@ final class SessionStore: ObservableObject {
     let closedTabs: ClosedTabsController
     /// Terminals journaled for when the session server dies.
     let shellRecovery: ShellRecoveryController
+    /// The recovery panel: what both of those offer back, and how it stands.
+    let recoveryCenter: RecoveryCenter
     /// How full each agent's context is, refreshed from its session file.
     private(set) lazy var usageTracker = AgentUsageTracker(store: self)
     private let resolver = ProjectGrouping.CachedResolver()
@@ -152,6 +154,7 @@ final class SessionStore: ObservableObject {
         recovery = AgentRecoveryController(client: client)
         closedTabs = ClosedTabsController(client: client)
         shellRecovery = ShellRecoveryController(client: client)
+        recoveryCenter = RecoveryCenter(agents: recovery, shells: shellRecovery)
         let defaults = UserDefaults.standard
         if let raw = defaults.dictionary(forKey: Self.stampsKey) as? [String: Double] {
             activity = WorkspaceActivity(stamps: raw.mapValues { Date(timeIntervalSince1970: $0) })
@@ -566,7 +569,8 @@ final class SessionStore: ObservableObject {
                     AccountProfiles.noteDirectories(snapshot)
                     CheckpointRecorder.shared.observe(snapshot)
                     let visible = ClosedTabs.visible(snapshot)
-                    self.recovery.observe(visible, inferred: inferred ?? [:])
+                    self.recovery.observe(visible, inferred: inferred ?? [:],
+                                          allTerminals: Set(snapshot.agents.compactMap(\.terminalId)))
                     self.shellRecovery.observe(visible)
                     self.apply(visible, branches: branches ?? [:], locations: locations ?? [:])
                     PromptQueueCenter.shared.observe(visible)

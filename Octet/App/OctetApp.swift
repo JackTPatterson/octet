@@ -255,6 +255,9 @@ struct OctetCommands: Commands {
             Button(OctetShortcut.reopenClosedTab.title) { KeyWindow.act { $0.reopenClosedTab() } }
                 .keyboardShortcut(OctetShortcut.reopenClosedTab.keyboardShortcut)
             RecentlyClosedMenu(closed: store.closedTabs)
+            // Brings back what a crash took after its panel was dismissed,
+            // else recent agent sessions that aren't running.
+            Button("Recover Sessions…") { store.recoveryCenter.reopen() }
         }
         CommandGroup(replacing: .saveItem) {
             Button(OctetShortcut.saveFile.title) { KeyWindow.act { $0.editor.save() } }
