@@ -11,21 +11,16 @@ struct CodexDetail: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(agent.name).font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                    Text("\(stateLabel) · \(abbreviateHome(agent.cwd))")
-                        .font(Theme.captionFont).foregroundStyle(Theme.textTertiary).lineLimit(1)
-                }
-                Spacer(minLength: 8)
-                OctetButton(title: "Resume in Terminal", icon: "terminal", kind: .secondary, compact: true) {
+            HubDetailHeader(vendor: "codex", title: agent.name, status: AgentsHubList.status(agent),
+                            crumbs: ["Background", abbreviateHome(agent.cwd)]) {
+                OctetButton(title: "Resume in Terminal", icon: "terminal", kind: .primary, compact: true) {
                     window.applyLayout(CodexAgentsStore.resumeLayout(agent).merging(
                         workspaceId.map { ["workspace_id": $0] } ?? [:]) { $1 },
                         failure: "Couldn't open \(agent.name) in a terminal")
                     AgentCenter.shared.setBoard(nil, in: window.focusedWorkspace?.workspaceId)
                 }
-                OctetButton(title: "Archive", kind: .ghost, compact: true) { CodexAgentsStore.shared.archive(agent) }
-                OctetButton(title: "Delete", kind: .ghost, compact: true) {
+                OctetButton(title: "Archive", kind: .secondary, compact: true) { CodexAgentsStore.shared.archive(agent) }
+                OctetIconButton(icon: "trash", help: "Delete") {
                     ConfirmCenter.shared.ask(
                         title: "Delete \(agent.name)?",
                         message: "Codex removes this session for good. This can't be undone.",
@@ -33,13 +28,11 @@ struct CodexDetail: View {
                     ) { _ in CodexAgentsStore.shared.delete(agent) }
                 }
             }
-            .padding(.horizontal, 16)
-            .frame(height: 52)
-            .background(Theme.chrome)
             Rectangle().fill(Theme.divider).frame(height: 1)
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 12) {
+                        HubTranscriptSummary(conversation: conversation, cwd: agent.cwd)
                         ForEach(conversation.items.filter { item in
                             if case .thinking(let text) = item.kind { return !text.isEmpty }
                             return true
@@ -48,7 +41,8 @@ struct CodexDetail: View {
                         }
                         Color.clear.frame(height: 1).id("end")
                     }
-                    .padding(20)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 20)
                 }
                 .octetScrollIndicators()
                 .onChange(of: conversation.items.count) { _, _ in proxy.scrollTo("end", anchor: .bottom) }
@@ -59,7 +53,7 @@ struct CodexDetail: View {
                     .disabled(reply.trimmingCharacters(in: .whitespaces).isEmpty)
             }
             .padding(12)
-            .background(Theme.chrome)
+            .overlay(alignment: .top) { Rectangle().fill(Theme.divider).frame(height: 1) }
         }
         .onAppear { load(); startPolling() }
         .onDisappear { timer?.invalidate() }

@@ -220,6 +220,29 @@ extension OctetCollapsible where Trailing == EmptyView {
     }
 }
 
+// MARK: - Shelf header
+
+/// T3 Code's shelf header: an icon, a 12pt label, a count, then a hairline
+/// to the edge, so sections read as shelves rather than boxed cards.
+struct OctetShelfHeader: View {
+    let icon: String
+    let title: String
+    let count: Int
+    var tint: Color?
+
+    var body: some View {
+        HStack(spacing: 6) {
+            OctetIcon(icon, size: 12).foregroundStyle(tint ?? Theme.textSecondary)
+            Text(title).font(Theme.interfaceFont(12, weight: .medium))
+            Text("\(count)").font(Theme.captionFont.monospacedDigit()).foregroundStyle(Theme.textTertiary)
+            Rectangle().fill(Theme.divider).frame(height: 1).padding(.leading, 4)
+        }
+        .foregroundStyle(Theme.textSecondary)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
+    }
+}
+
 // MARK: - Avatars
 
 /// A person's GitHub avatar, round, with their initial until it loads.

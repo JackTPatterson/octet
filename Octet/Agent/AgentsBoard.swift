@@ -13,24 +13,13 @@ struct AgentDetail: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(agent.name).font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                    Text("\(stateLabel) · \(abbreviateHome(agent.cwd))")
-                        .font(Theme.captionFont)
-                        .foregroundStyle(Theme.textTertiary)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 8)
-                actions
-            }
-            .padding(.horizontal, 16)
-            .frame(height: 52)
-            .background(Theme.chrome)
+            HubDetailHeader(vendor: "claude", title: agent.name, status: AgentsHubList.status(agent),
+                            crumbs: ["Background", abbreviateHome(agent.cwd)]) { actions }
             Rectangle().fill(Theme.divider).frame(height: 1)
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 12) {
+                        HubTranscriptSummary(conversation: conversation, cwd: agent.cwd)
                         if logMissing { missingLogNote }
                         ForEach(conversation.items.filter { item in
                             if case .thinking(let text) = item.kind { return !text.isEmpty }
@@ -42,9 +31,10 @@ struct AgentDetail: View {
                         }
                         Color.clear.frame(height: 1).id("end")
                     }
-                    .padding(20)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 20)
                 }
-                .scrollIndicators(.hidden)
+                .octetScrollIndicators()
                 .onChange(of: conversation.items.count) { _, _ in proxy.scrollTo("end", anchor: .bottom) }
             }
         }
@@ -79,9 +69,9 @@ struct AgentDetail: View {
                 AgentCenter.shared.setBoard(nil, in: window.focusedWorkspace?.workspaceId)
             }
             if agent.state == .working || agent.state == .needsInput {
-                OctetButton(title: "Stop", kind: .secondary, compact: true) { AgentsStore.shared.stop(agent) }
+                OctetButton(title: "Stop", icon: "pause.circle", kind: .secondary, compact: true) { AgentsStore.shared.stop(agent) }
             }
-            OctetButton(title: "Remove", kind: .ghost, compact: true) {
+            OctetIconButton(icon: "trash", help: "Remove") {
                 ConfirmCenter.shared.ask(
                     title: "Remove \(agent.name)?",
                     message: "It leaves the agents list. The conversation stays on disk and can still be resumed.",
@@ -104,18 +94,9 @@ struct AgentDetail: View {
 
     /// Why the transcript is short, when only the job's timeline is left.
     private var missingLogNote: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("The full conversation is no longer on disk")
-                .font(Theme.uiFontMedium)
-                .foregroundStyle(Theme.textSecondary)
-            Text("Claude Code deletes conversation logs after its cleanup period (30 days unless cleanupPeriodDays in ~/.claude/settings.json says otherwise), so it can't be brought back. Below is what the job kept of each step.")
-                .font(Theme.captionFont)
-                .foregroundStyle(Theme.textTertiary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: Theme.rowRadius).fill(Theme.card))
+        HubCallout(icon: "info.circle.fill", title: "The full conversation is no longer on disk",
+                   message: "Claude Code deletes conversation logs after its cleanup period (30 days unless cleanupPeriodDays in ~/.claude/settings.json says otherwise), so it can't be brought back. Below is what the job kept of each step.",
+                   tint: Theme.textTertiary)
     }
 
     private func load() {
