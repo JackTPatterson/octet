@@ -97,24 +97,22 @@ struct DeviceToolsDrawer: View {
                                items: [(false, "Light"), (true, "Dark")])
             }
             labeled("Text Size") {
-                Menu(model.textSize?.title ?? "Default") {
-                    ForEach(DeviceTextSize.allCases) { size in
-                        Button(size.title) { model.setTextSize(size) }
-                    }
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-                .font(Theme.uiFont)
+                // "Default" until a size is chosen; the device has no way back to it.
+                OctetSelect(selection: Binding(get: { model.textSize }, set: { if let size = $0 { model.setTextSize(size) } }),
+                            options: (model.textSize == nil ? [(DeviceTextSize?.none, "Default")] : [])
+                                + DeviceTextSize.allCases.map { (Optional($0), $0.title) })
+                    .accessibilityLabel("Text Size")
             }
             if ios {
-                Toggle("Increase Contrast", isOn: Binding(get: { increaseContrast }, set: {
-                    increaseContrast = $0
-                    model.setIncreaseContrast($0)
-                }))
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .font(Theme.uiFont)
-                .foregroundStyle(Theme.textSecondary)
+                HStack(spacing: 8) {
+                    Text("Increase Contrast").font(Theme.uiFont).foregroundStyle(Theme.textSecondary)
+                    Toggle("Increase Contrast", isOn: Binding(get: { increaseContrast }, set: {
+                        increaseContrast = $0
+                        model.setIncreaseContrast($0)
+                    }))
+                    .labelsHidden()
+                    .toggleStyle(OctetSwitchStyle())
+                }
             }
         }
         .padding(.bottom, 6)
@@ -157,14 +155,9 @@ struct DeviceToolsDrawer: View {
         VStack(alignment: .leading, spacing: 8) {
             OctetTextField(placeholder: ios ? "Bundle ID" : "Package name", text: $permissionApp)
             labeled("Permission") {
-                Menu(permission.isEmpty ? "Choose" : permission) {
-                    ForEach(permissions, id: \.self) { item in
-                        Button(item) { permission = item }
-                    }
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-                .font(Theme.uiFont)
+                OctetSelect(selection: $permission,
+                            options: (permission.isEmpty ? [("", "Choose")] : []) + permissions.map { ($0, $0) })
+                    .accessibilityLabel("Permission")
             }
             HStack(spacing: 6) {
                 OctetButton(title: "Grant", compact: true) { model.permission(.grant, service: permission, app: permissionApp) }
