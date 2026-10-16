@@ -40,7 +40,10 @@ private struct PullRequestComposer: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            OctetSegmented(selection: $mode, items: [(.comment, "Comment"), (.review, "Review")])
+            // Line comments held for the review count on its tab, so you
+            // see they'll go with it.
+            let pending = model.pendingComments.count
+            OctetSegmented(selection: $mode, items: [(.comment, "Comment"), (.review, pending > 0 ? "Review (\(pending))" : "Review")])
             switch mode {
             case .comment: comment
             case .review: review
@@ -49,6 +52,8 @@ private struct PullRequestComposer: View {
         .padding(12)
         .frame(width: 360)
         .background(Theme.card)
+        // Line comments waiting means a review is what you came to send.
+        .onAppear { if !model.pendingComments.isEmpty { mode = .review } }
     }
 
     private var comment: some View {
@@ -83,6 +88,12 @@ private struct PullRequestComposer: View {
                                       ? "Summarize your review (required)" : "Summarize your review",
                                   text: $model.reviewDraft)
             HStack {
+                let pending = model.pendingComments.count
+                if pending > 0 {
+                    Text("With \(pending) line \(pending == 1 ? "comment" : "comments")")
+                        .font(Theme.captionFont)
+                        .foregroundStyle(Theme.textTertiary)
+                }
                 Spacer()
                 OctetButton(title: model.busy.contains("review") ? "Submitting…" : "Submit Review",
                             kind: .primary, compact: true) {
