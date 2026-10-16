@@ -446,12 +446,20 @@ private struct UsageAreaChart: View {
                     .foregroundStyle(Theme.textTertiary.opacity(0.6))
                     .lineStyle(StrokeStyle(lineWidth: 1))
                     .annotation(position: .top, spacing: 4,
-                                overflowResolution: .init(x: .fit(to: .chart), y: .disabled)) { tooltip(bucket) }
+                                overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))) { tooltip(bucket) }
             }
         }
         .chartForegroundStyleScale(domain: providers, range: providers.map(UsagePalette.color))
         .chartLegend(.hidden)
         .chartXSelection(value: $hovered)
+        #if DEBUG
+        // "usage:…:peak" hovers the tallest bucket, to check the tooltip
+        // stays inside the chart.
+        .onAppear {
+            guard ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"]?.hasSuffix(":peak") == true else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { hovered = points.max { $0.value < $1.value }?.date }
+        }
+        #endif
         .chartYAxis {
             AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { value in
                 AxisGridLine(stroke: StrokeStyle(lineWidth: 1)).foregroundStyle(Theme.divider)
