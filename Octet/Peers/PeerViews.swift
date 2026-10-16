@@ -194,41 +194,6 @@ struct PeerRowMenu<Content: View>: View {
     }
 }
 
-/// A multi-line field drawn like `OctetTextField`, for a task.
-struct PeerTextArea: View {
-    let placeholder: String
-    @Binding var text: String
-    var lines: ClosedRange<Int> = 3...6
-    @FocusState private var focused: Bool
-
-    var body: some View {
-        // The placeholder is drawn under the field, as OctetTextField does:
-        // a plain field's own prompt ignores the theme's colours.
-        ZStack(alignment: .topLeading) {
-            if text.isEmpty {
-                Text(placeholder)
-                    .font(Theme.uiFont)
-                    .foregroundStyle(Theme.textTertiary)
-                    .allowsHitTesting(false)
-            }
-            TextField("", text: $text, axis: .vertical)
-                .lineLimit(lines)
-                .textFieldStyle(.plain)
-                .font(Theme.uiFont)
-                .foregroundStyle(Theme.textPrimary)
-                .focused($focused)
-        }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(Theme.terminalBackground.opacity(0.7))
-            .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius)
-                .strokeBorder(focused ? Theme.accent.opacity(0.85) : Theme.border, lineWidth: focused ? 1.5 : 1))
-            .clipShape(RoundedRectangle(cornerRadius: Theme.controlRadius))
-            .animation(.easeOut(duration: 0.12), value: focused)
-            .accessibilityLabel(placeholder)
-    }
-}
-
 /// A quiet heading over a list in the Peer window.
 struct PeerSectionHeader<Trailing: View>: View {
     let title: String

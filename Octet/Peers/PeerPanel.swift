@@ -312,7 +312,7 @@ struct PeerPanel: View {
                 Text("Folder on \(machine)").font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
                 OctetTextField(placeholder: "~/code/app", text: $taskFolder)
             }
-            PeerTextArea(placeholder: "What should it do?", text: $taskText)
+            OctetTextEditor(placeholder: "What should it do?", text: $taskText, minHeight: 64, maxHeight: 140)
             if let error = model.taskErrors[machine] {
                 Text(error).font(Theme.captionFont).foregroundStyle(Theme.danger).fixedSize(horizontal: false, vertical: true)
             }
