@@ -321,12 +321,7 @@ private struct ProjectLocation: View {
                     Text("±")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(Theme.textTertiary)
-                    if changes.added > 0 {
-                        Text("+\(changes.added)").foregroundStyle(Color(hex: AgentStateColor.done))
-                    }
-                    if changes.removed > 0 {
-                        Text("-\(changes.removed)").foregroundStyle(Color(hex: AgentStateColor.blocked))
-                    }
+                    DiffStatLabel(added: changes.added, removed: changes.removed)
                 }
                 .font(Theme.captionFont.monospacedDigit())
                 .help("Working tree changes")
@@ -1053,8 +1048,7 @@ struct ItemRow: View, Equatable {
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 6))
         case .text(let text):
-            MarkdownView(text: text)
-                .contextMenu { MessageCopyMenu(text: text) }
+            AssistantMessage(text: text)
         case .thinking(let text):
             Disclosure(title: "Thinking", tint: Theme.textTertiary) {
                 Text(text)
@@ -2050,6 +2044,7 @@ private struct Composer: View {
                 OctetButton(title: "", icon: "paperclip", kind: .ghost, compact: true) { pickImages() }
                     .help("Attach images (or paste or drop them here)")
                     .accessibilityLabel("Attach images")
+                PromptStashButton(text: $text)
                 MCPProblemChip(session: session)
                 Spacer()
                 let empty = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty
@@ -2683,5 +2678,25 @@ private struct EffortControl: View {
         .help(supported ? "How hard Claude thinks. Applies at once." : "This model has no effort setting.")
         .accessibilityLabel("Effort")
         .accessibilityValue(session.effort ?? "default")
+    }
+}
+
+/// An agent's message, with a copy button that shows on hover.
+private struct AssistantMessage: View {
+    let text: String
+    @State private var hovered = false
+
+    var body: some View {
+        MarkdownView(text: text)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .overlay(alignment: .topTrailing) {
+                if hovered {
+                    CopyMessageButton(text: text)
+                        .offset(y: -4)
+                        .transition(.opacity)
+                }
+            }
+            .onHover { inside in withAnimation(.easeOut(duration: 0.12)) { hovered = inside } }
+            .contextMenu { MessageCopyMenu(text: text) }
     }
 }

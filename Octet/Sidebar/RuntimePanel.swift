@@ -352,7 +352,8 @@ struct RuntimePanel: View {
                             accentSeed: Self.seed(runtime.id),
                             agentID: runtime.kind == .agent ? "claude" : nil,
                             modelName: runtime.kind == .agent ? session.map(modelName(for:)) : nil,
-                            paneId: paneId, sessionId: session?.id, autoReveal: true)
+                            paneId: paneId, sessionId: session?.id, autoReveal: true,
+                            liveSince: carried || runtime.kind == .monitor ? nil : runtime.startedAt)
     }
 
     private func activeMonitors(in session: AgentSession) -> [RuntimeEntry] {
@@ -478,7 +479,8 @@ struct RuntimePanel: View {
                                 prompt: prompt, output: output, process: process,
                                 depth: depth, accentSeed: Self.seed(item.id),
                                 agentID: session.engine.agent, modelName: modelName(for: session),
-                                paneId: nil, sessionId: session.id, autoReveal: true)
+                                paneId: nil, sessionId: session.id, autoReveal: true,
+                                liveSince: call.result == nil ? item.createdAt : nil)
         }
     }
 
@@ -560,6 +562,9 @@ private struct RuntimeEntry: Identifiable {
     /// Discovery can add account-wide background work to the requested panel,
     /// but only a child/event created by this tab's agent may open it.
     var autoReveal = false
+    /// Still running since then: the row counts up each second in place of
+    /// `detail`.
+    var liveSince: Date? = nil
 
     var tint: Color {
         guard kind == .agent else {
@@ -629,7 +634,10 @@ private struct RuntimeRow: View {
                                 .lineLimit(1)
                         }
                         Spacer(minLength: 4)
-                        Text(entry.detail).font(Theme.captionFont).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                        Group {
+                            if let since = entry.liveSince { ElapsedLabel(since: since) } else { Text(entry.detail) }
+                        }
+                        .font(Theme.captionFont).foregroundStyle(Theme.textTertiary).lineLimit(1)
                     }
                     Text(entry.location)
                         .font(Theme.captionFont)
