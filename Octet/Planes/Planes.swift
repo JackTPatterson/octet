@@ -108,18 +108,28 @@ struct PlaneBadge: Equatable {
 struct PlaneStrip: View {
     @ObservedObject var ui: UIState
     @State private var adding = false
+    @Namespace private var selection
 
     var body: some View {
         HStack(spacing: 4) {
             ScrollViewReader { proxy in
             ScrollView(.horizontal) {
-                HStack(spacing: 4) {
+                HStack(spacing: 0) {
                     ForEach(ui.planes) { plane in
                         PlaneChip(plane: plane, badge: ui.planeBadges[plane.id],
-                                  active: ui.activePlane?.id == plane.id, ui: ui)
+                                  active: ui.activePlane?.id == plane.id, ui: ui, selection: selection)
                             .id(plane.id)
                     }
-                    OctetIconButton(icon: "plus", help: "Add a plane") { adding.toggle() }
+                    // The tab bar's own plus.
+                    Button { adding.toggle() } label: {
+                        OctetIcon("plus", size: 15)
+                            .foregroundStyle(Theme.textSecondary)
+                            .frame(width: 30, height: 24)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Add a plane")
+                    .accessibilityLabel("Add a plane")
                         .popover(isPresented: $adding, arrowEdge: .bottom) {
                             PlanePicker(ui: ui) { adding = false }
                                 .padding(6)
@@ -127,7 +137,7 @@ struct PlaneStrip: View {
                                 .background(Theme.chrome)
                         }
                 }
-                .padding(.vertical, 2)
+                .frame(maxHeight: .infinity)
             }
             .scrollIndicators(.never)
             // The plane in front is always in view, as a new one is added.
@@ -154,56 +164,70 @@ struct PlaneStrip: View {
                 ui.sidePanelVisible = false
             }
         }
-        .padding(.leading, 8)
         .padding(.trailing, 6)
         .frame(height: Theme.tabBarHeight)
     }
 }
 
-/// One plane's tab: its mark and name, filled while it's in front. The
-/// mark turns into a close button under the pointer, as in T3 Code.
+/// One plane's tab, in Octet's own tab style like the tab bar's: square
+/// edges, the plane in front on the terminal's background with a line along
+/// its top, dividers between, and a close button at the right.
 private struct PlaneChip: View {
     let plane: Plane
     let badge: PlaneBadge?
     let active: Bool
     @ObservedObject var ui: UIState
+    let selection: Namespace.ID
     @State private var hovered = false
     @State private var closeHovered = false
+    @ObservedObject private var motion = MotionPreferences.shared
 
     var body: some View {
-        HStack(spacing: 3) {
+        HStack(spacing: 6) {
+            OctetIcon(badge?.icon ?? plane.kind.icon, size: 12)
+                .foregroundStyle(badge?.tint ?? (active ? Theme.textPrimary : Theme.textSecondary))
+            Text(title)
+                .font(Theme.uiFont)
+                .fontWeight(active ? .medium : .regular)
+                .foregroundStyle(active ? Theme.textPrimary : Theme.textSecondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 4)
             Button { ui.closePlane(plane.id) } label: {
-                ZStack {
-                    OctetIcon(badge?.icon ?? plane.kind.icon, size: 12)
-                        .foregroundStyle(badge?.tint ?? (active || hovered ? Theme.textPrimary : Theme.textSecondary))
-                        .opacity(hovered ? 0 : 1)
-                    OctetIcon("xmark", size: 11)
-                        .foregroundStyle(Theme.textPrimary)
-                        .opacity(hovered ? 1 : 0)
-                }
-                .frame(width: 16, height: 16)
-                .background(RoundedRectangle(cornerRadius: 4).fill(closeHovered ? Theme.cardSelected : .clear))
-                .contentShape(Rectangle())
+                OctetIcon("xmark", size: 15)
+                    .foregroundStyle(closeHovered ? Theme.textPrimary : Theme.textSecondary)
+                    .frame(width: 18, height: 18)
+                    .background(closeHovered ? Theme.cardSelected : Color.clear)
+                    .clipShape(RoundedRectangle(cornerRadius: 3))
             }
             .buttonStyle(.plain)
             .onHover { closeHovered = $0 }
+            .opacity(hovered || active ? 1 : 0)
             .help("Close \(title)")
             .accessibilityLabel("Close \(title)")
-            Text(title)
-                .font(Theme.uiFont)
-                .foregroundStyle(active || hovered ? Theme.textPrimary : Theme.textSecondary)
-                .lineLimit(1)
-                .truncationMode(.tail)
         }
-        .padding(.leading, 4)
-        .padding(.trailing, 8)
-        .frame(height: 24)
-        .frame(maxWidth: 150)
-        .background(RoundedRectangle(cornerRadius: 6)
-            .fill(active ? Theme.cardSelected : hovered ? Theme.hover : .clear))
+        .padding(.leading, 12)
+        .padding(.trailing, 6)
+        .frame(width: 150)
+        .frame(maxHeight: .infinity)
+        .background {
+            ZStack {
+                if hovered && !active { Theme.hover }
+                // One selection surface slides between the tabs.
+                if active {
+                    ZStack(alignment: .top) {
+                        Theme.terminalBackground
+                        Rectangle().fill(Color.white.opacity(0.9)).frame(height: 2)
+                    }
+                    .matchedGeometryEffect(id: "selectedPlane", in: selection)
+                }
+            }
+            .animation(motion.animation(.tabs, .easeOut(duration: 0.12)), value: hovered)
+        }
+        .overlay(alignment: .trailing) { Rectangle().fill(Theme.divider).frame(width: 1) }
         .overlay { MiddleClickCatcher { ui.closePlane(plane.id) } }
         .contentShape(Rectangle())
-        .onTapGesture { MotionPreferences.shared.perform(.sidebar) { ui.activePlaneId = plane.id } }
+        .onTapGesture { MotionPreferences.shared.perform(.tabs) { ui.activePlaneId = plane.id } }
         .onHover { hovered = $0 }
         .help(badge?.help ?? title)
         .contextMenu {
@@ -227,7 +251,7 @@ private struct PlaneChip: View {
             _ = providers.first?.loadObject(ofClass: NSString.self) { object, _ in
                 guard let moved = object as? String else { return }
                 DispatchQueue.main.async {
-                    MotionPreferences.shared.perform(.sidebar) { ui.movePlane(moved, before: plane.id) }
+                    MotionPreferences.shared.perform(.tabs) { ui.movePlane(moved, before: plane.id) }
                 }
             }
             return true

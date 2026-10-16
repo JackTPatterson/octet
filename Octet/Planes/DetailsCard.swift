@@ -71,7 +71,9 @@ struct DetailsCard: View {
     private func folderRow(_ directory: String) -> some View {
         let root = AccountProfiles.projectRoot(of: directory) ?? directory
         Button {
-            MotionPreferences.shared.perform(.sidebar, .easeOut(duration: 0.15)) { folderOpen.toggle() }
+            // A spring on the card's height and a fade on the rows: the card
+            // grows to them rather than the rows sliding in from above.
+            MotionPreferences.shared.perform(.sidebar, .spring(response: 0.32, dampingFraction: 0.86)) { folderOpen.toggle() }
         } label: {
             DetailsRowLabel(icon: "folder", title: (root as NSString).lastPathComponent,
                             detail: directory == root ? nil : String(directory.dropFirst(root.count + 1))) {
@@ -99,7 +101,7 @@ struct DetailsCard: View {
                 }
             }
             .padding(.leading, 18)
-            .transition(.opacity.combined(with: .move(edge: .top)))
+            .transition(.opacity)
         }
     }
 

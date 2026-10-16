@@ -406,8 +406,12 @@ private struct DropdownLayer: View {
                         }
                 }
                 .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
+                // Opens like T3 Code's popovers: from a touch smaller, fading in.
+                .transition(MotionPreferences.shared.animates(.palette)
+                    ? .opacity.combined(with: .scale(scale: 0.97, anchor: .top)) : .identity)
             }
         }
+        .animation(MotionPreferences.shared.animation(.palette, .easeOut(duration: 0.15)), value: state.openId)
     }
 }
 
