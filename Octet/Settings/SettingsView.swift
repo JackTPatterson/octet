@@ -84,7 +84,7 @@ struct SettingsView: View {
                             case .agents: AgentSettings(settings: settings, integrations: integrations)
                             case .plugins: PluginSettings()
                             case .motion: MotionSettings(motion: motion)
-                            case .keyboard: KeyboardSettings()
+                            case .keyboard: KeyboardSettings(settings: settings)
                             case .advanced: AdvancedSettings(store: store, settings: settings)
                             }
                         }
@@ -1120,22 +1120,6 @@ private struct MotionSettings: View {
     }
 }
 
-/// Lists `OctetShortcut.groups`, the values the menus bind, so this page
-/// always matches the menu bar.
-private struct KeyboardSettings: View {
-    var body: some View {
-        ForEach(OctetShortcut.groups, id: \.title) { group in
-            SettingsGroup(title: group.title) {
-                ForEach(Array(group.shortcuts.enumerated()), id: \.element.id) { index, shortcut in
-                    if index > 0 { SettingsDivider() }
-                    SettingsRow(title: shortcut.title) { Keycap(text: shortcut.display) }
-                        .accessibilityElement(children: .combine)
-                }
-            }
-        }
-    }
-}
-
 private struct AdvancedSettings: View {
     @ObservedObject var store: SessionStore
     @ObservedObject var settings: SettingsStore
@@ -1193,7 +1177,7 @@ private struct AdvancedSettings: View {
                 Button("Reset…") {
                     ConfirmCenter.shared.ask(
                         title: "Restore default settings?",
-                        message: "Appearance, terminal, agent, and advanced settings go back to their defaults.",
+                        message: "Appearance, terminal, agent, keyboard, and advanced settings go back to their defaults.",
                         confirmTitle: "Reset",
                         destructive: true
                     ) { _ in
@@ -1297,13 +1281,26 @@ struct SettingsGroup<Content: View>: View {
 struct SettingsRow<Control: View>: View {
     let title: String
     var detail: String?
+    /// A small outline label after the title, such as "Custom" on a
+    /// shortcut that differs from its default.
+    var badge: String?
     @ViewBuilder let control: Control
     @Environment(\.settingsHighlight) private var highlighted
 
     var body: some View {
         HStack(alignment: .center, spacing: 32) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.textPrimary)
+                HStack(spacing: 8) {
+                    Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.textPrimary)
+                    if let badge {
+                        Text(badge)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(Theme.textSecondary)
+                            .padding(.horizontal, 6)
+                            .frame(height: 18)
+                            .overlay(Capsule().strokeBorder(Theme.border, lineWidth: 1))
+                    }
+                }
                 if let detail {
                     Text(detail)
                         .font(.system(size: 11.5))
