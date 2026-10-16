@@ -21,7 +21,7 @@ struct OctetIconButton: View {
             OctetIcon(icon, size: large ? 15 : 14)
                 .foregroundStyle(tint ?? (active || hovered ? Theme.textPrimary : Theme.textSecondary))
                 .frame(width: side, height: side)
-                .background(RoundedRectangle(cornerRadius: 6)
+                .background(RoundedRectangle(cornerRadius: Theme.controlRadius)
                     .fill(active ? Theme.cardSelected : hovered && enabled ? Theme.hover : .clear))
                 .contentShape(Rectangle())
         }
@@ -68,11 +68,11 @@ struct OctetSegmented<Value: Hashable>: View {
                         .frame(height: 24)
                         .background {
                             if chosen {
-                                RoundedRectangle(cornerRadius: 6)
+                                RoundedRectangle(cornerRadius: Theme.controlRadius)
                                     .fill(Theme.cardSelected)
                                     .shadow(color: .black.opacity(0.18), radius: 1, y: 0.5)
                             } else if hovered == item.value {
-                                RoundedRectangle(cornerRadius: 6).fill(Theme.hover.opacity(0.7))
+                                RoundedRectangle(cornerRadius: Theme.controlRadius).fill(Theme.hover.opacity(0.7))
                             }
                         }
                         .contentShape(Rectangle())
@@ -86,7 +86,7 @@ struct OctetSegmented<Value: Hashable>: View {
             }
         }
         .padding(2)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Theme.card))
+        .background(RoundedRectangle(cornerRadius: Theme.popoverRadius).fill(Theme.card))
         .fixedSize()
     }
 }

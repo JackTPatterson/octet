@@ -34,6 +34,10 @@ enum Theme {
 
     static let sidebarWidth: CGFloat = 248
     static let rowRadius: CGFloat = 4
+    /// Buttons, fields and rows, after T3 Code's controls.
+    static let controlRadius: CGFloat = 8
+    /// Menus, popovers and code blocks.
+    static let popoverRadius: CGFloat = 10
     static let titleBarHeight: CGFloat = 38
     static let tabBarHeight: CGFloat = 34
     /// Tabs share one width.

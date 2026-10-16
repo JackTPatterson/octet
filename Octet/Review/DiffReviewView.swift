@@ -195,19 +195,12 @@ struct DiffReviewView: View {
                 Text(subtitle).font(Theme.captionFont).foregroundStyle(Theme.textTertiary).lineLimit(1)
             }
             Spacer()
-            Picker("Compare with", selection: $model.base) {
-                Text("Uncommitted").tag(ReviewDiff.Base.uncommitted)
-                Text("This branch").tag(ReviewDiff.Base.branch)
-                if let attempt = model.attemptBase { Text("The attempt").tag(attempt) }
-            }
-            .pickerStyle(.segmented).labelsHidden().frame(width: model.attemptBase == nil ? 220 : 320)
+            OctetSegmented(selection: $model.base,
+                           items: [(ReviewDiff.Base.uncommitted, "Uncommitted"), (ReviewDiff.Base.branch, "This Branch")]
+                               + (model.attemptBase.map { [($0, "The Attempt")] } ?? []))
             .help("Uncommitted: against HEAD. This branch: everything since it left the default branch.")
-            Picker("Layout", selection: $split) {
-                Image(systemName: "rectangle").tag(false).help("One column")
-                Image(systemName: "rectangle.split.2x1").tag(true).help("Side by side")
-            }
-            .pickerStyle(.segmented).labelsHidden().frame(width: 76)
-            .help("One column, or old and new side by side")
+            OctetSegmented(selection: $split, items: [(false, "Unified"), (true, "Split")])
+                .help("One column, or old and new side by side")
             OctetButton(title: "Previous", icon: "arrow.up", kind: .ghost, compact: true) { model.step(-1) }
                 .keyboardShortcut(.upArrow, modifiers: .option)
                 .help("Previous file (⌥↑)")

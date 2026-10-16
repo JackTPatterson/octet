@@ -271,13 +271,8 @@ struct PeerPanel: View {
     private func taskForm(_ machine: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("New task on \(machine)").font(Theme.captionFont.weight(.medium)).foregroundStyle(Theme.textSecondary)
-            Picker("Agent", selection: $taskAgent) {
-                Text("Claude Code").tag("claude")
-                Text("Codex").tag("codex")
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            TextField("Folder there, e.g. ~/code/app", text: $taskFolder).textFieldStyle(.roundedBorder)
+            OctetSegmented(selection: $taskAgent, items: [("claude", "Claude Code"), ("codex", "Codex")])
+            OctetTextField(placeholder: "Folder there, e.g. ~/code/app", text: $taskFolder)
             TextField("What should it do?", text: $taskText, axis: .vertical)
                 .lineLimit(3...6)
                 .textFieldStyle(.roundedBorder)

@@ -138,13 +138,8 @@ private struct EditorDocumentView: View {
                     .lineLimit(1).truncationMode(.head)
                 Spacer()
                 if isMarkdown {
-                    Picker("Markdown", selection: $markdownMode) {
-                        ForEach(MarkdownMode.allCases) { Text($0.title).tag($0.rawValue) }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.segmented)
-                    .controlSize(.mini)
-                    .frame(width: 170)
+                    OctetSegmented(selection: $markdownMode,
+                                   items: MarkdownMode.allCases.map { ($0.rawValue, $0.title) })
                     .help("Edit the Markdown, see it rendered, or both side by side")
                 }
                 if let error = document.lastError {

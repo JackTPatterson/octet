@@ -231,19 +231,15 @@ struct WaitEditorSheet: View {
             }
         case .package:
             field("Registry") {
-                Picker("Registry", selection: $draft.registry) {
-                    ForEach(WaitCondition.Registry.allCases, id: \.self) { Text($0.title).tag($0) }
-                }
-                .labelsHidden().pickerStyle(.segmented).frame(width: 140)
+                OctetSegmented(selection: $draft.registry,
+                               items: WaitCondition.Registry.allCases.map { ($0, $0.title) })
             }
             field("Package") { OctetTextField(placeholder: draft.placeholder, text: $draft.target) }
         case .url:
             field("Page") { OctetTextField(placeholder: draft.placeholder, text: $draft.target) }
             field("Until it") {
-                Picker("Page", selection: $draft.page) {
-                    ForEach(WaitDraft.PageKind.allCases) { Text($0.title).tag($0) }
-                }
-                .labelsHidden().pickerStyle(.segmented).frame(width: 240)
+                OctetSegmented(selection: $draft.page,
+                               items: WaitDraft.PageKind.allCases.map { ($0, $0.title) })
             }
             if draft.page == .contains {
                 field("Text") { OctetTextField(placeholder: "Version 2 is live", text: $draft.pageText) }

@@ -76,12 +76,7 @@ struct UsageBreakdownView: View {
                     Spacer()
                     OctetButton(title: "Done", kind: .secondary, compact: true, action: close).keyboardShortcut(.cancelAction)
                 }
-                Picker("Period", selection: $period) {
-                    ForEach(UsageLedger.Period.allCases) { Text($0.title).tag($0) }
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .frame(width: 330)
+                OctetSegmented(selection: $period, items: UsageLedger.Period.allCases.map { ($0, $0.title) })
             }
             .padding(16)
             Rectangle().fill(Theme.divider).frame(height: 1)

@@ -75,9 +75,14 @@ private struct PaletteSurfaceModifier: ViewModifier {
     func body(content: Content) -> some View {
         if floating {
             content
-                .clipShape(RoundedRectangle(cornerRadius: 7))
-                .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Theme.border, lineWidth: 1))
-                .shadow(color: .black.opacity(0.35), radius: 14, y: 6)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.popoverRadius))
+                .overlay(RoundedRectangle(cornerRadius: Theme.popoverRadius).strokeBorder(Theme.border, lineWidth: 1))
+                // T3 Code's popovers: a faint top highlight and a soft glow beneath.
+                .overlay(alignment: .top) {
+                    Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1)
+                        .padding(.horizontal, Theme.popoverRadius)
+                }
+                .shadow(color: .black.opacity(0.5), radius: 22, y: 12)
         } else if clips {
             content.clipped()
         } else {
@@ -147,25 +152,46 @@ struct OctetButton: View {
     @State private var hovered = false
 
     var body: some View {
+        let shape = RoundedRectangle(cornerRadius: Theme.controlRadius)
         Button(action: action) {
-            HStack(spacing: 5) {
+            HStack(spacing: 4) {
                 if let icon { OctetIcon(icon, size: compact ? 12 : 14) }
                 Text(title).font(Theme.uiFontMedium).lineLimit(1)
             }
             .foregroundStyle(foreground)
-            .padding(.horizontal, compact ? 9 : 14)
+            .padding(.horizontal, compact ? 8 : 11)
             .frame(height: compact ? 24 : 28)
             .background {
-                RoundedRectangle(cornerRadius: Theme.rowRadius + 1).fill(background)
+                shape.fill(background)
                 if kind == .secondary {
-                    RoundedRectangle(cornerRadius: Theme.rowRadius + 1).strokeBorder(Theme.border, lineWidth: 1)
+                    shape.strokeBorder(Theme.border, lineWidth: 1)
                 }
             }
-            .opacity(enabled ? 1 : 0.45)
+            // T3 Code's filled buttons catch the light along their top edge.
+            .overlay(alignment: .top) {
+                if kind != .ghost {
+                    Rectangle()
+                        .fill(Color.white.opacity(kind == .secondary ? 0.05 : 0.16))
+                        .frame(height: 1)
+                        .padding(.horizontal, Theme.controlRadius / 2)
+                }
+            }
+            .clipShape(shape)
+            .shadow(color: shadow, radius: 1.5, y: 1)
+            .opacity(enabled ? 1 : 0.64)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(OctetPressStyle())
         .onHover { hovered = $0 && enabled }
+    }
+
+    private var shadow: Color {
+        switch kind {
+        case .primary: Theme.accent.opacity(enabled ? 0.24 : 0)
+        case .destructive: Color(hex: "c62a2f").opacity(enabled ? 0.24 : 0)
+        case .secondary: .black.opacity(enabled ? 0.12 : 0)
+        case .ghost: .clear
+        }
     }
 
     private var foreground: Color {
@@ -179,8 +205,8 @@ struct OctetButton: View {
 
     private var background: Color {
         switch kind {
-        case .primary: Theme.accent.opacity(hovered ? 0.85 : 1)
-        case .destructive: Color(hex: "c62a2f").opacity(hovered ? 0.85 : 1)
+        case .primary: Theme.accent.opacity(hovered ? 0.9 : 1)
+        case .destructive: Color(hex: "c62a2f").opacity(hovered ? 0.9 : 1)
         case .secondary: hovered ? Theme.hover : Theme.card
         case .ghost: hovered ? Theme.hover : .clear
         }
@@ -214,12 +240,14 @@ struct OctetTextField: View {
                 .onSubmit(onSubmit)
                 .accessibilityLabel(placeholder)
         }
-        .padding(.horizontal, 9)
+        .padding(.horizontal, 10)
         .frame(height: 28)
-        .background(Theme.terminalBackground)
-        .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius + 1)
-            .strokeBorder(focused ? Theme.accent.opacity(0.7) : Theme.border, lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius + 1))
+        .background(Theme.terminalBackground.opacity(0.7))
+        // A hairline at rest; focused, T3 Code's inset ring in the accent.
+        .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius)
+            .strokeBorder(focused ? Theme.accent.opacity(0.85) : Theme.border, lineWidth: focused ? 1.5 : 1))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.controlRadius))
+        .animation(.easeOut(duration: 0.12), value: focused)
     }
 }
 
@@ -478,7 +506,7 @@ private struct DropdownMenu: View {
                     Spacer(minLength: 12)
                 }
                 .padding(.horizontal, 8)
-                .padding(.vertical, 5)
+                .frame(minHeight: 28)
                 .frame(minWidth: 170, alignment: .leading)
                 .background {
                     if option.shimmer {
@@ -488,7 +516,7 @@ private struct DropdownMenu: View {
                         Theme.cardSelected
                     }
                 }
-                .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
                 .contentShape(Rectangle())
                 .onHover { if $0 { highlighted = option.id } }
                 .onTapGesture { choose(option.id) }
