@@ -482,6 +482,16 @@ struct RootView: View {
                     else { window.toggleReview() }
                 }
             }
+            // "pull-requests" opens the Pull Requests page as the palette
+            // does; "pull-requests:project" opens it on the focused folder,
+            // and "pull-requests:<text>" with that search typed.
+            if let open = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], open.hasPrefix("pull-requests") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    let argument = open.hasPrefix("pull-requests:") ? String(open.dropFirst(14)) : ""
+                    window.togglePullRequests(scope: argument == "project" ? .project : .all)
+                    if !argument.isEmpty, argument != "project" { ui.pullRequests?.queryText = argument }
+                }
+            }
             // Verification hook: "planes:empty" closes every plane (the
             // launcher), "planes:max" maximizes the panel, "planes:pr" or
             // "planes:pr:12" opens a pull request, "planes:prs" the list.
@@ -621,6 +631,10 @@ struct RootView: View {
                             .id(review.directory)
                             .onAppear { DebugSnapshot.overlay("review", true) }
                             .onDisappear { DebugSnapshot.overlay("review", false) }
+                    } else if let pullRequests = ui.pullRequests {
+                        PullRequestsPage(model: pullRequests, store: store) { window.togglePullRequests() }
+                            .onAppear { DebugSnapshot.overlay("pullRequests", true) }
+                            .onDisappear { DebugSnapshot.overlay("pullRequests", false) }
                     } else if window.editor.isPresented, window.editor.presentation == .full {
                         CodeEditorView(workspace: window.editor, rootDirectory: window.editorRootDirectory)
                     } else if boardHere != nil {
@@ -957,6 +971,8 @@ final class UIState: ObservableObject {
     var paletteStart: [String]?
     /// The changes review over the terminal, while it's open.
     @Published var review: DiffReviewModel?
+    /// The Pull Requests page over the terminal, while it's open.
+    @Published var pullRequests: PullRequestsPageModel?
     /// Bumped to put the keyboard in the sidebar's search field.
     @Published var sidebarSearchRequest = 0
     /// The usage breakdown sheet.

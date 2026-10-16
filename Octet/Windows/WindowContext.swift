@@ -444,7 +444,20 @@ final class WindowContext: ObservableObject, Identifiable {
             return
         }
         guard let directory = focusedDirectory else { return }
+        ui.pullRequests = nil
         ui.review = DiffReviewModel(directory: directory)
+    }
+
+    /// The Pull Requests page over the terminal, or closes it. It doesn't
+    /// need a project in front: "All" searches every repository.
+    func togglePullRequests(scope: PullRequestScope = .all) {
+        if ui.pullRequests != nil {
+            ui.pullRequests = nil
+            OctetTerminalRuntime.focusTerminal()
+            return
+        }
+        ui.review = nil
+        ui.pullRequests = PullRequestsPageModel(directory: focusedDirectory, scope: scope)
     }
 
     /// The folder of the pane in front, else of its workspace: where the

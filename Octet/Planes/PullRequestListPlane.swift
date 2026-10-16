@@ -5,11 +5,14 @@ import SwiftUI
 struct PullRequestListPlane: View {
     let directory: String
     let open: (Int) -> Void
+    /// Opens the Pull Requests page; nil hides its button.
+    let openFullPage: (() -> Void)?
     @StateObject private var model: PullRequestListModel
 
-    init(directory: String, open: @escaping (Int) -> Void) {
+    init(directory: String, openFullPage: (() -> Void)? = nil, open: @escaping (Int) -> Void) {
         self.directory = directory
         self.open = open
+        self.openFullPage = openFullPage
         _model = StateObject(wrappedValue: PullRequestListModel(directory: directory))
     }
 
@@ -35,6 +38,9 @@ struct PullRequestListPlane: View {
                     .foregroundStyle(Theme.textTertiary)
             }
             Spacer()
+            if let openFullPage {
+                OctetIconButton(icon: "arrow.up.left.and.arrow.down.right", help: "Open Full Page", action: openFullPage)
+            }
             OctetIconButton(icon: "arrow.clockwise", help: "Refresh") { model.refresh() }
                 .disabled(model.loading)
         }

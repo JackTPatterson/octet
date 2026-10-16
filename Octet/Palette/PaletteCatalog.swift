@@ -233,6 +233,10 @@ enum PaletteCatalog {
                             keywords: ["hints", "url", "link", "open", "path", "file", "hash", "quick select"]) { HintsSession.start(window: window) })
         items.append(action("review", "Review Changes", "doc.text.magnifyingglass", shortcut: OctetShortcut.review.keys,
                             keywords: ["diff", "git", "changes", "comment", "code review", "agent"]) { window.toggleReview() })
+        items.append(action("pullRequests", "Pull Requests", "pull.request",
+                            keywords: ["pr", "prs", "github", "review requested", "inbox", "gh", "pull request"]) {
+            window.togglePullRequests()
+        })
         items += accountItems(window: window)
         if let item = checkpointItem(window: window) { items.append(item) }
         if let item = commandLogItem(window: window) { items.append(item) }
