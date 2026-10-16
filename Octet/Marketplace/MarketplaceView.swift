@@ -2,79 +2,62 @@ import AppKit
 import SwiftUI
 
 /// Browse and install MCP servers, plugins, skills and prompts for every
-/// agent from one window, then reload running agents in place.
+/// agent from one page, then reload running agents in place. Settings'
+/// sibling: the same section list with search on the left, the same 52pt
+/// breadcrumb header, and the section as a centred column of titled cards.
+/// A page over the window with `close`; on its own, the Marketplace window
+/// it falls back to with no main window open.
 struct MarketplaceView: View {
     @ObservedObject var store: MarketplaceStore
-    @ObservedObject private var pluginHost = OctetPluginHost.shared
-    @State private var editing: LibraryDraft?
-    @State private var addingServer = false
-    /// Set when the Marketplace is a page over the content area, as Usage
-    /// and Settings are; the separate window is only a fallback.
+    /// Set when the Marketplace is a page over the window, as Settings is.
     var close: (() -> Void)?
-    @StateObject private var dropdowns = OctetDropdownState()
-    @FocusState private var focused: Bool
+    @ObservedObject private var pluginHost = OctetPluginHost.shared
+    /// The editor showing over the page, if any.
+    @State private var editor: MarketplaceEditorKind?
+    /// The row showing its details.
+    @State private var expanded: String?
+    /// How many rows each long group shows, by group id.
+    @State private var limits: [String: Int] = [:]
+    @State private var marketplacesOpen = false
+    @FocusState private var focus: Focus?
+
+    private enum Focus: Hashable { case search, sections }
+    private var embedded: Bool { close != nil }
 
     var body: some View {
-        if close != nil { page } else { window }
-    }
-
-    /// In a window of its own.
-    private var window: some View {
         HStack(spacing: 0) {
-            sidebar
+            nav
             Rectangle().fill(Theme.divider).frame(width: 1)
             VStack(spacing: 0) {
                 header
-                Rectangle().fill(Theme.divider).frame(height: 1)
+                if store.section == .plugins, store.agentFilter == nil {
+                    PluginSourceTabs(store: store, agentCount: store.plugins.count, terminalCount: terminalPluginCount)
+                }
                 content
             }
+            .background(Theme.terminalBackground)
         }
-        .frame(minWidth: 820, minHeight: 540)
-        .overlay(alignment: .bottomTrailing) { ToastStack(center: ToastCenter.shared) }
-        .overlay { ConfirmDialog(center: ConfirmCenter.shared) }
-        .background(Theme.chrome)
-        .background(DarkTransparentTitleBar())
-        .background(ThemedWindow(themeName: SettingsStore.shared.themeKey))
-        .preferredColorScheme(Theme.colorScheme)
-        .modifier(MarketplaceLifecycle(view: self))
+        .overlay { editorOverlay }
+        .modifier(MarketplaceChrome(embedded: embedded))
+        .defaultFocus($focus, .sections)
+        .onAppear(perform: appeared)
+        .onKeyPress(KeyEquivalent("/")) {
+            guard focus != .search, editor == nil else { return .ignored }
+            focus = .search
+            return .handled
+        }
+        .onExitCommand(perform: escape)
+        // A new list starts at its top, folded, one page long.
+        .onChange(of: store.section) { _, _ in reset() }
+        .onChange(of: store.query) { _, _ in reset() }
+        .onChange(of: store.agentFilter) { _, _ in reset() }
+        .onChange(of: store.sort) { _, _ in reset() }
+        .onChange(of: store.pluginFilter) { _, _ in reset() }
     }
 
-    /// A page over the content area: the shared page header with a
-    /// breadcrumb, then the sections beside what they hold.
-    private var page: some View {
-        VStack(spacing: 0) {
-            PageHeader(crumbs: [.title("Marketplace"), .title(store.section.title)], dropdowns: dropdowns, close: close) {
-                actions
-            }
-            Rectangle().fill(Theme.divider).frame(height: 1)
-            HStack(spacing: 0) {
-                sidebar
-                Rectangle().fill(Theme.divider).frame(width: 1)
-                VStack(spacing: 0) {
-                    OctetTextField(placeholder: "Search \(store.section.title)", text: $store.query,
-                                   label: "Search \(store.section.title)")
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                    content
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.terminalBackground)
-        .octetDropdownHost(dropdowns)
-        // Takes keyboard focus so Esc reaches the page, not the shell under it.
-        .focusable()
-        .focusEffectDisabled()
-        .focused($focused)
-        .onExitCommand {
-            if dropdowns.openId != nil { dropdowns.openId = nil } else { close?() }
-        }
-        .modifier(MarketplaceLifecycle(view: self))
-        .onAppear { focused = true }
-    }
-
-    fileprivate func appeared() {
+    private func appeared() {
         store.refreshAll()
+        focus = .sections
         #if DEBUG
         if let name = ProcessInfo.processInfo.environment["OCTET_MARKETPLACE_SECTION"],
            let section = MarketplaceStore.Section(rawValue: name) {
@@ -83,111 +66,90 @@ struct MarketplaceView: View {
         #endif
     }
 
-    fileprivate var editingBinding: Binding<LibraryDraft?> { $editing }
-    fileprivate var addingServerBinding: Binding<Bool> { $addingServer }
+    private func reset() {
+        expanded = nil
+        limits = [:]
+    }
 
-    private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            // The page's breadcrumb already names it.
-            if close == nil {
-                Text("MARKETPLACE")
-                    .font(Theme.headerFont)
-                    .foregroundStyle(Theme.textTertiary)
-                    .padding(.horizontal, 12)
-                    .padding(.top, 30)
-                    .padding(.bottom, 6)
-            }
-            ForEach(MarketplaceStore.Section.allCases) { section in
-                SidebarRow(
-                    title: section.title,
-                    symbol: section.symbol,
-                    count: countLabel(of: section),
-                    selected: store.section == section,
-                    loading: store.loading.contains(section)
-                ) { store.section = section }
-            }
-            Spacer()
-            if !store.hosts.isEmpty {
-                Text("AGENTS")
-                    .font(Theme.headerFont)
-                    .foregroundStyle(Theme.textTertiary)
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 4)
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(store.hosts) { host in
-                        HStack(spacing: 6) {
-                            if let brand = AgentBrand.forAgent(host.id) { AgentLogo(brand: brand, size: 12) }
-                            Text(host.displayName)
-                                .font(Theme.uiFont)
-                                .foregroundStyle(Theme.textSecondary)
+    /// Esc closes what's on top: an editor, then the search, then the page.
+    private func escape() {
+        if editor != nil {
+            editor = nil
+        } else if !store.query.isEmpty {
+            store.query = ""
+        } else if expanded != nil {
+            expanded = nil
+        } else {
+            close?()
+        }
+    }
+
+    // MARK: Nav
+
+    private var nav: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SettingsSearchField(
+                query: $store.query, label: "Search \(store.section.title)",
+                focus: $focus, focusValue: .search,
+                submit: { focus = .sections }, move: { _ in },
+                // Esc in an empty search closes what's open, as it does elsewhere on the page.
+                clear: { if store.query.isEmpty { escape() } else { store.query = "" } }
+            )
+            .padding(.horizontal, 8)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(MarketplaceStore.Section.allCases) { section in
+                        MarketplaceNavRow(mark: .symbol(section.symbol), title: section.title,
+                                          count: countLabel(of: section),
+                                          loading: store.loading.contains(section),
+                                          selected: store.section == section) {
+                            store.section = section
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 3)
+                    }
+                    if !store.hosts.isEmpty {
+                        Text("Agents")
+                            .font(Theme.interfaceFont(11, weight: .medium))
+                            .foregroundStyle(Theme.textTertiary)
+                            .padding(.horizontal, 10)
+                            .padding(.top, 18)
+                            .padding(.bottom, 4)
+                            .accessibilityAddTraits(.isHeader)
+                        MarketplaceNavRow(mark: .symbol("person.2"), title: "All Agents", count: nil, loading: false,
+                                          selected: store.agentFilter == nil) {
+                            store.agentFilter = nil
+                        }
+                        ForEach(store.hosts) { host in
+                            MarketplaceNavRow(mark: .agent(host.id), title: host.displayName,
+                                              count: "\(store.installedCount(store.section, in: host))", loading: false,
+                                              selected: store.agentFilter == host.id) {
+                                store.agentFilter = store.agentFilter == host.id ? nil : host.id
+                            }
+                            .help("Show what \(host.displayName) has, and what it could add")
+                        }
                     }
                 }
-                .padding(.bottom, 10)
+                .padding(.horizontal, 8)
+                .padding(.bottom, 12)
             }
+            .scrollIndicators(.never)
+            .focusable()
+            .focusEffectDisabled()
+            .focused($focus, equals: .sections)
+            .onKeyPress(.downArrow) { step(1); return .handled }
+            .onKeyPress(.upArrow) { step(-1); return .handled }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Marketplace sections")
         }
-        .padding(.top, close == nil ? 0 : 10)
-        .frame(width: 190)
+        .padding(.top, embedded ? 12 : 44)
+        .frame(width: 220)
+        .frame(maxHeight: .infinity, alignment: .top)
         .background(Theme.sidebar)
     }
 
-    private var header: some View {
-        HStack(spacing: 8) {
-            OctetTextField(placeholder: "Search \(store.section.title)", text: $store.query,
-                           label: "Search \(store.section.title)")
-            actions
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
-    }
-
-    /// Reload, add, import and refresh, for the section in view.
-    @ViewBuilder private var actions: some View {
-            if store.pendingReload {
-                OctetButton(title: "Reload Agents", kind: .primary, compact: true) { store.reloadAgents() }
-                    .help("Restart running agents with --resume so the new configuration loads")
-            }
-            OctetButton(title: addTitle, icon: "plus", compact: true) {
-                switch store.section {
-                case .mcp: addingServer = true
-                case .plugins: editing = LibraryDraft(kind: .prompt, marketplaceSource: true)
-                case .skills: editing = LibraryDraft(kind: .skill)
-                case .prompts: editing = LibraryDraft(kind: .prompt)
-                }
-            }
-            if store.section == .prompts {
-                OctetButton(title: "Import…", compact: true) { importPrompts() }
-                    .help("Copy a folder of .md prompts into your library")
-            }
-            OctetIconButton(icon: "arrow.clockwise", help: "Refresh") {
-                if store.section == .plugins {
-                    store.loadPlugins(force: true)
-                    pluginHost.loadRegistry(force: true)
-                } else {
-                    store.refreshAll()
-                }
-            }
-    }
-
-    private func importPrompts() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.prompt = "Import"
-        panel.message = "Choose a folder of .md prompts"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        store.importPrompts(from: url, installIn: store.hosts)
-    }
-
-    private var addTitle: String {
-        switch store.section {
-        case .mcp: "Add Server"
-        case .plugins: "Add Marketplace"
-        case .skills: "New Skill"
-        case .prompts: "New Prompt"
-        }
+    private func step(_ delta: Int) {
+        let all = MarketplaceStore.Section.allCases
+        guard let index = all.firstIndex(of: store.section) else { return }
+        store.section = all[(index + delta + all.count) % all.count]
     }
 
     /// Plugins count as installed out of available; the rest count all.
@@ -195,7 +157,7 @@ struct MarketplaceView: View {
         let total = totalCount(of: section)
         guard total > 0 else { return nil }
         guard section == .plugins else { return "\(total)" }
-        return "\(store.plugins.filter(\.isInstalled).count + pluginHost.plugins.count) / \(total)"
+        return "\(store.installedPluginCount + pluginHost.plugins.count) / \(total.formatted())"
     }
 
     private func totalCount(of section: MarketplaceStore.Section) -> Int {
@@ -212,6 +174,166 @@ struct MarketplaceView: View {
         Set(pluginHost.plugins.map(\.id)).union(pluginHost.registry.map(\.id)).count
     }
 
+    private var filteredHost: AgentHost? {
+        store.agentFilter.flatMap { id in store.hosts.first { $0.id == id } }
+    }
+
+    // MARK: Header
+
+    /// "Marketplace / Plugins", Settings' header, with the section's
+    /// actions at the far end and the close button after them.
+    private var header: some View {
+        HStack(spacing: 8) {
+            Text("Marketplace").foregroundStyle(Theme.textTertiary)
+            Text("/").foregroundStyle(Theme.textMuted).accessibilityHidden(true)
+            Text(store.section.title)
+                .foregroundStyle(filteredHost == nil ? Theme.textPrimary : Theme.textTertiary)
+                .accessibilityAddTraits(filteredHost == nil ? .isHeader : [])
+            if let host = filteredHost {
+                Text("/").foregroundStyle(Theme.textMuted).accessibilityHidden(true)
+                AgentCrumb(host: host) { store.agentFilter = nil }
+            }
+            Spacer(minLength: 12)
+            actions
+            if let close {
+                OctetIconButton(icon: "xmark", help: "Close Marketplace (Esc)", action: close)
+            }
+        }
+        .font(Theme.interfaceFont(13, weight: .medium))
+        .lineLimit(1)
+        .padding(.horizontal, 24)
+        .frame(height: 52)
+        .frame(maxWidth: .infinity)
+    }
+
+    /// Reload, import, add and refresh, for the section in view.
+    @ViewBuilder private var actions: some View {
+        if store.reloading {
+            HStack(spacing: 6) {
+                LoadingLine(width: 16)
+                Text("Reloading agents…").font(Theme.uiFont).foregroundStyle(Theme.textSecondary)
+            }
+            .accessibilityElement(children: .combine)
+        } else if store.pendingReload {
+            OctetButton(title: "Reload Agents", icon: "arrow.clockwise", kind: .primary, compact: true) { store.reloadAgents() }
+                .help("Restart running agents with --resume so the new configuration loads")
+        }
+        if store.section == .prompts {
+            OctetButton(title: "Import…", icon: "square.and.arrow.down", kind: .ghost, compact: true) { importPrompts() }
+                .help("Copy a folder of .md prompts into your library")
+        }
+        OctetButton(title: addTitle, icon: "plus", compact: true, action: add)
+        if store.loading.contains(store.section) || (store.section == .plugins && pluginHost.registryLoading) {
+            LoadingLine(width: 16)
+                .frame(width: 24, height: 24)
+                .help("Refreshing…")
+        } else {
+            OctetIconButton(icon: "arrow.clockwise", help: "Refresh \(store.section.title)", action: refresh)
+        }
+    }
+
+    private var addTitle: String {
+        switch store.section {
+        case .mcp: "Add Server"
+        case .plugins: "Add Marketplace"
+        case .skills: "New Skill"
+        case .prompts: "New Prompt"
+        }
+    }
+
+    private func add() {
+        switch store.section {
+        case .mcp: editor = .server
+        case .plugins: editor = .library(LibraryDraft(kind: .prompt, marketplaceSource: true))
+        case .skills: editor = .library(LibraryDraft(kind: .skill))
+        case .prompts: editor = .library(LibraryDraft(kind: .prompt))
+        }
+    }
+
+    private func refresh() {
+        switch store.section {
+        case .mcp: store.loadServers()
+        case .plugins:
+            store.loadPlugins(force: true)
+            pluginHost.loadRegistry(force: true)
+        case .skills, .prompts:
+            store.loadLibrary()
+        }
+    }
+
+    private func importPrompts() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.prompt = "Import"
+        panel.message = "Choose a folder of .md prompts"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        store.importPrompts(from: url, installIn: store.scopeHosts(for: .prompts))
+    }
+
+    // MARK: Content
+
+    private var content: some View {
+        ScrollView {
+            // Settings' readable column: 896pt at most, centred.
+            LazyVStack(alignment: .leading, spacing: 0) {
+                banners
+                switch store.section {
+                case .mcp: serverSection
+                case .plugins: pluginSection
+                case .skills: librarySection(.skill)
+                case .prompts: librarySection(.prompt)
+                }
+            }
+            .frame(maxWidth: 896, alignment: .leading)
+            .padding(.horizontal, 24)
+            .padding(.bottom, 48)
+            .frame(maxWidth: .infinity)
+        }
+        .octetScrollIndicators()
+        .id(store.section)
+    }
+
+    @ViewBuilder private var banners: some View {
+        let section = store.section
+        if let error = store.loadErrors[section], totalCount(of: section) > 0 {
+            MarketplaceBanner(tone: .danger, icon: "exclamationmark.triangle.fill",
+                              title: "Couldn't refresh; showing what loaded before", message: error) {
+                if store.loading.contains(section) {
+                    LoadingLine(width: 18)
+                } else {
+                    OctetButton(title: "Retry", compact: true) { retry(section) }
+                }
+            }
+            .padding(.top, 24)
+        }
+        if section == .plugins, store.pluginFilter != .agents, store.agentFilter == nil {
+            if !pluginHost.updates.isEmpty {
+                let updates = pluginHost.updates
+                MarketplaceBanner(tone: .accent, icon: "arrow.down",
+                                  title: updates.count == 1 ? "An update for \(updates[0].name)" : "\(updates.count) plugin updates",
+                                  message: updates.map { "\($0.name) \($0.version)" }.joined(separator: ", ")) {
+                    OctetButton(title: updates.count == 1 ? "Update" : "Update All", kind: .primary, compact: true) {
+                        pluginHost.update(updates)
+                    }
+                    .disabled(!pluginHost.installing.isEmpty)
+                }
+                .padding(.top, 24)
+            }
+            if let error = pluginHost.registryError {
+                MarketplaceBanner(tone: .danger, icon: "exclamationmark.triangle.fill",
+                                  title: "Couldn't load terminal plugins", message: error) {
+                    if pluginHost.registryLoading {
+                        LoadingLine(width: 18)
+                    } else {
+                        OctetButton(title: "Retry", compact: true) { pluginHost.loadRegistry(force: true) }
+                    }
+                }
+                .padding(.top, 24)
+            }
+        }
+    }
+
     private func retry(_ section: MarketplaceStore.Section) {
         switch section {
         case .mcp: store.loadServers()
@@ -220,842 +342,330 @@ struct MarketplaceView: View {
         }
     }
 
-    @ViewBuilder
-    private var content: some View {
-        let section = store.section
-        ScrollView {
-            LazyVStack(spacing: 4) {
-                let total = totalCount(of: section)
-                if let error = store.loadErrors[section], total > 0 {
-                    LoadErrorBanner(message: error, retrying: store.loading.contains(section)) { retry(section) }
-                }
-                switch section {
-                case .mcp:
-                    let servers = store.filteredServers()
-                    if let state = emptyState(section, total: total, visible: servers.count) {
-                        state
-                    }
-                    ForEach(servers) { entry in
-                        EntryRow(store: store, entry: entry)
-                    }
-                case .plugins:
-                    let filter = store.pluginFilter
-                    let terminal = filter == .agents ? [] : store.filteredTerminalPlugins()
-                    let plugins = filter == .terminal ? [] : store.filteredPlugins()
-                    let limit = MarketplaceStore.pluginDisplayLimit
-                    PluginFilterBar(store: store)
-                    if filter != .agents, !pluginHost.updates.isEmpty {
-                        PluginUpdatesBanner(updates: pluginHost.updates)
-                    }
-                    if filter != .agents, let error = pluginHost.registryError {
-                        LoadErrorBanner(message: "Terminal plugins: \(error)", retrying: pluginHost.registryLoading) {
-                            pluginHost.loadRegistry(force: true)
-                        }
-                    }
-                    // What the filter can show, so the empty state reads right.
-                    let shown = (filter == .terminal ? 0 : store.plugins.count) + (filter == .agents ? 0 : terminalPluginCount)
-                    if let state = emptyState(section, total: shown, visible: plugins.count + terminal.count) {
-                        state
-                    }
-                    ForEach(terminal) { plugin in
-                        TerminalPluginRow(plugin: plugin)
-                    }
-                    ForEach(plugins.prefix(limit)) { entry in
-                        EntryRow(store: store, entry: entry)
-                    }
-                    if plugins.count > limit {
-                        Text("Showing \(limit) of \(plugins.count). Refine your search.")
-                            .font(Theme.captionFont)
-                            .foregroundStyle(Theme.textTertiary)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 10)
-                    }
-                case .skills, .prompts:
-                    let kind: AgentLibrary.Kind = section == .skills ? .skill : .prompt
-                    let items = store.filteredLibrary(kind)
-                    if let state = emptyState(section, total: total, visible: items.count) {
-                        state
-                    }
-                    ForEach(items) { item in
-                        LibraryRow(store: store, item: item) {
-                            editing = LibraryDraft(item: item, text: store.text(of: item))
-                        }
-                    }
-                    ImportRow(store: store, kind: kind)
+    // MARK: Sections
+
+    @ViewBuilder private var serverSection: some View {
+        let groups = store.serverGroups()
+        if let state = emptyState(.mcp, total: store.servers.count, visible: groups.count) {
+            state
+        } else {
+            let host = filteredHost
+            group("mcp.installed", title: host.map { "In \($0.displayName)" } ?? "Installed", items: groups.installed,
+                  empty: "No servers in \(host?.displayName ?? "any agent") match.") { entry in
+                EntryRow(store: store, entry: entry, expanded: expandedBinding(entry.id))
+            }
+            if host != nil {
+                group("mcp.available", title: "In Other Agents", items: groups.available,
+                      empty: "Every server your agents have is in \(host?.displayName ?? "this agent") too.") { entry in
+                    EntryRow(store: store, entry: entry, expanded: expandedBinding(entry.id))
                 }
             }
-            .padding(10)
         }
-        .background(Theme.terminalBackground)
     }
 
-    /// What to show in place of an empty list, or nil when rows are showing.
-    private func emptyState(_ section: MarketplaceStore.Section, total: Int, visible: Int) -> MarketplaceEmptyState? {
-        guard visible == 0 else { return nil }
-        let needsAgent = section == .mcp || section == .plugins
-        let capable = store.hosts.contains { section == .mcp ? $0.supportsMCP : $0.supportsPlugins }
-        if total == 0, store.loading.contains(section) || !store.loaded.contains(section) {
-            return MarketplaceEmptyState(
-                symbol: nil,
-                title: "Loading \(section.title)",
-                message: section == .plugins
-                    ? "Fetching every configured marketplace. This can take a while the first time."
-                    : "Asking each agent for its list."
-            )
+    @ViewBuilder private var pluginSection: some View {
+        let filter = store.agentFilter == nil ? store.pluginFilter : .agents
+        let agent = filter == .terminal ? MarketplaceStore.Groups<MarketplaceEntry>() : store.pluginGroups()
+        let terminal = filter == .agents ? MarketplaceStore.Groups<MarketplaceStore.TerminalPlugin>() : store.terminalPluginGroups()
+        // What the filter can show, so the empty state reads right.
+        let shown = (filter == .terminal ? 0 : store.plugins.count) + (filter == .agents ? 0 : terminalPluginCount)
+        let agentLoading = filter != .terminal && store.plugins.isEmpty
+            && (store.loading.contains(.plugins) || !store.loaded.contains(.plugins))
+        if let state = emptyState(.plugins, total: shown, visible: agent.count + terminal.count) {
+            state
+        } else if agentLoading {
+            // Octet's own plugins are in hand; the agents' catalog isn't yet.
+            MarketplaceSkeleton(title: "Loading Agent Plugins",
+                                detail: "Fetching every configured marketplace. This can take a while the first time.")
+            if filter != .agents {
+                group("terminal.installed", title: "Terminal Plugins", items: terminal.installed + terminal.available) { plugin in
+                    TerminalPluginRow(plugin: plugin, expanded: expandedBinding("terminal:" + plugin.id))
+                }
+            }
+        } else {
+            if filter != .terminal {
+                group("plugins.installed", title: filteredHost.map { "In \($0.displayName)" } ?? "Installed",
+                      items: agent.installed, empty: emptyInstalledMessage) { entry in
+                    EntryRow(store: store, entry: entry, expanded: expandedBinding(entry.id))
+                }
+            }
+            if filter != .agents {
+                group("terminal.installed", title: filter == .terminal ? "Installed" : "Terminal Plugins",
+                      items: terminal.installed + (filter == .all ? terminal.available : []),
+                      empty: emptyInstalledMessage) { plugin in
+                    TerminalPluginRow(plugin: plugin, expanded: expandedBinding("terminal:" + plugin.id))
+                }
+            }
+            if filter == .terminal {
+                group("terminal.available", title: "Discover", items: terminal.available,
+                      empty: "Every terminal plugin in the registry is installed.") { plugin in
+                    TerminalPluginRow(plugin: plugin, expanded: expandedBinding("terminal:" + plugin.id))
+                }
+            }
+            if filter != .terminal {
+                group("plugins.available", title: "Discover", items: agent.available,
+                      empty: store.query.isEmpty ? "Every plugin on offer is installed." : "Nothing else matches.") {
+                    OctetSelect(selection: $store.sort,
+                                options: MarketplaceStore.SortOrder.allCases.map { (value: $0, title: $0.title) })
+                        .help("Order the plugins on offer")
+                } row: { entry in
+                    EntryRow(store: store, entry: entry, expanded: expandedBinding(entry.id))
+                }
+                if store.query.isEmpty, !store.marketplaces.isEmpty {
+                    marketplaceSources
+                }
+            }
         }
-        if total == 0, needsAgent, !capable {
-            return MarketplaceEmptyState(
-                symbol: "person.crop.circle.badge.questionmark",
-                title: "No agents installed",
-                message: "Octet found no agent on this Mac that manages \(section.title.lowercased()). Install Claude Code or Codex, then refresh."
-            )
+    }
+
+    /// The plugin marketplaces each agent pulls from.
+    @ViewBuilder private var marketplaceSources: some View {
+        let sources = marketplaceList()
+        OctetCollapsible(title: "Marketplaces · \(sources.count)", open: $marketplacesOpen) {
+            VStack(spacing: 0) {
+                ForEach(Array(sources.enumerated()), id: \.element.source) { index, item in
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(item.source.name)
+                                .font(Theme.interfaceFont(13, weight: .medium))
+                                .foregroundStyle(Theme.textPrimary)
+                            if !item.source.source.isEmpty {
+                                Text(item.source.source)
+                                    .font(Theme.interfaceFont(12))
+                                    .foregroundStyle(Theme.textSecondary)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        AgentChips(hosts: store.hosts.filter { item.hosts.contains($0.id) }, installedIn: item.hosts)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .cardSlot(.at(index, of: sources.count))
+                }
+            }
+        }
+        .padding(.top, 20)
+    }
+
+    /// Each configured marketplace once, with the agents that have it.
+    private func marketplaceList() -> [(source: MarketplaceStore.MarketplaceSource, hosts: Set<String>)] {
+        var byHost: [MarketplaceStore.MarketplaceSource: Set<String>] = [:]
+        for (host, list) in store.marketplaces {
+            for source in list { byHost[source, default: []].insert(host) }
+        }
+        return byHost.map { (source: $0.key, hosts: $0.value) }
+            .sorted { $0.source.name.localizedCaseInsensitiveCompare($1.source.name) == .orderedAscending }
+    }
+
+    @ViewBuilder private func librarySection(_ kind: AgentLibrary.Kind) -> some View {
+        let section: MarketplaceStore.Section = kind == .skill ? .skills : .prompts
+        let groups = store.libraryGroups(kind)
+        let unmanaged = store.unmanaged(kind).flatMap { group in group.slugs.map { UnmanagedItem(host: group.host, slug: $0) } }
+            .filter { MarketplaceCatalog.searchRank(store.query, names: [$0.slug], texts: []) != nil }
+            .filter { item in store.agentFilter.map { item.host.id == $0 } ?? true }
+        let noun = kind == .skill ? "skill" : "prompt"
+        if let state = emptyState(section, total: totalCount(of: section) + unmanaged.count, visible: groups.count + unmanaged.count) {
+            state
+        } else {
+            group("\(noun).installed", title: filteredHost.map { "In \($0.displayName)" } ?? "Installed",
+                  items: groups.installed, empty: emptyInstalledMessage) { item in
+                LibraryRow(store: store, item: item, expanded: expandedBinding(item.id)) {
+                    editor = .library(LibraryDraft(item: item, text: store.text(of: item)))
+                }
+            }
+            if !groups.available.isEmpty {
+                group("\(noun).available", title: filteredHost.map { "Not in \($0.displayName)" } ?? "In Your Library",
+                      items: groups.available) { item in
+                    LibraryRow(store: store, item: item, expanded: expandedBinding(item.id)) {
+                        editor = .library(LibraryDraft(item: item, text: store.text(of: item)))
+                    }
+                }
+            }
+            if !unmanaged.isEmpty {
+                group("\(noun).unmanaged", title: "In Your Agents, Not in the Library", items: unmanaged) { item in
+                    UnmanagedRow(store: store, kind: kind, item: item)
+                }
+            }
+        }
+    }
+
+    private var emptyInstalledMessage: String {
+        let query = store.query.trimmingCharacters(in: .whitespaces)
+        if !query.isEmpty { return "Nothing installed matches \u{201C}\(query)\u{201D}." }
+        return "Nothing installed\(filteredHost.map { " in \($0.displayName)" } ?? "") yet."
+    }
+
+    private func expandedBinding(_ id: String) -> Binding<Bool> {
+        Binding(
+            get: { expanded == id },
+            set: { open in MotionPreferences.shared.perform(.sidebar) { expanded = open ? id : nil } }
+        )
+    }
+
+    // MARK: Groups
+
+    /// A titled card of rows, as Settings draws them, showing a page at a
+    /// time so a catalog of thousands stays quick.
+    @ViewBuilder
+    private func group<Item: Identifiable, Trailing: View, Row: View>(
+        _ id: String, title: String, items: [Item], empty: String? = nil,
+        @ViewBuilder trailing: () -> Trailing, @ViewBuilder row: @escaping (Item) -> Row
+    ) -> some View {
+        if !items.isEmpty || empty != nil {
+            let limit = limits[id] ?? MarketplaceStore.pageSize
+            let shown = Array(items.prefix(limit))
+            let more = items.count > shown.count
+            let slots = shown.count + (more ? 1 : 0)
+            let control = trailing()
+            MarketplaceGroupHeader(title: title, count: items.count) { control }
+            if items.isEmpty, let empty {
+                Text(empty)
+                    .font(Theme.interfaceFont(12))
+                    .foregroundStyle(Theme.textTertiary)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .cardSlot(.only)
+            }
+            ForEach(Array(shown.enumerated()), id: \.element.id) { index, item in
+                row(item).cardSlot(.at(index, of: slots))
+            }
+            if more {
+                ShowMoreRow(shown: shown.count, total: items.count) {
+                    limits[id] = limit + MarketplaceStore.pageSize
+                }
+                .cardSlot(.last)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func group<Item: Identifiable, Row: View>(
+        _ id: String, title: String, items: [Item], empty: String? = nil, @ViewBuilder row: @escaping (Item) -> Row
+    ) -> some View {
+        group(id, title: title, items: items, empty: empty, trailing: { EmptyView() }, row: row)
+    }
+
+    // MARK: Empty states
+
+    /// What to show in place of a section's groups, or nil when there are
+    /// rows (or groups worth showing empty).
+    private func emptyState(_ section: MarketplaceStore.Section, total: Int, visible: Int) -> AnyView? {
+        if total == 0, store.loading.contains(section) || !store.loaded.contains(section) {
+            return AnyView(MarketplaceSkeleton(title: "Loading \(section.title)",
+                                               detail: section == .plugins
+                                                   ? "Fetching every configured marketplace. This can take a while the first time."
+                                                   : "Asking each agent for its list."))
+        }
+        let capable = !store.capableHosts(for: section).isEmpty
+        if total == 0, section == .mcp || section == .plugins, !capable {
+            return AnyView(MarketplaceEmptyState(
+                symbol: "person.2",
+                title: "No agents to manage \(section.title.lowercased())",
+                message: "Octet found no agent on this Mac whose CLI manages \(section.title.lowercased()). Install Claude Code or Codex, then refresh."
+            ))
+        }
+        if let host = filteredHost, section == .mcp || section == .plugins, store.scopeHosts(for: section).isEmpty {
+            return AnyView(MarketplaceEmptyState(
+                symbol: section.symbol,
+                title: "\(host.displayName) doesn't manage \(section.title.lowercased()) here",
+                message: "Octet can only add \(section.title.lowercased()) through an agent's own CLI, and \(host.displayName)'s has no command for it.",
+                actionTitle: "Show All Agents"
+            ) { store.agentFilter = nil })
         }
         if total == 0, let error = store.loadErrors[section] {
-            return MarketplaceEmptyState(
-                symbol: "exclamationmark.triangle",
-                title: "Couldn't load \(section.title)",
-                message: error,
+            return AnyView(MarketplaceEmptyState(
+                symbol: "exclamationmark.triangle.fill", title: "Couldn't load \(section.title)", message: error,
                 actionTitle: "Retry"
-            ) { retry(section) }
+            ) { retry(section) })
         }
         if total == 0 {
-            switch section {
-            case .mcp:
-                return MarketplaceEmptyState(
-                    symbol: section.symbol,
-                    title: "No MCP servers yet",
-                    message: "Add a server once and Octet installs it into each agent in its own syntax.",
-                    actionTitle: "Add Server"
-                ) { addingServer = true }
-            case .plugins:
-                return MarketplaceEmptyState(
-                    symbol: section.symbol,
-                    title: "No plugins available",
-                    message: "Add a plugin marketplace to browse what it offers.",
-                    actionTitle: "Add Marketplace"
-                ) { editing = LibraryDraft(kind: .prompt, marketplaceSource: true) }
-            case .skills:
-                return MarketplaceEmptyState(
-                    symbol: section.symbol,
-                    title: "No skills yet",
-                    message: "Skills in your library are linked into every agent you pick.",
-                    actionTitle: "New Skill"
-                ) { editing = LibraryDraft(kind: .skill) }
-            case .prompts:
-                return MarketplaceEmptyState(
-                    symbol: section.symbol,
-                    title: "No prompts yet",
-                    message: "Prompts in your library become slash commands in every agent you pick.",
-                    actionTitle: "New Prompt"
-                ) { editing = LibraryDraft(kind: .prompt) }
+            let (title, message): (String, String) = switch section {
+            case .mcp: ("No MCP servers yet", "Add a server once and Octet installs it into each agent in its own syntax.")
+            case .plugins: ("No plugins available", "Add a plugin marketplace to browse what it offers.")
+            case .skills: ("No skills yet", "Skills in your library are linked into every agent you pick.")
+            case .prompts: ("No prompts yet", "Prompts in your library become slash commands in every agent you pick.")
             }
+            return AnyView(MarketplaceEmptyState(symbol: section.symbol, title: title, message: message,
+                                                 actionTitle: addTitle, action: add))
         }
-        return MarketplaceEmptyState(
-            symbol: "magnifyingglass",
-            title: "No matches",
-            message: "Nothing in \(section.title) matches \u{201C}\(store.query.trimmingCharacters(in: .whitespaces))\u{201D}.",
-            actionTitle: "Clear Search"
-        ) { store.query = "" }
-    }
-}
-
-// MARK: - Plugins
-
-/// Newer versions of installed terminal plugins, updated in one click.
-private struct PluginUpdatesBanner: View {
-    let updates: [PluginRegistry.Entry]
-    @ObservedObject private var host = OctetPluginHost.shared
-
-    var body: some View {
-        HStack(spacing: 8) {
-            OctetIcon("arrow.down", size: 13).foregroundStyle(Theme.accent)
-            Text(updates.count == 1 ? "An update for \(updates[0].name)" : "\(updates.count) plugin updates")
-                .font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary)
-            Text(updates.map { "\($0.name) \($0.version)" }.joined(separator: ", "))
-                .font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
-                .lineLimit(1).truncationMode(.tail)
-            Spacer(minLength: 8)
-            OctetButton(title: updates.count == 1 ? "Update" : "Update All", kind: .primary, compact: true) { host.update(updates) }
-                .disabled(!host.installing.isEmpty)
+        if visible == 0, !store.query.trimmingCharacters(in: .whitespaces).isEmpty {
+            return AnyView(MarketplaceEmptyState(
+                symbol: "magnifyingglass", title: "No matches",
+                message: "Nothing in \(section.title) matches \u{201C}\(store.query.trimmingCharacters(in: .whitespaces))\u{201D}. Search looks at names and descriptions.",
+                actionTitle: "Clear Search"
+            ) { store.query = "" })
         }
-        .padding(10)
-        .background(Theme.card)
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.accent.opacity(0.4), lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        return nil
     }
-}
 
-/// All, agents' plugins, or Octet's own: one list, filtered.
-private struct PluginFilterBar: View {
-    @ObservedObject var store: MarketplaceStore
+    // MARK: Editors
 
-    var body: some View {
-        HStack(spacing: 4) {
-            ForEach(MarketplaceStore.PluginFilter.allCases) { filter in
-                let selected = store.pluginFilter == filter
-                Button { store.pluginFilter = filter } label: {
-                    Text(filter.title)
-                        .font(Theme.captionFont.weight(.medium))
-                        .foregroundStyle(selected ? Theme.textPrimary : Theme.textSecondary)
-                        .padding(.horizontal, 9)
-                        .frame(height: 22)
-                        .background(RoundedRectangle(cornerRadius: Theme.rowRadius).fill(selected ? Theme.cardSelected : Color.clear))
-                        .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius)
-                            .strokeBorder(Theme.border.opacity(selected ? 1 : 0.6), lineWidth: 1))
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityAddTraits(selected ? .isSelected : [])
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.bottom, 4)
-    }
-}
-
-/// One of Octet's own plugins: on or off when it's here, Install when it's
-/// only in the registry, Update when the registry has newer, Remove when
-/// the person installed it.
-private struct TerminalPluginRow: View {
-    let plugin: MarketplaceStore.TerminalPlugin
-    @ObservedObject private var host = OctetPluginHost.shared
-    @State private var hovered = false
-
-    var body: some View {
-        let installed = plugin.installed
-        let busy = host.installing.contains(plugin.id)
-        HStack(alignment: .top, spacing: 10) {
-            OctetIcon("terminal", size: 16)
-                .foregroundStyle(installed.map(host.isEnabled) == true ? Theme.accent : Theme.textTertiary)
-                .frame(width: 16)
-                .padding(.top, 2)
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(plugin.name)
-                        .font(Theme.uiFontMedium)
-                        .foregroundStyle(Theme.textPrimary)
-                        .lineLimit(1)
-                        .layoutPriority(1)
-                    Text(plugin.version).font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
-                    Text(installed?.isBundled == true ? "Built in" : plugin.author)
-                        .font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
-                    Text("Terminal")
-                        .font(Theme.captionFont)
-                        .foregroundStyle(Theme.textTertiary)
-                        .padding(.horizontal, 5)
-                        .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(Theme.border, lineWidth: 1))
-                }
-                if !plugin.summary.isEmpty {
-                    Text(plugin.summary)
-                        .font(Theme.captionFont)
-                        .foregroundStyle(Theme.textSecondary)
-                        .lineLimit(3)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            Spacer(minLength: 8)
-            HStack(spacing: 6) {
-                if busy {
-                    LoadingLine(width: 14)
-                } else if let installed {
-                    if let update = host.update(for: installed) {
-                        OctetButton(title: "Update", kind: .primary, compact: true) { host.install(update) }
-                    }
-                    if installed.manifest.settings?.isEmpty == false, host.isEnabled(installed) {
-                        OctetButton(title: "Settings", compact: true) { PluginSettingsOpener.show(pluginId: installed.id) }
-                    }
-                    if !installed.isBundled {
-                        OctetButton(title: "Remove", kind: .ghost, compact: true) {
-                            ConfirmCenter.shared.ask(title: "Remove \(plugin.name)?", message: "Deletes it from your plugin folder.",
-                                                     confirmTitle: "Remove", destructive: true) { _ in host.uninstall(installed) }
-                        }
-                        .opacity(hovered ? 1 : 0.5)
-                    }
-                    Toggle(plugin.name, isOn: Binding(get: { host.isEnabled(installed) },
-                                                      set: { host.setEnabled(installed, $0) }))
-                        .labelsHidden()
-                        .toggleStyle(OctetSwitchStyle())
-                } else if let entry = plugin.entry {
-                    OctetButton(title: "Install", kind: .primary, compact: true) { host.install(entry) }
-                }
-            }
-        }
-        .padding(10)
-        .background(hovered ? Theme.hover : Theme.card)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .onHover { hovered = $0 }
-        .help(plugin.entry.map { "From github.com/\($0.repo)" } ?? "")
-    }
-}
-
-// MARK: - States
-
-/// Stands in for an empty list: loading, failed, empty, or no matches.
-private struct MarketplaceEmptyState: View {
-    /// nil shows a spinner.
-    let symbol: String?
-    let title: String
-    let message: String
-    var actionTitle: String?
-    var action: (() -> Void)?
-
-    var body: some View {
-        VStack(spacing: 10) {
-            if let symbol {
-                OctetIcon(symbol, size: 35)
-                    .foregroundStyle(Theme.textTertiary)
-            } else {
-                LoadingLine(width: 48, thickness: 3)
-            }
-            Text(title)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(Theme.textPrimary)
-            Text(message)
-                .font(Theme.uiFont)
-                .foregroundStyle(Theme.textSecondary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
-                .frame(maxWidth: 420)
-            if let actionTitle, let action {
-                OctetButton(title: actionTitle, compact: true, action: action)
-                    .padding(.top, 2)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.top, 70)
-        .padding(.bottom, 30)
-        .padding(.horizontal, 20)
-        .accessibilityElement(children: .contain)
-    }
-}
-
-/// A failed refresh over a list that still shows its previous rows.
-private struct LoadErrorBanner: View {
-    let message: String
-    let retrying: Bool
-    let retry: () -> Void
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            OctetIcon("exclamationmark.triangle.fill", size: 16)
-                .foregroundStyle(Theme.danger)
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Couldn't refresh; showing what loaded before")
-                    .font(Theme.uiFontMedium)
-                    .foregroundStyle(Theme.textPrimary)
-                Text(message)
-                    .font(Theme.captionFont)
-                    .foregroundStyle(Theme.textSecondary)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 8)
-            if retrying {
-                LoadingLine(width: 18)
-            } else {
-                OctetButton(title: "Retry", compact: true, action: retry)
-            }
-        }
-        .padding(10)
-        .background(Theme.danger.opacity(0.12))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.danger.opacity(0.5), lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .padding(.bottom, 4)
-    }
-}
-
-// MARK: - Rows
-
-private struct SidebarRow: View {
-    let title: String
-    let symbol: String
-    let count: String?
-    let selected: Bool
-    let loading: Bool
-    let action: () -> Void
-    @State private var hovered = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                OctetIcon(symbol, size: 15)
-                    .frame(width: 14)
-                Text(title)
-                    .font(selected ? Theme.uiFontMedium : Theme.uiFont)
-                Spacer(minLength: 4)
-                if loading {
-                    LoadingLine(width: 14)
-                } else if let count {
-                    Text(count)
-                        .font(Theme.captionFont)
-                        .foregroundStyle(Theme.textTertiary)
-                }
-            }
-            .foregroundStyle(selected ? Theme.textPrimary : Theme.textSecondary)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(selected ? Theme.cardSelected : (hovered ? Theme.hover : Color.clear))
-            .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
-        }
-        .buttonStyle(.plain)
-        .onHover { hovered = $0 }
-        .padding(.horizontal, 6)
-        .accessibilityAddTraits(selected ? .isSelected : [])
-    }
-}
-
-/// A plugin or MCP server, with a chip per agent showing where it is installed.
-private struct EntryRow: View {
-    @ObservedObject var store: MarketplaceStore
-    let entry: MarketplaceEntry
-    @State private var hovered = false
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            OctetIcon(entry.kind == .mcp ? "point.3.connected.trianglepath.dotted" : "puzzlepiece.extension", size: 16)
-                .foregroundStyle(entry.isInstalled ? Theme.accent : Theme.textTertiary)
-                .frame(width: 16)
-                .padding(.top, 2)
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(entry.name)
-                        .font(Theme.uiFontMedium)
-                        .foregroundStyle(Theme.textPrimary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .layoutPriority(1)
-                    if !entry.version.isEmpty {
-                        Text(entry.version).font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
-                    }
-                    if let count = entry.installCount, count > 0 {
-                        Text("\(count) installs").font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
-                    }
-                    if !entry.marketplace.isEmpty {
-                        Text(entry.marketplace).font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
+    @ViewBuilder private var editorOverlay: some View {
+        if let editor {
+            ZStack {
+                Color.black.opacity(0.35)
+                    .contentShape(Rectangle())
+                    .onTapGesture { self.editor = nil }
+                    .accessibilityHidden(true)
+                Group {
+                    switch editor {
+                    case .library(let draft):
+                        LibraryEditor(store: store, draft: draft) { self.editor = nil }
+                    case .server:
+                        ServerEditor(store: store) { self.editor = nil }
                     }
                 }
-                if !entry.summary.isEmpty || !entry.detail.isEmpty {
-                    Text(entry.summary.isEmpty ? entry.detail : entry.summary)
-                        .font(Theme.captionFont)
-                        .foregroundStyle(Theme.textSecondary)
-                        .lineLimit(2)
-                }
-                ChipFlowLayout(spacing: 6) {
-                    ForEach(store.hosts) { host in
-                        HostChip(
-                            host: host,
-                            installed: entry.installedIn.contains(host.id),
-                            enabled: entry.enabledIn.contains(host.id),
-                            status: entry.status[host.id],
-                            busy: store.isBusy(entry, host)
-                        ) {
-                            toggle(host)
-                        }
-                    }
-                }
+                .frame(width: 560)
+                .octetGlass(cornerRadius: 14)
+                .padding(40)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            Spacer(minLength: 8)
-            if entry.isInstalled {
-                OctetButton(title: "Remove", kind: .ghost, compact: true) {
-                    let hosts = store.hosts.filter { entry.installedIn.contains($0.id) }
-                    ConfirmCenter.shared.ask(
-                        title: "Remove \(entry.name)?",
-                        message: "Removes it from \(hosts.map(\.displayName).joined(separator: ", ")).",
-                        confirmTitle: "Remove",
-                        destructive: true
-                    ) { _ in store.remove(entry, from: hosts) }
-                }
-                .opacity(hovered ? 1 : 0.5)
-                .disabled(store.isBusy(entry))
-            }
-        }
-        .padding(10)
-        .background(hovered ? Theme.hover : Theme.card)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .onHover { hovered = $0 }
-    }
-
-    private func toggle(_ host: AgentHost) {
-        if entry.installedIn.contains(host.id) {
-            store.remove(entry, from: [host])
-        } else {
-            store.add(entry, to: [host])
+            .transition(.opacity)
+            .id(editor.id)
         }
     }
 }
 
-/// One agent's install state for an item; click to add or remove it there.
-private struct HostChip: View {
+/// Which editor is over the page.
+enum MarketplaceEditorKind: Identifiable {
+    case library(LibraryDraft)
+    case server
+
+    var id: String {
+        switch self {
+        case .library(let draft): draft.id.uuidString
+        case .server: "server"
+        }
+    }
+}
+
+/// A skill or prompt an agent has that the library doesn't.
+struct UnmanagedItem: Identifiable {
     let host: AgentHost
-    let installed: Bool
-    var enabled = true
-    var status: String?
-    /// A change for this host is running: spin and ignore clicks.
-    var busy = false
-    let toggle: () -> Void
-    @State private var hovered = false
-
-    var body: some View {
-        Button(action: toggle) {
-            HStack(spacing: 4) {
-                if busy {
-                    LoadingLine(width: 10)
-                } else if let brand = AgentBrand.forAgent(host.id) {
-                    AgentLogo(brand: brand, size: 10)
-                } else {
-                    OctetIcon("terminal", size: 12)
-                }
-                Text(host.displayName)
-                    .font(Theme.captionFont)
-                    .lineLimit(1)
-                if let status, status.contains("✘") || status == "disabled" {
-                    OctetIcon("exclamationmark.triangle.fill", size: 11)
-                        .foregroundStyle(.orange)
-                }
-            }
-            .foregroundStyle(installed ? Theme.textPrimary : Theme.textTertiary)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background {
-                let tint = AgentBrand.forAgent(host.id)?.hueHex.map { Color(hex: $0) } ?? Theme.accent
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(installed ? tint.opacity(enabled ? 0.22 : 0.1) : Color.clear)
-                RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(installed ? tint.opacity(0.5) : Theme.border, lineWidth: 1)
-            }
-            .opacity(hovered ? 0.85 : 1)
-            .fixedSize(horizontal: true, vertical: false)
-        }
-        .buttonStyle(.plain)
-        .disabled(busy)
-        .onHover { hovered = $0 }
-        .help(busy ? "Updating \(host.displayName)…" : status ?? (installed ? "Installed in \(host.displayName)" : "Add to \(host.displayName)"))
-        .accessibilityLabel(host.displayName)
-        .accessibilityValue(busy ? "Updating" : installed ? "Installed" : "Not installed")
-    }
+    let slug: String
+    var id: String { "\(host.id):\(slug)" }
 }
 
-private struct LibraryRow: View {
-    @ObservedObject var store: MarketplaceStore
-    let item: AgentLibrary.Item
-    let edit: () -> Void
-    @State private var hovered = false
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            OctetIcon(item.kind == .skill ? "graduationcap" : "text.bubble", size: 16)
-                .foregroundStyle(item.installedIn.isEmpty ? Theme.textTertiary : Theme.accent)
-                .frame(width: 16)
-                .padding(.top, 2)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(item.name)
-                    .font(Theme.uiFontMedium)
-                    .foregroundStyle(Theme.textPrimary)
-                if !item.summary.isEmpty {
-                    Text(item.summary)
-                        .font(Theme.captionFont)
-                        .foregroundStyle(Theme.textSecondary)
-                        .lineLimit(2)
-                }
-                ChipFlowLayout(spacing: 6) {
-                    ForEach(store.hosts) { host in
-                        HostChip(host: host, installed: item.installedIn.contains(host.id)) {
-                            store.setLibraryInstalled(item, host: host, installed: !item.installedIn.contains(host.id))
-                        }
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            Spacer(minLength: 8)
-            HStack(spacing: 4) {
-                if item.kind == .prompt, let agent = store.promptTarget {
-                    OctetButton(title: "Run", kind: .primary, compact: true) { store.runPrompt(item) }
-                        .help("Send this prompt to \(AgentBrand.forAgent(agent.agent)?.displayName ?? "the focused agent")")
-                }
-                OctetButton(title: "Edit", compact: true, action: edit)
-                OctetButton(title: "Delete", kind: .ghost, compact: true) {
-                    ConfirmCenter.shared.ask(
-                        title: "Delete \(item.name)?",
-                        message: "Deletes it from the library and uninstalls it from every agent that has it. This can't be undone.",
-                        confirmTitle: "Delete",
-                        destructive: true
-                    ) { _ in store.deleteLibraryItem(item) }
-                }
-            }
-            .opacity(hovered ? 1 : 0.5)
-        }
-        .padding(10)
-        .background(hovered ? Theme.hover : Theme.card)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .onHover { hovered = $0 }
-    }
-}
-
-/// Offers to pull an agent's own skills and prompts into the shared library.
-private struct ImportRow: View {
-    @ObservedObject var store: MarketplaceStore
-    let kind: AgentLibrary.Kind
-
-    var body: some View {
-        let groups = store.unmanaged(kind)
-        if !groups.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("In your agents but not in the library")
-                    .font(Theme.headerFont)
-                    .foregroundStyle(Theme.textTertiary)
-                ForEach(groups, id: \.host.id) { group in
-                    ForEach(group.slugs, id: \.self) { slug in
-                        HStack(spacing: 8) {
-                            Text(slug).font(Theme.uiFont).foregroundStyle(Theme.textSecondary)
-                            Text(group.host.displayName).font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
-                            Spacer()
-                            OctetButton(title: "Add to Library", compact: true) { store.adopt(kind: kind, slug: slug, from: group.host) }
-                        }
-                    }
-                }
-            }
-            .padding(10)
-            .background(Theme.card.opacity(0.6))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-        }
-    }
-}
-
-// MARK: - Editors
-
-struct LibraryDraft: Identifiable {
-    let id = UUID()
-    var kind: AgentLibrary.Kind
-    var slug = ""
-    var text = ""
-    var hosts: Set<String> = []
-    var isNew = true
-    /// Reuses the sheet to add a plugin marketplace instead.
-    var marketplaceSource = false
-
-    init(kind: AgentLibrary.Kind, marketplaceSource: Bool = false) {
-        self.kind = kind
-        self.marketplaceSource = marketplaceSource
-        text = kind == .skill
-            ? "---\nname: my-skill\ndescription: What this skill is for, and when to use it\n---\n\n# My Skill\n\nSteps the agent should follow.\n"
-            : "---\ndescription: What this prompt does\n---\n\nWrite the prompt here.\n"
-    }
-
-    init(item: AgentLibrary.Item, text: String) {
-        kind = item.kind
-        slug = item.slug
-        self.text = text
-        hosts = item.installedIn
-        isNew = false
-    }
-}
-
-private struct LibraryEditor: View {
-    @ObservedObject var store: MarketplaceStore
-    @State var draft: LibraryDraft
-    let close: () -> Void
-    @State private var source = ""
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title).font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary)
-            if draft.marketplaceSource {
-                Text("A GitHub repo, URL, or local path holding a plugin marketplace.")
-                    .font(Theme.captionFont).foregroundStyle(Theme.textSecondary)
-                OctetTextField(placeholder: "owner/repo", text: $source, label: "Marketplace source")
-                hostPicker
-            } else {
-                OctetTextField(placeholder: "name", text: $draft.slug, label: "Name")
-                    .disabled(!draft.isNew)
-                OctetTextEditor(placeholder: "Contents", text: $draft.text, minHeight: 260, maxHeight: nil, font: Theme.monoFont)
-                hostPicker
-            }
-            HStack {
-                OctetButton(title: "Cancel", kind: .ghost, compact: true, action: close).keyboardShortcut(.cancelAction)
-                Spacer()
-                OctetButton(title: "Save", kind: .primary, compact: true, action: save)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(draft.marketplaceSource ? source.isEmpty : draft.slug.isEmpty)
-            }
-        }
-        .padding(16)
-        .frame(width: 520)
-        .background(Theme.chrome)
-    }
-
-    private var title: String {
-        if draft.marketplaceSource { return "Add a plugin marketplace" }
-        let noun = draft.kind == .skill ? "skill" : "prompt"
-        return draft.isNew ? "New \(noun)" : "Edit \(draft.slug)"
-    }
-
-    private var hostPicker: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Install in").font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
-            ChipFlowLayout(spacing: 6) {
-                ForEach(store.hosts) { host in
-                    HostChip(host: host, installed: draft.hosts.contains(host.id)) {
-                        if draft.hosts.contains(host.id) { draft.hosts.remove(host.id) } else { draft.hosts.insert(host.id) }
-                    }
-                }
-            }
-        }
-    }
-
-    private func save() {
-        let hosts = store.hosts.filter { draft.hosts.contains($0.id) }
-        if draft.marketplaceSource {
-            store.addMarketplace(source.trimmingCharacters(in: .whitespaces), to: hosts.isEmpty ? store.hosts : hosts)
-            close()
-            return
-        }
-        let slug = draft.slug.trimmingCharacters(in: .whitespaces)
-            .replacingOccurrences(of: " ", with: "-")
-            .lowercased()
-        if store.saveLibraryItem(kind: draft.kind, slug: slug, text: draft.text, installIn: hosts) {
-            // Links for hosts that were unchecked are removed too.
-            if let item = (draft.kind == .skill ? store.skills : store.prompts).first(where: { $0.slug == slug }) {
-                for host in store.hosts where !draft.hosts.contains(host.id) && item.installedIn.contains(host.id) {
-                    store.setLibraryInstalled(item, host: host, installed: false)
-                }
-            }
-            close()
-        }
-    }
-}
-
-private struct ServerEditor: View {
-    @ObservedObject var store: MarketplaceStore
-    let close: () -> Void
-    @State private var name = ""
-    @State private var command = ""
-    @State private var hosts: Set<String> = []
-    @State private var submitting = false
-    @State private var error: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Add an MCP server").font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary)
-            Text("A command to run, or an HTTP URL. Octet adds it in each agent's own syntax.")
-                .font(Theme.captionFont).foregroundStyle(Theme.textSecondary)
-            OctetTextField(placeholder: "name", text: $name, label: "Name")
-                .disabled(submitting)
-            OctetTextField(placeholder: "npx -y @acme/mcp-server  ·  https://mcp.example.com/mcp", text: $command, label: "Command or URL")
-                .disabled(submitting)
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Add to").font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
-                ChipFlowLayout(spacing: 6) {
-                    ForEach(store.hosts) { host in
-                        HostChip(host: host, installed: hosts.contains(host.id)) {
-                            if hosts.contains(host.id) { hosts.remove(host.id) } else { hosts.insert(host.id) }
-                        }
-                    }
-                }
-            }
-            .disabled(submitting)
-            if let error {
-                HStack(alignment: .top, spacing: 6) {
-                    OctetIcon("exclamationmark.triangle.fill", size: 14)
-                        .foregroundStyle(Theme.danger)
-                    Text(error)
-                        .font(Theme.captionFont)
-                        .foregroundStyle(Theme.danger)
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .accessibilityElement(children: .combine)
-            }
-            HStack {
-                OctetButton(title: "Cancel", kind: .ghost, compact: true, action: close).keyboardShortcut(.cancelAction)
-                Spacer()
-                if submitting {
-                    LoadingLine(width: 18)
-                    Text("Adding…").font(Theme.captionFont).foregroundStyle(Theme.textSecondary)
-                }
-                OctetButton(title: "Add", kind: .primary, compact: true, action: add)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(submitting || name.trimmingCharacters(in: .whitespaces).isEmpty
-                        || command.trimmingCharacters(in: .whitespaces).isEmpty)
-            }
-        }
-        .padding(16)
-        .frame(width: 520)
-        .background(Theme.chrome)
-        .onAppear { hosts = Set(store.hosts.map(\.id)) }
-    }
-
-    /// Stays open until the agents answer, so a failed command can be fixed
-    /// instead of retyped.
-    private func add() {
-        let targets = store.hosts.filter { hosts.contains($0.id) }
-        submitting = true
-        error = nil
-        store.addServer(name: name.trimmingCharacters(in: .whitespaces),
-                        command: command,
-                        into: targets.isEmpty ? store.hosts : targets) { failure in
-            submitting = false
-            if let failure {
-                error = failure
-            } else {
-                close()
-            }
-        }
-    }
-}
-
-/// Keeps every agent chip readable and wraps complete chips onto another
-/// line when the Marketplace window is narrow.
-private struct ChipFlowLayout: Layout {
-    var spacing: CGFloat = 6
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let result = positions(for: subviews, width: proposal.width ?? .infinity)
-        return CGSize(width: result.width, height: result.height)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let result = positions(for: subviews, width: bounds.width)
-        for (index, point) in result.points.enumerated() {
-            subviews[index].place(at: CGPoint(x: bounds.minX + point.x, y: bounds.minY + point.y), proposal: .unspecified)
-        }
-    }
-
-    private func positions(for subviews: Subviews, width: CGFloat) -> (points: [CGPoint], width: CGFloat, height: CGFloat) {
-        var points: [CGPoint] = []
-        var x: CGFloat = 0
-        var y: CGFloat = 0
-        var rowHeight: CGFloat = 0
-        var usedWidth: CGFloat = 0
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if x > 0, x + size.width > width {
-                x = 0
-                y += rowHeight + spacing
-                rowHeight = 0
-            }
-            points.append(CGPoint(x: x, y: y))
-            x += size.width + spacing
-            rowHeight = max(rowHeight, size.height)
-            usedWidth = max(usedWidth, max(0, x - spacing))
-        }
-        return (points, min(usedWidth, width), y + rowHeight)
-    }
-}
-
-/// What both forms of the Marketplace do on appearing, and its editors.
-private struct MarketplaceLifecycle: ViewModifier {
-    let view: MarketplaceView
+/// The Marketplace window's own chrome, which the page in the main window
+/// doesn't want: its size, title bar and theme, and its own toasts and
+/// confirmations.
+private struct MarketplaceChrome: ViewModifier {
+    let embedded: Bool
+    @ObservedObject private var settings = SettingsStore.shared
 
     func body(content: Content) -> some View {
-        content
-            .onAppear { view.appeared() }
-            .sheet(item: view.editingBinding) { draft in
-                LibraryEditor(store: view.store, draft: draft) { view.editingBinding.wrappedValue = nil }
-            }
-            .sheet(isPresented: view.addingServerBinding) {
-                ServerEditor(store: view.store) { view.addingServerBinding.wrappedValue = false }
-            }
+        if embedded {
+            content
+        } else {
+            content
+                .frame(minWidth: 820, minHeight: 540)
+                .overlay(alignment: .bottomTrailing) { ToastStack(center: ToastCenter.shared) }
+                .overlay { ConfirmDialog(center: ConfirmCenter.shared) }
+                .ignoresSafeArea()
+                .background(DarkTransparentTitleBar())
+                .background(ThemedWindow(themeName: settings.themeKey))
+                .preferredColorScheme(Theme.colorScheme)
+        }
     }
 }

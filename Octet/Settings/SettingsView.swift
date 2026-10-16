@@ -287,9 +287,12 @@ struct SettingsView: View {
 
 /// The Settings search row, after T3 Code's: no box, a search icon, and the
 /// `/` that focuses it, which turns into a clear button once there's a
-/// query. Return opens the active result, ↑/↓ move it, Esc clears.
-private struct SettingsSearchField<Value: Hashable>: View {
+/// query. Return opens the active result, ↑/↓ move it, Esc clears. The
+/// Marketplace's search is the same row.
+struct SettingsSearchField<Value: Hashable>: View {
     @Binding var query: String
+    /// What VoiceOver calls it.
+    var label = "Search settings"
     var focus: FocusState<Value?>.Binding
     let focusValue: Value
     let submit: () -> Void
@@ -317,7 +320,7 @@ private struct SettingsSearchField<Value: Hashable>: View {
                 .onKeyPress(.downArrow) { move(1); return .handled }
                 .onKeyPress(.upArrow) { move(-1); return .handled }
                 .onExitCommand(perform: clear)
-                .accessibilityLabel("Search settings")
+                .accessibilityLabel(label)
             }
             if query.isEmpty {
                 Keycap(text: "/")
@@ -334,7 +337,7 @@ private struct SettingsSearchField<Value: Hashable>: View {
                 }
                 .buttonStyle(OctetPressStyle())
                 .help("Clear Search")
-                .accessibilityLabel("Clear settings search")
+                .accessibilityLabel("Clear " + label.lowercased())
             }
         }
         .padding(.horizontal, 8)
