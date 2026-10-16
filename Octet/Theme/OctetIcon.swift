@@ -165,7 +165,8 @@ struct OctetIcon: View {
         "arrow.up.right": .symbol("arrow.up.right"),
         "doc.diff": .symbol("plus.forwardslash.minus"),
         "message": .init("message-text"),
-        "ellipsis": .init("more"),
+        // Flat, filled dots, not the set's triangle of three.
+        "ellipsis": .symbol("ellipsis"),
         "check": .symbol("checkmark"),
         "circle.check": .symbol("checkmark.circle"),
         "circle.x": .symbol("xmark.circle"),
@@ -197,7 +198,7 @@ struct OctetIcon: View {
     ]
 
     var body: some View {
-        let art = Self.map[name] ?? .init("more")
+        let art = Self.map[name] ?? .symbol("ellipsis")
         Group {
             if let glyph = art.glyph {
                 OctetGlyph(kind: glyph)

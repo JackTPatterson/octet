@@ -241,10 +241,12 @@ final class PullRequestPlaneModel: ObservableObject {
     static let dryRunLog = ProcessInfo.processInfo.environment["OCTET_GH_DRY_RUN"]
     private static var debugActionsRan = false
 
-    /// OCTET_PR_ACTIONS (dry run only): every action, once, after the first read.
+    /// OCTET_PR_ACTIONS=<number> (dry run only): every action, once, after
+    /// the first read of that one pull request. Never without the dry run,
+    /// and never on any other PR a restored plane happens to load first.
     private func runDebugActions() {
-        guard Self.dryRunLog != nil, !Self.debugActionsRan,
-              ProcessInfo.processInfo.environment["OCTET_PR_ACTIONS"] == "all", let detail else { return }
+        guard Self.dryRunLog != nil, !Self.debugActionsRan, let detail,
+              ProcessInfo.processInfo.environment["OCTET_PR_ACTIONS"] == String(detail.number) else { return }
         Self.debugActionsRan = true
         for method in PullRequestMergeMethod.allCases {
             choose(method)
