@@ -90,6 +90,7 @@ final class StatusBarModel: ObservableObject {
     private static var fetchingVersions: Set<String> = []
 
     func show(pane: String?, directory: String?, ssh: SSHTarget?, client: EngineClient) {
+        if debugFrozen { return }
         let paneChanged = pane != self.pane
         guard paneChanged || directory != self.directory || ssh != self.ssh else { return }
         // Kept under where it was shown, before any of that changes.
@@ -159,7 +160,7 @@ final class StatusBarModel: ObservableObject {
         DispatchQueue.global(qos: .utility).async {
             let marks = (try? client.call("pane.marks", ["pane_id": pane, "limit": 4])).flatMap(PromptMarks.init(response:))
             DispatchQueue.main.async { [weak self] in
-                guard let self, self.pane == pane else { return }
+                guard let self, self.pane == pane, !self.debugFrozen else { return }
                 let last = marks?.lastFinished
                 // Panes come and go; a closed one's entry isn't worth keeping.
                 if self.lastCommands.count > 200 { self.lastCommands = [:] }
@@ -170,12 +171,52 @@ final class StatusBarModel: ObservableObject {
     }
 
     private func tick() {
+        if debugFrozen { return }
         refreshLastCommand()
         refreshRemoteControl()
         guard directory != nil else { return }
         refreshGit()
         refreshPlugins()
     }
+
+    /// Set by the DEBUG preview, so sample items aren't read over.
+    private var debugFrozen = false
+
+    #if DEBUG
+    /// Verification hook (OCTET_OPEN_WINDOW=status-preview[:running|:failed]):
+    /// fills the bar with every built-in item, a PR, CI in the asked-for
+    /// state and the ports chip, and stops reading the real pane.
+    func debugShowSample(ci overall: CIStatus.Overall = .passed) {
+        debugFrozen = true
+        let run = { (id: Int, name: String, status: String, conclusion: String) in
+            CIRun(id: id, workflow: name, title: "Split borders", status: status, conclusion: conclusion,
+                  headSha: "b777e4f", event: "push", url: nil, createdAt: Date().addingTimeInterval(-120),
+                  updatedAt: Date().addingTimeInterval(-30))
+        }
+        let runs: [CIRun] = switch overall {
+        case .running: [run(1, "Build", "completed", "success"), run(2, "Tests", "in_progress", "")]
+        case .failed: [run(1, "Build", "completed", "success"), run(2, "Tests", "completed", "failure")]
+        case .cancelled: [run(1, "Build", "completed", "cancelled")]
+        case .passed: [run(1, "Build", "completed", "success"), run(2, "Tests", "completed", "success")]
+        }
+        directory = NSHomeDirectory() + "/Developer/apps/octet"
+        var repo = Repo(root: directory!, gitDir: directory! + "/.git", branch: "feature/easier-group-start")
+        repo.changes = WorkingTreeChanges(added: 339, removed: 12, files: 4)
+        repo.pullRequest = GitHubPullRequest(number: 1, title: "Easier group start", state: "OPEN",
+                                             url: URL(string: "https://github.com/JackTPatterson/octet/pull/1")!,
+                                             isDraft: false, reviewDecision: nil,
+                                             checks: overall == .failed ? .failing : overall == .running ? .pending : .passing)
+        repo.ci = CIStatus(runs: runs, sha: "b777e4f", isHead: true)
+        self.repo = repo
+        pluginOutputs = [
+            "plugin.status-chips.ports": StatusItemOutput(text: ":8799", help: "Listening on 8799 · Click to open",
+                                                          url: URL(string: "http://localhost:8799")),
+            "plugin.status-chips.ahead-behind": StatusItemOutput(text: "↑1", help: "1 ahead, 0 behind origin"),
+        ]
+        lastCommand = PromptMark(promptRow: 0, outputRow: 1, endRow: 2, exitCode: 0,
+                                 startedAt: Date().addingTimeInterval(-0.001), finishedAt: Date(), command: "ls")
+    }
+    #endif
 
     // MARK: - Remote Control
 

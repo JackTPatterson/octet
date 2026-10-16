@@ -1,26 +1,34 @@
 import SwiftUI
 
-/// The strip under the terminal: chips for the focused pane, in the order
-/// and selection set in Settings › Status Bar. Over SSH only chips about the
-/// other machine (or about nothing local) show.
+/// The footer under the terminal, after T3 Code's: quiet, dense items about
+/// the focused pane in the order and selection set in Settings › Status Bar.
+/// Nothing is boxed; colour is kept for what it means (a failing check, a
+/// running build, a passing one), so the eye goes to it and nowhere else.
+/// Items that have a plane open it, the way T3 Code's footer leads into its
+/// panels. Over SSH only items about the other machine (or about nothing
+/// local) show.
 struct StatusBar: View {
     @ObservedObject var model: StatusBarModel
     @ObservedObject var store: SessionStore
+    /// The window's panel, for the planes items open.
+    @ObservedObject var ui: UIState
     let ssh: SSHTarget?
     let agent: EngineAgent?
     var openOnOctetUI: (EngineAgent) -> Void = { _ in }
     @ObservedObject private var plugins = OctetPluginHost.shared
     @ObservedObject private var motion = MotionPreferences.shared
-    /// Redraws the account chip when accounts change.
+    /// Redraws the account item when accounts change.
     @ObservedObject private var settings = SettingsStore.shared
+    /// What serves each port, for the ports item's logo.
+    @ObservedObject private var ports = PortsWatcher.shared
     @Environment(\.openURL) private var openURL
     @State private var ciShown = false
-    /// The plugin chip whose setup popover is open, by descriptor id.
+    /// The plugin item whose setup popover is open, by descriptor id.
     @State private var setupShown: String?
 
-    static let height: CGFloat = 32
+    static let height: CGFloat = 30
 
-    /// Whether any chip would draw, so an empty bar takes no room.
+    /// Whether any item would draw, so an empty bar takes no room.
     @MainActor
     static func hasContent(model: StatusBarModel, ssh: SSHTarget?, agent: EngineAgent?) -> Bool {
         let host = OctetPluginHost.shared
@@ -38,7 +46,7 @@ struct StatusBar: View {
             .joined(separator: ", ")
     }
 
-    /// Whether a chip has something to show; `chip(for:)` draws exactly these.
+    /// Whether an item has something to show; `item(for:)` draws exactly these.
     static func draws(_ descriptor: StatusItemDescriptor, model: StatusBarModel, ssh: SSHTarget?, agent: EngineAgent?) -> Bool {
         switch descriptor.scope {
         case .local: guard ssh == nil else { return false }
@@ -65,15 +73,18 @@ struct StatusBar: View {
 
     var body: some View {
         let descriptors = Dictionary(plugins.statusDescriptors.map { ($0.id, $0) }) { first, _ in first }
+        let shown = plugins.statusBarOrder.filter { id in
+            descriptors[id].map { Self.draws($0, model: model, ssh: ssh, agent: agent) } ?? false
+        }
+        let dividers = StatusBarItems.dividers(before: shown)
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(plugins.statusBarOrder, id: \.self) { id in
-                    if let descriptor = descriptors[id], Self.draws(descriptor, model: model, ssh: ssh, agent: agent) {
-                        chip(for: descriptor)
-                    }
+            HStack(spacing: 2) {
+                ForEach(Array(shown.enumerated()), id: \.element) { index, id in
+                    if dividers.contains(index) { StatusBarDivider() }
+                    if let descriptor = descriptors[id] { item(for: descriptor) }
                 }
             }
-            .padding(.horizontal, 10)
+            .padding(.horizontal, 6)
             .frame(height: Self.height)
         }
         .animation(motion.animation(.connections, .spring(response: 0.4, dampingFraction: 0.7)), value: ssh)
@@ -86,76 +97,95 @@ struct StatusBar: View {
         .accessibilityLabel("Status bar")
     }
 
+    /// Slides in from the leading edge as it arrives, for the connections
+    /// (SSH, Remote Control) that change under someone without a click.
+    private var arrival: AnyTransition {
+        motion.animates(.connections)
+            ? .asymmetric(insertion: .scale(scale: 0.6, anchor: .leading).combined(with: .opacity), removal: .opacity)
+            : .identity
+    }
+
     @ViewBuilder
-    private func chip(for descriptor: StatusItemDescriptor) -> some View {
+    private func item(for descriptor: StatusItemDescriptor) -> some View {
         switch descriptor.id {
         case "builtin.ssh":
             if let ssh {
-                SSHHostChip(target: ssh)
-                    .id(ssh.display)
-                    .transition(motion.animates(.connections)
-                        ? .asymmetric(insertion: .scale(scale: 0.6, anchor: .leading).combined(with: .opacity), removal: .opacity)
-                        : .identity)
+                StatusChip(tint: Theme.accent, help: "Connected over SSH to \(ssh.display)") {
+                    StatusGlyph(symbol: "network")
+                    Text(ssh.display).font(Theme.monoFont).lineLimit(1).truncationMode(.middle)
+                }
+                .accessibilityLabel("SSH to \(ssh.display)")
+                .id(ssh.display)
+                .transition(arrival)
             }
         case "builtin.agent":
-            if let agent { agentChip(agent) }
+            if let agent { agentItem(agent) }
         case "builtin.lastCommand":
-            if let last = model.lastCommand {
-                StatusChip(tone: last.exitCode == 0 ? .normal : .danger,
-                           help: [last.command.map { "`\($0)`" }, last.exitCode.map { "exited \($0)" },
-                                  last.duration.map { "took " + PromptMarks.format($0) }].compactMap { $0 }.joined(separator: " · ")) {
-                    Text(PromptMarks.summary(last)).monospacedDigit()
-                }
-            }
+            if let last = model.lastCommand { lastCommandItem(last) }
         case "builtin.account":
             let label = Self.accountLabel(for: model.directory)
             if !label.isEmpty {
                 StatusChip(help: "Agents started here sign in with this account. Palette › Use Account for This Project changes it.") {
-                    Image(systemName: "person.crop.circle").font(.system(size: 10, weight: .medium))
+                    StatusGlyph(symbol: "person.crop.circle")
                     Text(label).lineLimit(1)
                 }
             }
         case "builtin.remoteControl":
             if model.remoteControlOn {
-                // Keyed like the SSH chip, so it sweeps again each time it's shown.
-                remoteControlChip(model.remoteControlURL)
+                // Keyed like the SSH item, so it sweeps again each time it's shown.
+                remoteControlItem(model.remoteControlURL)
                     .id(model.remoteControlURL?.absoluteString ?? "remote")
-                    .transition(motion.animates(.connections)
-                        ? .asymmetric(insertion: .scale(scale: 0.6, anchor: .leading).combined(with: .opacity), removal: .opacity)
-                        : .identity)
+                    .transition(arrival)
             }
         case "builtin.runtime":
             if let runtime = model.runtime {
                 StatusChip(help: "\(runtime.name)\(model.version.map { " \($0)" } ?? "")") {
                     if let badge = plugins.runtimeBadge(id: runtime.id) {
-                        RuntimeIcon(badge: badge, size: 11)
+                        RuntimeIcon(badge: badge, size: 13)
                     }
                     Text(model.version ?? runtime.name)
                 }
             }
         case "builtin.directory":
             if let directory = model.directory {
-                StatusChip(color: descriptor.color, help: directory) {
-                    Image(systemName: "folder").font(.system(size: 10, weight: .medium))
-                    Text(abbreviateHome(directory)).lineLimit(1).truncationMode(.head)
+                Button { ui.showPlane(.files) } label: {
+                    StatusChip(help: "\(directory)\nClick to show the project's files") {
+                        OctetIcon("folder", size: 13)
+                        Text(abbreviateHome(directory)).lineLimit(1).truncationMode(.head)
+                    }
                 }
-                .contextMenu { Button("Copy Path") { copy(directory) } }
+                .buttonStyle(.plain)
+                .modifier(LinkHover())
+                .contextMenu {
+                    Button("Show Files") { ui.showPlane(.files) }
+                    Button("Copy Path") { copy(directory) }
+                }
             }
         case "builtin.branch":
             if let repo = model.repo, let branch = repo.branch {
-                StatusChip(tone: repo.detached ? .warning : .normal,
-                           help: repo.detached ? "Detached at \(branch)" : "Branch \(branch)") {
-                    OctetIcon("arrow.triangle.branch", size: 10)
-                    Text(repo.detached ? "HEAD \(branch)" : branch).lineLimit(1).truncationMode(.middle)
+                Button { ui.showPlane(.git) } label: {
+                    StatusChip(tone: repo.detached ? .warning : .normal,
+                               help: (repo.detached ? "Detached at \(branch)" : "Branch \(branch)") + "\nClick to show Git") {
+                        OctetIcon("branch", size: 13)
+                        Text(repo.detached ? "HEAD \(branch)" : branch)
+                            .font(Theme.monoFont)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
                 }
-                .contextMenu { Button("Copy Branch Name") { copy(branch) } }
+                .buttonStyle(.plain)
+                .modifier(LinkHover())
+                .contextMenu {
+                    Button("Show Git") { ui.showPlane(.git) }
+                    Button("Copy Branch Name") { copy(branch) }
+                }
             }
         case "builtin.worktree":
             if let repo = model.repo, repo.linkedWorktree {
                 // A click offers what's worth doing from a worktree.
                 Menu { worktreeActions(repo) } label: {
-                    StatusChip(color: descriptor.color, help: "Worktree at \(repo.root)") {
-                        OctetIcon("square.stack.3d.up", size: 10)
+                    StatusChip(help: "Worktree at \(repo.root)") {
+                        OctetIcon("square.stack.3d.up", size: 13)
                         Text((repo.root as NSString).lastPathComponent).lineLimit(1)
                     }
                 }
@@ -167,72 +197,123 @@ struct StatusBar: View {
             }
         case "builtin.gitState":
             if let operation = model.repo?.operation, !operation.isEmpty {
-                StatusChip(tone: operation.conflicts > 0 ? .danger : .warning,
-                           help: "Finish or abort it before switching branches") {
-                    Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 9.5))
-                    Text(operation.label)
+                Button { ui.showPlane(.git) } label: {
+                    StatusChip(tone: operation.conflicts > 0 ? .danger : .warning,
+                               help: "Finish or abort it before switching branches\nClick to show Git") {
+                        StatusGlyph(symbol: "exclamationmark.triangle.fill")
+                        Text(operation.label)
+                    }
                 }
+                .buttonStyle(.plain)
+                .modifier(LinkHover())
             }
         case "builtin.changes":
             if let changes = model.repo?.changes, !changes.isEmpty {
-                StatusChip(help: "\(changes.files) changed \(changes.files == 1 ? "file" : "files") in the working tree") {
-                    OctetIcon("doc", size: 10)
-                    Text("\(changes.files)")
-                    if changes.added > 0 || changes.removed > 0 {
-                        Text("•").foregroundStyle(Theme.textTertiary)
+                Button { ui.showPlane(.diff) } label: {
+                    StatusChip(help: "\(changes.files) changed \(changes.files == 1 ? "file" : "files") in the working tree, "
+                               + "\(changes.added) lines added and \(changes.removed) removed\nClick to show the diff") {
+                        OctetIcon("doc.diff", size: 13)
+                        Text("\(changes.files)")
+                        if changes.added > 0 || changes.removed > 0 {
+                            DiffStatLabel(added: changes.added, removed: changes.removed, font: StatusBarStyle.font)
+                        }
                     }
-                    DiffStatLabel(added: changes.added, removed: changes.removed)
+                }
+                .buttonStyle(.plain)
+                .modifier(LinkHover())
+                .contextMenu {
+                    Button("Show Diff") { ui.showPlane(.diff) }
+                    Button("Review Changes") { WindowRegistry.shared.key?.toggleReview() }
                 }
             }
         case "builtin.pullRequest":
             if let pullRequest = model.repo?.pullRequest {
-                Button { openURL(pullRequest.url) } label: {
-                    StatusChip(help: "\(pullRequest.title)\n\(pullRequest.statusText) · Open on GitHub") {
-                        OctetIcon("arrow.triangle.pull", size: 10)
-                        Text("PR #\(pullRequest.number)")
-                        checksGlyph(pullRequest)
-                    }
-                }
-                .buttonStyle(.plain)
+                pullRequestItem(pullRequest)
             }
         case "builtin.ci":
             if let ci = model.repo?.ci {
-                ciChip(ci)
+                ciItem(ci)
+            }
+        case StatusBarItems.portsItemId:
+            if let output = model.pluginOutputs[descriptor.id] {
+                portsItem(descriptor, output)
             }
         default:
             if let output = model.pluginOutputs[descriptor.id] {
-                pluginChip(descriptor, output)
+                pluginItem(descriptor, output)
             }
         }
     }
 
-    /// CI for this commit at a glance; a click shows each workflow, and
-    /// what to do about a failure.
-    private func ciChip(_ ci: CIStatus) -> some View {
+    /// How the pane's last command ended: a small green check and how long
+    /// it took, or the exit code in red.
+    private func lastCommandItem(_ last: PromptMark) -> some View {
+        let succeeded = last.exitCode == 0
+        let help = [last.command.map { "`\($0)`" }, last.exitCode.map { "exited \($0)" },
+                    last.duration.map { "took " + PromptMarks.format($0) }].compactMap { $0 }.joined(separator: " · ")
+        return StatusChip(tone: succeeded ? .normal : .danger, help: help) {
+            if succeeded {
+                OctetIcon("checkmark", size: 11).foregroundStyle(Color(hex: AgentStateColor.done))
+            } else {
+                OctetIcon("xmark", size: 11)
+                Text("\(last.exitCode ?? -1)")
+            }
+            if let duration = last.duration {
+                Text(PromptMarks.format(duration)).foregroundStyle(succeeded ? Theme.textTertiary : Theme.danger)
+            }
+        }
+    }
+
+    /// The branch's pull request: its state's glyph in GitHub's colours, its
+    /// number, and its checks. A click shows it in the Pull Request plane.
+    private func pullRequestItem(_ pullRequest: GitHubPullRequest) -> some View {
+        let tone = PullRequestTone(state: pullRequest.state, isDraft: pullRequest.isDraft)
+        return Button { ui.showPlane(.pullRequest, number: pullRequest.number) } label: {
+            StatusChip(help: "\(pullRequest.title)\n\(pullRequest.statusText)\nClick to show the pull request") {
+                OctetIcon(tone.icon, size: 13).foregroundStyle(tone.color)
+                Text("#\(pullRequest.number)")
+                checksGlyph(pullRequest)
+            }
+        }
+        .buttonStyle(.plain)
+        .modifier(LinkHover())
+        .contextMenu {
+            Button("Show Pull Request") { ui.showPlane(.pullRequest, number: pullRequest.number) }
+            Button("Open on GitHub") { openURL(pullRequest.url) }
+            Button("Copy Link") { copy(pullRequest.url.absoluteString) }
+        }
+    }
+
+    /// CI for this commit at a glance: amber while it runs, a small green
+    /// check once it passes, red when it fails. A click shows each workflow,
+    /// and what to do about a failure.
+    private func ciItem(_ ci: CIStatus) -> some View {
         let tone: StatusItemOutput.Tone = switch ci.overall {
         case .failed: .danger
+        case .running: .warning
         case .cancelled: .muted
-        case .running, .passed: .normal
+        case .passed: .normal
         }
         return Button { ciShown.toggle() } label: {
             StatusChip(tone: tone, help: ciHelp(ci)) {
-                Image(systemName: "gearshape.2").font(.system(size: 10, weight: .medium))
-                Text("CI")
                 switch ci.overall {
                 case .running:
-                    LoadingLine(width: 10, color: Theme.accent)
-                    Text("\(ci.finished)/\(ci.runs.count)")
+                    LoadingLine(width: 10, color: StatusBarStyle.amber)
+                    Text("CI \(ci.finished)/\(ci.runs.count)")
                 case .passed:
-                    Text("✓").foregroundStyle(Color(hex: AgentStateColor.done))
+                    OctetIcon("checkmark", size: 11).foregroundStyle(Color(hex: AgentStateColor.done))
+                    Text("CI")
                 case .failed:
-                    Text("✗ \(ci.failed.count)")
+                    OctetIcon("xmark", size: 11)
+                    Text("CI \(ci.failed.count) failed")
                 case .cancelled:
-                    Text("cancelled")
+                    Text("CI cancelled")
                 }
             }
             .opacity(ci.isHead ? 1 : 0.7)
         }
         .buttonStyle(.plain)
+        .modifier(LinkHover())
         .popover(isPresented: $ciShown, arrowEdge: .top) {
             CIPopover(status: ci, branch: model.repo?.branch, hasAgent: agent.map { !$0.isSubagentViewer } ?? false,
                       rerun: { model.rerunFailed(ci) },
@@ -255,15 +336,18 @@ struct StatusBar: View {
     }
 
     /// Remote Control is on for the agent in this pane: a light passes over
-    /// the chip; clicked, it opens the session on claude.ai.
-    private func remoteControlChip(_ url: URL?) -> some View {
+    /// the item; clicked, it opens the session on claude.ai.
+    private func remoteControlItem(_ url: URL?) -> some View {
         Button { if let url { openURL(url) } } label: {
-            StatusChip(help: url.map { "Remote Control is on · \($0.absoluteString)" } ?? "Remote Control is on", glimmer: true) {
+            StatusChip(tint: RemoteGlimmer.tint,
+                       help: url.map { "Remote Control is on · \($0.absoluteString)" } ?? "Remote Control is on",
+                       glimmer: true) {
                 Circle().fill(RemoteGlimmer.tint).frame(width: 6, height: 6)
                 Text("Remote")
             }
         }
         .buttonStyle(.plain)
+        .modifier(LinkHover())
         .contextMenu {
             if let url {
                 Button("Open in claude.ai") { openURL(url) }
@@ -272,7 +356,7 @@ struct StatusBar: View {
         }
     }
 
-    private func agentChip(_ agent: EngineAgent) -> some View {
+    private func agentItem(_ agent: EngineAgent) -> some View {
         let brand = AgentBrand.forAgent(agent.agent)
         let name = brand?.displayName ?? agent.agent ?? "Agent"
         let blocked = agent.agentStatus == .blocked
@@ -280,32 +364,83 @@ struct StatusBar: View {
         return Button { if movable { openOnOctetUI(agent) } } label: {
             StatusChip(tone: blocked ? .warning : .normal,
                        help: movable ? "\(name) · Click to open on Octet UI" : name) {
-                if let brand { AgentLogo(brand: brand, size: 11) }
+                if let brand { AgentLogo(brand: brand, size: 13) }
                 Text(blocked ? "\(name) needs you" : [name, stateLabel(agent.agentStatus)].filter { !$0.isEmpty }.joined(separator: " "))
             }
         }
         .buttonStyle(.plain)
+        .modifier(LinkHover(enabled: movable))
     }
 
+    /// The PR's checks, as small as they can be and still read: a green
+    /// check, a red cross, or an amber dot while they run.
     @ViewBuilder
     private func checksGlyph(_ pullRequest: GitHubPullRequest) -> some View {
         switch pullRequest.checks {
-        case .passing: Text("✓").foregroundStyle(Color(hex: AgentStateColor.done))
-        case .failing: Text("✗").foregroundStyle(Color(hex: AgentStateColor.blocked))
-        case .pending: Text("•").foregroundStyle(Theme.accent)
+        case .passing: OctetIcon("checkmark", size: 10).foregroundStyle(Color(hex: AgentStateColor.done))
+        case .failing: OctetIcon("xmark", size: 10).foregroundStyle(Theme.danger)
+        case .pending: Circle().fill(StatusBarStyle.amber).frame(width: 5, height: 5)
         case .none: EmptyView()
         }
     }
 
+    /// The servers the pane's programs listen on, as the sidebar and the
+    /// Browser plane name them: "localhost:3000" with what serves it. A
+    /// click opens the first in the Browser plane; the menu offers the
+    /// default browser and the rest.
     @ViewBuilder
-    private func pluginChip(_ descriptor: StatusItemDescriptor, _ output: StatusItemOutput) -> some View {
-        let content = StatusChip(color: descriptor.color, tone: output.tone, help: output.help ?? descriptor.name) {
-            StatusItemIcon(descriptor: descriptor)
+    private func portsItem(_ descriptor: StatusItemDescriptor, _ output: StatusItemOutput) -> some View {
+        let found = StatusBarItems.ports(in: output.text)
+        if let first = found.first, let url = Self.localURL(first) {
+            Button { ui.openInBrowserPlane(url) } label: {
+                StatusChip(help: (output.help.map { $0 + "\n" } ?? "") + "Click to open in the Browser plane") {
+                    if let logo = LanguageLogo(service: ports.services[first], size: 13) {
+                        logo
+                    } else {
+                        OctetIcon("global", size: 13)
+                    }
+                    Text("localhost:\(String(first))").font(Theme.monoFont)
+                    if found.count > 1 {
+                        Text("+\(found.count - 1)").foregroundStyle(Theme.textTertiary)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .modifier(LinkHover())
+            .contextMenu {
+                if found.count == 1 {
+                    portActions(first)
+                } else {
+                    ForEach(found, id: \.self) { port in
+                        Menu("localhost:\(String(port))") { portActions(port) }
+                    }
+                }
+            }
+        } else {
+            pluginItem(descriptor, output)
+        }
+    }
+
+    @ViewBuilder
+    private func portActions(_ port: Int) -> some View {
+        if let url = Self.localURL(port) {
+            Button("Open in Browser Plane") { ui.openInBrowserPlane(url) }
+            Button("Open in Default Browser") { openURL(url) }
+            Button("Copy URL") { copy(url.absoluteString) }
+        }
+    }
+
+    private static func localURL(_ port: Int) -> URL? { URL(string: "http://localhost:\(port)") }
+
+    @ViewBuilder
+    private func pluginItem(_ descriptor: StatusItemDescriptor, _ output: StatusItemOutput) -> some View {
+        let content = StatusChip(tone: output.tone, help: output.help ?? descriptor.name) {
+            StatusItemIcon(descriptor: descriptor, size: 13, tinted: output.tone == .normal)
             Text(output.text).lineLimit(1)
         }
         if let url = output.url, case .pluginSettings(let id)? = OctetURL(url),
            let plugin = plugins.plugins.first(where: { $0.id == id }) {
-            // What the plugin needs, asked right here on the chip.
+            // What the plugin needs, asked right here on the item.
             Button { setupShown = setupShown == descriptor.id ? nil : descriptor.id } label: { content }
                 .buttonStyle(.plain)
                 .modifier(LinkHover())
@@ -330,7 +465,7 @@ struct StatusBar: View {
         if let main = GitBranch.mainCheckout(ofWorktreeGitDir: repo.gitDir) {
             Button("Open Main Checkout") { WindowRegistry.shared.key?.openProject(path: main) }
         }
-        Button("Show Worktrees") { WindowRegistry.shared.key?.ui.showPlane(.git) }
+        Button("Show Worktrees") { ui.showPlane(.git) }
         Divider()
         Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: repo.root)]) }
         Button("Copy Path") { copy(repo.root) }
@@ -342,88 +477,124 @@ struct StatusBar: View {
     }
 }
 
-/// One chip's frame: an outlined rounded box in the terminal's font, its
-/// text in the chip's colour, or in a tone's when it's warning of something.
+/// The hairline between runs of related items.
+private struct StatusBarDivider: View {
+    var body: some View {
+        Rectangle()
+            .fill(Theme.divider)
+            .frame(width: 1, height: 12)
+            .padding(.horizontal, 4)
+            .accessibilityHidden(true)
+    }
+}
+
+/// The footer's type and colours, shared by its items.
+enum StatusBarStyle {
+    static var font: Font { Theme.interfaceFont(11.5) }
+    /// T3 Code's amber, for something running or wanting a look.
+    static var amber: Color { PullRequestStyle.amber }
+}
+
+/// One footer item: a 24pt run of a 13pt icon and 11.5pt text, in the
+/// secondary text colour, with no frame of its own. It fills on hover so it
+/// still reads as something to point at. A tone recolours it only when it's
+/// warning of something (or `tint` names a colour, for the SSH host).
 struct StatusChip<Content: View>: View {
-    var color: String?
+
     var tone: StatusItemOutput.Tone = .normal
+    var tint: Color?
     var help: String?
     /// A band of light passing over it, for something live elsewhere.
     var glimmer = false
     @ViewBuilder let content: Content
+    @State private var hovered = false
 
     var body: some View {
         HStack(spacing: 5) { content }
-            .font(Theme.monoFont.monospacedDigit())
+            .font(StatusBarStyle.font.monospacedDigit())
             .foregroundStyle(foreground)
             .padding(.horizontal, 7)
-            .frame(height: 22)
-            .background(RoundedRectangle(cornerRadius: 6).fill(glimmer ? RemoteGlimmer.tint.opacity(0.14) : background))
-            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(glimmer ? RemoteGlimmer.tint.opacity(0.45) : border))
-            .overlay { if glimmer { RemoteGlimmer() } }
+            .frame(height: 24)
+            .background(RoundedRectangle(cornerRadius: 6).fill(hovered ? Theme.hover : Color.clear))
+            .overlay { if glimmer { RemoteGlimmer(cornerRadius: 6) } }
+            .contentShape(RoundedRectangle(cornerRadius: 6))
             .fixedSize()
+            .onHover { hovered = $0 }
             .help(help ?? "")
     }
 
-    private var toneColor: Color? {
+    private var foreground: Color {
         switch tone {
-        case .warning: Color(hex: AgentStateColor.blocked)
+        case .warning: StatusBarStyle.amber
         case .danger: Theme.danger
         case .success: Color(hex: AgentStateColor.done)
         case .muted: Theme.textTertiary
-        case .normal: nil
-        }
-    }
-
-    private var foreground: Color {
-        if glimmer { return RemoteGlimmer.tint }
-        if let toneColor { return toneColor }
-        let palette = Theme.palette
-        return color.map {
-            Color(hex: ThemePalette.readable($0, on: palette.background, toward: palette.textPrimary, minimum: 4.5))
-        } ?? Theme.textPrimary
-    }
-
-    private var background: Color {
-        switch tone {
-        case .warning, .danger: (toneColor ?? Theme.card).opacity(0.12)
-        default: Theme.card
-        }
-    }
-
-    private var border: Color {
-        switch tone {
-        case .warning, .danger: (toneColor ?? Theme.border).opacity(0.5)
-        default: Theme.border
+        case .normal: tint ?? Theme.textSecondary
         }
     }
 }
 
-/// A chip that opens something: the pointing hand and a lift on hover, so it
-/// reads as a link and not as a label.
+/// An SF Symbol drawn to sit in the same 13pt box as an OctetIcon.
+struct StatusGlyph: View {
+    let symbol: String
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: 10.5, weight: .medium))
+            .frame(width: 13, height: 13)
+    }
+}
+
+/// An item that opens something: the pointing hand on hover, so it reads as
+/// a link and not as a label (the fill comes from the item itself).
 private struct LinkHover: ViewModifier {
-    @State private var hovered = false
+    var enabled = true
+    @State private var pushed = false
 
     func body(content: Content) -> some View {
         content
-            .brightness(hovered ? 0.08 : 0)
             .onHover { inside in
-                hovered = inside
-                if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+                guard enabled else { return }
+                if inside, !pushed {
+                    NSCursor.pointingHand.push()
+                    pushed = true
+                } else if !inside, pushed {
+                    NSCursor.pop()
+                    pushed = false
+                }
+            }
+            // An item that vanishes under the pointer (the PR merged, CI
+            // finished) would otherwise leave the hand pushed.
+            .onDisappear {
+                if pushed { NSCursor.pop() }
+                pushed = false
             }
     }
 }
 
-/// A chip's icon: a plugin's image tinted like a runtime icon, or an SF Symbol.
+/// An item's icon: a plugin's image tinted like a runtime icon, or an SF
+/// Symbol, in the plugin's colour when `tinted` (its brand, kept off the
+/// text so the footer stays quiet).
 struct StatusItemIcon: View {
     let descriptor: StatusItemDescriptor
+    var size: CGFloat = 11
+    var tinted = false
 
     var body: some View {
         if let path = descriptor.iconPath {
-            RuntimeIcon(badge: RuntimeBadge(id: descriptor.id, name: descriptor.name, iconPath: path, color: descriptor.color), size: 11)
+            RuntimeIcon(badge: RuntimeBadge(id: descriptor.id, name: descriptor.name, iconPath: path, color: descriptor.color), size: size)
         } else if let symbol = descriptor.symbol {
-            Image(systemName: symbol).font(.system(size: 10, weight: .medium))
+            Image(systemName: symbol)
+                .font(.system(size: size * 0.8, weight: .medium))
+                .frame(width: size, height: size)
+                .foregroundStyle(tint)
         }
+    }
+
+    private var tint: AnyShapeStyle {
+        guard tinted, let color = descriptor.color else { return AnyShapeStyle(ForegroundStyle()) }
+        let palette = Theme.palette
+        return AnyShapeStyle(Color(hex: ThemePalette.readable(color, on: palette.background, toward: palette.textPrimary, minimum: 3)))
     }
 }
 

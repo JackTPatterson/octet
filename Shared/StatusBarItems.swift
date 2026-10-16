@@ -96,11 +96,11 @@ enum StatusBarItems {
         .init(id: "builtin.gitState", name: "Merge & rebase", summary: "A merge, rebase or cherry-pick in progress, and conflicts",
               sample: "REBASING 3/7 · 2 conflicts", symbol: "exclamationmark.triangle", enabledByDefault: true),
         .init(id: "builtin.changes", name: "Changes", summary: "Changed files and lines in the working tree",
-              sample: "3 • +10 -2", symbol: "doc", enabledByDefault: true),
+              sample: "3 +10 −2", symbol: "doc", enabledByDefault: true),
         .init(id: "builtin.pullRequest", name: "Pull request", summary: "The branch's pull request and its checks, from the GitHub CLI",
-              sample: "PR #123 ✓", enabledByDefault: true),
+              sample: "#123 ✓", enabledByDefault: true),
         .init(id: "builtin.ci", name: "CI", summary: "GitHub Actions for this commit: running, passed or failed, with a hand-off to the agent when it fails (GitHub CLI)",
-              sample: "CI 3/4", enabledByDefault: true),
+              sample: "CI", enabledByDefault: true),
     ]
 
     /// The ids to show, in order. Until someone arranges the bar, it's every
@@ -115,6 +115,42 @@ enum StatusBarItems {
         let kept = saved.filter(known.contains)
         let arrived = defaults.filter { !seenSet.contains($0) && !kept.contains($0) }
         return kept + arrived
+    }
+
+    /// The Status Chips plugin's listening-ports chip. The bar draws it as
+    /// "localhost:N" with the server's logo rather than the plugin's raw
+    /// ":N" text, since that's what the sidebar and Browser plane show.
+    static let portsItemId = "plugin.status-chips.ports"
+
+    /// The ports in a ports chip's text, ":3000 :5173", in order.
+    static func ports(in text: String) -> [Int] {
+        text.split(whereSeparator: { $0 == " " || $0 == "," }).compactMap { word in
+            let digits = word.hasPrefix(":") ? word.dropFirst() : Substring(word)
+            return Int(digits).flatMap { (1...65535).contains($0) ? $0 : nil }
+        }
+    }
+
+    /// Which run of related items a chip belongs to. The bar draws a hairline
+    /// only where the run changes, so the footer reads as a few quiet groups
+    /// (this pane, its repository, plugins) without a divider between every
+    /// item, whatever order someone arranged them in.
+    enum Group: Equatable { case pane, repository, plugin }
+
+    static func group(of id: String) -> Group {
+        switch id {
+        case "builtin.branch", "builtin.worktree", "builtin.gitState", "builtin.changes",
+             "builtin.pullRequest", "builtin.ci":
+            .repository
+        case _ where id.hasPrefix("builtin."):
+            .pane
+        default:
+            .plugin
+        }
+    }
+
+    /// Indexes in `ids` that start a new group, where a hairline goes before.
+    static func dividers(before ids: [String]) -> Set<Int> {
+        Set(ids.indices.dropFirst().filter { group(of: ids[$0]) != group(of: ids[$0 - 1]) })
     }
 
     /// Whether any of `files` sits between `directory` and `root`, the way a
