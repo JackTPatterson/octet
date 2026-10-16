@@ -146,11 +146,11 @@ struct PlaneStrip: View {
                     MotionPreferences.shared.perform(.sidebar) { ui.sidePanelMaximized.toggle() }
                 }
             }
-            OctetIconButton(icon: "panel.bottom", help: "Toggle terminal drawer (\(OctetShortcut.terminalDrawer.display))",
+            OctetIconButton(icon: "panel.bottom", help: OctetShortcut.terminalDrawer.help("Toggle terminal drawer"),
                             active: ui.terminalDrawerVisible) {
                 MotionPreferences.shared.perform(.sidebar) { ui.terminalDrawerVisible.toggle() }
             }
-            OctetIconButton(icon: "sidebar.right", help: "Hide the panel (\(OctetShortcut.togglePanel.display))", active: true) {
+            OctetIconButton(icon: "sidebar.right", help: OctetShortcut.togglePanel.help("Hide the panel"), active: true) {
                 ui.sidePanelVisible = false
             }
         }

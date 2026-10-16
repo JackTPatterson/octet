@@ -80,7 +80,7 @@ struct TabBarView: View {
             // Every agent, from any tab: at the far right.
             AgentsHubButton(store: store).padding(.trailing, 4)
             // T3 Code's thread-details toggle.
-            OctetIconButton(icon: "menucard", help: "Toggle details (\(OctetShortcut.details.display))",
+            OctetIconButton(icon: "menucard", help: OctetShortcut.details.help("Toggle details"),
                             active: ui.detailsVisible) { ui.detailsVisible.toggle() }
                 .padding(.trailing, 4)
             // One button for the right panel: Todos, Git, the agents' runtime

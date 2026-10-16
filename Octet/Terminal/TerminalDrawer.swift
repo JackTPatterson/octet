@@ -61,7 +61,7 @@ struct TerminalDrawer: View {
     /// A small strip floating at the top right, as in T3 Code's drawer.
     private var toolbar: some View {
         HStack(spacing: 0) {
-            OctetIconButton(icon: "xmark", help: "Hide the terminal drawer (\(OctetShortcut.terminalDrawer.display))") {
+            OctetIconButton(icon: "xmark", help: OctetShortcut.terminalDrawer.help("Hide the terminal drawer")) {
                 MotionPreferences.shared.perform(.sidebar) { ui.terminalDrawerVisible = false }
             }
         }
