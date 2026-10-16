@@ -951,15 +951,15 @@ final class UIState: ObservableObject {
     /// What planes say about themselves on their tabs, e.g. "#12" in green.
     @Published var planeBadges: [String: PlaneBadge] = [:]
     /// The panel over the whole window's content, the terminal left as it is
-    /// underneath.
-    @Published var sidePanelMaximized = UserDefaults.standard.bool(forKey: "octet.sidePanelMaximized") {
-        didSet { UserDefaults.standard.set(sidePanelMaximized, forKey: "octet.sidePanelMaximized") }
-    }
+    /// underneath. Not kept across launches: Octet opens on the terminal.
+    @Published var sidePanelMaximized = false
 
     private static func savedPlanes() -> [Plane] {
         // Before planes the panel had fixed pages; start from the usual two.
+        // Closing the last plane closes the panel, so an empty list is only
+        // ever the last session's end: start from the usual two again.
         guard let data = UserDefaults.standard.data(forKey: "octet.planes"),
-              let planes = try? JSONDecoder().decode([Plane].self, from: data) else { return Plane.defaults }
+              let planes = try? JSONDecoder().decode([Plane].self, from: data), !planes.isEmpty else { return Plane.defaults }
         return planes
     }
 
