@@ -156,8 +156,16 @@ enum PaletteCatalog {
             action("toggleSidebar", "Toggle Sidebar", "sidebar.left", shortcut: "⌘B") { ui.sidebarVisible.toggle() },
             action("todos", "Show Todos", "tool.todo.done",
                    keywords: ["todo", "todos", "TODO.md", "tasks", "plan", "checklist", "project"]) { ui.showSidePanel(.todos) },
-            action("sidePanel", "Toggle Panel", "sidebar.left",
-                   keywords: ["panel", "overview", "git", "terminal", "right", "files changed"]) { ui.sidePanelVisible.toggle() },
+            action("sidePanel", "Toggle Panel", "sidebar.right", shortcut: OctetShortcut.togglePanel.display,
+                   keywords: ["panel", "overview", "git", "planes", "right", "files changed", "pull request"]) { ui.sidePanelVisible.toggle() },
+            action("terminalDrawer", "Toggle Terminal Drawer", "panel.bottom", shortcut: OctetShortcut.terminalDrawer.display,
+                   keywords: ["terminal", "drawer", "shell", "bottom"]) {
+                MotionPreferences.shared.perform(.sidebar) { ui.terminalDrawerVisible.toggle() }
+            },
+            action("pullRequest", "Show Pull Request", "pull.request",
+                   keywords: ["pr", "pull request", "github", "merge", "review", "checks"]) { ui.showPlane(.pullRequest) },
+            action("pullRequests", "Show Pull Requests", "list",
+                   keywords: ["prs", "pull requests", "github", "open"]) { ui.showPlane(.pullRequests) },
             action("reloadConfig", "Reload Terminal Config", "arrow.clockwise", keywords: ["settings"]) { store.reloadSessionConfig() },
             action("agentsReadTerminal",
                    SettingsStore.shared.values.agentsReadSidebarTerminal

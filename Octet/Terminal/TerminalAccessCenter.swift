@@ -96,7 +96,7 @@ final class TerminalAccessCenter {
             target.steer(toWorkspace: workspace, tab: nil)
         }
         let key = SidebarTerminals.key(workspace)
-        target.ui.showSidePanel(tab: .terminal)
+        target.ui.terminalDrawerVisible = true
         NSApp.requestUserAttention(.informationalRequest)
         Task { @MainActor in
             var view: TerminalEngine.SurfaceView?

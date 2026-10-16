@@ -10,7 +10,7 @@ struct GitPanel: View {
     @ObservedObject private var motion = MotionPreferences.shared
 
     /// Whether the Git page is in front, which is when the model reads.
-    private var showing: Bool { ui.sidePanelVisible && ui.sidePanelTab == .git }
+    private var showing: Bool { ui.showing(.git) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {

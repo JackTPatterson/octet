@@ -20,6 +20,8 @@ struct OctetIcon: View {
         var style = "linear"
         /// An SF Symbol drawn instead, for marks the bundled set lacks.
         var symbol: String?
+        /// A mark Octet draws itself, in the set's line weight.
+        var glyph: OctetGlyph.Kind?
         /// Drawn flipped left to right, e.g. the sidebar mark for the right.
         var mirrored = false
         init(_ asset: String, rotation: Double = 0, style: String = "linear", mirrored: Bool = false) {
@@ -27,6 +29,12 @@ struct OctetIcon: View {
             self.rotation = rotation
             self.style = style
             self.mirrored = mirrored
+        }
+
+        static func glyph(_ kind: OctetGlyph.Kind) -> Art {
+            var art = Art("more")
+            art.glyph = kind
+            return art
         }
 
         /// An SF Symbol stand-in until the iconsax mark is imported.
@@ -147,10 +155,10 @@ struct OctetIcon: View {
         "sidebar.right": .init("sidebar-left", mirrored: true),
         "panel.bottom": .symbol("rectangle.bottomthird.inset.filled"),
         "arrow.down.right.and.arrow.up.left": .symbol("arrow.down.right.and.arrow.up.left"),
-        "pull.request": .symbol("arrow.triangle.pull"),
-        "merge": .symbol("arrow.triangle.merge"),
+        "pull.request": .glyph(.pullRequest),
+        "merge": .glyph(.merge),
         "branch": .init("hierarchy-3"),
-        "commit": .symbol("smallcircle.filled.circle"),
+        "commit": .glyph(.commit),
         "tag": .symbol("tag"),
         "person.badge.plus": .symbol("person.badge.plus"),
         "person.2": .init("profile-2user"),
@@ -168,7 +176,11 @@ struct OctetIcon: View {
     var body: some View {
         let art = Self.map[name] ?? .init("more")
         Group {
-            if let symbol = art.symbol {
+            if let glyph = art.glyph {
+                OctetGlyph(kind: glyph)
+                    .stroke(style: StrokeStyle(lineWidth: max(1.1, size / 10.5), lineCap: .round, lineJoin: .round))
+                    .frame(width: size, height: size)
+            } else if let symbol = art.symbol {
                 Image(systemName: symbol)
                     .font(.system(size: size * 0.86, weight: .regular))
                     .frame(width: size, height: size)
@@ -183,5 +195,45 @@ struct OctetIcon: View {
         .scaleEffect(x: art.mirrored ? -1 : 1, y: 1)
         .rotationEffect(.degrees(art.rotation))
         .accessibilityHidden(true)
+    }
+}
+
+/// Git marks the bundled set lacks, drawn on a 24-point grid in the set's
+/// line style: two rings joined by the path a change takes.
+struct OctetGlyph: Shape {
+    enum Kind { case pullRequest, merge, commit }
+    let kind: Kind
+
+    func path(in rect: CGRect) -> Path {
+        let scale = min(rect.width, rect.height) / 24
+        func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            CGPoint(x: rect.minX + x * scale, y: rect.minY + y * scale)
+        }
+        func ring(_ path: inout Path, _ x: CGFloat, _ y: CGFloat) {
+            path.addEllipse(in: CGRect(x: rect.minX + (x - 2.6) * scale, y: rect.minY + (y - 2.6) * scale,
+                                       width: 5.2 * scale, height: 5.2 * scale))
+        }
+        var path = Path()
+        switch kind {
+        case .pullRequest:
+            ring(&path, 6, 5.5)
+            ring(&path, 18, 18.5)
+            path.move(to: point(6, 8.1)); path.addLine(to: point(6, 21))
+            path.move(to: point(18, 15.9)); path.addLine(to: point(18, 9.5))
+            path.addQuadCurve(to: point(15.5, 6.5), control: point(18, 6.5))
+            path.addLine(to: point(12, 6.5))
+            path.move(to: point(14, 4.3)); path.addLine(to: point(11.8, 6.5)); path.addLine(to: point(14, 8.7))
+        case .merge:
+            ring(&path, 6, 5.5)
+            ring(&path, 18, 17.5)
+            path.move(to: point(6, 8.1)); path.addLine(to: point(6, 21))
+            path.move(to: point(6, 9.5))
+            path.addQuadCurve(to: point(15.4, 17.5), control: point(7, 17.5))
+        case .commit:
+            ring(&path, 12, 12)
+            path.move(to: point(2.5, 12)); path.addLine(to: point(9.4, 12))
+            path.move(to: point(14.6, 12)); path.addLine(to: point(21.5, 12))
+        }
+        return path
     }
 }

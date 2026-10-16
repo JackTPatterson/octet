@@ -140,7 +140,7 @@ final class GitPanelModel: ObservableObject {
         guard let window else { return }
         let scoped = scope()
         // Hidden, only whether there's a repository at all, from files.
-        guard window.ui.sidePanelVisible, window.ui.sidePanelTab == .git else {
+        guard window.ui.showing(.git) else {
             let has = scoped.contains { GitBranch.location(for: $0.directory) != nil }
             if has != hasRepository { hasRepository = has }
             return

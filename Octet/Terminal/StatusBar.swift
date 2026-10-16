@@ -330,7 +330,7 @@ struct StatusBar: View {
         if let main = GitBranch.mainCheckout(ofWorktreeGitDir: repo.gitDir) {
             Button("Open Main Checkout") { WindowRegistry.shared.key?.openProject(path: main) }
         }
-        Button("Show Worktrees") { WindowRegistry.shared.key?.ui.showSidePanel(tab: .git) }
+        Button("Show Worktrees") { WindowRegistry.shared.key?.ui.showPlane(.git) }
         Divider()
         Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: repo.root)]) }
         Button("Copy Path") { copy(repo.root) }

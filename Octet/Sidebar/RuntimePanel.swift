@@ -130,9 +130,8 @@ struct RuntimePanel: View {
         // A new runtime opens the panel on its page, briefly, unless the
         // panel is already the person's.
         if !ui.sidePanelVisible {
-            ui.sidePanelVisible = true
+            ui.addPlane(.overview)
             ui.sidePanelAutoOpened = true
-            ui.sidePanelTab = .overview
         }
         if ui.sidePanelAutoOpened { scheduleAutoClose() }
         flashingEntryIDs.formUnion(added)

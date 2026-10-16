@@ -62,6 +62,8 @@ enum Theme {
         "super+w",
         "super+n",
         "super+b",
+        "super+alt+b",
+        "super+j",
         "super+p",
         "super+f",
         "super+g",

@@ -103,7 +103,7 @@ final class ProjectAgentModel: ObservableObject {
     func refresh(force: Bool = false) {
         guard let window, !reading else { return }
         // Only while the panel is showing the overview, unless something changed.
-        guard force || (window.ui.sidePanelVisible && window.ui.sidePanelTab == .overview) else { return }
+        guard force || window.ui.showing(.overview) else { return }
         guard let directory = folder() else {
             if root != nil { root = nil; instructions = .none; localRules = []; sharedRules = [] }
             return

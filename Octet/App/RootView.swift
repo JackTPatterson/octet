@@ -190,34 +190,49 @@ struct RootView: View {
                     .id(settings.themeKey)
                     .transition(motion.animates(.sidebar) ? .move(edge: .leading) : .identity)
                 }
-                VStack(spacing: 0) {
-                    TabBarView(store: store, ui: ui)
-                        .id(settings.themeKey)
-                    if let offer = agentOffer {
-                        AgentOfferBanner(agent: offer,
-                                         open: { window.continueInOctet(offer) },
-                                         dismiss: { offers.dismiss(offer) },
-                                         never: turnOffAgentBanner)
-                            // Keyed by agent, so each one's banner arrives afresh.
-                            .id(AgentOffer.key(offer))
+                HStack(spacing: 0) {
+                    VStack(spacing: 0) {
+                        TabBarView(store: store, ui: ui)
+                            .id(settings.themeKey)
+                        if let offer = agentOffer {
+                            AgentOfferBanner(agent: offer,
+                                             open: { window.continueInOctet(offer) },
+                                             dismiss: { offers.dismiss(offer) },
+                                             never: turnOffAgentBanner)
+                                // Keyed by agent, so each one's banner arrives afresh.
+                                .id(AgentOffer.key(offer))
+                        }
+                        contentArea
+                        // Not re-identified per theme: that would restart its shells.
+                        TerminalDrawerHost(store: store, ui: ui)
                     }
-                    contentArea
+                    // Room for the panel, which draws over it from the overlay.
+                    Color.clear
+                        .frame(width: ui.sidePanelVisible && !ui.sidePanelMaximized ? ui.sidePanelWidth : 0)
                 }
-                // The right panel: files, todos, agents, tasks and the
-                // plugins' panels, as sections down one page.
-                ZStack(alignment: .leading) {
-                    Rectangle().fill(Theme.divider).frame(width: 1)
-                        .frame(maxHeight: .infinity, alignment: .leading)
-                    SidePanel(store: store, ui: ui)
-                        .frame(width: ui.sidePanelWidth - 1)
-                        .padding(.leading, 1)
-                        .offset(x: ui.sidePanelVisible ? 0 : ui.sidePanelWidth)
-                    SidePanelResizeHandle(ui: ui)
+                // The right panel: a strip of planes over the one in front.
+                // In an overlay so that maximized it covers the terminal
+                // rather than squeezing it: a terminal resized to nothing
+                // reflows every agent's screen.
+                .overlay(alignment: .trailing) {
+                    GeometryReader { proxy in
+                        let width = ui.sidePanelMaximized ? proxy.size.width : ui.sidePanelWidth
+                        ZStack(alignment: .leading) {
+                            Rectangle().fill(Theme.divider).frame(width: 1)
+                                .frame(maxHeight: .infinity, alignment: .leading)
+                            SidePanel(store: store, ui: ui)
+                                .frame(width: width - 1)
+                                .padding(.leading, 1)
+                                .offset(x: ui.sidePanelVisible ? 0 : width)
+                            if !ui.sidePanelMaximized { SidePanelResizeHandle(ui: ui) }
+                        }
+                        .frame(width: ui.sidePanelVisible ? width : 0, alignment: .leading)
+                        .clipped()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+                    }
+                    .allowsHitTesting(ui.sidePanelVisible)
+                    .accessibilityHidden(!ui.sidePanelVisible)
                 }
-                .frame(width: ui.sidePanelVisible ? ui.sidePanelWidth : 0, alignment: .leading)
-                .clipped()
-                .allowsHitTesting(ui.sidePanelVisible)
-                .accessibilityHidden(!ui.sidePanelVisible)
             }
         }
         .overlay(alignment: .topTrailing) {
@@ -306,6 +321,7 @@ struct RootView: View {
         .animation(motion.animation(.palette, .smooth(duration: 0.16)), value: ui.paletteVisible)
         .animation(motion.animation(.sidebar), value: ui.sidebarVisible)
         .animation(motion.animation(.sidebar), value: ui.sidePanelVisible)
+        .animation(motion.animation(.sidebar), value: ui.sidePanelMaximized)
         .onAppear {
             window.todos.attach(window)
             window.projectAgent.attach(window)
@@ -449,6 +465,21 @@ struct RootView: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
                     if open.hasPrefix("review:") { ui.review = DiffReviewModel(directory: String(open.dropFirst(7))) }
                     else { window.toggleReview() }
+                }
+            }
+            // Verification hook: "planes:empty" closes every plane (the
+            // launcher), "planes:max" maximizes the panel, "planes:pr" or
+            // "planes:pr:12" opens a pull request, "planes:prs" the list.
+            if let open = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], open.hasPrefix("planes:") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    let parts = open.split(separator: ":").map(String.init)
+                    switch parts.dropFirst().first {
+                    case "empty": ui.closePlanes { _ in true }; ui.sidePanelVisible = true
+                    case "max": ui.sidePanelVisible = true; ui.sidePanelMaximized = true
+                    case "pr": ui.showPlane(.pullRequest, number: parts.count > 2 ? Int(parts[2]) : nil)
+                    case "prs": ui.showPlane(.pullRequests)
+                    default: break
+                    }
                 }
             }
             if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "agents" {
@@ -624,17 +655,21 @@ struct RootView: View {
 
     /// Octet's own command line and its completions, drawn over the shell's prompt.
     @ViewBuilder
+    /// The maximized panel lies over the terminal; what's drawn on the
+    /// terminal from the root would show through it.
+    private var panelCoversTerminal: Bool { ui.sidePanelVisible && ui.sidePanelMaximized }
+
     private var promptOverlay: some View {
         ZStack(alignment: .topLeading) {
             // Octet's own command line, drawn over the shell's prompt.
-            if prompt.isActive, let anchor = prompt.anchor {
+            if prompt.isActive, !panelCoversTerminal, let anchor = prompt.anchor {
                 PromptEditorView(editor: prompt)
                     .frame(width: max(120, CGFloat(anchor.columnsRemaining) * anchor.cellWidth))
                     .offset(x: sidebarInset + anchor.origin.x,
                             y: contentTop + anchor.origin.y)
                     .allowsHitTesting(false)
             }
-            if prompt.isActive, prompt.completionsOpen, let anchor = prompt.anchor {
+            if prompt.isActive, prompt.completionsOpen, !panelCoversTerminal, let anchor = prompt.anchor {
                 // Under the word being completed, or above it near the foot
                 // of the window.
                 let top = contentTop + anchor.origin.y
@@ -671,7 +706,8 @@ struct RootView: View {
             let _ = { DebugSnapshot.coverActive = terminalAnchor.chromeCover != nil || prompt.isActive }()
             // A conversation covers the terminal, so the patch over the engine's
             // tab row would only show through it.
-            if let cover = terminalAnchor.chromeCover, !twin.isVisible, agents.active(in: window.focusedWorkspace?.workspaceId) == nil, boardHere == nil {
+            if let cover = terminalAnchor.chromeCover, !twin.isVisible, !panelCoversTerminal,
+               agents.active(in: window.focusedWorkspace?.workspaceId) == nil, boardHere == nil {
                 Theme.terminalBackground
                     .frame(width: cover.width, height: cover.height)
                     .offset(x: sidebarInset + cover.minX,
@@ -883,7 +919,10 @@ final class UIState: ObservableObject {
     @Published var sidePanelVisible = UserDefaults.standard.bool(forKey: "octet.sidePanelVisible") {
         didSet {
             UserDefaults.standard.set(sidePanelVisible, forKey: "octet.sidePanelVisible")
-            if !sidePanelVisible { sidePanelAutoOpened = false }
+            if !sidePanelVisible {
+                sidePanelAutoOpened = false
+                sidePanelMaximized = false
+            }
         }
     }
     /// The panel opened itself for a new runtime, and nobody has pointed
@@ -897,24 +936,99 @@ final class UIState: ObservableObject {
     }
     @Published var sidePanelJump: SidePanelJump?
 
-    /// The page in front: overview, git or the terminal.
-    @Published var sidePanelTab: SidePanelTab = SidePanelTab(rawValue: UserDefaults.standard.string(forKey: "octet.sidePanelTab") ?? "") ?? .overview {
-        didSet { UserDefaults.standard.set(sidePanelTab.rawValue, forKey: "octet.sidePanelTab") }
+    // MARK: Planes
+
+    /// The panel's planes, left to right, kept across launches.
+    @Published var planes: [Plane] = UIState.savedPlanes() {
+        didSet {
+            if let data = try? JSONEncoder().encode(planes) { UserDefaults.standard.set(data, forKey: "octet.planes") }
+        }
+    }
+    /// The plane in front, by id.
+    @Published var activePlaneId: String? = UserDefaults.standard.string(forKey: "octet.activePlane") {
+        didSet { UserDefaults.standard.set(activePlaneId, forKey: "octet.activePlane") }
+    }
+    /// What planes say about themselves on their tabs, e.g. "#12" in green.
+    @Published var planeBadges: [String: PlaneBadge] = [:]
+    /// The panel over the whole window's content, the terminal left as it is
+    /// underneath.
+    @Published var sidePanelMaximized = UserDefaults.standard.bool(forKey: "octet.sidePanelMaximized") {
+        didSet { UserDefaults.standard.set(sidePanelMaximized, forKey: "octet.sidePanelMaximized") }
     }
 
-    /// Shows the panel with `section` open and in view, on its page.
-    func showSidePanel(_ section: SidePanelSection) {
+    private static func savedPlanes() -> [Plane] {
+        // Before planes the panel had fixed pages; start from the usual two.
+        guard let data = UserDefaults.standard.data(forKey: "octet.planes"),
+              let planes = try? JSONDecoder().decode([Plane].self, from: data) else { return Plane.defaults }
+        return planes
+    }
+
+    /// The plane in front: the chosen one, else the first.
+    var activePlane: Plane? { planes.first { $0.id == activePlaneId } ?? planes.first }
+
+    /// Whether a plane of this kind is in front of a visible panel.
+    func showing(_ kind: PlaneKind) -> Bool { sidePanelVisible && activePlane?.kind == kind }
+
+    /// Adds a plane, or brings forward the one there, and shows it.
+    func addPlane(_ kind: PlaneKind, number: Int? = nil) {
+        let plane = Plane.make(kind, number: number)
+        if !planes.contains(where: { $0.id == plane.id }) { planes.append(plane) }
+        activePlaneId = plane.id
         sidePanelVisible = true
+    }
+
+    /// Shows the panel on a plane of this kind, adding it if it's closed.
+    func showPlane(_ kind: PlaneKind, number: Int? = nil) {
+        addPlane(kind, number: number)
         sidePanelAutoOpened = false
-        sidePanelTab = section == .files ? .git : .overview
+    }
+
+    /// Closes a plane; the one beside it comes forward, and closing the last
+    /// closes the panel.
+    func closePlane(_ id: String) {
+        closePlanes { $0.id == id }
+    }
+
+    func closePlanes(where shouldClose: (Plane) -> Bool) {
+        let activeIndex = planes.firstIndex { $0.id == activePlane?.id }
+        let closingActive = activePlane.map(shouldClose) ?? false
+        planes.removeAll(where: shouldClose)
+        planeBadges = planeBadges.filter { id, _ in planes.contains { $0.id == id } }
+        if planes.isEmpty {
+            sidePanelVisible = false
+        } else if closingActive, let activeIndex {
+            activePlaneId = planes[min(activeIndex, planes.count - 1)].id
+        }
+    }
+
+    /// Drag and drop in the strip: `id` goes just before `target`.
+    func movePlane(_ id: String, before target: String) {
+        guard id != target, let from = planes.firstIndex(where: { $0.id == id }) else { return }
+        let plane = planes.remove(at: from)
+        let to = planes.firstIndex { $0.id == target } ?? planes.count
+        planes.insert(plane, at: to)
+    }
+
+    /// Shows the panel with `section` open and in view, on its plane.
+    func showSidePanel(_ section: SidePanelSection) {
+        showPlane(section == .files ? .git : .overview)
         sidePanelJump = SidePanelJump(section: section)
     }
 
-    func showSidePanel(tab: SidePanelTab) {
-        sidePanelVisible = true
-        sidePanelAutoOpened = false
-        sidePanelTab = tab
+    // MARK: Terminal drawer
+
+    /// The shell under the terminal, after T3 Code's drawer (⌘J).
+    @Published var terminalDrawerVisible = UserDefaults.standard.bool(forKey: "octet.terminalDrawer.visible") {
+        didSet { UserDefaults.standard.set(terminalDrawerVisible, forKey: "octet.terminalDrawer.visible") }
     }
+    @Published var terminalDrawerHeight: CGFloat = {
+        let saved = UserDefaults.standard.double(forKey: "octet.terminalDrawer.height")
+        return saved > 0 ? CGFloat(saved) : UIState.terminalDrawerDefaultHeight
+    }() {
+        didSet { UserDefaults.standard.set(Double(terminalDrawerHeight), forKey: "octet.terminalDrawer.height") }
+    }
+    static let terminalDrawerDefaultHeight: CGFloat = 280
+    static let terminalDrawerMinHeight: CGFloat = 180
     /// Runtime identities already announced in this window. Views are rebuilt
     /// during tab switches, but old processes must not look newly created.
     var seenRuntimeEntryIDs: Set<String> = []
