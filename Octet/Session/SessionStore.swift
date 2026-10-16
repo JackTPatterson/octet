@@ -226,7 +226,7 @@ final class SessionStore: ObservableObject {
                         Task { @MainActor [weak self] in self?.scheduleRefresh() }
                     })
                 } catch {
-                    Task { @MainActor [weak self] in self?.lostConnection() }
+                    Task { @MainActor [weak self] in self?.lostConnection(engineGone: true) }
                 }
                 Thread.sleep(forTimeInterval: 0.5)
             }
@@ -237,9 +237,11 @@ final class SessionStore: ObservableObject {
         // Agent state changes are per-pane subscriptions in the session server; a light
         // periodic snapshot keeps state glyphs current.
         pollTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
-            // While the engine can't be reached, polling only fails; the
-            // event connection says when it's back, and refreshes then.
-            MainActor.assumeIsolated { if self?.isConnected == true { self?.scheduleRefresh() } }
+            // Kept up while the engine can't be reached too: a snapshot that
+            // gets through is how Octet learns it's back, whether or not the
+            // event connection has come back yet. Failing to reach it isn't
+            // toasted, so this stays quiet meanwhile.
+            MainActor.assumeIsolated { self?.scheduleRefresh() }
         }
         // Workspaces cross the idle threshold with no snapshot change.
         clockTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
@@ -247,10 +249,12 @@ final class SessionStore: ObservableObject {
         }
     }
 
-    /// The engine stopped answering: what was running is noted for when it
-    /// comes back, and the title bar shows Octet connecting.
-    private func lostConnection() {
-        if isConnected {
+    /// The engine stopped answering, and the title bar shows Octet
+    /// connecting. Only the event connection dropping counts as the engine
+    /// going away, which notes what was running to check on its return; one
+    /// request failing to get through doesn't.
+    private func lostConnection(engineGone: Bool = false) {
+        if isConnected, engineGone {
             recovery.connectionLost()
             shellRecovery.connectionLost()
         }
