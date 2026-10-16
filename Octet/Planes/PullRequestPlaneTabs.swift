@@ -251,13 +251,8 @@ struct PullRequestSummaryTab: View {
     private var description: some View {
         if editingBody {
             VStack(alignment: .trailing, spacing: 6) {
-                TextEditor(text: $bodyDraft)
-                    .font(Theme.monoFont)
-                    .scrollContentBackground(.hidden)
-                    .padding(6)
-                    .frame(minHeight: 160)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(Theme.terminalBackground))
-                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.accent.opacity(0.7), lineWidth: 1))
+                OctetTextEditor(placeholder: "Description", text: $bodyDraft, minHeight: 160, maxHeight: nil,
+                                font: Theme.monoFont)
                 HStack(spacing: 6) {
                     OctetButton(title: "Cancel", kind: .ghost, compact: true) { editingBody = false }
                         .keyboardShortcut(.cancelAction)

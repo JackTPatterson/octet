@@ -112,34 +112,13 @@ private struct PullRequestComposer: View {
     }
 }
 
-/// A themed multi-line editor with a placeholder.
+/// The composer's editor: Octet's multi-line field at a fixed height,
+/// focused as the composer opens so you can start typing.
 private struct PullRequestTextEditor: View {
     let placeholder: String
     @Binding var text: String
-    @FocusState private var focused: Bool
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            if text.isEmpty {
-                Text(placeholder)
-                    .font(Theme.uiFont)
-                    .foregroundStyle(Theme.textTertiary)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .allowsHitTesting(false)
-            }
-            TextEditor(text: $text)
-                .font(Theme.uiFont)
-                .foregroundStyle(Theme.textPrimary)
-                .scrollContentBackground(.hidden)
-                .focused($focused)
-                .accessibilityLabel(placeholder)
-        }
-        .padding(6)
-        .frame(height: 120)
-        .background(RoundedRectangle(cornerRadius: 6).fill(Theme.terminalBackground))
-        .overlay(RoundedRectangle(cornerRadius: 6)
-            .strokeBorder(focused ? Theme.accent.opacity(0.7) : Theme.border, lineWidth: 1))
-        .onAppear { focused = true }
+        OctetTextEditor(placeholder: placeholder, text: $text, minHeight: 120, maxHeight: 120, autofocus: true)
     }
 }

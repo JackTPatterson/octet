@@ -163,9 +163,7 @@ struct ConfirmDialog: View {
             }
             if let suppressTitle = request.suppressTitle {
                 Toggle(suppressTitle, isOn: $center.suppress)
-                    .toggleStyle(.checkbox)
-                    .font(Theme.uiFont)
-                    .foregroundStyle(Theme.textSecondary)
+                    .toggleStyle(OctetCheckboxStyle())
             }
             HStack(spacing: 8) {
                 Spacer()

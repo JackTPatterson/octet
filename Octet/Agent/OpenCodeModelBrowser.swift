@@ -56,9 +56,7 @@ struct OpenCodeModelBrowser: View {
                 OctetTextField(placeholder: "Search models or providers", text: $query) {}
                     .focused($searching)
                 Toggle("Signed in only", isOn: $signedInOnly)
-                    .toggleStyle(.checkbox)
-                    .font(Theme.uiFont)
-                    .foregroundStyle(Theme.textSecondary)
+                    .toggleStyle(OctetCheckboxStyle())
                     .fixedSize()
             }
         }
