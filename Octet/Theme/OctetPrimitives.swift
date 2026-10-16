@@ -10,15 +10,17 @@ struct OctetIconButton: View {
     let help: String
     var active = false
     var large = false
+    /// 22pt, for rows that are themselves 22pt, such as the terminal drawer's.
+    var compact = false
     var tint: Color?
     let action: () -> Void
     @State private var hovered = false
     @Environment(\.isEnabled) private var enabled
 
     var body: some View {
-        let side: CGFloat = large ? 28 : 24
+        let side: CGFloat = large ? 28 : compact ? 22 : 24
         Button(action: action) {
-            OctetIcon(icon, size: large ? 15 : 14)
+            OctetIcon(icon, size: large ? 15 : compact ? 13 : 14)
                 .foregroundStyle(tint ?? (active || hovered ? Theme.textPrimary : Theme.textSecondary))
                 .frame(width: side, height: side)
                 .background(RoundedRectangle(cornerRadius: Theme.controlRadius)
