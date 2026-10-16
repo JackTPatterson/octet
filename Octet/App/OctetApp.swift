@@ -123,7 +123,8 @@ struct OctetApp: App {
     /// app rename, a new build location, or an update. Hooks that were never
     /// installed remain untouched.
     private func repairInstalledSubagentHooks() {
-        guard let cli = Bundle.main.url(forAuxiliaryExecutable: "octet-cli")?.path else { return }
+        guard AgentConfigWrites.allowedHere,
+              let cli = Bundle.main.url(forAuxiliaryExecutable: "octet-cli")?.path else { return }
         for spec in SubagentHookInstaller.available() where SubagentHookInstaller.isInstalled(spec) {
             _ = try? SubagentHookInstaller.install(cliPath: cli, spec: spec)
         }

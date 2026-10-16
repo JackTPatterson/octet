@@ -59,6 +59,9 @@ final class AgentMCPInstaller {
 
     private func sync(_ feature: Feature, force: Bool = false) {
         guard !running.contains(feature.server) else { return }
+        // A throwaway copy (a temporary folder, a worktree build) mustn't
+        // point the agents at itself; an explicit Add Again still can.
+        guard force || AgentConfigWrites.allowedHere else { return }
         let key = "octet.mcp.installed.\(feature.server)"
         let recorded = UserDefaults.standard.dictionary(forKey: key) as? [String: String] ?? [:]
         let agents = Set(AgentDiscoveryStore.shared.agents.filter { $0.executablePath != nil }.map(\.id))
