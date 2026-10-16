@@ -314,8 +314,10 @@ struct RootView: View {
             .id(settings.themeKey)
         }
         .sheet(isPresented: $ui.usageBreakdownVisible) {
-            UsageBreakdownView { ui.usageBreakdownVisible = false }
+            let size = UsagePage.size(in: NSApp.keyWindow?.frame.size)
+            UsagePage { ui.usageBreakdownVisible = false }
                 .environmentObject(window)
+                .frame(width: size.width, height: size.height)
         }
         // A wait being written, in the window that asked for it.
         .sheet(item: Binding(
@@ -526,6 +528,11 @@ struct RootView: View {
                     UserDefaults.standard.set(String(open.dropFirst(9)), forKey: SettingsView.sectionKey)
                 }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) { openSettings() }
+            }
+            // "usage" opens the usage page; "usage:tokens:week" also picks
+            // its mode and period.
+            if let open = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], open.hasPrefix("usage") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { ui.usageBreakdownVisible = true }
             }
             if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "agents" {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) { AgentCenter.shared.showingBoard = true }
