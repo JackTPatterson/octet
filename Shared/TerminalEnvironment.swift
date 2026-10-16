@@ -15,9 +15,12 @@ enum TerminalEnvironment {
 
     /// Variables another terminal set for the programs in it. Inherited by
     /// Octet when it's started from that terminal's shell, they'd tell every
-    /// program in Octet's panes it's running there.
+    /// program in Octet's panes it's running there. HERDR_ is the session
+    /// server's own: started from a pane of another Octet, the engine sees
+    /// them, calls itself nested and refuses to run.
     static func isInheritedTerminalVariable(_ name: String) -> Bool {
-        name == "NO_COLOR" || name.hasPrefix("WARP_") || inheritedTerminalVariables.contains(name)
+        name == "NO_COLOR" || name.hasPrefix("WARP_") || name.hasPrefix("HERDR_")
+            || inheritedTerminalVariables.contains(name)
     }
 
     private static let inheritedTerminalVariables: Set<String> = [
