@@ -990,6 +990,11 @@ enum PaletteCatalog {
 /// most recently modified first.
 enum ProjectDirectories {
     static func list(parents: [String] = ProjectGrouping.defaultParentDirectories) -> [String] {
+        listWithDates(parents: parents).map(\.path)
+    }
+
+    /// The same folders, most recently changed first, with when they changed.
+    static func listWithDates(parents: [String] = ProjectGrouping.defaultParentDirectories) -> [(path: String, modified: Date)] {
         let fileManager = FileManager.default
         let home = NSHomeDirectory()
         var entries: [(path: String, modified: Date)] = []
@@ -1004,7 +1009,7 @@ enum ProjectDirectories {
                 entries.append((path, values.contentModificationDate ?? .distantPast))
             }
         }
-        return entries.sorted { $0.modified > $1.modified }.map(\.path)
+        return entries.sorted { $0.modified > $1.modified }
     }
 }
 

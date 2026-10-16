@@ -704,6 +704,12 @@ private struct WorkspaceCard: View {
                 .environmentObject(window)
                 .onHover { peek.card($0) }
         }
+        #if DEBUG
+        // Verification hook (OCTET_OPEN_WINDOW=peek): the first workspace's card.
+        .onReceive(NotificationCenter.default.publisher(for: WorkspacePeek.debugOpen)) { _ in
+            if window.ownWorkspaces.first?.workspaceId == workspace.workspaceId { peek.show() }
+        }
+        #endif
         .onTapGesture {
             peek.close()
             HoverIntent.navigating = true
