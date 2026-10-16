@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import SwiftUI
 
@@ -14,6 +15,8 @@ struct SidebarView: View {
     /// Groups showing all their workspaces, past the first few.
     @State private var expandedGroups: Set<String> = []
     @State private var query = ""
+    /// The project the sidebar is narrowed to, by its folder; empty for all.
+    @AppStorage("octet.sidebar.project") private var projectFilter = ""
     /// The result the arrow keys are on, by position in the results.
     @State private var highlighted = 0
     @FocusState private var searchFocused: Bool
@@ -29,7 +32,7 @@ struct SidebarView: View {
                         searchResults
                     } else {
                         ReadyWaits()
-                        ForEach(window.activeGroups) { group in
+                        ForEach(shownGroups) { group in
                             groupSection(group)
                         }
                     }
@@ -80,22 +83,25 @@ struct SidebarView: View {
         .onReceive(window.ui.$sidebarSearchRequest.dropFirst()) { _ in searchFocused = true }
     }
 
+    /// Two quiet rows, after T3 Code's: search with a button for a new
+    /// workspace, then which project the sidebar shows with a button to
+    /// start one in another folder.
     private var controlBar: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 2) {
             searchField
-            ControlButton(title: "New workspace", icon: "plus", shortcut: "⌘N") {
-                window.newWorkspace()
-            }
+            projectRow
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 6)
+        .padding(.top, 6)
+        .padding(.bottom, 4)
     }
 
     private var searchField: some View {
-        HStack(spacing: 6) {
-            OctetIcon("magnifyingglass", size: 13)
+        HStack(spacing: 8) {
+            OctetIcon("magnifyingglass", size: 14)
                 .foregroundStyle(Theme.textTertiary)
-            TextField("Search workspaces", text: $query)
+                .frame(width: 18)
+            TextField("Search", text: $query)
                 .textFieldStyle(.plain)
                 .font(Theme.uiFont)
                 .focused($searchFocused)
@@ -105,6 +111,7 @@ struct SidebarView: View {
                 .onKeyPress(.downArrow) { moveHighlight(1) }
                 .onKeyPress(.upArrow) { moveHighlight(-1) }
                 .onChange(of: query) { _, _ in highlighted = 0 }
+                .help("Search workspaces (\(OctetShortcut.searchWorkspaces.display))")
             if !query.isEmpty {
                 Button(action: clearSearch) {
                     OctetIcon("xmark.circle.fill", size: 12)
@@ -112,17 +119,89 @@ struct SidebarView: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(Theme.textTertiary)
                 .help("Clear the search")
-            } else if !searchFocused {
-                Text(OctetShortcut.searchWorkspaces.display)
-                    .font(Theme.captionFont)
-                    .foregroundStyle(Theme.textTertiary)
             }
+            SidebarIconButton(icon: "pencil", help: newWorkspaceHelp) { newWorkspaceHere() }
+                .accessibilityLabel("New workspace")
         }
-        .padding(.horizontal, 8)
-        .frame(height: 24)
+        .padding(.leading, 6)
+        .frame(height: 30)
         .background(RoundedRectangle(cornerRadius: Theme.rowRadius).fill(searchFocused ? Theme.hover : Color.clear))
-        .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius)
-            .strokeBorder(searchFocused ? Theme.accent.opacity(0.6) : Theme.border, lineWidth: 1))
+    }
+
+    /// "All projects", or the one project the sidebar is narrowed to.
+    private var projectRow: some View {
+        HStack(spacing: 8) {
+            Menu {
+                Button { projectFilter = "" } label: {
+                    if projectFilter.isEmpty { Label("All projects", systemImage: "checkmark") } else { Text("All projects") }
+                }
+                Divider()
+                ForEach(window.activeGroups.filter { $0.id != ProjectGroup.otherId }) { group in
+                    Button { projectFilter = group.id } label: {
+                        if projectFilter == group.id { Label(group.name, systemImage: "checkmark") } else { Text(group.name) }
+                    }
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    if let group = filteredGroup {
+                        ProjectMonogram(name: group.name).frame(width: 18)
+                    } else {
+                        OctetIcon("folder", size: 14).foregroundStyle(Theme.textTertiary).frame(width: 18)
+                    }
+                    Text(filteredGroup?.name ?? "All projects")
+                        .font(Theme.uiFont)
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    OctetIcon("chevron.down", size: 11).foregroundStyle(Theme.textTertiary)
+                }
+                .contentShape(Rectangle())
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .fixedSize(horizontal: false, vertical: true)
+            .help("Show every project's workspaces, or one project's")
+            .accessibilityLabel("Project: \(filteredGroup?.name ?? "All projects")")
+            SidebarIconButton(icon: "folder.badge.plus", help: "New workspace in a folder…") { pickFolder() }
+                .accessibilityLabel("New workspace in a folder")
+        }
+        .padding(.leading, 6)
+        .frame(height: 30)
+    }
+
+    /// The project the sidebar is narrowed to, while it still has workspaces.
+    private var filteredGroup: ProjectGroup? {
+        guard !projectFilter.isEmpty else { return nil }
+        return window.activeGroups.first { $0.id == projectFilter }
+    }
+
+    /// The groups the sidebar lists: all, or the one picked.
+    private var shownGroups: [ProjectGroup] {
+        guard let filteredGroup else { return window.activeGroups }
+        return [filteredGroup]
+    }
+
+    private var newWorkspaceHelp: String {
+        if let filteredGroup { return "New workspace in \(filteredGroup.name) (⌘N)" }
+        return "New workspace (⌘N)"
+    }
+
+    /// A new workspace, in the project the sidebar is narrowed to.
+    private func newWorkspaceHere() {
+        window.newWorkspace(cwd: filteredGroup?.id)
+    }
+
+    private func pickFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Open"
+        panel.message = "Choose a folder to start a workspace in"
+        if let filteredGroup { panel.directoryURL = URL(fileURLWithPath: filteredGroup.id) }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        window.newWorkspace(cwd: url.path)
     }
 
     /// The workspaces the query finds, under their groups' names, then the
@@ -1401,5 +1480,26 @@ private struct SnippetLine: View {
             .font(Theme.captionFont)
             .lineLimit(1)
             .truncationMode(.tail)
+    }
+}
+
+/// A small icon button at the end of a sidebar header row.
+private struct SidebarIconButton: View {
+    let icon: String
+    let help: String
+    let action: () -> Void
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: action) {
+            OctetIcon(icon, size: 14)
+                .foregroundStyle(hovered ? Theme.textPrimary : Theme.textTertiary)
+                .frame(width: 26, height: 24)
+                .background(RoundedRectangle(cornerRadius: Theme.rowRadius).fill(hovered ? Theme.hover : .clear))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
+        .help(help)
     }
 }
