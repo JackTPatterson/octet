@@ -48,6 +48,9 @@ final class PeerCenter: ObservableObject, PeerHost {
     @Published private(set) var port: UInt16?
     @Published private(set) var activity: [Activity] = []
     @Published private(set) var pairingStatus: String?
+    /// When each paired Mac was last connected, kept across launches so an
+    /// offline Mac can say "Last seen 2h ago", as T3 Code's clients do.
+    @Published private(set) var lastSeen: [String: Date] = [:]
 
     private var node: PeerNode?
     private var control: PermissionSocketServer?
@@ -56,7 +59,27 @@ final class PeerCenter: ObservableObject, PeerHost {
     private var outgoing: [String: OutgoingTask] = [:]
     private(set) lazy var peerStore = PeerStore(url: EngineSession.supportDirectory.appendingPathComponent("peers.json"))
 
-    var identityFingerprint: String { PeerCrypto.fingerprint(peerStore.identity.publicKey) }
+    var identityFingerprint: String {
+        #if DEBUG
+        if PeerSamples.active { return "7F3A-C21E" }
+        #endif
+        return PeerCrypto.fingerprint(peerStore.identity.publicKey)
+    }
+
+    /// This build's version, told to other Macs with its agents so each can
+    /// say when the other runs an older Octet.
+    static let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+
+    /// This Mac's network name, for the address another Mac can type.
+    var hostName: String {
+        #if DEBUG
+        if PeerSamples.active { return "Jacks-MacBook-Pro.local" }
+        #endif
+        return ProcessInfo.processInfo.hostName
+    }
+
+    /// "studio.local:52100", once listening.
+    var address: String? { PeerPresentation.address(host: hostName, port: port) }
 
     var machineName: String {
         #if DEBUG
@@ -71,6 +94,11 @@ final class PeerCenter: ObservableObject, PeerHost {
     /// Follows the setting: on starts listening and looking, off stops both.
     func apply(store: SessionStore? = nil) {
         if let store { self.store = store }
+        #if DEBUG
+        // Sample data stands in for the network: nothing listens or looks.
+        PeerSamples.openIfAsked()
+        if PeerSamples.active { return }
+        #endif
         startControlSocket()
         let wanted = SettingsStore.shared.values.peersEnabled
         if wanted, node == nil { start() } else if !wanted, node != nil { stop() }
@@ -142,12 +170,52 @@ final class PeerCenter: ObservableObject, PeerHost {
     }
 
     func refresh() {
+        #if DEBUG
+        if PeerSamples.active { return }
+        #endif
         paired = peerStore.peers.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        let wasOnline = online
         online = node?.onlineDevices ?? []
+        noteSeen(online.union(wasOnline))
         let pairedDevices = Set(paired.map(\.device))
         nearby = (node?.nearby ?? []).filter { $0.device.map { !pairedDevices.contains($0) } ?? true }
         port = node?.port
     }
+
+    // MARK: - Last seen
+
+    private var lastSeenURL: URL { EngineSession.supportDirectory.appendingPathComponent("peers-seen.json") }
+    private var lastSeenLoaded = false
+
+    /// Marks `devices` seen now: those online, and those that just left.
+    private func noteSeen(_ devices: Set<String>) {
+        if !lastSeenLoaded {
+            lastSeenLoaded = true
+            if let data = try? Data(contentsOf: lastSeenURL),
+               let saved = try? JSONDecoder().decode([String: Date].self, from: data) {
+                lastSeen = saved
+            }
+        }
+        let known = Set(paired.map(\.device))
+        var seen = lastSeen.filter { known.contains($0.key) }
+        let now = Date()
+        for device in devices where known.contains(device) { seen[device] = now }
+        guard seen != lastSeen else { return }
+        lastSeen = seen
+        if let data = try? JSONEncoder().encode(seen) { try? data.write(to: lastSeenURL, options: .atomic) }
+    }
+
+    #if DEBUG
+    /// Sample machines for the verification hooks, in place of the network.
+    func showSample(paired: [PairedPeer], online: Set<String>, nearby: [DiscoveredPeer], lastSeen: [String: Date], running: Bool) {
+        self.paired = paired
+        self.online = online
+        self.nearby = nearby
+        self.lastSeen = lastSeen
+        self.running = running
+        port = running ? 52100 : nil
+    }
+    #endif
 
     // MARK: - Pairing and trust (Settings)
 
@@ -162,12 +230,16 @@ final class PeerCenter: ObservableObject, PeerHost {
                 case .success: completion?(nil)
                 case .failure(let error): completion?(String(describing: error))
                 }
+                // The Pair a Mac dialog shows the outcome itself.
+                let dialogShows = PeerPairingModel.shared.isPresented
                 switch result {
                 case .success(let peer):
-                    ToastCenter.shared.succeed(nil, "Paired with \(peer.name)")
+                    if !dialogShows { ToastCenter.shared.succeed(nil, "Paired with \(peer.name)") }
                     self.log(false, peer.name, "Paired")
                 case .failure(let error):
-                    ToastCenter.shared.fail(nil, "Couldn't pair with \(name)", detail: String(describing: error))
+                    if !dialogShows {
+                        ToastCenter.shared.fail(nil, "Couldn't pair with \(name)", detail: String(describing: error))
+                    }
                 }
                 self.refresh()
             }
@@ -179,7 +251,9 @@ final class PeerCenter: ObservableObject, PeerHost {
         let text = address.trimmingCharacters(in: .whitespaces)
         guard let colon = text.lastIndex(of: ":"), let port = UInt16(text[text.index(after: colon)...]),
               let nwPort = NWEndpoint.Port(rawValue: port) else {
-            ToastCenter.shared.info("Give the address as host:port", detail: "The port shows in the other Mac's Settings › Other Macs.")
+            if !PeerPairingModel.shared.isPresented {
+                ToastCenter.shared.info("Give the address as host:port", detail: "The port shows in the other Mac's Settings › Other Macs.")
+            }
             completion?("Give the address as host:port.")
             return
         }
@@ -216,15 +290,10 @@ final class PeerCenter: ObservableObject, PeerHost {
                 }
                 #endif
                 NSApp.requestUserAttention(.criticalRequest)
-                ConfirmCenter.shared.ask(ConfirmCenter.Request(
-                    title: incoming ? "\(name) wants to pair with this Mac" : "Pair with \(name)?",
-                    message: "Pair only if \(name) shows the same code. A paired Mac can see your agents, and message them or give them tasks as you allow in Settings › Other Macs. Its key: \(fingerprint).",
-                    detail: code,
-                    confirmTitle: "Codes Match, Pair",
-                    cancelTitle: "Don't Pair",
-                    onConfirm: { _ in answer(true) },
-                    onCancel: { answer(false) }
-                ))
+                // The Pair a Mac dialog shows the code large, on the Mac that
+                // asked and the one asked alike, then says how it ended.
+                PeerPairingModel.shared.receivedCode(machine: name, code: code, fingerprint: fingerprint,
+                                                     incoming: incoming, answer: answer)
             }
         }
     }
@@ -258,7 +327,8 @@ final class PeerCenter: ObservableObject, PeerHost {
         let sender = PeerProtocol.Sender(params["from"] as? [String: Any], machine: peer.name)
         switch method {
         case .agents:
-            reply(.success(["machine": machineName, "agents": agents(in: store).map(\.dictionary)]))
+            // The version rides along so the asking Mac can flag an older Octet.
+            reply(.success(["machine": machineName, "version": Self.appVersion, "agents": agents(in: store).map(\.dictionary)]))
         case .send:
             guard let paneId = params["agent"] as? String, let text = params["text"] as? String, !text.isEmpty else {
                 return reply(Self.failure(.badRequest, "A message needs an agent and some text."))
@@ -564,7 +634,9 @@ final class PeerCenter: ObservableObject, PeerHost {
                         }
                         reply(["result": value])
                     case .failure(let error):
-                        reply(["error": error.message])
+                        // The code lets the Peer window tell "declined" from
+                        // "offline" from "too old"; the CLI reads only the message.
+                        reply(["error": error.message, "code": error.code])
                     }
                 }
             }
