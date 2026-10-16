@@ -135,6 +135,9 @@ final class PullRequestPlaneModel: ObservableObject {
         }
         if parsed != detail { detail = parsed }
         if phase != .loaded { phase = .loaded }
+        #if DEBUG
+        runDebugActions()
+        #endif
         let stamp = "\(parsed.number)·\(parsed.updatedAt?.timeIntervalSince1970 ?? 0)·\(parsed.additions)·\(parsed.deletions)"
         if diffStamp != nil, diffStamp != stamp {
             diffFiles = nil
@@ -196,6 +199,24 @@ final class PullRequestPlaneModel: ObservableObject {
     private func perform(_ key: String, _ arguments: [String], success: String?, failure: String,
                          then: ((Bool) -> Void)? = nil) {
         guard !busy.contains(key) else { return }
+        #if DEBUG
+        // Verification: write the command instead of running it, so every
+        // action's real code path can be checked without touching GitHub.
+        if let log = Self.dryRunLog {
+            let line = arguments.map { $0.contains(" ") || $0.isEmpty ? "'\($0)'" : $0 }.joined(separator: " ")
+            if let handle = FileHandle(forWritingAtPath: log) ?? {
+                FileManager.default.createFile(atPath: log, contents: nil)
+                return FileHandle(forWritingAtPath: log)
+            }() {
+                handle.seekToEndOfFile()
+                handle.write(Data((key + "\t" + line + "\n").utf8))
+                try? handle.close()
+            }
+            if let success { ToastCenter.shared.succeed(nil, success) }
+            then?(true)
+            return
+        }
+        #endif
         busy.insert(key)
         let directory = self.directory
         DispatchQueue.global(qos: .userInitiated).async {
@@ -214,6 +235,45 @@ final class PullRequestPlaneModel: ObservableObject {
             }
         }
     }
+
+    #if DEBUG
+    /// OCTET_GH_DRY_RUN: a file that gh commands are written to instead of run.
+    static let dryRunLog = ProcessInfo.processInfo.environment["OCTET_GH_DRY_RUN"]
+    private static var debugActionsRan = false
+
+    /// OCTET_PR_ACTIONS (dry run only): every action, once, after the first read.
+    private func runDebugActions() {
+        guard Self.dryRunLog != nil, !Self.debugActionsRan,
+              ProcessInfo.processInfo.environment["OCTET_PR_ACTIONS"] == "all", let detail else { return }
+        Self.debugActionsRan = true
+        for method in PullRequestMergeMethod.allCases {
+            choose(method)
+            merge()
+        }
+        enableAutoMerge()
+        disableAutoMerge()
+        markReady()
+        convertToDraft()
+        close()
+        reopen()
+        checkOut()
+        updateBranch()
+        editTitle(detail.title + " (edited)")
+        editBody("A new description, with spaces.")
+        addReviewer("@octocat")
+        toggleLabel(PullRequestLabel(name: "needs review", color: "ededed"))
+        commentDraft = "Looks good to me"
+        postComment(closing: false)
+        commentDraft = "Closing: superseded"
+        postComment(closing: true)
+        for verdict in [ReviewVerdict.approve, .requestChanges, .comment] {
+            reviewVerdict = verdict
+            reviewDraft = verdict == .approve ? "" : "Please rename this"
+            submitReview()
+        }
+        createInBrowser()
+    }
+    #endif
 
     /// gh's last few lines: where it says what went wrong.
     private static func lastLines(_ output: String) -> String {
