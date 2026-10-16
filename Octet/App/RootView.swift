@@ -1004,9 +1004,22 @@ final class UIState: ObservableObject {
         closePlanes { $0.id == id }
     }
 
+    /// Planes closed this session, newest last, for Reopen Closed Plane.
+    private(set) var closedPlanes: [Plane] = []
+
+    /// Brings back the plane closed last, where it was.
+    func reopenClosedPlane() {
+        guard let plane = closedPlanes.popLast() else { return }
+        if !planes.contains(where: { $0.id == plane.id }) { planes.append(plane) }
+        activePlaneId = plane.id
+        sidePanelVisible = true
+    }
+
     func closePlanes(where shouldClose: (Plane) -> Bool) {
         let activeIndex = planes.firstIndex { $0.id == activePlane?.id }
         let closingActive = activePlane.map(shouldClose) ?? false
+        closedPlanes.append(contentsOf: planes.filter(shouldClose))
+        closedPlanes = Array(closedPlanes.suffix(20))
         planes.removeAll(where: shouldClose)
         planeBadges = planeBadges.filter { id, _ in planes.contains { $0.id == id } }
         if planes.isEmpty {

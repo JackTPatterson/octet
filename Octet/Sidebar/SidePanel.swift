@@ -173,7 +173,8 @@ struct SidePanel: View {
     @ObservedObject private var folds = SidePanelFolds.shared
     @ObservedObject private var motion = MotionPreferences.shared
 
-    static let width: CGFloat = 321
+    /// Wide enough for a pull request or a device, as T3 Code's panel opens.
+    static let width: CGFloat = 420
 
     var body: some View {
         VStack(spacing: 0) {
