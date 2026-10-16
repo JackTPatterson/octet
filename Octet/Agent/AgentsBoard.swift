@@ -7,6 +7,8 @@ struct AgentDetail: View {
     let agent: BackgroundAgent
     @ObservedObject var store: SessionStore
     @State private var conversation = AgentConversation()
+    /// Set when the conversation log is gone and the job's timeline stands in.
+    @State private var logMissing = false
     @State private var timer: Timer?
 
     var body: some View {
@@ -29,6 +31,7 @@ struct AgentDetail: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 12) {
+                        if logMissing { missingLogNote }
                         ForEach(conversation.items.filter { item in
                             if case .thinking(let text) = item.kind { return !text.isEmpty }
                             return true
@@ -61,11 +64,14 @@ struct AgentDetail: View {
 
     @ViewBuilder private var actions: some View {
         if agent.kind == .background {
-            OctetButton(title: "Bring Back Here", kind: .primary, compact: true) {
-                guard let workspace = workspaceId else { return }
-                AgentsStore.shared.bringBack(agent, workspaceId: workspace)
+            // Resuming needs the conversation log.
+            if !logMissing {
+                OctetButton(title: "Bring Back Here", kind: .primary, compact: true) {
+                    guard let workspace = workspaceId else { return }
+                    AgentsStore.shared.bringBack(agent, workspaceId: workspace)
+                }
+                .help("Stop the background run and continue this conversation in Octet")
             }
-            .help("Stop the background run and continue this conversation in Octet")
             OctetButton(title: "Open in Terminal", icon: "terminal", kind: .secondary, compact: true) {
                 window.applyLayout(AgentsStore.attachLayout(agent).merging(
                     workspaceId.map { ["workspace_id": $0] } ?? [:]) { $1 },
@@ -96,12 +102,40 @@ struct AgentDetail: View {
             ?? window.focusedWorkspace?.workspaceId
     }
 
+    /// Why the transcript is short, when only the job's timeline is left.
+    private var missingLogNote: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("The full conversation is no longer on disk")
+                .font(Theme.uiFontMedium)
+                .foregroundStyle(Theme.textSecondary)
+            Text("Claude Code deletes conversation logs after its cleanup period (30 days unless cleanupPeriodDays in ~/.claude/settings.json says otherwise), so it can't be brought back. Below is what the job kept of each step.")
+                .font(Theme.captionFont)
+                .foregroundStyle(Theme.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: Theme.rowRadius).fill(Theme.card))
+    }
+
     private func load() {
         let agent = self.agent
         DispatchQueue.global(qos: .userInitiated).async {
-            let text = AgentsStore.logPath(for: agent).flatMap { try? String(contentsOfFile: $0, encoding: .utf8) } ?? ""
-            let replayed = AgentConversation.replay(lines: text.components(separatedBy: "\n"))
+            let path = AgentsStore.logPath(for: agent)
+            var replayed: AgentConversation
+            if let path {
+                let text = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
+                replayed = AgentConversation.replay(lines: text.components(separatedBy: "\n"))
+            } else {
+                // The log is gone; the job's own timeline is what's left.
+                replayed = AgentConversation()
+                replayed.items = BackgroundJob.timeline(id: agent.id).enumerated().map { index, entry in
+                    AgentItem(id: "timeline-\(index)", kind: .text(entry))
+                }
+            }
+            let missing = path == nil
             DispatchQueue.main.async {
+                if logMissing != missing { logMissing = missing }
                 if replayed.items != conversation.items { conversation = replayed }
             }
         }

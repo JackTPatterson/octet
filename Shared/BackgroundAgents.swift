@@ -66,6 +66,25 @@ struct BackgroundJob: Equatable {
         }
         return BackgroundJob(detail: text("detail"), needs: text("needs"), logSessionId: text("resumeSessionId"))
     }
+
+    /// What a job's `timeline.jsonl` kept of each step: what it said, else
+    /// what it was doing. Outlives the conversation log, which Claude Code
+    /// deletes after its cleanup period.
+    static func timeline(id: String, home: String = NSHomeDirectory()) -> [String] {
+        let path = home + "/.claude/jobs/" + id + "/timeline.jsonl"
+        guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return [] }
+        return timeline(lines: text.components(separatedBy: "\n"))
+    }
+
+    static func timeline(lines: [String]) -> [String] {
+        lines.compactMap { line in
+            guard let json = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any] else { return nil }
+            let said = (json["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let doing = (json["detail"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let entry = said.isEmpty ? doing : said
+            return entry.isEmpty ? nil : entry
+        }
+    }
 }
 
 extension AgentConversation {
