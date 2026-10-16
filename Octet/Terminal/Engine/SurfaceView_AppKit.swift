@@ -67,6 +67,10 @@ extension TerminalEngine {
         /// attached to a window.
         var focusOnAttach: Bool = false
 
+        /// Called when this view becomes first responder, so a split that
+        /// was clicked into can be marked as the one in front.
+        var onBecomeFirstResponder: (() -> Void)?
+
         func notifyExit() {
             guard !didExit else { return }
             didExit = true
@@ -466,7 +470,10 @@ extension TerminalEngine {
 
         override func becomeFirstResponder() -> Bool {
             let result = super.becomeFirstResponder()
-            if result { focusDidChange(window?.isKeyWindow ?? true) }
+            if result {
+                focusDidChange(window?.isKeyWindow ?? true)
+                onBecomeFirstResponder?()
+            }
             return result
         }
 
