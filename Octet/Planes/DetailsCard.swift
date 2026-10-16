@@ -12,6 +12,7 @@ struct DetailsCard: View {
     @ObservedObject var store: SessionStore
     @ObservedObject var ui: UIState
     @ObservedObject private var ports = PortsWatcher.shared
+    @State private var folderOpen = false
 
     var body: some View {
         let workspace = window.focusedWorkspace?.workspaceId
@@ -64,25 +65,42 @@ struct DetailsCard: View {
         .onDisappear { DebugSnapshot.overlay("details", false) }
     }
 
+    /// The folder row opens in place: the card grows to show what you can
+    /// do with the folder, rather than a system menu.
+    @ViewBuilder
     private func folderRow(_ directory: String) -> some View {
         let root = AccountProfiles.projectRoot(of: directory) ?? directory
-        return Menu {
-            Button("Show Files") { show(.files) }
-            Button("New Terminal Here") { show(.terminal) }
-            Divider()
-            Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: directory)]) }
-            Button("Copy Path") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(directory, forType: .string)
-            }
+        Button {
+            MotionPreferences.shared.perform(.sidebar, .easeOut(duration: 0.15)) { folderOpen.toggle() }
         } label: {
             DetailsRowLabel(icon: "folder", title: (root as NSString).lastPathComponent,
-                            detail: directory == root ? nil : String(directory.dropFirst(root.count + 1)))
+                            detail: directory == root ? nil : String(directory.dropFirst(root.count + 1))) {
+                OctetIcon("chevron.down", size: 10)
+                    .foregroundStyle(Theme.textTertiary)
+                    .rotationEffect(.degrees(folderOpen ? 180 : 0))
+            }
         }
-        .menuStyle(.button)
         .buttonStyle(.plain)
-        .menuIndicator(.hidden)
         .help(abbreviateHome(directory))
+        if folderOpen {
+            VStack(alignment: .leading, spacing: 2) {
+                DetailsRow(icon: "folder", title: "Show Files", help: "Open the Files plane") { show(.files); folderOpen = false }
+                DetailsRow(icon: "terminal", title: "New Terminal Here", help: "A Terminal plane in this folder") {
+                    show(.terminal); folderOpen = false
+                }
+                DetailsRow(icon: "safari", title: "Reveal in Finder", help: directory) {
+                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: directory)])
+                    folderOpen = false
+                }
+                DetailsRow(icon: "doc.on.doc", title: "Copy Path", help: directory) {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(directory, forType: .string)
+                    folderOpen = false
+                }
+            }
+            .padding(.leading, 18)
+            .transition(.opacity.combined(with: .move(edge: .top)))
+        }
     }
 
     private func show(_ kind: PlaneKind, number: Int? = nil) {
