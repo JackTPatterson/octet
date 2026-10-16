@@ -13,6 +13,18 @@ final class TerminalEnvironmentTests: XCTestCase {
         XCTAssertEqual(TerminalEnvironment.colorCapability["COLORTERM"], "truecolor")
         XCTAssertEqual(TerminalEnvironment.colorCapability["FORCE_COLOR"], "3")
     }
+
+    /// Opened from a pane of another Octet, the session server's variables
+    /// would make this Octet's engine refuse to start as a nested one.
+    func testDropsAnotherOctetsSessionVariables() {
+        let environment = TerminalEnvironment.sanitized([
+            "HERDR_SESSION": "octet",
+            "HERDR_SOCKET_PATH": "/tmp/herdr.sock",
+            "HERDR_PANE_ID": "p1",
+            "HOME": "/Users/me",
+        ])
+        XCTAssertEqual(environment, ["HOME": "/Users/me"])
+    }
 }
 
 final class GitHubPullRequestTests: XCTestCase {
@@ -1738,6 +1750,28 @@ final class TwinTranscriptTests: XCTestCase {
                        [.toolResult(id: "c1", summary: "test result: ok", isError: false)])
         XCTAssertEqual(conversation.usage?.contextWindow, 272_000)
         XCTAssertEqual(conversation.usage?.total, 60)
+    }
+
+    func testBackgroundJobTimelineKeepsWhatWasSaid() {
+        let entries = BackgroundJob.timeline(lines: [
+            #"{"at":"2026-07-05T22:11:55Z","state":"running","detail":"[Request interrupted by user]","text":""}"#,
+            #"{"at":"2026-07-05T22:12:01Z","state":"blocked","detail":"awaiting direction","text":"What would you like to work on?"}"#,
+            #"{"at":"2026-07-05T22:13:00Z","state":"blocked","detail":"","text":""}"#,
+            "not json",
+        ])
+        XCTAssertEqual(entries, ["[Request interrupted by user]", "What would you like to work on?"])
+    }
+
+    func testCodexSetupMessagesAreNotTurns() {
+        let lines = [
+            ##"{"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"<skills_instructions>\n## Skills"},{"type":"input_text","text":"<permissions instructions>\nsandbox"}]}}"##,
+            ##"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>\n  <cwd>/repo</cwd>\n</environment_context>"}]}}"##,
+            ##"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions for /repo\n..."},{"type":"input_text","text":"fix the build"}]}}"##,
+        ]
+        let messages = TwinTranscript.parse(agent: "codex", lines: lines).messages
+        XCTAssertEqual(messages.count, 1)
+        XCTAssertEqual(messages.first?.role, .user)
+        XCTAssertEqual(messages.first?.blocks, [.text("fix the build")])
     }
 
     func testTheAgentDecidesWhichReaderRunsAndBadLinesAreSkipped() {

@@ -17,6 +17,7 @@ struct SidebarView: View {
     @State private var query = ""
     /// The project the sidebar is narrowed to, by its folder; empty for all.
     @AppStorage("octet.sidebar.project") private var projectFilter = ""
+    @StateObject private var dropdowns = OctetDropdownState()
     /// The result the arrow keys are on, by position in the results.
     @State private var highlighted = 0
     @FocusState private var searchFocused: Bool
@@ -78,6 +79,7 @@ struct SidebarView: View {
         .animation(motion.animation(.sidebar), value: waits.waiting.isEmpty)
         .frame(width: width)
         .background(Theme.sidebar)
+        .octetDropdownHost(dropdowns)
         // Peeks come back once the pointer has left the sidebar.
         .onHover { if !$0 { HoverIntent.navigating = false } }
         .onReceive(window.ui.$sidebarSearchRequest.dropFirst()) { _ in searchFocused = true }
@@ -131,17 +133,7 @@ struct SidebarView: View {
     /// "All projects", or the one project the sidebar is narrowed to.
     private var projectRow: some View {
         HStack(spacing: 8) {
-            Menu {
-                Button { projectFilter = "" } label: {
-                    if projectFilter.isEmpty { Label("All projects", systemImage: "checkmark") } else { Text("All projects") }
-                }
-                Divider()
-                ForEach(window.activeGroups.filter { $0.id != ProjectGroup.otherId }) { group in
-                    Button { projectFilter = group.id } label: {
-                        if projectFilter == group.id { Label(group.name, systemImage: "checkmark") } else { Text(group.name) }
-                    }
-                }
-            } label: {
+            OctetDropdownAnchor(spec: projectSpec, state: dropdowns) { open in
                 HStack(spacing: 8) {
                     if let group = filteredGroup {
                         ProjectMonogram(name: group.name).frame(width: 18)
@@ -150,24 +142,47 @@ struct SidebarView: View {
                     }
                     Text(filteredGroup?.name ?? "All projects")
                         .font(Theme.uiFont)
-                        .foregroundStyle(Theme.textSecondary)
+                        .foregroundStyle(open ? Theme.textPrimary : Theme.textSecondary)
                         .lineLimit(1)
                     Spacer(minLength: 4)
-                    OctetIcon("chevron.down", size: 11).foregroundStyle(Theme.textTertiary)
+                    OctetIcon("chevron.down", size: 11)
+                        .foregroundStyle(Theme.textTertiary)
+                        .rotationEffect(.degrees(open ? 180 : 0))
                 }
-                .contentShape(Rectangle())
+                .padding(.trailing, 6)
+                .frame(height: 26)
+                .background(RoundedRectangle(cornerRadius: Theme.rowRadius).fill(open ? Theme.hover : .clear))
             }
-            .menuStyle(.button)
-            .buttonStyle(.plain)
-            .menuIndicator(.hidden)
-            .fixedSize(horizontal: false, vertical: true)
             .help("Show every project's workspaces, or one project's")
-            .accessibilityLabel("Project: \(filteredGroup?.name ?? "All projects")")
+            .accessibilityLabel("Project")
+            .accessibilityValue(filteredGroup?.name ?? "All projects")
+            .accessibilityHint("Opens a menu")
             SidebarIconButton(icon: "folder.badge.plus", help: "New workspace in a folder…") { pickFolder() }
                 .accessibilityLabel("New workspace in a folder")
         }
         .padding(.leading, 6)
         .frame(height: 30)
+    }
+
+    /// The project picker, drawn by the sidebar's dropdown host as Octet's
+    /// own panel: each project by its badge and workspace count.
+    private var projectSpec: OctetDropdownSpec {
+        let groups = window.activeGroups.filter { $0.id != ProjectGroup.otherId }
+        let selected = filteredGroup?.id ?? ""
+        let total = window.activeGroups.reduce(0) { $0 + $1.workspaces.count }
+        // From the row's inset (14) to just short of the sidebar's edge.
+        let panelWidth = width - 22
+        return OctetDropdownSpec(
+            id: "project",
+            options: [OctetDropdownOption(id: "", title: "All projects")]
+                + groups.map { OctetDropdownOption(id: $0.id, title: $0.name) },
+            selected: selected,
+            select: { projectFilter = $0 },
+            panel: { close in
+                AnyView(ProjectPickerPanel(groups: groups, total: total, selected: selected, width: panelWidth,
+                                           select: { projectFilter = $0; close() }, close: close))
+            }
+        )
     }
 
     /// The project the sidebar is narrowed to, while it still has workspaces.
@@ -1501,5 +1516,112 @@ private struct SidebarIconButton: View {
         .buttonStyle(.plain)
         .onHover { hovered = $0 }
         .help(help)
+    }
+}
+
+/// The "All projects" dropdown: every project with its badge and how many
+/// workspaces it has, the shown one checked. Arrow keys move, Return picks,
+/// Escape closes.
+private struct ProjectPickerPanel: View {
+    let groups: [ProjectGroup]
+    let total: Int
+    let selected: String
+    let width: CGFloat
+    let select: (String) -> Void
+    let close: () -> Void
+    @State private var highlighted: String?
+    @FocusState private var focused: Bool
+
+    /// "" stands for all projects, then each project by its folder.
+    private var ids: [String] { [""] + groups.map(\.id) }
+
+    var body: some View {
+        OctetPalettePanel(style: .floating, divider: .none) {
+            VStack(alignment: .leading, spacing: 1) {
+                row(id: "", count: total) {
+                    OctetIcon("folder", size: 13).foregroundStyle(Theme.textTertiary)
+                } title: { "All projects" }
+                if !groups.isEmpty {
+                    Rectangle().fill(Theme.divider).frame(height: 1).padding(.vertical, 4)
+                    Text("PROJECTS")
+                        .font(Theme.headerFont)
+                        .kerning(0.4)
+                        .foregroundStyle(Theme.textTertiary)
+                        .padding(.horizontal, 8)
+                        .padding(.bottom, 2)
+                        .accessibilityAddTraits(.isHeader)
+                    ViewThatFits(in: .vertical) {
+                        projectRows
+                        ScrollView { projectRows }.frame(height: 320)
+                    }
+                }
+            }
+            .padding(4)
+        }
+        .frame(width: max(width, 200))
+        .focusable()
+        .focusEffectDisabled()
+        .focused($focused)
+        .onAppear {
+            highlighted = selected
+            DispatchQueue.main.async { focused = true }
+        }
+        .onKeyPress(.upArrow) { move(-1); return .handled }
+        .onKeyPress(.downArrow) { move(1); return .handled }
+        .onKeyPress(.return) { select(highlighted ?? selected); return .handled }
+        .onExitCommand(perform: close)
+        // A click outside the sidebar, e.g. in a terminal, takes focus away.
+        .onChange(of: focused) { was, now in if was && !now { close() } }
+    }
+
+    private var projectRows: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            ForEach(groups) { group in
+                row(id: group.id, count: group.workspaces.count) {
+                    ProjectMonogram(name: group.name)
+                } title: { group.name }
+                .help(group.id)
+            }
+        }
+    }
+
+    private func row<Mark: View>(id: String, count: Int, @ViewBuilder mark: () -> Mark,
+                                 title: () -> String) -> some View {
+        let isSelected = id == selected
+        let name = title()
+        return HStack(spacing: 8) {
+            mark().frame(width: 18)
+            Text(name)
+                .font(Theme.uiFont)
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 8)
+            Text("\(count)")
+                .font(Theme.captionFont)
+                .monospacedDigit()
+                .foregroundStyle(Theme.textTertiary)
+            OctetIcon("checkmark", size: 11)
+                .foregroundStyle(Theme.accent)
+                .opacity(isSelected ? 1 : 0)
+                .frame(width: 12)
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 28)
+        .background(RoundedRectangle(cornerRadius: Theme.rowRadius)
+            .fill(highlighted == id ? Theme.cardSelected : .clear))
+        .contentShape(Rectangle())
+        .onHover { if $0 { highlighted = id } }
+        .onTapGesture { select(id) }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(name)
+        .accessibilityValue("\(count) workspace\(count == 1 ? "" : "s")")
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction { select(id) }
+    }
+
+    private func move(_ delta: Int) {
+        let current = ids.firstIndex(of: highlighted ?? selected) ?? 0
+        highlighted = ids[(current + delta + ids.count) % ids.count]
     }
 }
