@@ -329,9 +329,13 @@ struct DiffReviewView: View {
                                                  half: max(200, proxy.size.width / 2), model: model)
                                 }
                             } else {
-                                ForEach(hunk.lines) { line in
-                                    DiffReviewLine(line: line, path: file.path, text: colored[line.index], model: model)
+                                let kinds = hunk.lineKinds
+                                ForEach(Array(hunk.lines.enumerated()), id: \.element.id) { index, line in
+                                    DiffReviewLine(line: line, path: file.path, text: colored[line.index], model: model,
+                                                   gutter: file.gutterWidth, edges: DiffStyle.edges(kinds, at: index),
+                                                   minWidth: proxy.size.width - 12)
                                 }
+                                .padding(.horizontal, 6)
                             }
                         }
                     }
@@ -440,7 +444,8 @@ struct DiffReviewView: View {
     }
 }
 
-/// One line of the diff: numbers, the text, and its note. Click to write one.
+/// One line of the diff in Octet's diff style, and its note. Click to
+/// write one.
 struct DiffReviewLine: View {
     let line: ReviewDiff.Line
     let path: String
@@ -448,6 +453,10 @@ struct DiffReviewLine: View {
     @ObservedObject var model: DiffReviewModel
     /// Long lines wrap rather than run off, for a narrow pane.
     var wraps = false
+    var gutter: CGFloat = 48
+    /// Where it sits in its run of changes, for the block's corners.
+    var edges: (first: Bool, last: Bool) = (false, false)
+    var minWidth: CGFloat = 0
     @State private var hovered = false
 
     var body: some View {
@@ -455,65 +464,24 @@ struct DiffReviewLine: View {
         let drafting = model.drafting.map { $0.path == path && $0.line == line } ?? false
         VStack(alignment: .leading, spacing: 0) {
             Button { model.beginNote(on: line, in: path) } label: {
-                HStack(spacing: 0) {
-                    number(line.oldNumber)
-                    number(line.newNumber)
-                    Text(marker).frame(width: 16).foregroundStyle(tint)
-                    Group {
-                        if let text { Text(text) } else { Text(line.text.isEmpty ? " " : line.text) }
+                DiffLineRow(line, text: text, gutter: gutter, edges: edges, wraps: wraps, minWidth: minWidth)
+                    .opacity(line.kind == .context ? 0.85 : 1)
+                    .background {
+                        if line.kind == .context && hovered { Theme.hover }
                     }
-                    .opacity(line.kind == .context ? 0.8 : 1)
-                    .fixedSize(horizontal: !wraps, vertical: false)
-                    Spacer(minLength: 0)
-                }
-                .font(Theme.monoFont)
-                .padding(.vertical, 1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(background)
-                .overlay(alignment: .leading) {
-                    if hovered && note == nil && !drafting {
-                        Image(systemName: "plus.bubble.fill")
-                            .font(.system(size: 11)).foregroundStyle(Theme.accent)
-                            .padding(.leading, 4)
+                    .overlay(alignment: .leading) {
+                        if hovered && note == nil && !drafting {
+                            Image(systemName: "plus.bubble.fill")
+                                .font(.system(size: 11)).foregroundStyle(Theme.accent)
+                                .padding(.leading, 4)
+                        }
                     }
-                }
-                .contentShape(Rectangle())
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .onHover { hovered = $0 }
             .help("Leave a note on this line")
             DiffNoteArea(line: line, path: path, model: model)
-        }
-    }
-
-    private func number(_ value: Int?) -> some View {
-        Text(value.map(String.init) ?? "")
-            .foregroundStyle(Theme.textTertiary)
-            .frame(width: 42, alignment: .trailing)
-            .padding(.trailing, 6)
-    }
-
-    private var marker: String {
-        switch line.kind {
-        case .added: "+"
-        case .removed: "−"
-        case .context: " "
-        }
-    }
-
-    private var tint: Color {
-        switch line.kind {
-        case .added: DiffReviewView.addedColor
-        case .removed: Theme.danger
-        case .context: Theme.textTertiary
-        }
-    }
-
-    private var background: Color {
-        switch line.kind {
-        case .added: DiffReviewView.addedColor.opacity(0.12)
-        case .removed: Theme.danger.opacity(0.12)
-        case .context: hovered ? Theme.hover : .clear
         }
     }
 }

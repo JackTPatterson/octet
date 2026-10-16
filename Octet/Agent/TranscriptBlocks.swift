@@ -207,37 +207,11 @@ struct DiffView: View {
         .accessibilityLabel("\(path.map { "Changes to \(($0 as NSString).lastPathComponent), " } ?? "")\(Self.summary(lines))")
     }
 
-    @ViewBuilder
     private func row(_ line: LineDiff.Line, text: AttributedString, index: Int, in all: [LineDiff.Line],
                      number: Int?, gutter: CGFloat, width: CGFloat) -> some View {
-        let changed = line.kind != .context
-        let tint = Self.tint(line.kind)
-        // Consecutive changed lines of one kind read as one block.
-        let first = changed && (index == 0 || all[index - 1].kind != line.kind)
-        let last = changed && (index + 1 == all.count || all[index + 1].kind != line.kind)
-        let shape = UnevenRoundedRectangle(
-            topLeadingRadius: first ? Self.radius : 0, bottomLeadingRadius: last ? Self.radius : 0,
-            bottomTrailingRadius: last ? Self.radius : 0, topTrailingRadius: first ? Self.radius : 0
-        )
-        HStack(spacing: 0) {
-            Text(number.map(String.init) ?? "")
-                .font(Theme.monoFont.monospacedDigit())
-                .foregroundStyle(changed ? Theme.textPrimary : Theme.textTertiary)
-                .padding(.trailing, 10)
-                .frame(width: gutter, height: Self.rowHeight, alignment: .trailing)
-                .background(changed ? tint.opacity(0.55) : Color.clear)
-            Text(Self.marker(line.kind))
-                .font(.system(size: 12.5, design: .monospaced))
-                .foregroundStyle(Theme.textPrimary)
-                .frame(width: 26)
-            Text(text)
-                .font(.system(size: 12.5, design: .monospaced))
-                .fixedSize()
-                .padding(.trailing, 16)
-        }
-        .frame(minWidth: width, minHeight: Self.rowHeight, alignment: .leading)
-        .background(changed ? tint.opacity(0.2) : Color.clear)
-        .clipShape(shape)
+        let edges = DiffStyle.edges(all.map { DiffLineKind($0.kind) }, at: index)
+        return DiffLineRow(kind: DiffLineKind(line.kind), number: number, text: text, gutter: gutter,
+                           first: edges.first, last: edges.last, minWidth: width)
     }
 
     /// Syntax colors per line, carrying block-comment state down the diff.

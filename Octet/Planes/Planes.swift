@@ -83,6 +83,8 @@ struct PlaneBadge: Equatable {
     var title: String
     var tint: Color?
     var help: String?
+    /// A mark in place of the kind's, e.g. merged rather than open.
+    var icon: String?
 }
 
 // MARK: - Strip
@@ -95,11 +97,13 @@ struct PlaneStrip: View {
 
     var body: some View {
         HStack(spacing: 4) {
+            ScrollViewReader { proxy in
             ScrollView(.horizontal) {
                 HStack(spacing: 4) {
                     ForEach(ui.planes) { plane in
                         PlaneChip(plane: plane, badge: ui.planeBadges[plane.id],
                                   active: ui.activePlane?.id == plane.id, ui: ui)
+                            .id(plane.id)
                     }
                     OctetIconButton(icon: "plus", help: "Add a plane") { adding.toggle() }
                         .popover(isPresented: $adding, arrowEdge: .bottom) {
@@ -112,6 +116,14 @@ struct PlaneStrip: View {
                 .padding(.vertical, 2)
             }
             .scrollIndicators(.never)
+            // The plane in front is always in view, as a new one is added.
+            .onChange(of: ui.activePlane?.id, initial: true) { _, id in
+                guard let id else { return }
+                DispatchQueue.main.async {
+                    MotionPreferences.shared.perform(.sidebar) { proxy.scrollTo(id, anchor: .trailing) }
+                }
+            }
+            }
             Spacer(minLength: 0)
             if ui.sidePanelVisible {
                 OctetIconButton(icon: ui.sidePanelMaximized ? "arrow.down.right.and.arrow.up.left"
@@ -148,7 +160,7 @@ private struct PlaneChip: View {
         HStack(spacing: 3) {
             Button { ui.closePlane(plane.id) } label: {
                 ZStack {
-                    OctetIcon(plane.kind.icon, size: 12)
+                    OctetIcon(badge?.icon ?? plane.kind.icon, size: 12)
                         .foregroundStyle(badge?.tint ?? (active || hovered ? Theme.textPrimary : Theme.textSecondary))
                         .opacity(hovered ? 0 : 1)
                     OctetIcon("xmark", size: 11)

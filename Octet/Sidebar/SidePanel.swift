@@ -210,9 +210,51 @@ struct SidePanel: View {
             }
             .scrollIndicators(.hidden)
         case .diff: DiffPlane(store: store, ui: ui)
-        case .pullRequest, .pullRequests, .device:
+        case .pullRequest:
+            if let directory = planeDirectory {
+                PullRequestPlane(directory: directory, number: plane.number,
+                                 askAgent: { askAgent($0, in: directory) },
+                                 onSummary: { number, tone, title in
+                                     let badge = PlaneBadge(title: "#\(number)", tint: tone.color,
+                                                            help: "#\(number) \(title)", icon: tone.icon)
+                                     if ui.planeBadges[plane.id] != badge { ui.planeBadges[plane.id] = badge }
+                                 })
+            } else {
+                PlaneMessage(icon: "pull.request", title: "No project in front",
+                             detail: "Open a tab in a repository to see its pull request.")
+            }
+        case .pullRequests:
+            if let directory = planeDirectory {
+                PullRequestListPlane(directory: directory) { number in
+                    MotionPreferences.shared.perform(.sidebar) { ui.showPlane(.pullRequest, number: number) }
+                }
+            } else {
+                PlaneMessage(icon: "list", title: "No project in front",
+                             detail: "Open a tab in a repository to see its pull requests.")
+            }
+        case .device:
             PlaneUnavailable(kind: plane.kind)
         }
+    }
+
+    /// The project planes look at: the pane in front's.
+    private var planeDirectory: String? {
+        #if DEBUG
+        // Verification hook: a project to show without a pane in it.
+        if let forced = ProcessInfo.processInfo.environment["OCTET_PLANE_DIRECTORY"] { return forced }
+        #endif
+        return window.focusedDirectory
+    }
+
+    /// Sends a prompt to the agent working in `directory`'s project, the
+    /// one in front first; says so when there's none.
+    private func askAgent(_ prompt: String, in directory: String) {
+        guard let agent = DiffReviewView.agents(in: store, directory: directory).first else {
+            ToastCenter.shared.info("No agent here to ask", detail: "Start an agent in this project, then try again.")
+            return
+        }
+        store.broadcast(prompt, to: [Broadcast.Target(paneId: agent.paneId,
+                                                      name: DiffReviewView.name(agent, in: store), isAgent: true)])
     }
 
     private var overview: some View {

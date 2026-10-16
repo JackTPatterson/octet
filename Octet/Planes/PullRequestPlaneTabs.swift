@@ -735,6 +735,7 @@ private struct PullRequestFileDiff: View {
                 } else if file.tooLarge {
                     note("Too large to show here: +\(file.added) −\(file.removed).")
                 } else {
+                    let colored = DiffReviewView.colors(file)
                     ScrollView(.horizontal) {
                         VStack(alignment: .leading, spacing: 0) {
                             ForEach(Array(file.hunks.enumerated()), id: \.offset) { _, hunk in
@@ -746,7 +747,12 @@ private struct PullRequestFileDiff: View {
                                     .padding(.vertical, 3)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .background(Theme.card.opacity(0.5))
-                                ForEach(hunk.lines) { line in PullRequestDiffLine(line: line) }
+                                let kinds = hunk.lineKinds
+                                ForEach(Array(hunk.lines.enumerated()), id: \.element.id) { index, line in
+                                    DiffLineRow(line, text: colored[line.index], gutter: file.gutterWidth,
+                                                edges: DiffStyle.edges(kinds, at: index), minWidth: max(0, width - 12))
+                                }
+                                .padding(.horizontal, 6)
                             }
                         }
                         // The card's width at least, then as wide as the
@@ -792,53 +798,3 @@ private struct PullRequestFileDiff: View {
     }
 }
 
-/// A unified diff line, tinted as DiffReviewView tints them.
-private struct PullRequestDiffLine: View {
-    let line: ReviewDiff.Line
-
-    var body: some View {
-        HStack(spacing: 0) {
-            Text(line.oldNumber.map(String.init) ?? "")
-                .foregroundStyle(Theme.textTertiary)
-                .frame(width: 34, alignment: .trailing)
-            Text(line.newNumber.map(String.init) ?? "")
-                .foregroundStyle(Theme.textTertiary)
-                .frame(width: 34, alignment: .trailing)
-                .padding(.trailing, 6)
-            Text(marker).frame(width: 12).foregroundStyle(tint)
-            Text(line.text.isEmpty ? " " : line.text)
-                .foregroundStyle(Theme.textPrimary)
-                .opacity(line.kind == .context ? 0.8 : 1)
-                .padding(.trailing, 12)
-        }
-        .font(Theme.monoFont)
-        .padding(.vertical, 1)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(background)
-        .textSelection(.enabled)
-    }
-
-    private var marker: String {
-        switch line.kind {
-        case .added: "+"
-        case .removed: "−"
-        case .context: " "
-        }
-    }
-
-    private var tint: Color {
-        switch line.kind {
-        case .added: Color(hex: AgentStateColor.done)
-        case .removed: Theme.danger
-        case .context: Theme.textTertiary
-        }
-    }
-
-    private var background: Color {
-        switch line.kind {
-        case .added: Color(hex: AgentStateColor.done).opacity(0.12)
-        case .removed: Theme.danger.opacity(0.12)
-        case .context: .clear
-        }
-    }
-}

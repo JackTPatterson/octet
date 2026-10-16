@@ -194,9 +194,12 @@ private struct DiffPlaneBody: View {
                         .padding(.vertical, 4)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(Theme.card.opacity(0.6))
-                    ForEach(hunk.lines) { line in
-                        DiffReviewLine(line: line, path: file.path, text: colored[line.index], model: model, wraps: true)
+                    let kinds = hunk.lineKinds
+                    ForEach(Array(hunk.lines.enumerated()), id: \.element.id) { index, line in
+                        DiffReviewLine(line: line, path: file.path, text: colored[line.index], model: model,
+                                       wraps: true, gutter: file.gutterWidth, edges: DiffStyle.edges(kinds, at: index))
                     }
+                    .padding(.horizontal, 6)
                 }
             }
             .padding(.bottom, 6)
