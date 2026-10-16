@@ -592,8 +592,14 @@ struct RootView: View {
             if let open = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], open.hasPrefix("usage") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) { ui.usageBreakdownVisible = true }
             }
-            if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "agents" {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { AgentCenter.shared.showingBoard = true }
+            // "agents" opens the agents hub; "agents:down:return" and the
+            // like also drive it (AgentsHub.applyDebugOptions).
+            if let open = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], open == "agents" || open.hasPrefix("agents:") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    // This window's own workspace: the app may not be in
+                    // front, so "the key window" can be nobody.
+                    AgentCenter.shared.setBoard(.all, in: window.focusedWorkspace?.workspaceId)
+                }
             }
             // Verification hook: open a window at launch without a click.
             if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == MarketplaceWindow.id {

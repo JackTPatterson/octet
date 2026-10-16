@@ -488,7 +488,7 @@ private struct PullRequestsList: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 1) {
                         ForEach(sections, id: \.group) { section in
-                            ShelfHeader(icon: section.group.icon, title: section.group.title, count: section.items.count)
+                            OctetShelfHeader(icon: section.group.icon, title: section.group.title, count: section.items.count)
                                 .padding(.top, 10)
                                 .padding(.bottom, 4)
                                 .padding(.horizontal, 8)
@@ -531,25 +531,6 @@ private struct PullRequestsList: View {
         .multilineTextAlignment(.center)
         .padding(.horizontal, 24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
-
-/// T3 Code's shelf header: an icon, a 12pt label, a count, then a hairline
-/// to the edge, so sections read as shelves rather than boxed cards.
-private struct ShelfHeader: View {
-    let icon: String
-    let title: String
-    let count: Int
-
-    var body: some View {
-        HStack(spacing: 6) {
-            OctetIcon(icon, size: 12)
-            Text(title).font(Theme.interfaceFont(12, weight: .medium))
-            Text("\(count)").font(Theme.captionFont.monospacedDigit()).foregroundStyle(Theme.textTertiary)
-            Rectangle().fill(Theme.divider).frame(height: 1).padding(.leading, 4)
-        }
-        .foregroundStyle(Theme.textSecondary)
-        .accessibilityElement(children: .combine)
     }
 }
 
