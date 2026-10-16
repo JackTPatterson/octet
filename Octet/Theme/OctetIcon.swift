@@ -173,6 +173,24 @@ struct OctetIcon: View {
         "list": .symbol("list.bullet"),
         "iphone": .symbol("iphone"),
         "lock": .symbol("lock"),
+        // The Device plane. Prefixed so they can't collide with keys other
+        // planes add; SF Symbols until iconsax marks are imported.
+        "device.iphone": .symbol("iphone"),
+        "device.ipad": .symbol("ipad"),
+        "device.android": .symbol("candybarphone"),
+        "device.home": .symbol("house"),
+        "device.lock": .symbol("lock"),
+        "device.camera": .symbol("camera"),
+        "device.sun": .symbol("sun.max"),
+        "device.moon": .symbol("moon"),
+        "device.location": .symbol("location"),
+        "device.textsize": .symbol("textformat.size"),
+        "device.tools": .symbol("wrench.and.screwdriver"),
+        "device.power": .symbol("power"),
+        "device.back": .symbol("arrow.uturn.backward"),
+        "device.recents": .symbol("square.on.square"),
+        "device.rotate": .symbol("rotate.right"),
+        "device.send": .symbol("paperplane"),
     ]
 
     var body: some View {
