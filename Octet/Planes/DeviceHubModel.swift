@@ -34,6 +34,10 @@ final class DeviceHubModel: ObservableObject {
     @Published private(set) var textSize: DeviceTextSize?
     @Published private(set) var rotation = 0
     @Published var toolsOpen = false
+    /// Shown in the floating preview. The plane then shows a notice rather
+    /// than the screen, and the one stream keeps running while the panel is
+    /// hidden.
+    @Published private(set) var floating = false
     /// The screen in the units input takes: points on iOS, pixels on Android.
     @Published private(set) var screen: CGSize?
 
@@ -58,6 +62,12 @@ final class DeviceHubModel: ObservableObject {
     /// iOS without AXe can show video (polled) but not take input.
     var inputAvailable: Bool { current?.platform == .android || !axeMissing }
 
+    /// Video is on screen, so hiding the panel can hand it to the float.
+    var streaming: Bool { stream != nil && phase == .live }
+
+    /// Something is showing the screen: the plane in front, or the float.
+    private var wanted: Bool { visible || floating }
+
     // MARK: Lifecycle
 
     func appear(visible: Bool) {
@@ -75,7 +85,20 @@ final class DeviceHubModel: ObservableObject {
         self.visible = visible
         if visible {
             if phase == .connecting || phase == .live { startStream() }
-        } else {
+        } else if !floating {
+            stopStream()
+        }
+    }
+
+    /// The float took the screen, or gave it back. The stream is shared, so
+    /// handing over never starts a second one; closing the float stops it
+    /// unless the plane is in front. The device keeps running either way.
+    func setFloating(_ floating: Bool) {
+        guard floating != self.floating else { return }
+        self.floating = floating
+        if floating {
+            if phase == .connecting || phase == .live { startStream() }
+        } else if !visible {
             stopStream()
         }
     }
@@ -328,14 +351,14 @@ final class DeviceHubModel: ObservableObject {
         if phase != .live { phase = .connecting }
         screen = nil
         loadDetails(device)
-        if visible { startStream() }
+        if wanted { startStream() }
     }
 
     func reconnect() {
         stopStream()
         noVideo = false
         phase = .connecting
-        Task { await refresh(); if visible { startStream() } }
+        Task { await refresh(); if wanted { startStream() } }
     }
 
     private func startStream() {

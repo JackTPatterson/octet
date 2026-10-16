@@ -237,7 +237,7 @@ struct SidePanel: View {
                              detail: "Open a tab in a repository to see its pull requests.")
             }
         case .device:
-            DevicePlane(deviceId: plane.deviceId,
+            DevicePlane(planeId: plane.id, deviceId: plane.deviceId,
                         visible: ui.sidePanelVisible && ui.activePlane?.id == plane.id,
                         onOpen: { device in
                             ui.setPlaneDevice(plane.id, deviceId: device.id)
@@ -250,7 +250,12 @@ struct SidePanel: View {
                         askAgent: { prompt in
                             if let directory = planeDirectory { askAgent(prompt, in: directory) }
                             else { ToastCenter.shared.info("No agent here to ask", detail: "Start an agent in a project, then try again.") }
-                        })
+                        },
+                        showPlane: {
+                            ui.activePlaneId = plane.id
+                            ui.sidePanelVisible = true
+                        },
+                        presentSetup: { model in if ui.deviceSetup !== model { ui.deviceSetup = model } })
         }
     }
 

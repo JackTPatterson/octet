@@ -81,6 +81,9 @@ final class DeviceScreenNSView: NSView {
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { interactive }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    /// Drags are swipes, even in the floating preview, which otherwise
+    /// moves by its background.
+    override var mouseDownCanMoveWindow: Bool { false }
 
     func show(_ image: CGImage?) {
         CATransaction.begin()
