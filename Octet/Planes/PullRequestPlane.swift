@@ -160,7 +160,7 @@ private struct PullRequestContent: View {
                             switch tab {
                             case .summary: PullRequestSummaryTab(model: model, detail: detail)
                             case .timeline: PullRequestTimelineTab(model: model, detail: detail, newestFirst: newestFirst)
-                            case .code: PullRequestCodeTab(model: model, detail: detail)
+                            case .code: PullRequestCodeTab(model: model, detail: detail, askAgent: askAgent)
                             }
                         }
                         .padding(.top, 4)
