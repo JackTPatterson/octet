@@ -87,15 +87,22 @@ final class IdleCenter: ObservableObject {
     // MARK: - Closing
 
     /// Closes idle workspaces, saying first which hold work that isn't
-    /// saved anywhere else, and offering to close only the others.
+    /// saved anywhere else or have an agent still at it, and offering to
+    /// close only the others. One with nothing to lose closes at once, as
+    /// a row's × should; several are still asked about.
     func close(_ workspaces: [EngineWorkspace]) {
         guard let store, !workspaces.isEmpty else { return }
         let ids = workspaces.map(\.workspaceId)
         refresh(ids) { [weak self] in
             guard let self else { return }
-            let risky = workspaces.filter { !(self.work[$0.workspaceId]?.isClean ?? true) }
+            let risky = workspaces.filter { self.risks(of: $0, in: store.snapshot) != nil }
             let clean = workspaces.filter { workspace in !risky.contains { $0.workspaceId == workspace.workspaceId } }
             let noun = workspaces.count == 1 ? "idle workspace" : "idle workspaces"
+            if risky.isEmpty, workspaces.count == 1 {
+                store.closeWorkspaces(workspaces)
+                self.selection.subtract(ids)
+                return
+            }
             guard !risky.isEmpty else {
                 return ConfirmCenter.shared.ask(
                     title: "Close \(Recap.count(workspaces.count, "idle workspace"))?",
@@ -105,10 +112,10 @@ final class IdleCenter: ObservableObject {
             }
             var request = ConfirmCenter.Request(
                 title: risky.count == workspaces.count && workspaces.count == 1
-                    ? "\(risky[0].label) has work that isn't saved anywhere else"
-                    : "\(risky.count) of \(workspaces.count) \(noun) hold work that isn't saved anywhere else",
-                message: "Files stay on disk, but uncommitted and unpushed work is only in these folders, and running servers stop.",
-                items: risky.map { "\($0.label) — \(self.work[$0.workspaceId]?.risks ?? "")" },
+                    ? "Close \(risky[0].label)? It's still doing something"
+                    : "\(risky.count) of \(workspaces.count) \(noun) are still doing something",
+                message: "Files stay on disk, but uncommitted and unpushed work is only in these folders, and agents and servers stop.",
+                items: risky.map { "\($0.label) — \(self.risks(of: $0, in: store.snapshot) ?? "")" },
                 confirmTitle: workspaces.count == 1 ? "Close Anyway" : "Close All",
                 destructive: true,
                 onConfirm: { _ in store.closeWorkspaces(workspaces); self.selection.subtract(ids) })
@@ -118,6 +125,21 @@ final class IdleCenter: ObservableObject {
             }
             ConfirmCenter.shared.ask(request)
         }
+    }
+
+    /// What closing would end, or nil when nothing: an agent still working
+    /// or asking (a workspace moved to Idle by hand can be busy), then work
+    /// only in its folder and servers.
+    private func risks(of workspace: EngineWorkspace, in snapshot: EngineSnapshot) -> String? {
+        let agents = snapshot.agents(inWorkspace: workspace.workspaceId)
+        var parts: [String] = []
+        if agents.contains(where: { $0.agentStatus == .working }) || workspace.agentStatus == .working {
+            parts.append("an agent is working")
+        } else if agents.contains(where: { $0.agentStatus == .blocked }) || workspace.agentStatus == .blocked {
+            parts.append("an agent is waiting on you")
+        }
+        if let held = work[workspace.workspaceId]?.risks { parts.append(held) }
+        return parts.isEmpty ? nil : parts.joined(separator: "; ")
     }
 
     // MARK: - Sleep
@@ -265,6 +287,19 @@ final class IdleCenter: ObservableObject {
         save()
     }
 
+    /// Forgets sleeping workspaces once asked: the note is the only way
+    /// back to their tabs and agents' conversations.
+    func confirmForget(_ records: [SleepingWorkspace]) {
+        guard !records.isEmpty else { return }
+        ConfirmCenter.shared.ask(
+            title: records.count == 1 ? "Forget \(records[0].label)?" : "Forget \(records.count) sleeping workspaces?",
+            message: "Their files stay where they are, but their tabs and conversations won't be reopened.",
+            items: records.count == 1 ? [] : records.map(\.label), confirmTitle: "Forget", destructive: true
+        ) { _ in
+            for record in records { IdleCenter.shared.forget(record.id) }
+        }
+    }
+
     /// Idle workspaces past Settings' sleep time, put to sleep where nothing
     /// would be lost.
     func sleepWhatsDue() {
@@ -275,6 +310,8 @@ final class IdleCenter: ObservableObject {
             let id = workspace.workspaceId
             return WorkspaceSleep.isDue(lastActive: store.activity.lastActive(id), afterDays: days)
                 && !store.isPinned(id) && WaitCenter.shared.snooze(of: id) == nil
+                // Snoozed comes back by itself soon; asleep it would not.
+                && store.snoozedUntil[id] == nil
                 // A workspace a wait comes back to stays, so it's there.
                 && !WaitCenter.shared.waits.contains { $0.origin.workspaceId == id }
         }

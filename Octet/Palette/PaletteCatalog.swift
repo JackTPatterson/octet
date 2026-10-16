@@ -303,13 +303,15 @@ enum PaletteCatalog {
             items.append(action("markIdle", "Move Workspace to Idle", "moon.zzz", keywords: ["stale", "archive", "hide"]) {
                 store.markIdle(workspace.workspaceId)
             })
-            if let morning = IdleUntilMenu.morning(daysAhead: 1) {
-                items.append(action("idleUntilTomorrow", "Keep Workspace in Idle Until Tomorrow", "clock",
-                                    keywords: ["snooze", "later", "idle", "tomorrow", "hide"]) {
-                    WaitCenter.shared.snooze(workspaceId: workspace.workspaceId, until: .date(morning), title: "tomorrow morning")
-                })
-            }
-            items.append(action("idleUntil", "Keep Workspace in Idle Until Something Happens…", "clock",
+            items.append(action("snoozeHour", "Snooze Workspace for an Hour", "clock",
+                                keywords: ["snooze", "later", "idle", "hide"]) {
+                store.snooze(workspace.workspaceId, .hour)
+            })
+            items.append(action("idleUntilTomorrow", "Snooze Workspace Until Tomorrow Morning", "clock",
+                                keywords: ["snooze", "later", "idle", "tomorrow", "hide"]) {
+                store.snooze(workspace.workspaceId, .tomorrowMorning)
+            })
+            items.append(action("idleUntil", "Snooze Workspace Until Something Happens…", "clock",
                                 keywords: ["snooze", "later", "idle", "pull request", "merged", "release"]) {
                 WaitCenter.shared.compose(workspaceId: workspace.workspaceId, snooze: true)
             })
