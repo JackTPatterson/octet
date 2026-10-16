@@ -1,9 +1,9 @@
 import AppKit
 import SwiftUI
 
-/// The title bar's layout picker, like a trading app's: a monitor button
-/// that opens every layout enabled plugins offer, grouped by how many panes
-/// they make. Picking one opens a new tab split that way, each pane a shell
+/// The title bar's layout picker: a window-with-panes button that opens
+/// every layout enabled plugins offer, grouped by how many panes they make.
+/// It lays out this window's panes, not your displays, so it's drawn as one. Picking one opens a new tab split that way, each pane a shell
 /// in the folder in front.
 struct LayoutPickerButton: View {
     @EnvironmentObject private var window: WindowContext
@@ -15,7 +15,7 @@ struct LayoutPickerButton: View {
         let layouts = host.layouts
         if !layouts.isEmpty {
             Button { open.toggle() } label: {
-                MonitorGlyph()
+                WindowLayoutGlyph()
                     .foregroundStyle(open || hovered ? Theme.textPrimary : Theme.textSecondary)
                     .frame(width: 28, height: 24)
                     .background(RoundedRectangle(cornerRadius: Theme.rowRadius).fill(open || hovered ? Theme.hover : .clear))
@@ -23,8 +23,8 @@ struct LayoutPickerButton: View {
             }
             .buttonStyle(.plain)
             .onHover { hovered = $0 }
-            .help("Pane layouts")
-            .accessibilityLabel("Pane layouts")
+            .help("Window layouts: split a new tab into panes")
+            .accessibilityLabel("Window layouts")
             .popover(isPresented: $open, arrowEdge: .bottom) {
                 LayoutPickerGrid(layouts: layouts) { layout in
                     open = false
@@ -32,6 +32,27 @@ struct LayoutPickerButton: View {
                 }
             }
         }
+    }
+}
+
+/// A window split into panes, drawn so it follows the text color.
+struct WindowLayoutGlyph: View {
+    var size: CGFloat = 16
+
+    var body: some View {
+        Canvas { context, canvas in
+            let width = canvas.width, height = canvas.height
+            let frame = CGRect(x: width * 0.08, y: height * 0.14, width: width * 0.84, height: height * 0.72)
+            context.stroke(Path(roundedRect: frame, cornerRadius: 2.5), with: .foreground, lineWidth: 1.4)
+            var panes = Path()
+            panes.move(to: CGPoint(x: frame.midX, y: frame.minY))
+            panes.addLine(to: CGPoint(x: frame.midX, y: frame.maxY))
+            panes.move(to: CGPoint(x: frame.midX, y: frame.midY))
+            panes.addLine(to: CGPoint(x: frame.maxX, y: frame.midY))
+            context.stroke(panes, with: .foreground, lineWidth: 1.2)
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
     }
 }
 
@@ -64,7 +85,7 @@ struct LayoutPickerGrid: View {
     var body: some View {
         let groups = Dictionary(grouping: layouts) { $0.layout.layout.paneCount }
         VStack(alignment: .leading, spacing: 10) {
-            Text("Split a new tab into").font(Theme.captionFont.weight(.semibold)).foregroundStyle(Theme.textTertiary)
+            Text("Split a new tab in this window into").font(Theme.captionFont.weight(.semibold)).foregroundStyle(Theme.textTertiary)
             ForEach(groups.keys.sorted(), id: \.self) { count in
                 VStack(alignment: .leading, spacing: 5) {
                     Text(count == 1 ? "1 pane" : "\(count) panes").font(Theme.captionFont).foregroundStyle(Theme.textSecondary)
