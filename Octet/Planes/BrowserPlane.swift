@@ -6,7 +6,13 @@ import WebKit
 /// open it lists what's serving on localhost, from the ports Octet watches.
 struct BrowserPlane: View {
     @ObservedObject var ui: UIState
-    @StateObject private var page = BrowserPage()
+    @StateObject private var page = BrowserPage(private: false)
+    /// T3 Code's browser profiles, as Safari's: a private page keeps no
+    /// cookies, storage or history once the plane closes.
+    @StateObject private var privatePage = BrowserPage(private: true)
+    @State private var isPrivate = false
+
+    private var current: BrowserPage { isPrivate ? privatePage : page }
     @ObservedObject private var ports = PortsWatcher.shared
     @State private var address = ""
     @FocusState private var addressFocused: Bool
@@ -16,15 +22,16 @@ struct BrowserPlane: View {
             toolbar
             Rectangle().fill(Theme.divider).frame(height: 1)
             ZStack {
-                BrowserWebView(page: page)
-                    .opacity(page.url == nil ? 0 : 1)
-                if page.url == nil { start }
+                BrowserWebView(page: current)
+                    .id(isPrivate)
+                    .opacity(current.url == nil ? 0 : 1)
+                if current.url == nil { start }
             }
             .overlay(alignment: .top) {
-                if page.loading { LoadingLine(width: 60).padding(.top, 2) }
+                if current.loading { LoadingLine(width: 60).padding(.top, 2) }
             }
         }
-        .onChange(of: page.url) { _, url in
+        .onChange(of: current.url) { _, url in
             if !addressFocused { address = url?.absoluteString ?? "" }
             if let url { ui.planeBadges[Plane.make(.browser).id] = PlaneBadge(title: url.host() ?? "Browser", help: url.absoluteString) }
         }
@@ -32,14 +39,14 @@ struct BrowserPlane: View {
 
     private var toolbar: some View {
         HStack(spacing: 4) {
-            OctetIconButton(icon: "arrow.left", help: "Back") { page.view.goBack() }
-                .disabled(!page.canGoBack)
-            OctetIconButton(icon: "arrow.right", help: "Forward") { page.view.goForward() }
-                .disabled(!page.canGoForward)
-            OctetIconButton(icon: "arrow.clockwise", help: "Reload") { page.view.reload() }
-                .disabled(page.url == nil)
+            OctetIconButton(icon: "arrow.left", help: "Back") { current.view.goBack() }
+                .disabled(!current.canGoBack)
+            OctetIconButton(icon: "arrow.right", help: "Forward") { current.view.goForward() }
+                .disabled(!current.canGoForward)
+            OctetIconButton(icon: "arrow.clockwise", help: "Reload") { current.view.reload() }
+                .disabled(current.url == nil)
             HStack(spacing: 6) {
-                OctetIcon(page.url?.scheme == "https" ? "lock" : "safari", size: 11)
+                OctetIcon(current.url?.scheme == "https" ? "lock" : "safari", size: 11)
                     .foregroundStyle(Theme.textTertiary)
                 TextField("Search or enter an address", text: $address)
                     .textFieldStyle(.plain)
@@ -47,7 +54,7 @@ struct BrowserPlane: View {
                     .focused($addressFocused)
                     .onSubmit { go(address) }
                     .onExitCommand {
-                        address = page.url?.absoluteString ?? ""
+                        address = current.url?.absoluteString ?? ""
                         addressFocused = false
                     }
             }
@@ -55,10 +62,16 @@ struct BrowserPlane: View {
             .frame(height: 26)
             .background(RoundedRectangle(cornerRadius: Theme.controlRadius)
                 .fill(addressFocused ? Theme.cardSelected : Theme.card.opacity(0.7)))
-            OctetIconButton(icon: "arrow.up.right", help: "Open in your browser") {
-                if let url = page.url { NSWorkspace.shared.open(url) }
+            OctetIconButton(icon: isPrivate ? "eye.slash" : "eye",
+                            help: isPrivate ? "Private: nothing is kept. Switch to the default profile" : "Switch to a private page",
+                            active: isPrivate) {
+                isPrivate.toggle()
+                address = current.url?.absoluteString ?? ""
             }
-            .disabled(page.url == nil)
+            OctetIconButton(icon: "arrow.up.right", help: "Open in your browser") {
+                if let url = current.url { NSWorkspace.shared.open(url) }
+            }
+            .disabled(current.url == nil)
         }
         .padding(.horizontal, 8)
         .frame(height: 38)
@@ -95,7 +108,7 @@ struct BrowserPlane: View {
     private func go(_ text: String) {
         guard let url = BrowserAddress.url(from: text) else { return }
         addressFocused = false
-        page.view.load(URLRequest(url: url))
+        current.view.load(URLRequest(url: url))
     }
 }
 
@@ -140,8 +153,9 @@ final class BrowserPage: NSObject, ObservableObject, WKNavigationDelegate {
     @Published private(set) var canGoBack = false
     @Published private(set) var canGoForward = false
 
-    override init() {
+    init(private isPrivate: Bool) {
         let configuration = WKWebViewConfiguration()
+        if isPrivate { configuration.websiteDataStore = .nonPersistent() }
         configuration.preferences.isElementFullscreenEnabled = true
         view = WKWebView(frame: .zero, configuration: configuration)
         view.allowsBackForwardNavigationGestures = true

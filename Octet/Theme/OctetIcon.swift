@@ -175,6 +175,7 @@ struct OctetIcon: View {
         "lock": .symbol("lock"),
         "menucard": .symbol("menucard"),
         "pilcrow": .symbol("paragraphsign"),
+        "eye.slash": .symbol("eye.slash"),
         // The Device plane. Prefixed so they can't collide with keys other
         // planes add; SF Symbols until iconsax marks are imported.
         "device.iphone": .symbol("iphone"),

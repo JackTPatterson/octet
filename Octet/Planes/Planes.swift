@@ -201,6 +201,7 @@ private struct PlaneChip: View {
         .frame(maxWidth: 150)
         .background(RoundedRectangle(cornerRadius: 6)
             .fill(active ? Theme.cardSelected : hovered ? Theme.hover : .clear))
+        .overlay { MiddleClickCatcher { ui.closePlane(plane.id) } }
         .contentShape(Rectangle())
         .onTapGesture { MotionPreferences.shared.perform(.sidebar) { ui.activePlaneId = plane.id } }
         .onHover { hovered = $0 }

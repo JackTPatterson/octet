@@ -10,7 +10,7 @@ T3 Code is a chat app for agents; Octet is a terminal that hosts them. Where the
 |---|---|---|
 | Tabbed right panel, + menu with letter keys | Done | `Octet/Planes/Planes.swift`. Picker keys: O D F G P L T B M |
 | Empty panel "Open a surface" launcher | Done | "Open a plane" |
-| Tab chip: icon becomes close on hover, middle-click, context menu (Close / Others / Right / All), drag to reorder | Done, except middle-click | Middle-click is caught on the main tabs; plane chips close from their icon |
+| Tab chip: icon becomes close on hover, middle-click, context menu (Close / Others / Right / All), drag to reorder | Done | |
 | Maximize panel | Done | Covers the terminal without resizing it |
 | Toggle panel ⌘⌥B | Done | |
 | ⌘T new surface, ⌘W close surface | Skipped | Both are Octet's tab shortcuts; the picker and chip close cover them |
@@ -31,7 +31,7 @@ T3 Code is a chat app for agents; Octet is a terminal that hosts them. Where the
 | Linked pull requests | Adapted | Pull Requests plane (the repo's open PRs) |
 | Files: tree, search, breadcrumbs, file preview | Done | Files open in Octet's editor beside the terminal |
 | Terminal surface (with splits) | Done, no splits | Terminal plane, several allowed; the drawer is the main one |
-| Browser: address bar, profiles, local servers, recording | Done, without profiles or recording | Browser plane with local servers from Octet's port watcher |
+| Browser: address bar, profiles, local servers, recording | Done, without recording | Browser plane with local servers from Octet's port watcher; profiles as Default / Private (non-persistent). Recording skipped: needs a capture pipeline Octet doesn't have |
 | Device: picker, boot, live stream, touch/keys, rail, tools drawer, setup wizard | Done | Native (simctl + AXe, adb) rather than T3 Code's Node hub. iOS verified on a throwaway simulator; Android verified against a fake SDK (real emulator untested: no SDK on this Mac) |
 | Device 3D bezel, iPhone Duo, Android fold | Skipped | T3 Code's own report rates it high effort, low value |
 | Floating device mini-player | Skipped | Worth doing next if devices get used: needs a second stream view in an NSPanel |
