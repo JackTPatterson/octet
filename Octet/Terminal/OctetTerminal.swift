@@ -215,7 +215,10 @@ final class OctetTerminalRuntime {
                 if let store = OctetKeyHook.store { PastePreviewCenter.shared.send(store: store) }
                 continue
             }
-            var parts = token.split(separator: "+").map(String.init)
+            // `app:<key>` goes through the app's event queue instead, so key
+            // monitors (the new-tab splash's) see it as they'd see a real press.
+            let viaApp = token.hasPrefix("app:")
+            var parts = token.dropFirst(viaApp ? 4 : 0).split(separator: "+").map(String.init)
             let key = parts.removeLast()
             guard let code = codes[key] else { continue }
             var flags: NSEvent.ModifierFlags = []
@@ -234,6 +237,7 @@ final class OctetTerminalRuntime {
                                                    windowNumber: window.windowNumber, context: nil,
                                                    characters: character, charactersIgnoringModifiers: typed,
                                                    isARepeat: false, keyCode: code) else { continue }
+                if viaApp { NSApp.postEvent(event, atStart: false); continue }
                 if type == .keyDown { surface.keyDown(with: event) } else { surface.keyUp(with: event) }
             }
         }

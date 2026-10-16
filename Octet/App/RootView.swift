@@ -436,6 +436,19 @@ struct RootView: View {
                 Self.debugHotkeyPressed = true
                 DispatchQueue.main.asyncAfter(deadline: .now() + 4) { WindowActions.newWindow(store: store) }
             }
+            // Verification hook: "peek" opens a second tab, then the first
+            // workspace's hover card; "peek:<folder>" first cd's there.
+            if let open = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], open == "peek" || open.hasPrefix("peek:") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { window.newTab() }
+                if open.hasPrefix("peek:") {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                        window.runInFocusedPane("cd " + shellQuote(String(open.dropFirst(5))))
+                    }
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 7) {
+                    NotificationCenter.default.post(name: WorkspacePeek.debugOpen, object: nil)
+                }
+            }
             // Verification hook: "newtab" opens a tab, to see its splash.
             if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "newtab" {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) { window.newTab() }
@@ -962,6 +975,7 @@ struct RootView: View {
             let height = max(0, max(above, below))
             NewTabSplash(
                 currentDirectory: store.snapshot.panes.first { $0.paneId == window.focusedPaneId }?.effectiveCwd,
+                hostWindow: window.nsWindow,
                 runAgent: { window.startAgent($0) },
                 openFolder: { window.runInFocusedPane("cd " + shellQuote($0)) },
                 shortcuts: [
