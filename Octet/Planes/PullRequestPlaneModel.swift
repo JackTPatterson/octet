@@ -357,12 +357,39 @@ final class PullRequestPlaneModel: ObservableObject {
     static let dryRunLog = ProcessInfo.processInfo.environment["OCTET_GH_DRY_RUN"]
     private static var debugActionsRan = false
 
-    /// OCTET_PR_ACTIONS=<number> (dry run only): every action, once, after
+    /// OCTET_GH_LIVE=1 with OCTET_PR_ACTIONS=<number>: on that PR only, the
+    /// actions safe on a throwaway draft, for real, one after another.
+    /// Merging is never among them, nor approving or requesting changes
+    /// (GitHub refuses both from a PR's author).
+    private func runLiveDebugActions(_ detail: PullRequestDetail) {
+        Self.debugActionsRan = true
+        let steps: [() -> Void] = [
+            { self.markReady() },
+            { self.convertToDraft() },
+            { self.editTitle(detail.title + " (edited in Octet)") },
+            { self.editBody("Edited from Octet's pull request plane.") },
+            { self.commentDraft = "A comment from Octet's pull request plane."; self.postComment(closing: false) },
+            { self.reviewVerdict = .comment; self.reviewDraft = "A review comment from Octet."; self.submitReview() },
+            { self.close() },
+            { self.reopen() },
+            { self.checkOut() },
+            { self.commentDraft = "Closing: this was a test."; self.postComment(closing: true) },
+        ]
+        for (index, step) in steps.enumerated() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * 6) { step() }
+        }
+    }
+
+    /// OCTET_PR_ACTIONS=<number> (dry run): every action, once, after
     /// the first read of that one pull request. Never without the dry run,
     /// and never on any other PR a restored plane happens to load first.
     private func runDebugActions() {
-        guard Self.dryRunLog != nil, !Self.debugActionsRan, let detail,
+        guard !Self.debugActionsRan, let detail,
               ProcessInfo.processInfo.environment["OCTET_PR_ACTIONS"] == String(detail.number) else { return }
+        if Self.dryRunLog == nil {
+            if ProcessInfo.processInfo.environment["OCTET_GH_LIVE"] == "1" { runLiveDebugActions(detail) }
+            return
+        }
         Self.debugActionsRan = true
         for method in PullRequestMergeMethod.allCases {
             choose(method)
