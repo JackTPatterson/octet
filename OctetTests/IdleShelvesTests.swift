@@ -85,6 +85,19 @@ final class IdleShelvesTests: XCTestCase {
         XCTAssertEqual(IdleShelves.reconcile(wakes, parked: ["a", "z"]), ["a": date(15, 9)])
     }
 
+    func testWakeDescriptions() {
+        let now = date(14, 10)
+        let locale = Locale(identifier: "en_US_POSIX")
+        func describe(_ wake: Date) -> String {
+            IdleShelves.wakeDescription(wake, now: now, calendar: calendar, locale: locale)
+                .replacingOccurrences(of: "\u{202F}", with: " ")
+        }
+        XCTAssertEqual(describe(date(14, 18)), "at 6:00 PM")
+        XCTAssertEqual(describe(date(15, 9)), "tomorrow at 9:00 AM")
+        XCTAssertEqual(describe(date(19, 9)), "Monday at 9:00 AM")
+        XCTAssertTrue(describe(date(30, 9)).contains("2026"))
+    }
+
     func testWakeLabels() {
         let now = date(14, 10)
         XCTAssertEqual(IdleShelves.wakeLabel(now.addingTimeInterval(20), now: now), "now")

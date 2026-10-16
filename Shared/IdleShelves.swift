@@ -110,6 +110,39 @@ enum IdleShelves {
         wakeTimes.filter { parked.contains($0.key) }
     }
 
+    /// When a snooze ends, in words: `at 6:00 PM`, `tomorrow at 9:00 AM`,
+    /// `Monday at 9:00 AM`, then a date once it's over a week off.
+    static func wakeDescription(_ wake: Date, now: Date = Date(), calendar: Calendar = .current,
+                                locale: Locale = .current) -> String {
+        let time = DateFormatter()
+        time.calendar = calendar
+        time.timeZone = calendar.timeZone
+        time.locale = locale
+        time.dateStyle = .none
+        time.timeStyle = .short
+        let at = "at " + time.string(from: wake)
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: now), to: calendar.startOfDay(for: wake)).day ?? 0
+        switch days {
+        case ...0: return at
+        case 1: return "tomorrow " + at
+        case ..<7:
+            let weekday = DateFormatter()
+            weekday.calendar = calendar
+            weekday.timeZone = calendar.timeZone
+            weekday.locale = locale
+            weekday.setLocalizedDateFormatFromTemplate("EEEE")
+            return weekday.string(from: wake) + " " + at
+        default:
+            let date = DateFormatter()
+            date.calendar = calendar
+            date.timeZone = calendar.timeZone
+            date.locale = locale
+            date.dateStyle = .medium
+            date.timeStyle = .short
+            return date.string(from: wake)
+        }
+    }
+
     /// Compact time until a wake, for a row: `in 45m`, `in 3h`, `in 2d`.
     static func wakeLabel(_ wake: Date, now: Date = Date()) -> String {
         let seconds = wake.timeIntervalSince(now)
