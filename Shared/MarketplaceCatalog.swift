@@ -99,7 +99,56 @@ enum MarketplaceCatalog {
         }
     }
 
+    // MARK: Search
+
+    /// How well an item matches a search, lower is better, or nil for no
+    /// match: a name containing the query, then a name the query fuzzily
+    /// spells, then a description holding every word. Descriptions are
+    /// never fuzzy-matched, since a long one spells almost anything.
+    static func searchRank(_ query: String, names: [String], texts: [String]) -> Int? {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return 0 }
+        let lowered = needle.lowercased()
+        if names.contains(where: { $0.lowercased().hasPrefix(lowered) }) { return 0 }
+        if names.contains(where: { $0.lowercased().contains(lowered) }) { return 1 }
+        if names.contains(where: { FuzzyMatcher.match(needle, in: $0) != nil }) { return 2 }
+        let words = lowered.split(whereSeparator: \.isWhitespace).map(String.init)
+        let haystack = (names + texts).joined(separator: " ").lowercased()
+        if !words.isEmpty, words.allSatisfy({ haystack.contains($0) }) { return 3 }
+        return nil
+    }
+
+    /// Items that match a search, best matches first and otherwise in the
+    /// order given.
+    static func search<T>(_ items: [T], query: String, names: (T) -> [String], texts: (T) -> [String]) -> [T] {
+        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return items }
+        var ranked: [(item: T, rank: Int, offset: Int)] = []
+        for (offset, item) in items.enumerated() {
+            if let rank = searchRank(query, names: names(item), texts: texts(item)) {
+                ranked.append((item, rank, offset))
+            }
+        }
+        ranked.sort { first, second in
+            first.rank != second.rank ? first.rank < second.rank : first.offset < second.offset
+        }
+        return ranked.map { $0.item }
+    }
+
     // MARK: MCP servers
+
+    /// What `<cli> mcp list` printed for a server, as something another CLI
+    /// can add: Claude prints URL servers as `https://… (HTTP)` or `(SSE)`.
+    static func serverTarget(_ detail: String) -> (value: String, isURL: Bool, transport: String) {
+        var value = detail.trimmingCharacters(in: .whitespacesAndNewlines)
+        var transport = "http"
+        for (suffix, kind) in [(" (HTTP)", "http"), (" (SSE)", "sse")] where value.hasSuffix(suffix) {
+            value = String(value.dropLast(suffix.count)).trimmingCharacters(in: .whitespaces)
+            transport = kind
+        }
+        let isURL = value.hasPrefix("http://") || value.hasPrefix("https://")
+        return (value, isURL, transport)
+    }
+
 
     /// Parses `claude mcp list` output:
     /// `name: <command or url> - ✔ Connected`.

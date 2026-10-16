@@ -210,8 +210,11 @@ final class AgentRecoveryController: ObservableObject {
 
     /// Restarts each agent in its own tab with `--resume`, so it picks up new
     /// MCP servers, plugins, or skills while keeping the conversation.
-    func reload(_ agents: [(agent: EngineAgent, record: AgentSessionRecord)]) {
-        guard !agents.isEmpty else { return }
+    func reload(_ agents: [(agent: EngineAgent, record: AgentSessionRecord)], then done: (@MainActor @Sendable () -> Void)? = nil) {
+        guard !agents.isEmpty else {
+            done?()
+            return
+        }
         let noun = agents.count == 1 ? "1 agent" : "\(agents.count) agents"
         let toast = ToastCenter.shared.progress("Reloading \(noun)…")
         let client = self.client
@@ -235,6 +238,7 @@ final class AgentRecoveryController: ObservableObject {
                     ToastCenter.shared.fail(toast, "Reloaded \(agents.count - failures.count) of \(agents.count) agents",
                                             detail: failures.prefix(3).joined(separator: "\n"))
                 }
+                done?()
             }
         }
     }

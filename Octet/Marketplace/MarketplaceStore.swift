@@ -33,6 +33,22 @@ final class MarketplaceStore: ObservableObject {
         didSet { if section != oldValue { query = "" } }
     }
     @Published var query = ""
+    /// One agent's view of every section: what it has, and what it could
+    /// add. nil shows every agent.
+    @Published var agentFilter: String?
+    /// How the plugins on offer are ordered; the rest are by name.
+    @Published var sort: SortOrder = .popular
+
+    enum SortOrder: String, CaseIterable, Identifiable {
+        case popular, name
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .popular: "Most installed"
+            case .name: "Name"
+            }
+        }
+    }
     /// Plugins for agents and for the terminal share one list.
     @Published var pluginFilter: PluginFilter = .all
 
@@ -48,11 +64,24 @@ final class MarketplaceStore: ObservableObject {
         }
     }
     @Published private(set) var hosts: [AgentHost] = []
-    @Published private(set) var plugins: [MarketplaceEntry] = []
+    @Published private(set) var plugins: [MarketplaceEntry] = [] {
+        didSet {
+            pluginGroupsCache = nil
+            installedPluginCount = plugins.filter(\.isInstalled).count
+        }
+    }
+    /// Counted once per load rather than on every redraw of 10,000 rows.
+    @Published private(set) var installedPluginCount = 0
     @Published private(set) var servers: [MarketplaceEntry] = []
     @Published private(set) var skills: [AgentLibrary.Item] = []
     @Published private(set) var prompts: [AgentLibrary.Item] = []
-    @Published private(set) var marketplaces: [String: [String]] = [:]
+    /// Plugin marketplaces each host has configured, by host id.
+    @Published private(set) var marketplaces: [String: [MarketplaceSource]] = [:]
+
+    struct MarketplaceSource: Hashable {
+        let name: String
+        let source: String
+    }
     @Published private(set) var loading: Set<Section> = []
     /// Sections that have finished at least one load, so an empty list
     /// means empty rather than not fetched yet.
@@ -63,6 +92,8 @@ final class MarketplaceStore: ObservableObject {
     @Published private(set) var busy: Set<String> = []
     /// Set after a change that running agents only pick up on restart.
     @Published private(set) var pendingReload = false
+    /// Agents are restarting after Reload Agents.
+    @Published private(set) var reloading = false
 
     private let recovery: AgentRecoveryController
     private unowned let session: SessionStore
@@ -70,8 +101,9 @@ final class MarketplaceStore: ObservableObject {
     private static let catalogURL = EngineSession.supportDirectory.appendingPathComponent("plugin-catalog.json")
     /// The plugin catalogs take tens of seconds to fetch, so they're cached.
     static let catalogLifetime: TimeInterval = 6 * 3600
-    /// Rows the plugin list renders at once; a search narrows the rest.
-    static let pluginDisplayLimit = 400
+    /// Rows a list shows before "Show more"; each click adds as many again.
+    static let pageSize = 100
+    private var pluginGroupsCache: (key: String, value: Groups<MarketplaceEntry>)?
 
     init(session: SessionStore) {
         self.session = session
@@ -124,14 +156,24 @@ final class MarketplaceStore: ObservableObject {
             return
         }
         var added = 0
+        var failed: [String] = []
         for file in files {
             let slug = String(file.dropLast(3))
-            guard let text = try? String(contentsOfFile: directory.appendingPathComponent(file).path, encoding: .utf8) else { continue }
-            if saveLibraryItem(kind: .prompt, slug: slug, text: text, installIn: hosts, quiet: true) { added += 1 }
+            guard let text = try? String(contentsOfFile: directory.appendingPathComponent(file).path, encoding: .utf8),
+                  saveLibraryItem(kind: .prompt, slug: slug, text: text, installIn: hosts, quiet: true) else {
+                failed.append(file)
+                continue
+            }
+            added += 1
         }
         loadLibrary()
-        ToastCenter.shared.info("Imported \(added) prompt\(added == 1 ? "" : "s")",
-                                detail: "From \(directory.lastPathComponent)")
+        if failed.isEmpty {
+            ToastCenter.shared.info("Imported \(added) prompt\(added == 1 ? "" : "s")",
+                                    detail: "From \(directory.lastPathComponent)")
+        } else {
+            ToastCenter.shared.fail(nil, "Imported \(added) of \(files.count) prompts",
+                                    detail: "Couldn't import \(failed.prefix(3).joined(separator: ", "))\(failed.count > 3 ? "…" : "")")
+        }
     }
 
     // MARK: - Loading
@@ -204,9 +246,9 @@ final class MarketplaceStore: ObservableObject {
         }
         run(hosts.map { "\($0.cli) plugin marketplace list" }, timeout: 120) { [weak self] results in
             guard let self else { return }
-            var result: [String: [String]] = [:]
+            var result: [String: [MarketplaceSource]] = [:]
             for (host, output) in zip(hosts, results) where output.exitCode == 0 {
-                result[host.id] = MarketplaceCatalog.marketplaces(output.output).map(\.name)
+                result[host.id] = MarketplaceCatalog.marketplaces(output.output).map { MarketplaceSource(name: $0.name, source: $0.source) }
             }
             self.marketplaces = result
         }
@@ -270,8 +312,14 @@ final class MarketplaceStore: ObservableObject {
             completion?("No agent to add it to")
             return
         }
-        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
-        let isURL = trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://")
+        // Copying a server from Claude brings its "(HTTP)" label along.
+        let target = MarketplaceCatalog.serverTarget(command)
+        let trimmed = target.value
+        let isURL = target.isURL
+        guard !trimmed.isEmpty else {
+            completion?("No command or URL to run")
+            return
+        }
         let commands = hosts.map { host -> String in
             switch host.id {
             case "codex":
@@ -280,7 +328,7 @@ final class MarketplaceStore: ObservableObject {
                     : "\(host.cli) mcp add \(PluginCLI.quote(name)) -- \(trimmed)"
             default:
                 return isURL
-                    ? "\(host.cli) mcp add --transport http \(PluginCLI.quote(name)) \(PluginCLI.quote(trimmed))"
+                    ? "\(host.cli) mcp add --transport \(target.transport) \(PluginCLI.quote(name)) \(PluginCLI.quote(trimmed))"
                     : "\(host.cli) mcp add \(PluginCLI.quote(name)) -- \(trimmed)"
             }
         }
@@ -423,8 +471,7 @@ final class MarketplaceStore: ObservableObject {
             return
         }
         guard confirm else {
-            pendingReload = false
-            recovery.reload(reloadable)
+            startReload(reloadable)
             return
         }
         let working = reloadable.filter { $0.agent.agentStatus == .working }.count
@@ -440,9 +487,14 @@ final class MarketplaceStore: ObservableObject {
             },
             confirmTitle: "Reload"
         ) { [weak self] _ in
-            self?.pendingReload = false
-            self?.recovery.reload(reloadable)
+            self?.startReload(reloadable)
         }
+    }
+
+    private func startReload(_ agents: [(agent: EngineAgent, record: AgentSessionRecord)]) {
+        pendingReload = false
+        reloading = true
+        recovery.reload(agents) { [weak self] in self?.reloading = false }
     }
 
     private func markPendingReload(_ affectsAgents: Bool = true) {
@@ -451,10 +503,65 @@ final class MarketplaceStore: ObservableObject {
 
     // MARK: - Filtering
 
-    func filteredServers() -> [MarketplaceEntry] { filter(servers) { [$0.name, $0.detail] } }
+    /// A section's rows split into what's installed (in the filtered agent,
+    /// or any) and what isn't yet.
+    struct Groups<T> {
+        var installed: [T] = []
+        var available: [T] = []
+        var isEmpty: Bool { installed.isEmpty && available.isEmpty }
+        var count: Int { installed.count + available.count }
+    }
 
-    func filteredPlugins() -> [MarketplaceEntry] {
-        MarketplaceCatalog.sorted(filter(plugins) { [$0.name, $0.summary, $0.marketplace] })
+    /// The agents a section's items go into: the filtered one when it can
+    /// take them, else every capable one.
+    func scopeHosts(for section: Section) -> [AgentHost] {
+        let capable = capableHosts(for: section)
+        guard let agentFilter else { return capable }
+        return capable.filter { $0.id == agentFilter }
+    }
+
+    func capableHosts(for section: Section) -> [AgentHost] {
+        hosts.filter { host in
+            switch section {
+            case .mcp: host.supportsMCP
+            case .plugins: host.supportsPlugins
+            case .skills, .prompts: true
+            }
+        }
+    }
+
+    /// Whether the filtered agent (or any) has an item.
+    private func isInstalled(_ installedIn: Set<String>) -> Bool {
+        agentFilter.map(installedIn.contains) ?? !installedIn.isEmpty
+    }
+
+    private func split<T>(_ items: [T], installedIn: (T) -> Set<String>) -> Groups<T> {
+        var groups = Groups<T>()
+        for item in items {
+            if isInstalled(installedIn(item)) { groups.installed.append(item) } else { groups.available.append(item) }
+        }
+        return groups
+    }
+
+    func serverGroups() -> Groups<MarketplaceEntry> {
+        let found = MarketplaceCatalog.search(servers, query: query, names: { [$0.name] }, texts: { [$0.detail] })
+        return split(found, installedIn: \.installedIn)
+    }
+
+    /// Searched, split and sorted once per change of list, query, order or
+    /// agent: the catalog runs to thousands of plugins.
+    func pluginGroups() -> Groups<MarketplaceEntry> {
+        let key = "\(query)|\(sort.rawValue)|\(agentFilter ?? "")"
+        if let cache = pluginGroupsCache, cache.key == key { return cache.value }
+        let ordered: [MarketplaceEntry] = switch sort {
+        case .popular: MarketplaceCatalog.sorted(plugins)
+        case .name: plugins.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        }
+        let found = MarketplaceCatalog.search(ordered, query: query,
+                                              names: { [$0.name, $0.identifier] }, texts: { [$0.summary, $0.marketplace] })
+        let groups = split(found, installedIn: \.installedIn)
+        pluginGroupsCache = (key, groups)
+        return groups
     }
 
     /// One of Octet's own plugins: built in, installed, or in the registry.
@@ -471,9 +578,11 @@ final class MarketplaceStore: ObservableObject {
         let entry: PluginRegistry.Entry?
     }
 
-    /// Octet's plugins that match the search: built-in and installed ones
-    /// first, then what the registry offers.
-    func filteredTerminalPlugins() -> [TerminalPlugin] {
+    /// Octet's plugins that match the search: built-in and installed ones,
+    /// then what the registry offers. They belong to no agent, so an agent
+    /// filter leaves them out.
+    func terminalPluginGroups() -> Groups<TerminalPlugin> {
+        guard agentFilter == nil else { return Groups() }
         let host = OctetPluginHost.shared
         let installedIds = Set(host.plugins.map(\.id))
         let local = host.plugins.map { plugin in
@@ -481,22 +590,31 @@ final class MarketplaceStore: ObservableObject {
                            author: plugin.isBundled ? "Octet" : plugin.manifest.author ?? "", version: plugin.manifest.version,
                            keywords: [], installed: plugin, entry: host.registry.first { $0.id == plugin.id })
         }
+        .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         let available = host.registry.filter { !installedIds.contains($0.id) }.map { entry in
             TerminalPlugin(id: entry.id, name: entry.name, summary: entry.description, author: entry.author,
                            version: entry.version, keywords: entry.keywords, installed: nil, entry: entry)
         }
-        return filter(local + available) { [$0.name, $0.summary, $0.id] + $0.keywords }
+        .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        func search(_ items: [TerminalPlugin]) -> [TerminalPlugin] {
+            MarketplaceCatalog.search(items, query: query, names: { [$0.name, $0.id] }, texts: { [$0.summary] + $0.keywords })
+        }
+        return Groups(installed: search(local), available: search(available))
     }
 
-    func filteredLibrary(_ kind: AgentLibrary.Kind) -> [AgentLibrary.Item] {
-        filter(kind == .skill ? skills : prompts) { [$0.name, $0.summary, $0.slug] }
+    func libraryGroups(_ kind: AgentLibrary.Kind) -> Groups<AgentLibrary.Item> {
+        let found = MarketplaceCatalog.search(kind == .skill ? skills : prompts, query: query,
+                                              names: { [$0.name, $0.slug] }, texts: { [$0.summary] })
+        return split(found, installedIn: \.installedIn)
     }
 
-    private func filter<T>(_ items: [T], fields: (T) -> [String]) -> [T] {
-        let needle = query.trimmingCharacters(in: .whitespaces)
-        guard !needle.isEmpty else { return items }
-        return items.filter { item in
-            fields(item).contains { FuzzyMatcher.match(needle, in: $0) != nil }
+    /// How many of a section's items an agent has.
+    func installedCount(_ section: Section, in host: AgentHost) -> Int {
+        switch section {
+        case .mcp: servers.filter { $0.installedIn.contains(host.id) }.count
+        case .plugins: plugins.filter { $0.installedIn.contains(host.id) }.count
+        case .skills: skills.filter { $0.installedIn.contains(host.id) }.count
+        case .prompts: prompts.filter { $0.installedIn.contains(host.id) }.count
         }
     }
 
