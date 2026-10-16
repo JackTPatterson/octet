@@ -5,7 +5,7 @@ import SwiftUI
 /// The kinds of plane the right panel can show. A plane is one tab in the
 /// panel's strip; the "+" picker adds them, after T3 Code's surfaces.
 enum PlaneKind: String, Codable, CaseIterable, Identifiable {
-    case overview, diff, files, git, pullRequest, pullRequests, browser, device
+    case overview, diff, files, git, pullRequest, pullRequests, terminal, browser, device
     var id: String { rawValue }
 
     var title: String {
@@ -16,6 +16,7 @@ enum PlaneKind: String, Codable, CaseIterable, Identifiable {
         case .git: "Git"
         case .pullRequest: "Pull Request"
         case .pullRequests: "Pull Requests"
+        case .terminal: "Terminal"
         case .browser: "Browser"
         case .device: "Device"
         }
@@ -29,6 +30,7 @@ enum PlaneKind: String, Codable, CaseIterable, Identifiable {
         case .git: "branch"
         case .pullRequest: "pull.request"
         case .pullRequests: "list"
+        case .terminal: "terminal"
         case .browser: "safari"
         case .device: "iphone"
         }
@@ -43,6 +45,7 @@ enum PlaneKind: String, Codable, CaseIterable, Identifiable {
         case .git: "g"
         case .pullRequest: "p"
         case .pullRequests: "l"
+        case .terminal: "t"
         case .browser: "b"
         case .device: "m"
         }
@@ -56,13 +59,14 @@ enum PlaneKind: String, Codable, CaseIterable, Identifiable {
         case .git: "Changes, commits and worktrees"
         case .pullRequest: "This branch's pull request"
         case .pullRequests: "The repository's open pull requests"
+        case .terminal: "A shell of its own in the panel"
         case .browser: "A page beside the terminal, like your dev server"
         case .device: "Watch and drive an iOS Simulator or Android Emulator"
         }
     }
 
     /// Kinds that are one per panel: adding another shows the one there.
-    var single: Bool { self != .pullRequest && self != .device }
+    var single: Bool { self != .pullRequest && self != .device && self != .terminal }
 }
 
 /// One tab in the panel. Pull requests carry their number (none means the
@@ -79,6 +83,7 @@ struct Plane: Codable, Identifiable, Equatable {
         case .pullRequest: Plane(id: "pr:" + (number.map(String.init) ?? "branch"), kind: kind, number: number)
         // Several can be open, one per device; each its own tab.
         case .device: Plane(id: "device:" + UUID().uuidString, kind: kind, deviceId: deviceId)
+        case .terminal: Plane(id: "terminal:" + UUID().uuidString, kind: kind)
         default: Plane(id: kind.rawValue, kind: kind)
         }
     }

@@ -485,6 +485,7 @@ struct RootView: View {
                     case "diff": ui.showPlane(.diff)
                     case "files": ui.showPlane(.files)
                     case "browser": ui.showPlane(.browser)
+                    case "terminal": ui.showPlane(.terminal)
                     case "device": ui.showPlane(.device)
                     default: break
                     }
@@ -596,9 +597,13 @@ struct RootView: View {
                     } else if boardHere != nil {
                         AgentsHub(store: store)
                             .transition(motion.animates(.sidebar) ? .move(edge: .leading).combined(with: .opacity) : .identity)
+                            .onAppear { DebugSnapshot.overlay("agents", true) }
+                            .onDisappear { DebugSnapshot.overlay("agents", false) }
                     } else if let conversation = agents.active(in: window.focusedWorkspace?.workspaceId) {
                         ConversationView(session: conversation, client: store.client)
                             .id(conversation.id)
+                            .onAppear { DebugSnapshot.overlay("conversation", true) }
+                            .onDisappear { DebugSnapshot.overlay("conversation", false) }
                     } else if twin.isVisible {
                         TwinView(twin: twin, store: store)
                     } else if let hints = ui.hints {

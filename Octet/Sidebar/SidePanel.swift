@@ -213,6 +213,7 @@ struct SidePanel: View {
         case .diff: DiffPlane(store: store, ui: ui)
         case .files: FilesPlane(ui: ui, directory: planeDirectory)
         case .browser: BrowserPlane(ui: ui)
+        case .terminal: TerminalPlane(ui: ui, planeId: plane.id, directory: planeDirectory)
         case .pullRequest:
             if let directory = planeDirectory {
                 PullRequestPlane(directory: directory, number: plane.number,
