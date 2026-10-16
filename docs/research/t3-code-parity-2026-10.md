@@ -24,7 +24,7 @@ T3 Code is a chat app for agents; Octet is a terminal that hosts them. Where the
 
 | T3 Code | Octet | Notes |
 |---|---|---|
-| Diff: scope (changes, uncommitted, latest turn, turn N), base picker, collapse all, stacked/split, wrap, whitespace, file tree, line comments | Done, mostly | Diff plane: Uncommitted / This Branch, fold and collapse all, wrapped lines, line notes sent to the agent, and a button into the full review (split view and staging live there). Hide whitespace changes (kept across launches) too. Not done: per-turn scope (needs turn checkpoints in the diff model) |
+| Diff: scope (changes, uncommitted, latest turn, turn N), base picker, collapse all, stacked/split, wrap, whitespace, file tree, line comments | Done, mostly | Diff plane: Uncommitted / This Branch, fold and collapse all, wrapped lines, line notes sent to the agent, and a button into the full review (split view and staging live there). Hide whitespace changes (kept across launches) and per-turn scope (Latest Turn, Turn N, from Octet's per-turn checkpoints) too |
 | Pull request: header, merge with two-click confirm, merge methods, check out, ⋯ menu, title edit, meta, copy checkout, branches, Summary / Timeline / Code, checks popover, reviewers, labels, description, comments, composer, condensed header | Done | Every gh command verified in a dry run (`OCTET_GH_DRY_RUN`) and against gh's help |
 | PR Guide tab (agent-written review guide) | Skipped | Needs T3 Code's guide service; "Explain This PR" asks the agent instead |
 | Line comments in the PR Code tab, Viewed toggles | Skipped | gh has no viewed-file or line-comment API; would need GraphQL |

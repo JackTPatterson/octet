@@ -62,6 +62,25 @@ private struct DiffPlaneBody: View {
     @State private var seen: Set<String> = []
     /// Kept across launches, as T3 Code keeps it.
     @AppStorage("octet.diff.hideWhitespace") private var hideWhitespace = false
+    /// The agent's turns here, newest first.
+    @State private var turns: [(base: ReviewDiff.Base, title: String, date: Date)] = []
+
+    private var scopeTitle: String {
+        switch model.base {
+        case .uncommitted: "Uncommitted"
+        case .branch: "This Branch"
+        case .turn: turns.first { $0.base == model.base }?.title ?? "Turn"
+        case .since(_, let name): "Since \(name)"
+        }
+    }
+
+    private func loadTurns() {
+        let directory = model.directory
+        Task {
+            let found = await Task.detached(priority: .utility) { ReviewDiff.turns(Checkpoints.list(in: directory)) }.value
+            turns = found
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -73,7 +92,11 @@ private struct DiffPlaneBody: View {
                 notesFooter
             }
         }
-        .onAppear { if model.ignoreWhitespace != hideWhitespace { model.ignoreWhitespace = hideWhitespace } }
+        .onAppear {
+            if model.ignoreWhitespace != hideWhitespace { model.ignoreWhitespace = hideWhitespace }
+            loadTurns()
+        }
+        .onChange(of: model.diff?.baseCommit) { _, _ in loadTurns() }
         .onChange(of: model.diff?.files.map(\.path) ?? [], initial: true) { _, paths in
             // Many files start folded, so the list reads as a summary first.
             let fresh = paths.filter { !seen.contains($0) }
@@ -93,9 +116,19 @@ private struct DiffPlaneBody: View {
                 }
                 .pickerStyle(.inline)
                 .labelsHidden()
+                // An agent's turns, from the checkpoints Octet takes as each
+                // starts, after T3 Code's turn diffs.
+                if !turns.isEmpty {
+                    Picker("Turns", selection: $model.base) {
+                        ForEach(turns.prefix(20), id: \.title) { turn in
+                            Text("\(turn.title) · \(turn.date.formatted(.relative(presentation: .named)))").tag(turn.base)
+                        }
+                    }
+                    .pickerStyle(.inline)
+                }
             } label: {
                 HStack(spacing: 4) {
-                    Text(model.base == .branch ? "This Branch" : "Uncommitted")
+                    Text(scopeTitle)
                         .font(Theme.uiFontMedium)
                         .foregroundStyle(Theme.textPrimary)
                     OctetIcon("chevron.down", size: 10).foregroundStyle(Theme.textTertiary)
@@ -153,8 +186,11 @@ private struct DiffPlaneBody: View {
         } else if let diff = model.diff {
             if diff.files.isEmpty {
                 PlaneMessage(icon: "doc.diff", title: "No changes",
-                             detail: model.base == .branch ? "This branch has nothing the default branch doesn't."
-                                                          : "Nothing is uncommitted here.")
+                             detail: { switch model.base {
+                                 case .branch: "This branch has nothing the default branch doesn't."
+                                 case .turn: "This turn changed no files."
+                                 default: "Nothing is uncommitted here."
+                             } }())
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {

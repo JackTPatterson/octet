@@ -84,6 +84,9 @@ struct ReviewDiff: Equatable {
         case branch
         /// Against a given commit: where a best-of-N attempt started.
         case since(commit: String, name: String)
+        /// One agent turn: from the checkpoint it started at to the next
+        /// one, or to now for the latest turn. After T3 Code's turn diffs.
+        case turn(from: String, to: String?, name: String)
     }
 
     var files: [File]
@@ -261,6 +264,10 @@ struct ReviewDiff: Equatable {
     /// The diff for the tree `directory` is in, or nil outside a repository.
     static func read(in directory: String, base: Base, ignoreWhitespace: Bool = false, git: Git = Git()) -> ReviewDiff? {
         guard let top = git.topLevel(directory), let tree = try? Checkpoints.snapshotTree(top: top, git: git) else { return nil }
+        if case .turn(let from, let to?, let name) = base {
+            let text = (try? git.run(diffArguments(from, to, ignoreWhitespace: ignoreWhitespace), in: top)) ?? ""
+            return ReviewDiff(files: parse(text), baseCommit: from, baseName: name)
+        }
         guard let (commit, name) = resolveBase(base, top: top, git: git) else {
             // No commits yet: everything is new.
             let empty = (try? git.run(["hash-object", "-t", "tree", "/dev/null"], in: top)) ?? "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
@@ -283,6 +290,7 @@ struct ReviewDiff: Equatable {
     /// HEAD, or where HEAD's branch left the default branch.
     static func resolveBase(_ base: Base, top: String, git: Git) -> (commit: String, name: String)? {
         if case .since(let commit, let name) = base { return (commit, name) }
+        if case .turn(let from, _, let name) = base { return (from, name) }
         guard let head = try? git.run(["rev-parse", "-q", "--verify", "HEAD"], in: top), !head.isEmpty else { return nil }
         guard base == .branch, let main = defaultBranch(top: top, git: git),
               let fork = try? git.run(["merge-base", "HEAD", main], in: top), !fork.isEmpty else { return (head, "HEAD") }
@@ -331,5 +339,19 @@ struct ReviewComment: Equatable, Identifiable {
             text += "\n  " + note.text.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "\n", with: "\n  ")
         }
         return text
+    }
+}
+
+extension ReviewDiff {
+    /// Each agent turn as a comparison, newest first: a turn runs from its
+    /// checkpoint to the next one taken, the latest to now. `checkpoints`
+    /// come newest first, as `Checkpoints.list` gives them.
+    static func turns(_ checkpoints: [Checkpoint]) -> [(base: Base, title: String, date: Date)] {
+        checkpoints.enumerated().map { index, point in
+            let number = checkpoints.count - index
+            let next = index > 0 ? checkpoints[index - 1].commit : nil
+            return (.turn(from: point.commit, to: next, name: "turn \(number)"),
+                    index == 0 ? "Latest Turn" : "Turn \(number)", point.date)
+        }
     }
 }
