@@ -479,6 +479,7 @@ struct RootView: View {
                     case "pr": ui.showPlane(.pullRequest, number: parts.count > 2 ? Int(parts[2]) : nil)
                     case "prs": ui.showPlane(.pullRequests)
                     case "diff": ui.showPlane(.diff)
+                    case "files": ui.showPlane(.files)
                     case "device": ui.showPlane(.device)
                     default: break
                     }

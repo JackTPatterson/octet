@@ -5,13 +5,14 @@ import SwiftUI
 /// The kinds of plane the right panel can show. A plane is one tab in the
 /// panel's strip; the "+" picker adds them, after T3 Code's surfaces.
 enum PlaneKind: String, Codable, CaseIterable, Identifiable {
-    case overview, diff, git, pullRequest, pullRequests, device
+    case overview, diff, files, git, pullRequest, pullRequests, device
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .overview: "Overview"
         case .diff: "Diff"
+        case .files: "Files"
         case .git: "Git"
         case .pullRequest: "Pull Request"
         case .pullRequests: "Pull Requests"
@@ -23,6 +24,7 @@ enum PlaneKind: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .overview: "list.bullet.rectangle"
         case .diff: "doc.diff"
+        case .files: "folder"
         case .git: "branch"
         case .pullRequest: "pull.request"
         case .pullRequests: "list"
@@ -35,6 +37,7 @@ enum PlaneKind: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .overview: "o"
         case .diff: "d"
+        case .files: "f"
         case .git: "g"
         case .pullRequest: "p"
         case .pullRequests: "l"
@@ -46,6 +49,7 @@ enum PlaneKind: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .overview: "Agents, tasks, todos and plugins for the tab in front"
         case .diff: "What changed, file by file, with notes for the agent"
+        case .files: "The project's files, to open beside the terminal"
         case .git: "Changes, commits and worktrees"
         case .pullRequest: "This branch's pull request"
         case .pullRequests: "The repository's open pull requests"

@@ -210,6 +210,7 @@ struct SidePanel: View {
             }
             .scrollIndicators(.hidden)
         case .diff: DiffPlane(store: store, ui: ui)
+        case .files: FilesPlane(ui: ui, directory: planeDirectory)
         case .pullRequest:
             if let directory = planeDirectory {
                 PullRequestPlane(directory: directory, number: plane.number,
