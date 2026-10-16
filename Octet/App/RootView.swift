@@ -23,6 +23,8 @@ struct RootView: View {
     @State private var connecting: SSHTarget?
     @ObservedObject private var tabDrag = TabDrag.shared
     @ObservedObject private var recapCenter = RecapCenter.shared
+    /// The last terminal failure shown, so a repeat isn't shown again.
+    private static var lastFailure: (message: String, at: Date)?
     /// The panes of the tab showing, fetched when a tab drag starts.
     @State private var dropLayout: PaneLayout?
     @ObservedObject private var agents = AgentCenter.shared
@@ -227,12 +229,13 @@ struct RootView: View {
         .overlay(alignment: .top) {
             // Only the window in front shows it, once.
             if let recap = recapCenter.shown, recapCenter.showsIn(window) {
-                RecapCard(recap: recap)
-                    .padding(.top, contentTop + 24)
+                RecapStrip(recap: recap)
+                    .padding(.top, contentTop + 10)
                     .transition(motion.animates(.toasts) ? .move(edge: .top).combined(with: .opacity) : .identity)
             }
         }
         .animation(motion.animation(.toasts, .smooth(duration: 0.22)), value: recapCenter.shown)
+        .animation(motion.animation(.toasts, .smooth(duration: 0.18)), value: recapCenter.expanded)
         .onAppear { appeared() }
         .modifier(TerminalWatchers(
             anchor: terminalAnchor, tabDrag: tabDrag,
@@ -242,8 +245,12 @@ struct RootView: View {
         ))
         .onChange(of: store.lastError) { _, error in
             guard let error else { return }
-            ToastCenter.shared.fail(nil, "Terminal request failed", detail: error)
             store.lastError = nil
+            // The same failure again soon after is the same news: once.
+            let now = Date()
+            if let last = Self.lastFailure, last.message == error, now.timeIntervalSince(last.at) < 60 { return }
+            Self.lastFailure = (error, now)
+            ToastCenter.shared.fail(nil, "Terminal request failed", detail: error)
         }
         .onChange(of: confirmations.request?.id) { _, id in DebugSnapshot.overlay("confirmation", id != nil) }
         // Hide the engine's chrome before drawing the prompt and completions;
@@ -1039,6 +1046,8 @@ private struct TitleBar: View {
             .buttonStyle(.plain)
             .help("Toggle Sidebar (⌘B)")
             .accessibilityLabel(ui.sidebarVisible ? "Hide sidebar" : "Show sidebar")
+            // Pane layouts from plugins (Pane Layouts ships with Octet).
+            LayoutPickerButton()
             if let stage = ReleaseStage.current {
                 ReleaseStageChip(stage: stage)
             }
@@ -1046,8 +1055,6 @@ private struct TitleBar: View {
             // A connected engine is the normal state and says nothing worth a
             // badge; only the wait for one does.
             if !store.isConnected { connectingIndicator }
-            // Pane layouts from plugins (Pane Layouts ships with Octet).
-            LayoutPickerButton()
             AccountChips(runningAgents: runningAgents)
                 .padding(.trailing, 12)
         }

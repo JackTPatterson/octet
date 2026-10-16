@@ -321,12 +321,7 @@ private struct ProjectLocation: View {
                     Text("±")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(Theme.textTertiary)
-                    if changes.added > 0 {
-                        Text("+\(changes.added)").foregroundStyle(Color(hex: AgentStateColor.done))
-                    }
-                    if changes.removed > 0 {
-                        Text("-\(changes.removed)").foregroundStyle(Color(hex: AgentStateColor.blocked))
-                    }
+                    DiffStatLabel(added: changes.added, removed: changes.removed)
                 }
                 .font(Theme.captionFont.monospacedDigit())
                 .help("Working tree changes")
@@ -494,7 +489,21 @@ private struct MessageMenu: View {
 
 private struct Transcript: View {
     @ObservedObject var session: AgentSession
-    @State private var atBottom = true
+    @State private var atBottom: Bool
+    /// The item at the top of the view, to come back to it.
+    @State private var position: String?
+
+    /// Starts where it should on its very first layout: where you were
+    /// reading, else the latest (`defaultScrollAnchor`). Scrolling there
+    /// after it appears showed the wrong place for a moment first.
+    init(session: AgentSession) {
+        _session = ObservedObject(wrappedValue: session)
+        let saved = session.transcriptReadingAt.flatMap { id in
+            session.conversation.items.contains { $0.id == id } ? id : nil
+        }
+        _position = State(initialValue: saved)
+        _atBottom = State(initialValue: saved == nil)
+    }
 
     var body: some View {
         let items = session.conversation.items
@@ -508,14 +517,30 @@ private struct Transcript: View {
                         EmptyConversation(session: session)
                     }
                     if blocking == nil {
+                        let depths = Self.depths(items)
                         ForEach(items.filter(Self.isShown)) { item in
-                            ItemRow(item: item, running: session.conversation.isRunning)
-                                .equatable()
+                            let depth = depths[item.id] ?? 0
+                            Group {
+                                if let report = session.usageReports[item.id] {
+                                    UsageCard(report: report)
+                                } else {
+                                    ItemRow(item: item, running: session.conversation.isRunning)
+                                        .equatable()
+                                }
+                            }
                                 .contextMenu { MessageMenu(session: session, item: item) }
-                                .padding(.leading, item.parent == nil ? 0 : 18)
+                                // A subagent's work is indented under the call that
+                                // started it, a rail per level, so a subagent's own
+                                // subagents sit one step further in.
+                                .padding(.leading, CGFloat(depth) * 18)
                                 .overlay(alignment: .leading) {
-                                    if item.parent != nil {
-                                        Rectangle().fill(Theme.border).frame(width: 2).padding(.leading, 6)
+                                    if depth > 0 {
+                                        HStack(spacing: 16) {
+                                            ForEach(0..<depth, id: \.self) { _ in
+                                                Rectangle().fill(Theme.border).frame(width: 2)
+                                            }
+                                        }
+                                        .padding(.leading, 6)
                                     }
                                 }
                                 .id(item.id)
@@ -529,8 +554,26 @@ private struct Transcript: View {
                 .padding(.horizontal, 20)
                 .padding(.vertical, 16)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .scrollTargetLayout()
             }
+            .scrollPosition(id: $position, anchor: .top)
+            // Opens at the latest, not the first message.
+            .defaultScrollAnchor(.bottom)
             .octetScrollIndicators()
+            // Coming back to where you were reading: the position above
+            // takes it there on first layout; this settles it once the lazy
+            // rows above it have their real heights. Following the latest
+            // needs nothing: the bottom anchor opens there.
+            .onAppear {
+                guard let saved = position else { return }
+                DispatchQueue.main.async { proxy.scrollTo(saved, anchor: .top) }
+            }
+            .onChange(of: position) { _, id in
+                session.transcriptReadingAt = atBottom ? nil : id
+            }
+            .onChange(of: atBottom) { _, bottom in
+                if bottom { session.transcriptReadingAt = nil }
+            }
             // Follow the stream only while at the end, so reading back isn't
             // yanked away; a button jumps to the latest instead.
             .onChange(of: items) { _, _ in
@@ -556,6 +599,25 @@ private struct Transcript: View {
                 }
             }
         }
+    }
+
+    /// How deep each item sits: 0 for the conversation's own, 1 for a
+    /// subagent's, 2 for that subagent's own subagent's, and so on, by
+    /// following each item's parent call up.
+    static func depths(_ items: [AgentItem]) -> [String: Int] {
+        let parents = Dictionary(items.map { ($0.id, $0.parent) }, uniquingKeysWith: { first, _ in first })
+        var depths: [String: Int] = [:]
+        for item in items where item.parent != nil {
+            var depth = 0
+            var parent = item.parent
+            var seen = Set<String>()
+            while let id = parent, seen.insert(id).inserted {
+                depth += 1
+                parent = parents[id] ?? nil
+            }
+            depths[item.id] = depth
+        }
+        return depths
     }
 
     private var blockingState: AgentBlockState? {
@@ -722,12 +784,55 @@ private struct SuggestedCommandsPanel: View {
     private func confirmRun() {
         ConfirmCenter.shared.ask(
             title: commands.count == 1 ? "Run this command?" : "Run these commands?",
-            message: "The commands will run through \(session.engine.displayName) in \(abbreviateHome(session.cwd)).",
+            message: session.engine == .opencode
+                ? "The commands will run through OpenCode in \(abbreviateHome(session.cwd))."
+                : "They run in \(abbreviateHome(session.cwd)), one after another, stopping at the first that fails; \(session.engine.displayName) sees the output with your next message.",
             detail: commands.joined(separator: "\n"),
             confirmTitle: "Run"
         ) { _ in
             dismissed = true
-            for command in commands { session.send("!" + command) }
+            if session.engine == .opencode {
+                for command in commands { session.send("!" + command) }
+            } else {
+                session.send("!" + commands.joined(separator: " && "))
+            }
+        }
+    }
+}
+
+/// Over the message field: that a line starting with `!` runs as a shell
+/// command, what's running now (Esc stops it), and output still to go to
+/// the agent with the next message.
+private struct ShellModeStrip: View {
+    @ObservedObject var session: AgentSession
+    let typingCommand: Bool
+
+    var body: some View {
+        if typingCommand || session.shellRunning != nil || !session.shellRuns.isEmpty {
+            HStack(spacing: 7) {
+                OctetIcon("terminal", size: 12).foregroundStyle(Theme.accent)
+                if let running = session.shellRunning {
+                    LoadingLine(width: 14)
+                    Text("Running `\(running)`").lineLimit(1).truncationMode(.middle)
+                    Spacer(minLength: 4)
+                    Button("Stop") { session.stopShell() }.buttonStyle(.plain).foregroundStyle(Theme.accent)
+                    Keycap(text: "esc")
+                } else if typingCommand {
+                    Text("Runs in \(abbreviateHome(session.cwd)); its output goes to \(session.engine.displayName) with your next message")
+                        .lineLimit(1).truncationMode(.middle)
+                    Spacer(minLength: 0)
+                } else {
+                    let count = session.shellRuns.count
+                    Text(count == 1 ? "1 command's output goes with your next message"
+                                    : "\(count) commands' output goes with your next message")
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    Button("Don't Send") { session.dropShellRuns() }.buttonStyle(.plain).foregroundStyle(Theme.accent)
+                }
+            }
+            .font(Theme.captionFont)
+            .foregroundStyle(Theme.textSecondary)
+            .padding(.horizontal, 4)
         }
     }
 }
@@ -943,8 +1048,7 @@ struct ItemRow: View, Equatable {
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 6))
         case .text(let text):
-            MarkdownView(text: text)
-                .contextMenu { MessageCopyMenu(text: text) }
+            AssistantMessage(text: text)
         case .thinking(let text):
             Disclosure(title: "Thinking", tint: Theme.textTertiary) {
                 Text(text)
@@ -1696,6 +1800,7 @@ private struct Composer: View {
         switch command.name {
         case "model":
             if !arguments.isEmpty, let match = modelMatching(arguments) { session.model = match } else { dropdowns.openId = "model" }
+        case "usage": session.showUsage()
         case "effort": dropdowns.openId = "effort"
         case "permissions": dropdowns.openId = "mode"
         case "new", "clear": window.newConversation(engine: session.engine)
@@ -1757,9 +1862,10 @@ private struct Composer: View {
             if !attachments.isEmpty {
                 AttachmentStrip(images: attachments.map(\.data)) { index in attachments.remove(at: index) }
             }
+            ShellModeStrip(session: session, typingCommand: text.hasPrefix("!") && session.engine != .opencode)
             ZStack(alignment: .topLeading) {
                 if text.isEmpty {
-                    Text("Message \(session.engine.displayName)")
+                    Text("Message \(session.engine.displayName), or ! to run a command")
                         .font(.system(size: 13))
                         .foregroundStyle(Theme.textTertiary)
                         .padding(.leading, 5)
@@ -1787,7 +1893,7 @@ private struct Composer: View {
                     }
                     .onKeyPress(.tab) {
                         // Tab cycles OpenCode's agents, as in its own interface.
-                        guard session.engine == .opencode, suggestions.isEmpty else { return .ignored }
+                        guard session.engine == .opencode, suggestions.isEmpty, referenceSuggestions.isEmpty else { return .ignored }
                         let agents = OpenCodeCatalogStore.shared.catalog(for: session.cwd).agents
                         guard agents.count > 1 else { return .ignored }
                         let current = agents.firstIndex { $0.name == (session.agentName ?? agents[0].name) } ?? 0
@@ -1849,6 +1955,11 @@ private struct Composer: View {
                             dismissedFor = text
                             referenceSuggestions = []
                             refreshSuggestions()
+                            return .handled
+                        }
+                        // A `!` command running stops first, with no question.
+                        if session.shellRunning != nil {
+                            session.stopShell()
                             return .handled
                         }
                         guard running else { return .ignored }
@@ -1933,6 +2044,7 @@ private struct Composer: View {
                 OctetButton(title: "", icon: "paperclip", kind: .ghost, compact: true) { pickImages() }
                     .help("Attach images (or paste or drop them here)")
                     .accessibilityLabel("Attach images")
+                PromptStashButton(text: $text)
                 MCPProblemChip(session: session)
                 Spacer()
                 let empty = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty
@@ -2566,5 +2678,25 @@ private struct EffortControl: View {
         .help(supported ? "How hard Claude thinks. Applies at once." : "This model has no effort setting.")
         .accessibilityLabel("Effort")
         .accessibilityValue(session.effort ?? "default")
+    }
+}
+
+/// An agent's message, with a copy button that shows on hover.
+private struct AssistantMessage: View {
+    let text: String
+    @State private var hovered = false
+
+    var body: some View {
+        MarkdownView(text: text)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .overlay(alignment: .topTrailing) {
+                if hovered {
+                    CopyMessageButton(text: text)
+                        .offset(y: -4)
+                        .transition(.opacity)
+                }
+            }
+            .onHover { inside in withAnimation(.easeOut(duration: 0.12)) { hovered = inside } }
+            .contextMenu { MessageCopyMenu(text: text) }
     }
 }

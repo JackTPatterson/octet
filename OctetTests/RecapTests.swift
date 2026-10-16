@@ -140,6 +140,52 @@ final class RecapTests: XCTestCase {
         XCTAssertTrue(recap.isWorthShowing)
         XCTAssertFalse(Recap(leftAt: start, cameBackAt: start, runs: []).isWorthShowing)
     }
+
+    func testTheLatestComesFirstWithinEachOutcome() {
+        func run(_ id: String, _ outcome: Recap.Outcome, at offset: TimeInterval?) -> Recap.Run {
+            var run = Recap.Run(id: id, source: .conversation(id), agent: nil, title: id, workspaceId: nil, outcome: outcome)
+            run.lastActivity = offset.map { start.addingTimeInterval($0) }
+            return run
+        }
+        let ordered = Recap.ordered([run("old", .finished, at: 10), run("new", .finished, at: 500),
+                                     run("never", .finished, at: nil), run("ask", .needsYou, at: 1)])
+        XCTAssertEqual(ordered.map(\.id), ["ask", "new", "old", "never"])
+    }
+
+    func testComingBackTwiceKeepsWhatWasntReadYet() {
+        func run(_ id: String, _ outcome: Recap.Outcome) -> Recap.Run {
+            Recap.Run(id: id, source: .conversation(id), agent: nil, title: id, workspaceId: nil, outcome: outcome)
+        }
+        let first = Recap(leftAt: start, cameBackAt: start.addingTimeInterval(600), runs: [run("a", .finished), run("b", .working)])
+        let second = Recap(leftAt: start.addingTimeInterval(900), cameBackAt: start.addingTimeInterval(1800),
+                           runs: [run("b", .finished), run("c", .needsYou)])
+        let merged = second.merged(unread: first)
+        XCTAssertEqual(merged.runs.map(\.id), ["c", "a", "b"])
+        XCTAssertEqual(merged.runs.first { $0.id == "b" }?.outcome, .finished)
+        XCTAssertEqual(merged.leftAt, start)
+        XCTAssertTrue(merged.isUrgent)
+        XCTAssertFalse(first.isUrgent)
+        XCTAssertEqual(second.merged(unread: nil), second)
+    }
+
+    func testAwayMeansOutOfSightLockedOrUntouched() {
+        let now = start
+        func away(_ signals: RecapPresence.Signals) -> Date? {
+            RecapPresence.awaySince(signals, now: now, idleAfter: 300)
+        }
+        // Another app in front with Octet on screen, in use: here.
+        XCTAssertNil(away(.init(locked: false, octetVisible: true, idleSeconds: 20)))
+        XCTAssertEqual(away(.init(locked: true, octetVisible: true, idleSeconds: 0)), now)
+        XCTAssertEqual(away(.init(locked: false, octetVisible: false, idleSeconds: 0)), now)
+        // Untouched long enough: away since the last touch.
+        XCTAssertEqual(away(.init(locked: false, octetVisible: true, idleSeconds: 420)), now.addingTimeInterval(-420))
+    }
+
+    func testExcerptsReadAsPlainText() {
+        XCTAssertEqual(Recap.excerpt("## Done\n**Fixed** the `login` flow, see [the PR](https://x.y/1)."),
+                       "Done Fixed the login flow, see the PR.")
+        XCTAssertEqual(Recap.plain("- Added tests"), "Added tests")
+    }
 }
 
 final class VerificationTests: XCTestCase {

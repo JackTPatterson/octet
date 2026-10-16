@@ -59,8 +59,9 @@ enum WindowActions {
 
     /// A workspace into a window of its own, at `frame` when it was dropped
     /// somewhere, else cascaded from `window`. Nothing moves in the engine: the
-    /// new window shows the workspace, and the window that showed it moves to
-    /// its neighbour, since two windows never show the same workspace.
+    /// new window shows the workspace and it becomes that window's alone,
+    /// out of `window`'s sidebar; `window` moves to its neighbour, and keeps
+    /// its other workspaces and everything running in them.
     /// Whether a window now shows it apart from `window`.
     @discardableResult
     static func moveWorkspaceToNewWindow(_ workspaceId: String, from window: WindowContext, frame: CGRect? = nil) -> Bool {
@@ -71,12 +72,9 @@ enum WindowActions {
             other.bringForward()
             return true
         }
-        let store = window.store
-        let showsIt = window.focusedWorkspace?.workspaceId == workspaceId
-        let shownElsewhere = registry.shownWorkspaceIds(except: window)
-        if showsIt, !store.snapshot.workspaces.contains(where: {
-            $0.workspaceId != workspaceId && !shownElsewhere.contains($0.workspaceId)
-        }) {
+        // The window keeps its other workspaces; with none, there'd be
+        // nothing left for it to show.
+        if !window.ownWorkspaces.contains(where: { $0.workspaceId != workspaceId }) {
             ToastCenter.shared.info("This window has no other workspace to show",
                                     detail: "Open another workspace here first, or use New Window (⌥⌘N).")
             return false

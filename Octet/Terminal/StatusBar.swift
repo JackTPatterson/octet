@@ -181,12 +181,7 @@ struct StatusBar: View {
                     if changes.added > 0 || changes.removed > 0 {
                         Text("•").foregroundStyle(Theme.textTertiary)
                     }
-                    if changes.added > 0 {
-                        Text("+\(changes.added)").foregroundStyle(Color(hex: AgentStateColor.done))
-                    }
-                    if changes.removed > 0 {
-                        Text("-\(changes.removed)").foregroundStyle(Color(hex: AgentStateColor.blocked))
-                    }
+                    DiffStatLabel(added: changes.added, removed: changes.removed)
                 }
             }
         case "builtin.pullRequest":

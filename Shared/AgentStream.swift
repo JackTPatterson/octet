@@ -69,6 +69,8 @@ struct AgentConversation: Equatable {
     /// Tokens the model saw on its latest call, and its window size.
     var contextUsed: Int?
     var contextWindow: Int?
+    /// What the latest model call read and wrote.
+    var lastTokens: TokenUsage?
     var lastError: String?
     /// Plan allowance, when the account is a subscription.
     var usageWindows: [UsageWindow] = []
@@ -338,6 +340,7 @@ struct AgentConversation: Equatable {
     private mutating func notePiUsage(_ usage: [String: Any]) {
         if let total = usage["totalTokens"] as? Int { contextUsed = total }
         if let cost = usage["cost"] as? [String: Any], let total = cost["total"] as? Double { costUSD = total }
+        if let tokens = TokenUsage.openCode(usage) { lastTokens = tokens }
     }
 
     private static func piToolName(_ name: String) -> String {
@@ -504,6 +507,7 @@ struct AgentConversation: Equatable {
         let total = ["input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"]
             .compactMap { usage[$0] as? Int }.reduce(0, +)
         if total > 0 { contextUsed = total }
+        if let tokens = TokenUsage.claude(usage) { lastTokens = tokens }
     }
 
     /// One line saying what a tool call does.

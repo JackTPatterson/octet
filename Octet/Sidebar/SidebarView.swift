@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import SwiftUI
 
@@ -11,7 +12,13 @@ struct SidebarView: View {
     @ObservedObject private var waits = WaitCenter.shared
     @ObservedObject private var idle = IdleCenter.shared
     @State private var collapsedGroups: Set<String> = []
+    /// Groups showing all their workspaces, past the first few.
+    @State private var expandedGroups: Set<String> = []
     @State private var query = ""
+    /// The project the sidebar is narrowed to, by its folder; empty for all.
+    @AppStorage("octet.sidebar.project") private var projectFilter = ""
+    /// The result the arrow keys are on, by position in the results.
+    @State private var highlighted = 0
     @FocusState private var searchFocused: Bool
 
     private var searching: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty }
@@ -25,11 +32,11 @@ struct SidebarView: View {
                         searchResults
                     } else {
                         ReadyWaits()
-                        ForEach(store.activeGroups) { group in
+                        ForEach(shownGroups) { group in
                             groupSection(group)
                         }
                     }
-                    if store.snapshot.workspaces.isEmpty {
+                    if window.ownWorkspaces.isEmpty {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(store.isConnected ? "No workspaces" : "Starting the terminal…")
                                 .font(Theme.uiFont)
@@ -45,7 +52,7 @@ struct SidebarView: View {
                     }
                 }
                 .padding(.vertical, 8)
-                .animation(motion.animation(.sidebar), value: store.activeGroups)
+                .animation(motion.animation(.sidebar), value: window.activeGroups)
             }
             .scrollIndicators(.hidden)
             // Double-click empty sidebar space for a new workspace.
@@ -62,12 +69,12 @@ struct SidebarView: View {
                 WaitsDock()
                     .transition(motion.animates(.sidebar) ? .move(edge: .bottom).combined(with: .opacity) : .identity)
             }
-            if !searching, !store.idleWorkspaces.isEmpty || !idle.sleeping.isEmpty {
+            if !searching, !window.idleWorkspaces.isEmpty || !idle.sleeping.isEmpty {
                 IdleDock(store: store)
                     .transition(motion.animates(.sidebar) ? .move(edge: .bottom).combined(with: .opacity) : .identity)
             }
         }
-        .animation(motion.animation(.sidebar), value: store.idleWorkspaces.isEmpty)
+        .animation(motion.animation(.sidebar), value: window.idleWorkspaces.isEmpty)
         .animation(motion.animation(.sidebar), value: waits.waiting.isEmpty)
         .frame(width: width)
         .background(Theme.sidebar)
@@ -76,27 +83,35 @@ struct SidebarView: View {
         .onReceive(window.ui.$sidebarSearchRequest.dropFirst()) { _ in searchFocused = true }
     }
 
+    /// Two quiet rows, after T3 Code's: search with a button for a new
+    /// workspace, then which project the sidebar shows with a button to
+    /// start one in another folder.
     private var controlBar: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 2) {
             searchField
-            ControlButton(title: "New workspace", icon: "plus", shortcut: "⌘N") {
-                window.newWorkspace()
-            }
+            projectRow
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 6)
+        .padding(.top, 6)
+        .padding(.bottom, 4)
     }
 
     private var searchField: some View {
-        HStack(spacing: 6) {
-            OctetIcon("magnifyingglass", size: 13)
+        HStack(spacing: 8) {
+            OctetIcon("magnifyingglass", size: 14)
                 .foregroundStyle(Theme.textTertiary)
-            TextField("Search workspaces", text: $query)
+                .frame(width: 18)
+            TextField("Search", text: $query)
                 .textFieldStyle(.plain)
                 .font(Theme.uiFont)
                 .focused($searchFocused)
-                .onSubmit(openFirstResult)
+                .onSubmit(openHighlighted)
                 .onExitCommand(perform: clearSearch)
+                // Up and down move through the results; Return opens one.
+                .onKeyPress(.downArrow) { moveHighlight(1) }
+                .onKeyPress(.upArrow) { moveHighlight(-1) }
+                .onChange(of: query) { _, _ in highlighted = 0 }
+                .help("Search workspaces (\(OctetShortcut.searchWorkspaces.display))")
             if !query.isEmpty {
                 Button(action: clearSearch) {
                     OctetIcon("xmark.circle.fill", size: 12)
@@ -104,27 +119,135 @@ struct SidebarView: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(Theme.textTertiary)
                 .help("Clear the search")
-            } else if !searchFocused {
-                Text(OctetShortcut.searchWorkspaces.display)
-                    .font(Theme.captionFont)
-                    .foregroundStyle(Theme.textTertiary)
             }
+            SidebarIconButton(icon: "pencil", help: newWorkspaceHelp) { newWorkspaceHere() }
+                .accessibilityLabel("New workspace")
         }
-        .padding(.horizontal, 8)
-        .frame(height: 24)
+        .padding(.leading, 6)
+        .frame(height: 30)
         .background(RoundedRectangle(cornerRadius: Theme.rowRadius).fill(searchFocused ? Theme.hover : Color.clear))
-        .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius)
-            .strokeBorder(searchFocused ? Theme.accent.opacity(0.6) : Theme.border, lineWidth: 1))
+    }
+
+    /// "All projects", or the one project the sidebar is narrowed to.
+    private var projectRow: some View {
+        HStack(spacing: 8) {
+            Menu {
+                Button { projectFilter = "" } label: {
+                    if projectFilter.isEmpty { Label("All projects", systemImage: "checkmark") } else { Text("All projects") }
+                }
+                Divider()
+                ForEach(window.activeGroups.filter { $0.id != ProjectGroup.otherId }) { group in
+                    Button { projectFilter = group.id } label: {
+                        if projectFilter == group.id { Label(group.name, systemImage: "checkmark") } else { Text(group.name) }
+                    }
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    if let group = filteredGroup {
+                        ProjectMonogram(name: group.name).frame(width: 18)
+                    } else {
+                        OctetIcon("folder", size: 14).foregroundStyle(Theme.textTertiary).frame(width: 18)
+                    }
+                    Text(filteredGroup?.name ?? "All projects")
+                        .font(Theme.uiFont)
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    OctetIcon("chevron.down", size: 11).foregroundStyle(Theme.textTertiary)
+                }
+                .contentShape(Rectangle())
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .fixedSize(horizontal: false, vertical: true)
+            .help("Show every project's workspaces, or one project's")
+            .accessibilityLabel("Project: \(filteredGroup?.name ?? "All projects")")
+            SidebarIconButton(icon: "folder.badge.plus", help: "New workspace in a folder…") { pickFolder() }
+                .accessibilityLabel("New workspace in a folder")
+        }
+        .padding(.leading, 6)
+        .frame(height: 30)
+    }
+
+    /// The project the sidebar is narrowed to, while it still has workspaces.
+    private var filteredGroup: ProjectGroup? {
+        guard !projectFilter.isEmpty else { return nil }
+        return window.activeGroups.first { $0.id == projectFilter }
+    }
+
+    /// The groups the sidebar lists: all, or the one picked.
+    private var shownGroups: [ProjectGroup] {
+        guard let filteredGroup else { return window.activeGroups }
+        return [filteredGroup]
+    }
+
+    private var newWorkspaceHelp: String {
+        if let filteredGroup { return "New workspace in \(filteredGroup.name) (⌘N)" }
+        return "New workspace (⌘N)"
+    }
+
+    /// A new workspace, in the project the sidebar is narrowed to.
+    private func newWorkspaceHere() {
+        window.newWorkspace(cwd: filteredGroup?.id)
+    }
+
+    private func pickFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Open"
+        panel.message = "Choose a folder to start a workspace in"
+        if let filteredGroup { panel.directoryURL = URL(fileURLWithPath: filteredGroup.id) }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        window.newWorkspace(cwd: url.path)
     }
 
     /// The workspaces the query finds, under their groups' names, then the
-    /// idle ones it finds; groups aren't collapsed while searching.
-    private var matches: (groups: [ProjectGroup], idle: [EngineWorkspace]) {
-        let groups = store.activeGroups.compactMap { group -> ProjectGroup? in
-            let hits = group.workspaces.filter { found($0, group: group.name) }
+    /// idle ones it finds; groups aren't collapsed while searching. A
+    /// workspace is found by its names and folders, or by what was said in
+    /// its conversations, which then shows under it.
+    private var matches: (groups: [ProjectGroup], idle: [EngineWorkspace], snippets: [String: SidebarSearch.Snippet]) {
+        var snippets: [String: SidebarSearch.Snippet] = [:]
+        func hit(_ workspace: EngineWorkspace, group: String?) -> Bool {
+            if found(workspace, group: group) { return true }
+            guard let snippet = SidebarSearch.snippet(query, in: messages(in: workspace.workspaceId)) else { return false }
+            snippets[workspace.workspaceId] = snippet
+            return true
+        }
+        let groups = window.activeGroups.compactMap { group -> ProjectGroup? in
+            let hits = group.workspaces.filter { hit($0, group: group.name) }
             return hits.isEmpty ? nil : ProjectGroup(id: group.id, name: group.name, workspaces: hits)
         }
-        return (groups, store.idleWorkspaces.filter { found($0, group: nil) })
+        let idle = window.idleWorkspaces.filter { hit($0, group: nil) }
+        return (groups, idle, snippets)
+    }
+
+    /// What was said in a workspace's conversations, oldest first.
+    private func messages(in workspaceId: String) -> [(fromYou: Bool, text: String)] {
+        AgentCenter.shared.sessions(in: workspaceId).flatMap { session in
+            session.conversation.items.compactMap { item -> (fromYou: Bool, text: String)? in
+                switch item.kind {
+                case .user(let text): return (true, text)
+                case .text(let text) where item.parent == nil: return (false, text)
+                default: return nil
+                }
+            }
+        }
+    }
+
+    /// The results in the order shown, for the arrow keys.
+    private func results(_ matches: (groups: [ProjectGroup], idle: [EngineWorkspace], snippets: [String: SidebarSearch.Snippet])) -> [EngineWorkspace] {
+        matches.groups.flatMap(\.workspaces) + matches.idle
+    }
+
+    private func moveHighlight(_ step: Int) -> KeyPress.Result {
+        guard searching else { return .ignored }
+        let count = results(matches).count
+        guard count > 0 else { return .handled }
+        highlighted = (highlighted + step + count) % count
+        return .handled
     }
 
     private func found(_ workspace: EngineWorkspace, group: String?) -> Bool {
@@ -137,11 +260,12 @@ struct SidebarView: View {
     @ViewBuilder
     private var searchResults: some View {
         let matches = matches
+        let order = results(matches).map(\.workspaceId)
         ForEach(matches.groups) { group in
             VStack(alignment: .leading, spacing: 4) {
                 resultsHeader(group.name)
                 ForEach(group.workspaces) { workspace in
-                    WorkspaceCard(store: store, workspace: workspace).padding(.horizontal, 8)
+                    result(workspace, snippet: matches.snippets[workspace.workspaceId], at: order.firstIndex(of: workspace.workspaceId))
                 }
             }
         }
@@ -149,11 +273,11 @@ struct SidebarView: View {
             VStack(alignment: .leading, spacing: 4) {
                 resultsHeader("Idle")
                 ForEach(matches.idle) { workspace in
-                    WorkspaceCard(store: store, workspace: workspace).padding(.horizontal, 8)
+                    result(workspace, snippet: matches.snippets[workspace.workspaceId], at: order.firstIndex(of: workspace.workspaceId))
                 }
             }
         }
-        if matches.groups.isEmpty, matches.idle.isEmpty, !store.snapshot.workspaces.isEmpty {
+        if matches.groups.isEmpty, matches.idle.isEmpty, !window.ownWorkspaces.isEmpty {
             Text("No workspace matches “\(query.trimmingCharacters(in: .whitespaces))”")
                 .font(Theme.captionFont)
                 .foregroundStyle(Theme.textTertiary)
@@ -174,12 +298,28 @@ struct SidebarView: View {
 
     /// Return opens the first workspace found and gives the terminal back
     /// the keyboard.
-    private func openFirstResult() {
+    /// A result: the workspace's card, ringed while the arrow keys are on
+    /// it, and what was said that matched, when that's how it was found.
+    private func result(_ workspace: EngineWorkspace, snippet: SidebarSearch.Snippet?, at index: Int?) -> some View {
+        let on = index == highlighted
+        return VStack(alignment: .leading, spacing: 3) {
+            WorkspaceCard(store: store, workspace: workspace)
+            if let snippet { SnippetLine(snippet: snippet).padding(.horizontal, 10) }
+        }
+        .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius + 2)
+            .strokeBorder(on ? Theme.accent.opacity(0.7) : .clear, lineWidth: 1.5))
+        .onHover { if $0, let index { highlighted = index } }
+        .padding(.horizontal, 8)
+    }
+
+    /// Return in the search: the result the arrow keys are on.
+    private func openHighlighted() {
         guard searching else { return }
-        let matches = matches
-        guard let first = matches.groups.first?.workspaces.first ?? matches.idle.first else { return }
+        let found = results(matches)
+        guard !found.isEmpty else { return }
+        let pick = found[min(max(highlighted, 0), found.count - 1)]
         clearSearch()
-        window.focusWorkspace(first.workspaceId)
+        window.focusWorkspace(pick.workspaceId)
     }
 
     private func clearSearch() {
@@ -187,41 +327,28 @@ struct SidebarView: View {
         searchFocused = false
     }
 
+    /// A project's workspaces show this many before "Show more".
+    private static let shownPerGroup = 6
+
     @ViewBuilder
     private func groupSection(_ group: ProjectGroup) -> some View {
         let collapsed = collapsedGroups.contains(group.id)
+        let showsAll = expandedGroups.contains(group.id) || group.workspaces.count <= Self.shownPerGroup + 1
+        let shown = showsAll ? group.workspaces : Array(group.workspaces.prefix(Self.shownPerGroup))
         VStack(alignment: .leading, spacing: 4) {
-            Button {
-                motion.perform(.sidebar) {
-                    if collapsed { collapsedGroups.remove(group.id) } else { collapsedGroups.insert(group.id) }
-                }
-            } label: {
-                HStack(spacing: 4) {
-                    OctetIcon(Self.isRepository(group) ? "arrow.triangle.branch" : "folder", size: 11)
-                        .foregroundStyle(Theme.textTertiary)
-                    Text(group.name.uppercased())
-                        .font(Theme.headerFont)
-                        .kerning(0.4)
-                        .foregroundStyle(Theme.textSecondary)
-                        .lineLimit(1)
-                    Spacer(minLength: 4)
-                    Text(group.workspaces.count == 1 ? "1 workspace" : "\(group.workspaces.count) workspaces")
-                        .font(Theme.captionFont)
-                        .foregroundStyle(Theme.textTertiary)
-                    OctetIcon("chevron.down", size: 12)
-                        .foregroundStyle(Theme.textTertiary)
-                        .rotationEffect(.degrees(collapsed ? -90 : 0))
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 4)
-            .help(Self.groupHelp(group))
+            ProjectGroupHeader(
+                group: group, collapsed: collapsed, isRepository: Self.isRepository(group), help: Self.groupHelp(group),
+                toggle: {
+                    motion.perform(.sidebar) {
+                        if collapsed { collapsedGroups.remove(group.id) } else { collapsedGroups.insert(group.id) }
+                    }
+                },
+                newWorkspace: group.id == ProjectGroup.otherId ? nil : { window.newWorkspace(cwd: group.id) }
+            )
 
             if !collapsed {
                 // Workspaces on the same branch stack together under one chip.
-                ForEach(BranchRuns.make(group.workspaces, branch: { store.branches[$0.workspaceId] },
+                ForEach(BranchRuns.make(shown, branch: { store.branches[$0.workspaceId] },
                                         worktree: { $0.worktree })) { run in
                     VStack(spacing: 4) {
                         ForEach(run.workspaces) { workspace in
@@ -236,13 +363,22 @@ struct SidebarView: View {
                         ? .asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity)
                         : .identity)
                 }
+                if group.workspaces.count > Self.shownPerGroup + 1 {
+                    let hidden = group.workspaces.count - Self.shownPerGroup
+                    Button(expandedGroups.contains(group.id) ? "Show fewer" : "Show \(hidden) more") {
+                        motion.perform(.sidebar) {
+                            if expandedGroups.contains(group.id) { expandedGroups.remove(group.id) } else { expandedGroups.insert(group.id) }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .font(Theme.captionFont)
+                    .foregroundStyle(Theme.textTertiary)
+                    .padding(.horizontal, 14)
+                }
             }
         }
     }
-}
 
-extension SidebarView {
-    /// Whether a group is a git repository, rather than a plain folder.
     static func isRepository(_ group: ProjectGroup) -> Bool {
         group.id != ProjectGroup.otherId && FileManager.default.fileExists(atPath: group.id + "/.git")
     }
@@ -658,7 +794,7 @@ struct WorkspaceOrganizeMenu: View {
         } else {
             Button("Pin to Keep in View") { store.setPinned(id, true) }
         }
-        if store.idleWorkspaces.contains(where: { $0.workspaceId == id }) {
+        if window.idleWorkspaces.contains(where: { $0.workspaceId == id }) {
             Button("Keep in View Now") {
                 WaitCenter.shared.cancelSnooze(of: id)
                 store.keepInView(id)
@@ -763,7 +899,7 @@ struct IdleDock: View {
                         OctetIcon("chevron.down", size: 12)
                             .rotationEffect(.degrees(collapsed ? -90 : 0))
                         Text("IDLE").font(Theme.headerFont).kerning(0.4)
-                        Text("\(store.idleWorkspaces.count)")
+                        Text("\(window.idleWorkspaces.count)")
                             .font(Theme.uiFont)
                             .foregroundStyle(Theme.textTertiary)
                         Text("· unused \(IdleDock.thresholdLabel(store.idleAfter))+")
@@ -814,7 +950,7 @@ struct IdleDock: View {
                             ForEach(idle.sleeping) { record in SleepingRow(record: record) }
                         }
                     }
-                    .animation(motion.animation(.sidebar), value: store.idleWorkspaces)
+                    .animation(motion.animation(.sidebar), value: window.idleWorkspaces)
                     .padding(.horizontal, 6)
                     .padding(.bottom, 6)
                 }
@@ -829,7 +965,7 @@ struct IdleDock: View {
 
     private var rowCount: Int {
         let headers = sections.filter { !$0.name.isEmpty }.count
-        return store.idleWorkspaces.count + headers + (idle.sleeping.isEmpty ? 0 : idle.sleeping.count + 1)
+        return window.idleWorkspaces.count + headers + (idle.sleeping.isEmpty ? 0 : idle.sleeping.count + 1)
     }
 
     private struct Section: Identifiable {
@@ -840,7 +976,7 @@ struct IdleDock: View {
 
     /// One unnamed section, or one per project once there are many.
     private var sections: [Section] {
-        let all = store.idleWorkspaces
+        let all = window.idleWorkspaces
         let projects = Dictionary(grouping: all) { store.projectName(of: $0.workspaceId) ?? "Other" }
         guard all.count > Self.groupAfter, projects.count > 1 else { return [Section(name: "", workspaces: all)] }
         // In the order their newest workspace went idle.
@@ -853,17 +989,17 @@ struct IdleDock: View {
     }
 
     @ViewBuilder private var actions: some View {
-        let picked = store.idleWorkspaces.filter { idle.selection.contains($0.workspaceId) }
+        let picked = window.idleWorkspaces.filter { idle.selection.contains($0.workspaceId) }
         if !picked.isEmpty {
             Button("Close \(picked.count) Picked…") { idle.close(picked) }
             Button("Sleep \(picked.count) Picked") { idle.sleep(picked) }
             Button("Clear Picks") { idle.selection = [] }
             Divider()
         }
-        Button("Close All Idle…") { idle.close(store.idleWorkspaces) }
-            .disabled(store.idleWorkspaces.isEmpty)
-        Button("Sleep All Idle") { idle.sleep(store.idleWorkspaces) }
-            .disabled(store.idleWorkspaces.isEmpty)
+        Button("Close All Idle…") { idle.close(window.idleWorkspaces) }
+            .disabled(window.idleWorkspaces.isEmpty)
+        Button("Sleep All Idle") { idle.sleep(window.idleWorkspaces) }
+            .disabled(window.idleWorkspaces.isEmpty)
         let ports = idle.idlePorts
         if !ports.isEmpty {
             Button("Stop \(ports.count == 1 ? "the Server" : "\(ports.count) Servers") in Idle…") { idle.stopIdleServers() }
@@ -1245,5 +1381,125 @@ private struct WorkspaceProjectIcon: View {
         case .done: "Agent done"
         default: "Project icon"
         }
+    }
+}
+
+/// A project's header in the sidebar: its badge and name, and on hover a
+/// count and a button for a new workspace there; collapsed, it keeps the
+/// count so you know what's folded away.
+private struct ProjectGroupHeader: View {
+    let group: ProjectGroup
+    let collapsed: Bool
+    let isRepository: Bool
+    let help: String
+    let toggle: () -> Void
+    let newWorkspace: (() -> Void)?
+    @State private var hovered = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Button(action: toggle) {
+                HStack(spacing: 6) {
+                    if group.id == ProjectGroup.otherId {
+                        OctetIcon("folder", size: 11).foregroundStyle(Theme.textTertiary).frame(width: 16, height: 16)
+                    } else {
+                        ProjectMonogram(name: group.name)
+                    }
+                    Text(group.name.uppercased())
+                        .font(Theme.headerFont)
+                        .kerning(0.4)
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
+                    if isRepository {
+                        OctetIcon("arrow.triangle.branch", size: 10).foregroundStyle(Theme.textMuted)
+                    }
+                    Spacer(minLength: 4)
+                    if collapsed || hovered {
+                        Text("\(group.workspaces.count)")
+                            .font(Theme.captionFont.monospacedDigit())
+                            .foregroundStyle(Theme.textTertiary)
+                            .help(group.workspaces.count == 1 ? "1 workspace" : "\(group.workspaces.count) workspaces")
+                    }
+                    OctetIcon("chevron.down", size: 12)
+                        .foregroundStyle(Theme.textTertiary)
+                        .rotationEffect(.degrees(collapsed ? -90 : 0))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(help)
+            if let newWorkspace, hovered {
+                Button(action: newWorkspace) {
+                    OctetIcon("plus", size: 11).foregroundStyle(Theme.textSecondary)
+                        .frame(width: 18, height: 18).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("New workspace in \(group.name)")
+                .accessibilityLabel("New workspace in \(group.name)")
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 4)
+        .onHover { hovered = $0 }
+        .accessibilityElement(children: .contain)
+    }
+}
+
+/// A project's initials on a tile of its own colour, the same each launch.
+struct ProjectMonogram: View {
+    let name: String
+    var size: CGFloat = 16
+
+    private static let palette: [KeyPath<ThemePalette, String>] = [
+        \.syntaxBuiltin, \.syntaxFlag, \.syntaxString, \.syntaxPath, \.syntaxVariable,
+    ]
+
+    var body: some View {
+        let color = Theme.palette.color(Self.palette[SidebarSearch.colorIndex(name, count: Self.palette.count)])
+        Text(SidebarSearch.monogram(name))
+            .font(.system(size: size * 0.5, weight: .bold, design: .monospaced))
+            .foregroundStyle(color)
+            .minimumScaleFactor(0.6)
+            .frame(width: size, height: size)
+            .background(RoundedRectangle(cornerRadius: size * 0.25).fill(color.opacity(0.16)))
+            .accessibilityHidden(true)
+    }
+}
+
+/// What was said that a search found: who said it, then the words around
+/// the match, the match in bold.
+private struct SnippetLine: View {
+    let snippet: SidebarSearch.Snippet
+
+    var body: some View {
+        (Text(snippet.fromYou ? "You: " : "Agent: ")
+            .foregroundColor(snippet.fromYou ? Theme.accent : Color(hex: AgentStateColor.done))
+         + Text(snippet.before).foregroundColor(Theme.textTertiary)
+         + Text(snippet.match).bold().foregroundColor(Theme.textPrimary)
+         + Text(snippet.after).foregroundColor(Theme.textTertiary))
+            .font(Theme.captionFont)
+            .lineLimit(1)
+            .truncationMode(.tail)
+    }
+}
+
+/// A small icon button at the end of a sidebar header row.
+private struct SidebarIconButton: View {
+    let icon: String
+    let help: String
+    let action: () -> Void
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: action) {
+            OctetIcon(icon, size: 14)
+                .foregroundStyle(hovered ? Theme.textPrimary : Theme.textTertiary)
+                .frame(width: 26, height: 24)
+                .background(RoundedRectangle(cornerRadius: Theme.rowRadius).fill(hovered ? Theme.hover : .clear))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
+        .help(help)
     }
 }

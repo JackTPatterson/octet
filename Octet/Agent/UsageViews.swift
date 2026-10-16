@@ -77,10 +77,16 @@ struct AccountChips: View {
         }
     }
 
-    /// Usage support varies by CLI, but the title bar should still represent
-    /// every agent that can actually be started on this machine.
+    /// Agents installed here with something to say: an allowance, a plan,
+    /// an API key or being signed out. One that would only read "Ready"
+    /// (Pi and OpenCode, whose usage Octet can't read) has no chip.
     private var availableAgents: [DiscoveredAgent] {
-        discovery.agents.filter { $0.executablePath != nil }
+        discovery.agents.filter { agent in
+            guard agent.executablePath != nil else { return false }
+            let account = store.accounts[agent.id] ?? AgentAccount(agent: agent.id, kind: .unknown)
+            return account.kind == .apiKey || account.kind == .signedOut
+                || account.tightest != nil || account.plan != nil
+        }
     }
 
     /// Bound to the card, so dismissing it any other way (Esc, a click

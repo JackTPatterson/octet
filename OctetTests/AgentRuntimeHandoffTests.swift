@@ -88,6 +88,41 @@ final class AgentRuntimeHandoffTests: XCTestCase {
         XCTAssertTrue(ledger.live(processStart: nil, now: now).isEmpty)
     }
 
+    func testASubagentsLogNamesItAsTheParentOfWhatItStarts() {
+        // A subagent's records are sidechain ones: skipped in the session's
+        // log, read in the subagent's own, where they belong to it.
+        let nested = json(["type": "assistant", "timestamp": "2026-09-23T12:00:00Z", "isSidechain": true,
+                           "message": ["content": [["type": "tool_use", "id": "g1", "name": "Agent",
+                                                    "input": ["description": "Check fields", "prompt": "Check"]]]]])
+        var session = RuntimeLedger()
+        session.consume(nested)
+        XCTAssertTrue(session.live(processStart: nil, now: now).isEmpty)
+        var subagent = RuntimeLedger()
+        subagent.parentId = "a1"
+        subagent.consume(nested)
+        let live = subagent.live(processStart: nil, now: now)
+        XCTAssertEqual(live.map(\.id), ["g1"])
+        XCTAssertEqual(live.first?.parentId, "a1")
+        XCTAssertEqual(live.first?.title, "Check fields")
+    }
+
+    func testRuntimesNestUnderTheSubagentThatStartedThem() {
+        func runtime(_ id: String, parent: String? = nil) -> HandoffRuntime {
+            HandoffRuntime(id: id, kind: .agent, title: id, command: nil, prompt: nil,
+                           startedAt: nil, expiresAt: nil, parentId: parent)
+        }
+        // Read session first, then each subagent's log: a sibling started
+        // after `a` must not land between `a` and its children.
+        let list = [runtime("a"), runtime("b"), runtime("a1", parent: "a"), runtime("b1", parent: "b"),
+                    runtime("a1x", parent: "a1"), runtime("orphan", parent: "gone")]
+        let nested = HandoffRuntime.nested(list)
+        XCTAssertEqual(nested.map { $0.runtime.id }, ["a", "a1", "a1x", "b", "b1", "orphan"])
+        XCTAssertEqual(nested.map { $0.depth }, [0, 1, 2, 0, 1, 0])
+        // A cycle still shows every item, once.
+        let cycle = RuntimeTree.order([("x", "y"), ("y", "x")], id: { $0.0 }, parent: { $0.1 })
+        XCTAssertEqual(cycle.map { $0.0.0 }.sorted(), ["x", "y"])
+    }
+
     func testProcessStartOfThisProcess() {
         let start = AgentRuntimeHandoff.processStart(pid: Int(ProcessInfo.processInfo.processIdentifier))
         XCTAssertNotNil(start)
