@@ -163,6 +163,10 @@ struct OctetIcon: View {
         "person.badge.plus": .symbol("person.badge.plus"),
         "person.2": .init("profile-2user"),
         "arrow.up.right": .symbol("arrow.up.right"),
+        // Allowance pace, after T3 Code's trending and gauge marks.
+        "usage.pace.ahead": .symbol("chart.line.uptrend.xyaxis"),
+        "usage.pace.on": .symbol("gauge.with.dots.needle.50percent"),
+        "usage.pace.under": .symbol("chart.line.downtrend.xyaxis"),
         "doc.diff": .symbol("plus.forwardslash.minus"),
         "message": .init("message-text"),
         // Flat, filled dots, not the set's triangle of three.

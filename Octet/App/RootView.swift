@@ -592,6 +592,16 @@ struct RootView: View {
             if let open = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], open.hasPrefix("usage") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) { ui.usageBreakdownVisible = true }
             }
+            #if DEBUG
+            // "account-card" opens the title bar's usage card;
+            // "account-card:sample" fills it with sample readings first.
+            if let open = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], open.hasPrefix("account-card") {
+                if open == "account-card:sample" { AccountStore.shared.debugShowSample() }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    NotificationCenter.default.post(name: AccountChips.debugOpenCard, object: nil)
+                }
+            }
+            #endif
             if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "agents" {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) { AgentCenter.shared.showingBoard = true }
             }
@@ -1346,8 +1356,8 @@ private struct TitleBar: View {
             // A connected engine is the normal state and says nothing worth a
             // badge; only the wait for one does.
             if !store.isConnected { connectingIndicator }
-            AccountChips(runningAgents: runningAgents)
-                .padding(.trailing, 12)
+            AccountChips(runningAgents: runningAgents) { ui.usageBreakdownVisible = true }
+                .padding(.trailing, 10)
         }
         // Centered on the window, not between the uneven side groups.
         .overlay {

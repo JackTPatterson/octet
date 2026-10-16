@@ -555,7 +555,7 @@ private struct UsageLimitsView: View {
                 Text(note(account)).font(Theme.uiFont).foregroundStyle(Theme.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                ForEach(account.live, id: \.name) { window($0) }
+                ForEach(account.live, id: \.name) { UsageWindowRow(window: $0, agent: account.agent) }
                 if let updatedAt = account.updatedAt {
                     Text("As of \(UsageMeter.relative(min(updatedAt, Date())))").font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
                 }
@@ -580,50 +580,6 @@ private struct UsageLimitsView: View {
         case .apiKey: "Signed in with an API key: there is no allowance, every token is billed."
         case .signedOut: "Not signed in. Sign in with its CLI to see its allowance."
         default: "No allowance reported yet. It shows here once the agent reports one, which it does as it works."
-        }
-    }
-
-    private func window(_ window: UsageWindow) -> some View {
-        let percent = Int((window.used * 100).rounded())
-        let now = Date()
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(Self.title(window.name)).font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary)
-                Spacer()
-                Text("\(percent)% used").font(Theme.uiFont.monospacedDigit()).foregroundStyle(UsageMeter.color(window.used))
-            }
-            GeometryReader { proxy in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Theme.border)
-                    Capsule().fill(UsageMeter.color(window.used))
-                        .frame(width: max(3, proxy.size.width * min(1, max(0, window.used))))
-                    if let expected = UsageReport.expected(window, at: now) {
-                        Rectangle().fill(Theme.textTertiary).frame(width: 1, height: 10)
-                            .offset(x: proxy.size.width * expected)
-                            .help("Where an even pace would be by now")
-                    }
-                }
-            }
-            .frame(height: 6)
-            HStack(spacing: 4) {
-                Text("\(100 - percent)% left")
-                if let reset = window.resetsAt, let when = UsageReport.resetsIn(reset, now: now) {
-                    Text("· resets \(reset.formatted(.dateTime.weekday(.abbreviated).hour().minute())), \(when)")
-                }
-                if let pace = UsageReport.pace(window, at: now) { Text("· \(pace)") }
-            }
-            .font(Theme.captionFont.monospacedDigit())
-            .foregroundStyle(Theme.textTertiary)
-        }
-        .accessibilityElement(children: .combine)
-    }
-
-    /// "5h" reads as "5-hour limit", "7d" as "Weekly limit".
-    static func title(_ name: String) -> String {
-        switch name {
-        case "5h": "5-hour limit"
-        case "7d": "Weekly limit"
-        default: name.hasSuffix("d") || name.hasSuffix("h") ? "\(name) limit" : name
         }
     }
 }

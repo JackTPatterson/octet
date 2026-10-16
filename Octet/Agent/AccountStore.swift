@@ -81,6 +81,9 @@ final class AccountStore: ObservableObject {
     /// its usual spacing, for someone looking at the chip.
     func refresh(force: Bool = false, eager: Bool = false) {
         guard !refreshing else { return }
+        #if DEBUG
+        guard !showingSample else { return }
+        #endif
         let now = Date()
         let checkSignIn = force || now.timeIntervalSince(lastSignInCheck) >= Self.signInEvery
         // Read here, on the main actor, and handed to the background work.
@@ -197,6 +200,27 @@ final class AccountStore: ObservableObject {
         }
         set(merged)
     }
+
+    #if DEBUG
+    /// Set while sample readings stand in for real ones, so a refresh
+    /// doesn't replace them.
+    private var showingSample = false
+
+    /// Verification hook: sample readings for Claude and Codex, one window
+    /// of each on the way to its limit, kept from refreshes and not saved.
+    func debugShowSample() {
+        showingSample = true
+        let now = Date()
+        accounts["claude"] = AgentAccount(agent: "claude", kind: .subscription, plan: "Max", windows: [
+            UsageWindow(name: "5h", used: 0.38, resetsAt: now.addingTimeInterval(2 * 3600 + 600)),
+            UsageWindow(name: "7d", used: 0.74, resetsAt: now.addingTimeInterval(2 * 86_400 + 5 * 3600)),
+        ], updatedAt: now.addingTimeInterval(-120))
+        accounts["codex"] = AgentAccount(agent: "codex", kind: .subscription, plan: "Codex", windows: [
+            UsageWindow(name: "5h", used: 0.93, resetsAt: now.addingTimeInterval(40 * 60)),
+            UsageWindow(name: "7d", used: 0.12, resetsAt: now.addingTimeInterval(6 * 86_400)),
+        ], updatedAt: now.addingTimeInterval(-30))
+    }
+    #endif
 
     private func set(_ account: AgentAccount) {
         record(account)

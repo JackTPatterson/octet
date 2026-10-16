@@ -74,19 +74,13 @@ struct UsageReport: Equatable {
     /// Where a window should be by now if the allowance were spread evenly
     /// over it, 0…1; nil when its length or reset isn't known.
     static func expected(_ window: UsageWindow, at now: Date) -> Double? {
-        guard let resetsAt = window.resetsAt, let duration = UsageRate.duration(named: window.name), duration > 0 else { return nil }
-        let elapsed = duration - resetsAt.timeIntervalSince(now)
-        return min(1, max(0, elapsed / duration))
+        window.elapsedShare(at: now)
     }
 
     /// "Ahead of pace", "on pace", "under pace" for a window, by more than
     /// a tenth of it either way.
     static func pace(_ window: UsageWindow, at now: Date) -> String? {
-        guard let expected = expected(window, at: now) else { return nil }
-        let difference = window.used - expected
-        if difference > 0.1 { return "ahead of pace" }
-        if difference < -0.1 { return "under pace" }
-        return "on pace"
+        window.pace(at: now)?.phrase
     }
 
     /// The level a share of something is at, for color and words.
