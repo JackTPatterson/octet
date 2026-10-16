@@ -14,7 +14,7 @@ struct LayoutPickerButton: View {
 
     var body: some View {
         let layouts = host.layouts
-        if true {
+        Group {
             Button { open.toggle() } label: {
                 MonitorGlyph()
                     .foregroundStyle(open || hovered ? Theme.textPrimary : Theme.textSecondary)
@@ -24,7 +24,6 @@ struct LayoutPickerButton: View {
             }
             .buttonStyle(.plain)
             .onHover { hovered = $0 }
-            .help("Arrange windows on this screen")
             .accessibilityLabel("Window layouts")
             .popover(isPresented: $open, arrowEdge: .bottom) {
                 LayoutPickerGrid(layouts: layouts, screen: window.nsWindow?.screen) { frames in
@@ -33,6 +32,14 @@ struct LayoutPickerButton: View {
                 }
             }
         }
+        #if DEBUG
+        // Verification hook: "layouts" opens the picker.
+        .onAppear {
+            guard ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "layouts" else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { open = true }
+        }
+        #endif
+        .help("Arrange windows across your displays")
     }
 }
 

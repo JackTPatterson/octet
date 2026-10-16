@@ -12,7 +12,7 @@ final class MonitorLayoutsTests: XCTestCase {
 
     func testSeveralDisplaysGetOneEachAndTheCurrentComesFirst() {
         let options = MonitorArrangement.across([laptop, portrait], current: 1)
-        XCTAssertEqual(options.first?.title, "One on Each Display")
+        XCTAssertEqual(options.first?.title, "1 on Each Display")
         XCTAssertEqual(options.first?.frames, [portrait, laptop])
         XCTAssertEqual(options[1].frames.count, 4)
     }

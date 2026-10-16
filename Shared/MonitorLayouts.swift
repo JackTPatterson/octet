@@ -22,7 +22,7 @@ struct MonitorArrangement: Identifiable, Equatable {
             .filter { $0.offset != start }.map(\.element).sorted { $0.minX < $1.minX }
         var result: [MonitorArrangement] = []
         if displays.count > 1 {
-            result.append(.init(id: "each.1", title: "One on Each Display", frames: ordered))
+            result.append(.init(id: "each.1", title: "1 on Each Display", frames: ordered))
         }
         for count in [2, 3, 4] {
             let frames = ordered.flatMap { split($0, into: count) }
