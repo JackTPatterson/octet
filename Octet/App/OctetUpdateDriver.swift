@@ -522,7 +522,7 @@ private struct UpdatePromptView: View {
 
 /// A version in a small rounded tag: the one installed quiet, the new one
 /// in the accent colour.
-private struct VersionTag: View {
+struct VersionTag: View {
     let label: String
     let current: Bool
 

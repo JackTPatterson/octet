@@ -339,6 +339,7 @@ struct RootView: View {
                 .environmentObject(window)
         }
         // Above the palette, so a confirm raised while it's open isn't buried.
+        .overlay { AgentUpdateDialog(center: AgentUpdateCenter.shared) }
         .overlay { ConfirmDialog(center: confirmations) }
         // Set Up Devices, over the whole window rather than the panel.
         .overlay { if let model = ui.deviceSetup { DeviceSetupSheet(model: model) } }
@@ -573,6 +574,14 @@ struct RootView: View {
             if let open = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], open.hasPrefix("update-preview") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                     OctetUpdateDriver.showPreview(stage: open.split(separator: ":").dropFirst().first.map(String.init))
+                }
+            }
+            // "agent-updates-preview" shows the agent updates dialog with
+            // sample updates; updating plays out sample results, never a
+            // command. ":run" starts updating at once.
+            if let open = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], open.hasPrefix("agent-updates-preview") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    AgentUpdateCenter.shared.showPreview(stage: open.split(separator: ":").dropFirst().first.map(String.init))
                 }
             }
             // "status-preview" fills the status bar with sample items;

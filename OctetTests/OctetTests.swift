@@ -2623,6 +2623,19 @@ final class AgentDiscoveryTests: XCTestCase {
         XCTAssertFalse(AgentUpdateChecker.isNewer("2.0.0-beta.4", than: "2.0.0"))
         XCTAssertFalse(AgentUpdateChecker.isNewer("2.0.0", than: "2.0.0"))
     }
+
+    func testSkippedAgentVersionsStayQuietUntilANewerRelease() {
+        let claude = AgentUpdate(id: "claude", displayName: "Claude Code", current: "2.4.1", latest: "2.5.0", command: "claude update")
+        let codex = AgentUpdate(id: "codex", displayName: "Codex", current: "0.98.0", latest: "0.99.0", command: "codex update")
+        XCTAssertEqual(AgentUpdateSelection.signature([claude, codex]), "claude:2.5.0|codex:0.99.0")
+
+        let skipped = AgentUpdateSelection.skipping([claude], in: ["claude:2.4.9", "pi:1.0.0"])
+        XCTAssertEqual(skipped, ["claude:2.5.0", "pi:1.0.0"])
+        XCTAssertEqual(AgentUpdateSelection.pending([claude, codex], skipped: skipped), [codex])
+
+        let newer = AgentUpdate(id: "claude", displayName: "Claude Code", current: "2.4.1", latest: "2.6.0", command: "claude update")
+        XCTAssertEqual(AgentUpdateSelection.pending([newer], skipped: skipped), [newer])
+    }
 }
 
 final class WorkingTreeChangesTests: XCTestCase {

@@ -86,3 +86,32 @@ enum AgentUpdateChecker {
         return (lhs.1 ?? "").localizedStandardCompare(rhs.1 ?? "") == .orderedDescending
     }
 }
+
+/// Which found updates are worth asking about: the ones not skipped, and
+/// not the exact set asked about last time.
+enum AgentUpdateSelection {
+    /// One release of one tool, as remembered by "Skip These Versions".
+    static func key(_ update: AgentUpdate) -> String { "\(update.id):\(update.latest)" }
+
+    /// The set as a whole; asking again about the same set is noise.
+    static func signature(_ updates: [AgentUpdate]) -> String {
+        updates.map(key).joined(separator: "|")
+    }
+
+    /// Drops releases the person chose to skip. A newer release of the same
+    /// tool has a different key, so it's asked about again.
+    static func pending(_ updates: [AgentUpdate], skipped: Set<String>) -> [AgentUpdate] {
+        updates.filter { !skipped.contains(key($0)) }
+    }
+
+    /// Skipped keys after skipping `updates`: one entry per tool, the
+    /// newest skipped release, so the list can't grow without bound.
+    static func skipping(_ updates: [AgentUpdate], in skipped: Set<String>) -> Set<String> {
+        let ids = Set(updates.map(\.id))
+        let kept = skipped.filter { entry in
+            guard let id = entry.split(separator: ":", maxSplits: 1).first else { return false }
+            return !ids.contains(String(id))
+        }
+        return kept.union(updates.map(key))
+    }
+}
