@@ -229,7 +229,9 @@ struct SidePanel: View {
             }
         case .pullRequests:
             if let directory = planeDirectory {
-                PullRequestListPlane(directory: directory) { number in
+                PullRequestListPlane(directory: directory, openFullPage: {
+                    if window.ui.pullRequests == nil { window.togglePullRequests(scope: .project) }
+                }) { number in
                     MotionPreferences.shared.perform(.sidebar) { ui.showPlane(.pullRequest, number: number) }
                 }
             } else {

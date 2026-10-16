@@ -288,6 +288,8 @@ struct OctetCommands: Commands {
                 .keyboardShortcut(OctetShortcut.visualTwin.keyboardShortcut)
             Button(OctetShortcut.review.title) { KeyWindow.act { $0.toggleReview() } }
                 .keyboardShortcut(OctetShortcut.review.keyboardShortcut)
+            // No default shortcut: the palette and the panel reach it too.
+            Button("Pull Requests") { KeyWindow.act { $0.togglePullRequests() } }
             // The workspace's agents, else every agent, else the tab's panes.
             Button(OctetShortcut.broadcast.title) {
                 KeyWindow.act { window in

@@ -8,20 +8,24 @@ import SwiftUI
 struct PullRequestPlane: View {
     let directory: String
     let number: Int?
+    /// "owner/name" for a PR outside `directory`'s repository (the Pull
+    /// Requests page); nil is the folder's own, as the panel uses it.
+    let repo: String?
     /// Sends a prompt to the agent in front.
     let askAgent: (String) -> Void
     /// Number, tone and title, for the tab chip.
     let onSummary: (Int, PullRequestTone, String) -> Void
     @StateObject private var model: PullRequestPlaneModel
 
-    init(directory: String, number: Int?,
+    init(directory: String, number: Int?, repo: String? = nil,
          askAgent: @escaping (String) -> Void,
          onSummary: @escaping (Int, PullRequestTone, String) -> Void) {
         self.directory = directory
         self.number = number
+        self.repo = repo
         self.askAgent = askAgent
         self.onSummary = onSummary
-        _model = StateObject(wrappedValue: PullRequestPlaneModel(directory: directory, number: number))
+        _model = StateObject(wrappedValue: PullRequestPlaneModel(directory: directory, number: number, repo: repo))
     }
 
     var body: some View {
@@ -298,8 +302,10 @@ private struct PullRequestTopRow: View {
             Spacer(minLength: 6)
             PullRequestPrimaryControl(model: model, detail: detail, askAgent: askAgent)
                 .layoutPriority(1)
-            PullRequestCheckoutMenu(model: model, narrow: narrow)
-                .layoutPriority(1)
+            if model.canCheckOut {
+                PullRequestCheckoutMenu(model: model, narrow: narrow)
+                    .layoutPriority(1)
+            }
             PullRequestMoreMenu(model: model, detail: detail, askAgent: askAgent)
                 .layoutPriority(1)
         }
@@ -603,7 +609,8 @@ private struct PullRequestHeader: View {
                 .lineLimit(1)
             Spacer(minLength: 6)
             if detail.isOpen {
-                OctetCopyText(text: "gh pr checkout \(detail.number)")
+                // Another repository's PR needs -R to check out anywhere.
+                OctetCopyText(text: "gh pr checkout \(detail.number)" + (model.repo.map { " -R \($0)" } ?? ""))
                     .layoutPriority(-1)
             }
         }

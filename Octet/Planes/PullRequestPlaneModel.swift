@@ -26,6 +26,10 @@ final class PullRequestPlaneModel: ObservableObject {
     }
 
     let directory: String
+    /// "owner/name" when the PR lives in another repository than
+    /// `directory`'s (the Pull Requests page): every gh call then names it
+    /// with `-R`. Nil keeps the folder's own repository, as before.
+    let repo: String?
     /// The PR asked for; nil follows whatever branch is checked out.
     private(set) var requestedNumber: Int?
 
@@ -72,10 +76,18 @@ final class PullRequestPlaneModel: ObservableObject {
 
     static let pollInterval: TimeInterval = 60
 
-    init(directory: String, number: Int?) {
+    init(directory: String, number: Int?, repo: String? = nil) {
         self.directory = directory
         self.requestedNumber = number
+        self.repo = repo
     }
+
+    /// `-R owner/name` for gh's pr and label commands, when `repo` is set.
+    private var repoFlag: [String] { repo.map { ["-R", $0] } ?? [] }
+
+    /// Checking out switches `directory`'s branch, which only makes sense
+    /// for a PR of that folder's own repository.
+    var canCheckOut: Bool { repo == nil }
 
     /// The PR's number for gh: the one asked for, else the one found.
     private var target: String? { (requestedNumber ?? detail?.number).map(String.init) }
@@ -114,13 +126,18 @@ final class PullRequestPlaneModel: ObservableObject {
         let generation = self.generation, directory = self.directory
         let number = requestedNumber.map(String.init)
         let needsRepository = repository == nil || !quietly
+        let repoFlag = self.repoFlag, otherRepository = self.repo
         if !quietly { refreshing = true }
         DispatchQueue.global(qos: .userInitiated).async {
-            let view = LoginShell.run(["gh", "pr", "view"] + (number.map { [$0] } ?? [])
+            let view = LoginShell.run(["gh", "pr", "view"] + (number.map { [$0] } ?? []) + repoFlag
                                       + ["--json", PullRequestDetail.fields], in: directory)
-            let branch = LoginShell.run(["git", "branch", "--show-current"], in: directory)
+            // Another repository's PR is never the branch checked out here.
+            let branch = otherRepository == nil
+                ? LoginShell.run(["git", "branch", "--show-current"], in: directory)
+                : LoginShell.Result(status: 1, output: "")
             let repo = needsRepository
-                ? LoginShell.run(["gh", "repo", "view", "--json", PullRequestRepository.fields], in: directory) : nil
+                ? LoginShell.run(["gh", "repo", "view"] + (otherRepository.map { [$0] } ?? [])
+                                 + ["--json", PullRequestRepository.fields], in: directory) : nil
             let parsed = view.status == 0 ? PullRequestDetail.parse(view.output) : nil
             let repository = repo.flatMap { $0.status == 0 ? PullRequestRepository.parse($0.output) : nil }
             DispatchQueue.main.async {
@@ -182,10 +199,10 @@ final class PullRequestPlaneModel: ObservableObject {
         guard diffFiles == nil, !diffLoading, let number = target, let detail else { return }
         diffLoading = true
         loadReviewLayer()
-        let directory = self.directory
+        let directory = self.directory, repoFlag = self.repoFlag
         let stamp = "\(detail.number)·\(detail.updatedAt?.timeIntervalSince1970 ?? 0)·\(detail.additions)·\(detail.deletions)"
         DispatchQueue.global(qos: .userInitiated).async {
-            let result = LoginShell.run(["gh", "pr", "diff", number, "--color=never"], in: directory)
+            let result = LoginShell.run(["gh", "pr", "diff", number, "--color=never"] + repoFlag, in: directory)
             let files = result.status == 0 ? ReviewDiff.parse(result.output) : nil
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
@@ -452,7 +469,7 @@ final class PullRequestPlaneModel: ObservableObject {
     }
 
     private func pr(_ verb: String, _ extra: [String] = []) -> [String]? {
-        target.map { ["gh", "pr", verb, $0] + extra }
+        target.map { ["gh", "pr", verb, $0] + repoFlag + extra }
     }
 
     func merge() {
@@ -532,9 +549,9 @@ final class PullRequestPlaneModel: ObservableObject {
 
     func loadLabels() {
         guard repositoryLabels == nil else { return }
-        let directory = self.directory
+        let directory = self.directory, repoFlag = self.repoFlag
         DispatchQueue.global(qos: .userInitiated).async {
-            let result = LoginShell.run(["gh", "label", "list", "--json", "name,color", "--limit", "200"], in: directory)
+            let result = LoginShell.run(["gh", "label", "list"] + repoFlag + ["--json", "name,color", "--limit", "200"], in: directory)
             let labels = PullRequestLabel.parseList(result.output)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated { self.repositoryLabels = labels }
