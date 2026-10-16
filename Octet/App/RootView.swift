@@ -216,8 +216,13 @@ struct RootView: View {
                         TerminalDrawerHost(store: store, ui: ui)
                     }
                     // Room for the panel, which draws over it from the overlay.
+                    // It changes at once, never animated: the terminal then
+                    // resizes and reflows its text one time, while the panel
+                    // slides in over the room, instead of reflowing on every
+                    // frame of the slide.
                     Color.clear
                         .frame(width: ui.sidePanelVisible && !ui.sidePanelMaximized ? ui.sidePanelWidth : 0)
+                        .transaction { $0.animation = nil }
                 }
                 // The right panel: a strip of planes over the one in front.
                 // In an overlay so that maximized it covers the terminal

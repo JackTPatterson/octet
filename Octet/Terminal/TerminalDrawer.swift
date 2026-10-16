@@ -592,6 +592,8 @@ final class DrawerTerminals: ObservableObject {
 struct TerminalDrawerHost: View {
     @ObservedObject var store: SessionStore
     @ObservedObject var ui: UIState
+    /// The drawer's room under the terminal, changed without animation.
+    @State private var room = false
 
     var body: some View {
         let height = clampedHeight
@@ -600,8 +602,17 @@ struct TerminalDrawerHost: View {
             TerminalDrawer(store: store, ui: ui)
                 .frame(height: height)
         }
-        .frame(height: ui.terminalDrawerVisible ? height + 1 : 0, alignment: .top)
+        // Slides up into its room; the room itself changes at once, so the
+        // terminal above resizes and reflows one time rather than on every
+        // frame of an animated height.
+        .offset(y: ui.terminalDrawerVisible ? 0 : height + 1)
+        .frame(height: room ? height + 1 : 0, alignment: .top)
         .clipped()
+        .onChange(of: ui.terminalDrawerVisible, initial: true) { _, visible in
+            var instant = Transaction()
+            instant.disablesAnimations = true
+            withTransaction(instant) { room = visible }
+        }
         .overlay(alignment: .top) {
             if ui.terminalDrawerVisible { TerminalDrawerResizeHandle(ui: ui) }
         }
