@@ -13,8 +13,17 @@ final class PullRequestPlaneModel: ObservableObject {
         case failed(PullRequestLoadFailure)
     }
 
-    /// What's in the review composer's verdict picker.
-    enum ReviewVerdict: Hashable { case comment, approve, requestChanges }
+    /// What's in the review composer's verdict picker; the REST event too,
+    /// for a review that carries line comments.
+    typealias ReviewVerdict = PullRequestReviewEvent
+
+    /// The line comment being written under a diff line.
+    struct LineDraft: Equatable {
+        let anchor: PullRequestLineAnchor
+        /// The line's code, for the agent's prompt.
+        let code: String
+        var text = ""
+    }
 
     let directory: String
     /// The PR asked for; nil follows whatever branch is checked out.
@@ -42,7 +51,20 @@ final class PullRequestPlaneModel: ObservableObject {
     @Published var reviewDraft = ""
     @Published var reviewVerdict: ReviewVerdict = .comment
 
+    // The Code tab's review layer, read with the diff.
+    /// Your viewed marks and the PR's node id; nil until read, or when the
+    /// read failed (the checkboxes then don't show).
+    @Published private(set) var viewedState: PullRequestViewedState?
+    /// Review comments already on the PR, by the line they sit on.
+    @Published private(set) var reviewComments: [PullRequestLineAnchor: [PullRequestReviewComment]] = [:]
+    /// Line comments held for the next review ("Add to Review").
+    @Published private(set) var pendingComments: [PullRequestPendingComment] = []
+    /// The line comment open under a line; one at a time, as in T3 Code.
+    @Published var lineDraft: LineDraft?
+
     private var generation = 0
+    /// Bumped when the PR changes, so a late answer for the old one is dropped.
+    private var reviewLayerGeneration = 0
     private var timer: Timer?
     /// The diff's freshness: when the PR changes, it's read again.
     private var diffStamp: String?
@@ -82,6 +104,7 @@ final class PullRequestPlaneModel: ObservableObject {
         diffFiles = nil
         diffStamp = nil
         chosenMethod = nil
+        resetReviewLayer()
         phase = .loading
         refresh()
     }
@@ -105,7 +128,11 @@ final class PullRequestPlaneModel: ObservableObject {
                     guard self.generation == generation else { return }
                     self.refreshing = false
                     self.currentBranch = branch.status == 0 && !branch.output.isEmpty ? branch.output : nil
-                    if let repository, repository != self.repository { self.repository = repository }
+                    if let repository, repository != self.repository {
+                        self.repository = repository
+                        // The Code tab opened before the repository was known.
+                        if self.diffWanted, self.viewedState == nil { self.loadReviewLayer() }
+                    }
                     if let parsed {
                         self.apply(parsed)
                     } else {
@@ -132,6 +159,8 @@ final class PullRequestPlaneModel: ObservableObject {
             diffFiles = nil
             diffStamp = nil
             chosenMethod = nil
+            // Another PR (the branch moved): its comments and marks aren't these.
+            if detail != nil { resetReviewLayer() }
         }
         if parsed != detail { detail = parsed }
         if phase != .loaded { phase = .loaded }
@@ -152,6 +181,7 @@ final class PullRequestPlaneModel: ObservableObject {
         diffWanted = true
         guard diffFiles == nil, !diffLoading, let number = target, let detail else { return }
         diffLoading = true
+        loadReviewLayer()
         let directory = self.directory
         let stamp = "\(detail.number)·\(detail.updatedAt?.timeIntervalSince1970 ?? 0)·\(detail.additions)·\(detail.deletions)"
         DispatchQueue.global(qos: .userInitiated).async {
@@ -171,6 +201,89 @@ final class PullRequestPlaneModel: ObservableObject {
                 }
             }
         }
+    }
+
+    // MARK: - Viewed marks and review comments
+
+    private func resetReviewLayer() {
+        reviewLayerGeneration += 1
+        viewedState = nil
+        reviewComments = [:]
+        pendingComments = []
+        lineDraft = nil
+    }
+
+    /// Reads your viewed marks (GraphQL) and the review comments (REST)
+    /// beside the diff. Both are read-only; a failure leaves the Code tab
+    /// as it was without them, since the diff still reads fine.
+    func loadReviewLayer() {
+        guard let repository = repository?.nameWithOwner, let number = detail?.number else { return }
+        let directory = self.directory, generation = reviewLayerGeneration
+        DispatchQueue.global(qos: .userInitiated).async {
+            let viewed = PullRequestViewedState.arguments(repository: repository, number: number)
+                .map { LoginShell.run($0, in: directory) }
+            let comments = LoginShell.run(PullRequestReviewComment.arguments(repository: repository, number: number), in: directory)
+            let viewedState = viewed.flatMap { $0.status == 0 ? PullRequestViewedState.parse($0.output) : nil }
+            let parsed = comments.status == 0 ? PullRequestReviewComment.parseList(comments.output) : nil
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard self.reviewLayerGeneration == generation else { return }
+                    if let viewedState, viewedState != self.viewedState { self.viewedState = viewedState }
+                    if let parsed {
+                        let threads = PullRequestReviewComment.byAnchor(parsed)
+                        if threads != self.reviewComments { self.reviewComments = threads }
+                    }
+                    #if DEBUG
+                    self.runDebugCodeActions()
+                    #endif
+                }
+            }
+        }
+    }
+
+    func isViewed(_ path: String) -> Bool { viewedState?.isViewed(path) ?? false }
+
+    /// Marks a file viewed on GitHub, or not. Shown at once; put back if
+    /// GitHub refuses.
+    func setViewed(_ path: String, _ viewed: Bool) {
+        guard let state = viewedState, state.isViewed(path) != viewed else { return }
+        let arguments = PullRequestViewedState.markArguments(pullRequestId: state.pullRequestId, path: path, viewed: viewed)
+        viewedState?.viewed[path] = viewed
+        perform("viewed:" + path, arguments, success: nil,
+                failure: viewed ? "Couldn't mark \(path) viewed" : "Couldn't mark \(path) unviewed",
+                refresh: false) { ok in
+            if !ok { self.viewedState?.viewed[path] = !viewed }
+        }
+    }
+
+    // MARK: - Line comments
+
+    func beginLineComment(on line: ReviewDiff.Line, in path: String) {
+        guard let anchor = PullRequestLineAnchor(path: path, line: line) else { return }
+        if lineDraft?.anchor == anchor { return }
+        lineDraft = LineDraft(anchor: anchor, code: line.text)
+    }
+
+    /// "Add to Review": held until the review is submitted.
+    func addDraftToReview() {
+        guard let draft = lineDraft, !Self.isBlank(draft.text) else { return }
+        pendingComments.append(PullRequestPendingComment(anchor: draft.anchor, body: draft.text))
+        lineDraft = nil
+    }
+
+    /// "Add to Agent": the prompt for the agent; the draft is done with.
+    func takeDraftForAgent() -> String? {
+        guard let draft = lineDraft, !Self.isBlank(draft.text), let number = detail?.number else { return nil }
+        lineDraft = nil
+        return PullRequestPendingComment.agentPrompt(number: number, anchor: draft.anchor, code: draft.code, text: draft.text)
+    }
+
+    func removePending(_ comment: PullRequestPendingComment) {
+        pendingComments.removeAll { $0.id == comment.id }
+    }
+
+    private static func isBlank(_ text: String) -> Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     // MARK: - Merge method
@@ -196,14 +309,17 @@ final class PullRequestPlaneModel: ObservableObject {
 
     /// Runs one gh command for the PR, says how it went, and reads the PR
     /// again so the plane shows the result.
-    private func perform(_ key: String, _ arguments: [String], success: String?, failure: String,
-                         then: ((Bool) -> Void)? = nil) {
+    /// `input` is the command's stdin (a REST body). `refresh: false` skips
+    /// reading the PR again, for actions it doesn't show (viewed marks).
+    private func perform(_ key: String, _ arguments: [String], input: Data? = nil, success: String?, failure: String,
+                         refresh: Bool = true, then: ((Bool) -> Void)? = nil) {
         guard !busy.contains(key) else { return }
         #if DEBUG
         // Verification: write the command instead of running it, so every
         // action's real code path can be checked without touching GitHub.
         if let log = Self.dryRunLog {
-            let line = arguments.map { $0.contains(" ") || $0.isEmpty ? "'\($0)'" : $0 }.joined(separator: " ")
+            var line = arguments.map { $0.contains(" ") || $0.isEmpty ? "'\($0)'" : $0 }.joined(separator: " ")
+            if let input { line += " <<< " + String(decoding: input, as: UTF8.self) }
             if let handle = FileHandle(forWritingAtPath: log) ?? {
                 FileManager.default.createFile(atPath: log, contents: nil)
                 return FileHandle(forWritingAtPath: log)
@@ -220,7 +336,7 @@ final class PullRequestPlaneModel: ObservableObject {
         busy.insert(key)
         let directory = self.directory
         DispatchQueue.global(qos: .userInitiated).async {
-            let result = LoginShell.run(arguments, in: directory)
+            let result = LoginShell.run(arguments, in: directory, input: input)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     self.busy.remove(key)
@@ -230,7 +346,7 @@ final class PullRequestPlaneModel: ObservableObject {
                         ToastCenter.shared.fail(nil, failure, detail: Self.lastLines(result.output))
                     }
                     then?(result.status == 0)
-                    self.refresh(quietly: true)
+                    if refresh { self.refresh(quietly: true) }
                 }
             }
         }
@@ -274,6 +390,32 @@ final class PullRequestPlaneModel: ObservableObject {
             submitReview()
         }
         createInBrowser()
+        // The Code tab's actions need the viewed marks first.
+        loadReviewLayer()
+    }
+
+    private static var debugCodeActionsRan = false
+
+    /// The Code tab's writes, once its review layer has been read: each
+    /// file's viewed mark flipped and flipped back, then a review carrying
+    /// a comment on an added line and one on a removed line.
+    private func runDebugCodeActions() {
+        guard Self.dryRunLog != nil, !Self.debugCodeActionsRan,
+              ProcessInfo.processInfo.environment["OCTET_PR_ACTIONS"] == "all",
+              let state = viewedState, let path = state.viewed.keys.sorted().first else { return }
+        Self.debugCodeActionsRan = true
+        let was = state.isViewed(path)
+        setViewed(path, !was)
+        setViewed(path, was)
+        beginLineComment(on: ReviewDiff.Line(kind: .added, oldNumber: nil, newNumber: 3, text: "added", index: 0), in: path)
+        lineDraft?.text = "Why this line?"
+        addDraftToReview()
+        beginLineComment(on: ReviewDiff.Line(kind: .removed, oldNumber: 2, newNumber: nil, text: "removed", index: 1), in: path)
+        lineDraft?.text = "Keep \"this\" one"
+        addDraftToReview()
+        reviewVerdict = .requestChanges
+        reviewDraft = "Two line comments"
+        submitReview()
     }
     #endif
 
@@ -385,12 +527,14 @@ final class PullRequestPlaneModel: ObservableObject {
         }
     }
 
-    /// Changes requested need a reason; the other verdicts don't.
+    /// Changes requested need a reason; a comment needs a body or a line
+    /// comment; approving needs neither.
     var canSubmitReview: Bool {
-        let body = reviewDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        return reviewVerdict == .approve || !body.isEmpty
+        PullRequestReviewEvent.canSubmit(reviewVerdict, body: reviewDraft, lineComments: pendingComments.count)
     }
 
+    /// With no line comments, `gh pr review`. With them, the REST reviews
+    /// endpoint, which gh's review command can't feed line comments to.
     func submitReview() {
         guard canSubmitReview else { return }
         let body = reviewDraft.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -399,12 +543,24 @@ final class PullRequestPlaneModel: ObservableObject {
         case .requestChanges: ("--request-changes", "Changes requested")
         case .comment: ("--comment", "Review submitted")
         }
-        guard let arguments = pr("review", [flag] + (body.isEmpty ? [] : ["--body", body])) else { return }
-        perform("review", arguments, success: success, failure: "Couldn't submit the review") { ok in
-            if ok {
-                self.reviewDraft = ""
-                self.reviewVerdict = .comment
-            }
+        let pending = pendingComments
+        let done: (Bool) -> Void = { ok in
+            guard ok else { return }
+            self.reviewDraft = ""
+            self.reviewVerdict = .comment
+            // Only the ones sent: any added while it was on its way stay.
+            let sent = Set(pending.map(\.id))
+            self.pendingComments.removeAll { sent.contains($0.id) }
+            if !pending.isEmpty { self.loadReviewLayer() }
+        }
+        if pending.isEmpty {
+            guard let arguments = pr("review", [flag] + (body.isEmpty ? [] : ["--body", body])) else { return }
+            perform("review", arguments, success: success, failure: "Couldn't submit the review", then: done)
+        } else {
+            guard let repository = repository?.nameWithOwner, let number = detail?.number else { return }
+            perform("review", PullRequestReviewSubmission.arguments(repository: repository, number: number),
+                    input: PullRequestReviewSubmission.body(event: reviewVerdict, body: body, comments: pending),
+                    success: success, failure: "Couldn't submit the review", then: done)
         }
     }
 
