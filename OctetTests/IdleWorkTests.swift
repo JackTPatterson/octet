@@ -202,4 +202,17 @@ final class PaneLayoutTests: XCTestCase {
         let pictures = manifest.contributes.layouts.map { $0.layout.rects().map { "\($0.x),\($0.y),\($0.width),\($0.height)" } }
         XCTAssertEqual(Set(pictures).count, pictures.count)
     }
+
+    func testMovingToIdleKeepsTheRealLastUse() {
+        var activity = WorkspaceActivity()
+        let used = Date(timeIntervalSince1970: 1_800_000_000)
+        activity.touch("w1", now: used)
+        activity.markIdle("w1", now: used.addingTimeInterval(120))
+        XCTAssertEqual(activity.lastActive("w1"), used)
+        XCTAssertEqual(WorkspaceActivity.ageLabel(since: activity.lastActive("w1"), now: used.addingTimeInterval(180)), "3m")
+        // Never used: counts from now, not from the year 1.
+        activity.markIdle("w2", now: used)
+        XCTAssertEqual(activity.lastActive("w2"), used)
+        XCTAssertEqual(WorkspaceActivity.ageLabel(since: .distantPast), "")
+    }
 }

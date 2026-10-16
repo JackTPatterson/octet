@@ -128,9 +128,11 @@ struct WorkspaceActivity: Equatable {
             ?? active[..<index].last(where: candidates.contains)
     }
 
-    /// Backdates a workspace so it reads as idle until it is used again.
-    mutating func markIdle(_ workspaceId: String) {
-        stamps[workspaceId] = .distantPast
+    /// Moved to Idle by hand: the parked set keeps it there, so its last
+    /// use stays true (backdating it read as "105,000w" in Idle, and made a
+    /// minutes-old workspace due to sleep). One never stamped counts from now.
+    mutating func markIdle(_ workspaceId: String, now: Date = Date()) {
+        if stamps[workspaceId] == nil || stamps[workspaceId] == .distantPast { stamps[workspaceId] = now }
     }
 
     /// Counts a workspace as used just now.
@@ -140,7 +142,8 @@ struct WorkspaceActivity: Equatable {
 
     /// Compact age like `45m`, `3h`, `2d`.
     static func ageLabel(since date: Date?, now: Date = Date()) -> String {
-        guard let date else { return "" }
+        // Over a century is no real use: an old backdated stamp.
+        guard let date, now.timeIntervalSince(date) < 100 * 365 * 86_400 else { return "" }
         let seconds = max(0, now.timeIntervalSince(date))
         switch seconds {
         case ..<60: return "now"
