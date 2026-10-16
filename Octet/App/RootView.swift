@@ -1040,6 +1040,8 @@ private struct TitleBar: View {
             .buttonStyle(.plain)
             .help("Toggle Sidebar (⌘B)")
             .accessibilityLabel(ui.sidebarVisible ? "Hide sidebar" : "Show sidebar")
+            // Pane layouts from plugins (Pane Layouts ships with Octet).
+            LayoutPickerButton()
             if let stage = ReleaseStage.current {
                 ReleaseStageChip(stage: stage)
             }
@@ -1047,8 +1049,6 @@ private struct TitleBar: View {
             // A connected engine is the normal state and says nothing worth a
             // badge; only the wait for one does.
             if !store.isConnected { connectingIndicator }
-            // Pane layouts from plugins (Pane Layouts ships with Octet).
-            LayoutPickerButton()
             AccountChips(runningAgents: runningAgents)
                 .padding(.trailing, 12)
         }
