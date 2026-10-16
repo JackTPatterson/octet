@@ -326,6 +326,8 @@ struct RootView: View {
         }
         // Above the palette, so a confirm raised while it's open isn't buried.
         .overlay { ConfirmDialog(center: confirmations) }
+        // Set Up Devices, over the whole window rather than the panel.
+        .overlay { if let model = ui.deviceSetup { DeviceSetupSheet(model: model) } }
         .overlay { PastePreviewDialog(center: PastePreviewCenter.shared, store: store) }
         .animation(motion.animation(.palette, .smooth(duration: 0.16)), value: ui.paletteVisible)
         .animation(motion.animation(.sidebar), value: ui.sidebarVisible)
@@ -506,6 +508,14 @@ struct RootView: View {
                         } else {
                             ui.showPlane(.device)
                         }
+                    case "devicefloat" where parts.count > 2 && DeviceFloat.debugClaimHook():
+                        // "planes:devicefloat:<id>" opens that device, then
+                        // hides the panel once it streams, which floats it.
+                        let plane = Plane.make(.device, deviceId: parts[2...].joined(separator: ":"))
+                        ui.planes.append(plane)
+                        ui.activePlaneId = plane.id
+                        ui.sidePanelVisible = true
+                        DeviceFloat.debugWhenStreaming(planeId: plane.id) { ui.sidePanelVisible = false }
                     default: break
                     }
                 }
@@ -959,6 +969,12 @@ final class UIState: ObservableObject {
         didSet {
             UserDefaults.standard.set(sidePanelVisible, forKey: "octet.sidePanelVisible")
             if !sidePanelVisible {
+                // T3 Code: hiding the panel over a streaming device floats
+                // it over the terminal. Said before the plane hears it's
+                // hidden, so the stream is handed over, not restarted.
+                if let plane = activePlane, plane.kind == .device {
+                    MainActor.assumeIsolated { DeviceFloat.shared.panelHiding(planeId: plane.id) }
+                }
                 sidePanelAutoOpened = false
                 sidePanelMaximized = false
             }
@@ -974,6 +990,9 @@ final class UIState: ObservableObject {
         let at = Date()
     }
     @Published var sidePanelJump: SidePanelJump?
+    /// The Device plane whose Set Up Devices dialog is up (or was last),
+    /// drawn over the window; it shows while the model's `setupShowing` is.
+    @Published var deviceSetup: DeviceHubModel?
 
     // MARK: Planes
 

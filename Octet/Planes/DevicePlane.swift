@@ -5,18 +5,28 @@ import SwiftUI
 /// After T3 Code's device hub, done natively: simctl, AXe and adb rather
 /// than a Node hub.
 struct DevicePlane: View {
+    /// The plane's tab, so the floating preview can bring it back.
+    let planeId: String
     let deviceId: String?
     let visible: Bool
     let onOpen: (DeviceInfo) -> Void
     let askAgent: (String) -> Void
+    /// Puts this plane in front of a visible panel (Open in Panel).
+    let showPlane: () -> Void
+    /// Shows this plane's Set Up Devices dialog over the window.
+    let presentSetup: (DeviceHubModel) -> Void
     @StateObject private var model: DeviceHubModel
 
-    init(deviceId: String?, visible: Bool, onOpen: @escaping (DeviceInfo) -> Void,
-         askAgent: @escaping (String) -> Void) {
+    init(planeId: String, deviceId: String?, visible: Bool, onOpen: @escaping (DeviceInfo) -> Void,
+         askAgent: @escaping (String) -> Void, showPlane: @escaping () -> Void,
+         presentSetup: @escaping (DeviceHubModel) -> Void) {
+        self.planeId = planeId
         self.deviceId = deviceId
         self.visible = visible
         self.onOpen = onOpen
         self.askAgent = askAgent
+        self.showPlane = showPlane
+        self.presentSetup = presentSetup
         _model = StateObject(wrappedValue: DeviceHubModel(deviceId: deviceId))
     }
 
@@ -25,19 +35,39 @@ struct DevicePlane: View {
             switch model.phase {
             case .picker:
                 DevicePicker(model: model) { model.open($0, onOpen: onOpen) }
+            case .live where model.floating, .connecting where model.floating:
+                // The float has the one stream; the plane says where it went.
+                DeviceFloatingNotice(model: model) { DeviceFloat.shared.openInPanel() }
             case .live:
-                DeviceLiveView(model: model, askAgent: askAgent)
+                DeviceLiveView(model: model, askAgent: askAgent) { DeviceFloat.shared.float(planeId: planeId) }
             default:
                 DeviceStatusView(model: model)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.terminalBackground)
-        .overlay { DeviceSetupSheet(model: model) }
-        .onAppear { model.appear(visible: visible) }
-        .onDisappear { model.disappear() }
-        .onChange(of: visible) { _, now in model.setVisible(now) }
+        .onAppear {
+            DeviceFloat.shared.register(planeId: planeId, model: model, showPlane: showPlane)
+            model.appear(visible: visible)
+        }
+        .onDisappear {
+            DeviceFloat.shared.unregister(planeId: planeId)
+            model.setupShowing = false
+            model.disappear()
+        }
+        .onChange(of: visible) { _, now in
+            model.setVisible(now)
+            presentSetupIfWanted()
+        }
+        .onChange(of: model.setupShowing) { _, _ in presentSetupIfWanted() }
         .onChange(of: deviceId) { _, now in model.show(id: now) }
+    }
+
+    /// Set Up Devices is drawn over the whole window, where its stepper has
+    /// room; the plane asks for it while it's the one in front, so a plane
+    /// restored behind another doesn't raise it at launch.
+    private func presentSetupIfWanted() {
+        if model.setupShowing && visible { presentSetup(model) }
     }
 }
 
@@ -212,11 +242,40 @@ private struct DeviceStatusView: View {
     }
 }
 
+// MARK: - Floating
+
+/// The plane while its device is in the floating preview: the plane
+/// doesn't stream it a second time.
+private struct DeviceFloatingNotice: View {
+    @ObservedObject var model: DeviceHubModel
+    let openInPanel: () -> Void
+
+    var body: some View {
+        VStack(spacing: 10) {
+            OctetIcon(model.current?.platform == .android ? "device.android"
+                      : model.current?.isTablet == true ? "device.ipad" : "device.iphone", size: 28)
+                .foregroundStyle(Theme.textTertiary)
+            Text("\(model.current?.name ?? "This device") is in a floating window.")
+                .font(Theme.captionFont)
+                .foregroundStyle(Theme.textSecondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                OctetButton(title: "Show Here", kind: .primary, compact: true, action: openInPanel)
+                OctetButton(title: "Close Floating Preview", kind: .ghost, compact: true) { DeviceFloat.shared.close() }
+            }
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
 // MARK: - Live
 
 private struct DeviceLiveView: View {
     @ObservedObject var model: DeviceHubModel
     let askAgent: (String) -> Void
+    let float: () -> Void
     @AppStorage(DeviceSetup.agentAccessKey) private var agentAccess = false
 
     var body: some View {
@@ -224,7 +283,7 @@ private struct DeviceLiveView: View {
             VStack(spacing: 0) {
                 HStack(spacing: 0) {
                     screen(device)
-                    DeviceControlsRail(model: model, device: device, agentAccess: agentAccess) {
+                    DeviceControlsRail(model: model, device: device, agentAccess: agentAccess, float: float) {
                         model.sendScreenshot(to: askAgent)
                     }
                     .padding(.trailing, 8)
@@ -291,6 +350,7 @@ private struct DeviceControlsRail: View {
     @ObservedObject var model: DeviceHubModel
     let device: DeviceInfo
     let agentAccess: Bool
+    let float: () -> Void
     let sendScreenshot: () -> Void
 
     var body: some View {
@@ -339,6 +399,8 @@ private struct DeviceControlsRail: View {
                 if device.platform == .ios {
                     Button("Open in Simulator App") { model.openInSimulatorApp() }
                 }
+                Button("Float Device Over Terminal", action: float)
+                Divider()
                 Button("Choose Another Device") { model.choosePicker() }
                 Button("Set Up Devices…") { model.setupShowing = true }
                 Divider()

@@ -2,8 +2,9 @@ import SwiftUI
 
 /// "Set up devices", after T3 Code's: what this Mac has for simulators and
 /// emulators, AXe for smooth video and touch, and whether agents may use
-/// them. Shown over the Device plane in Octet's dialog look; laid out like
-/// WaitEditorSheet (heading, body, footer between dividers).
+/// them. Shown over the whole window in Octet's dialog look, like
+/// ConfirmDialog; laid out like WaitEditorSheet (heading, body, footer
+/// between dividers).
 struct DeviceSetupSheet: View {
     @ObservedObject var model: DeviceHubModel
     @ObservedObject private var motion = MotionPreferences.shared
@@ -22,6 +23,9 @@ struct DeviceSetupSheet: View {
             }
         }
         .animation(motion.animation(.palette, .smooth(duration: 0.16)), value: model.setupShowing)
+        // Window snapshots keep it on top of the terminal's image.
+        .onAppear { DebugSnapshot.overlay("deviceSetup", model.setupShowing) }
+        .onChange(of: model.setupShowing) { _, showing in DebugSnapshot.overlay("deviceSetup", showing) }
     }
 
     private var card: some View {
@@ -56,7 +60,7 @@ struct DeviceSetupSheet: View {
             Rectangle().fill(Theme.divider).frame(height: 1)
             footer.padding(12)
         }
-        .frame(maxWidth: 460)
+        .frame(maxWidth: 560)
         .background(RoundedRectangle(cornerRadius: 18).fill(Theme.chrome))
         .overlay(alignment: .top) {
             // A faint highlight along the top edge, as Octet's dialogs have.
@@ -72,7 +76,7 @@ struct DeviceSetupSheet: View {
 
     // MARK: Stepper
 
-    /// Every step named when there's room; in a narrow panel, the current one.
+    /// Every step named when there's room; in a narrow window, the current one.
     private var stepper: some View {
         ViewThatFits(in: .horizontal) {
             stepperRow(allTitles: true)

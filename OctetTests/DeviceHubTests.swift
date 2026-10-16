@@ -200,6 +200,70 @@ final class DeviceHubTests: XCTestCase {
         XCTAssertLessThan(DeviceHub.cornerRadius(for: CGSize(width: 100, height: 200), tablet: true), 14)
     }
 
+    // MARK: - Floating preview
+
+    private let phone = CGSize(width: 1179, height: 2556)
+    private let desk = CGRect(x: 0, y: 0, width: 1440, height: 875)
+
+    func testFloatSizeKeepsTheScreenAspectInsideTheMargin() {
+        let size = DeviceFloatGeometry.size(screen: phone, width: 300)
+        XCTAssertEqual(size.width, 300)
+        let inset = DeviceFloatGeometry.inset
+        XCTAssertEqual((size.height - 2 * inset) / (size.width - 2 * inset), phone.height / phone.width, accuracy: 0.01)
+        // Never narrower than the minimum; no screen yet is an upright phone.
+        XCTAssertEqual(DeviceFloatGeometry.size(screen: phone, width: 40).width, DeviceFloatGeometry.minWidth)
+        XCTAssertGreaterThan(DeviceFloatGeometry.size(screen: .zero, width: 300).height, 300)
+    }
+
+    func testFloatOpensBottomRightAtThreeHundredPoints() {
+        let frame = DeviceFloatGeometry.frame(saved: nil, screen: phone, visible: desk)
+        XCTAssertEqual(frame.width, 300)
+        XCTAssertEqual(frame.maxX, desk.maxX - DeviceFloatGeometry.margin)
+        XCTAssertEqual(frame.minY, desk.minY + DeviceFloatGeometry.margin)
+    }
+
+    func testFloatRestoresSavedWidthAndTopLeft() {
+        let saved = CGRect(x: 100, y: 200, width: 240, height: 500)
+        let frame = DeviceFloatGeometry.frame(saved: saved, screen: phone, visible: desk)
+        XCTAssertEqual(frame.width, 240)
+        XCTAssertEqual(frame.minX, 100)
+        XCTAssertEqual(frame.maxY, saved.maxY, accuracy: 0.5)
+        XCTAssertEqual(frame.height, DeviceFloatGeometry.size(screen: phone, width: 240).height)
+    }
+
+    func testFloatIgnoresAFrameOnAScreenThatIsGone() {
+        let saved = CGRect(x: 5000, y: 5000, width: 240, height: 500)
+        let frame = DeviceFloatGeometry.frame(saved: saved, screen: phone, visible: desk)
+        XCTAssertEqual(frame.width, 300)
+        XCTAssertTrue(desk.contains(frame))
+    }
+
+    func testFloatShrinksToFitAShortScreen() {
+        let short = CGRect(x: 0, y: 0, width: 1280, height: 400)
+        let frame = DeviceFloatGeometry.frame(saved: CGRect(x: 0, y: 0, width: 600, height: 1300), screen: phone, visible: short)
+        XCTAssertTrue(short.contains(frame))
+        XCTAssertLessThanOrEqual(frame.height, short.height - 2 * DeviceFloatGeometry.margin)
+        let inset = DeviceFloatGeometry.inset
+        XCTAssertEqual((frame.height - 2 * inset) / (frame.width - 2 * inset), phone.height / phone.width, accuracy: 0.02)
+    }
+
+    func testFloatResizeFollowsTheEdgeThatMovedMore() {
+        let current = DeviceFloatGeometry.size(screen: phone, width: 300)
+        let wider = DeviceFloatGeometry.resize(from: current, to: CGSize(width: 360, height: current.height), screen: phone)
+        XCTAssertEqual(wider.width, 360)
+        let taller = DeviceFloatGeometry.resize(from: current, to: CGSize(width: 300, height: current.height + 120), screen: phone)
+        XCTAssertGreaterThan(taller.width, 300)
+        XCTAssertEqual(taller.height, current.height + 120, accuracy: 1.5)
+    }
+
+    func testFloatCornersRoundLikeAPhoneOnAndroid() {
+        let size = CGSize(width: 300, height: 640)
+        XCTAssertEqual(DeviceFloatGeometry.cornerRadius(size: size, platform: .ios), DeviceFloatGeometry.cornerRadius)
+        XCTAssertEqual(DeviceFloatGeometry.cornerRadius(size: size, platform: .android), 42, accuracy: 0.001)
+        XCTAssertEqual(DeviceFloatGeometry.cornerRadius(size: CGSize(width: 60, height: 120), platform: .android),
+                       DeviceFloatGeometry.cornerRadius)
+    }
+
     // MARK: - Commands
 
     private let iphone = DeviceInfo(id: "U1", name: "iPhone", platform: .ios, version: "iOS 26.0", booted: true)
