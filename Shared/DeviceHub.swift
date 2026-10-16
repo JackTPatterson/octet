@@ -697,6 +697,13 @@ enum DeviceCommands {
     }
 
     /// Trims a failed command's output to what fits in a toast.
+    /// AXe on iOS 27 times out creating its automation session the first
+    /// time a gesture needs one after boot or an app launch; the next try
+    /// finds it ready. Worth a retry, not an error.
+    static func isAutomationWarmup(_ output: String) -> Bool {
+        output.localizedCaseInsensitiveContains("remote automation session")
+    }
+
     static func failureDetail(_ output: String, limit: Int = 240) -> String {
         let text = output.trimmingCharacters(in: .whitespacesAndNewlines)
         if text.isEmpty { return "The command failed with no output." }

@@ -434,7 +434,12 @@ final class DeviceHubModel: ObservableObject {
         if screen == nil, case .swipe = input { return }
         let name = device.name
         inputQueue.async { [weak self] in
-            let out = DeviceRunner.run(argv, timeout: 15)
+            var out = DeviceRunner.run(argv, timeout: 15)
+            // A session still warming up: try again shortly, twice at most.
+            for _ in 0..<2 where !out.ok && DeviceCommands.isAutomationWarmup(out.text) {
+                Thread.sleep(forTimeInterval: 1)
+                out = DeviceRunner.run(argv, timeout: 15)
+            }
             guard !out.ok else { return }
             let detail = DeviceCommands.failureDetail(out.text)
             DispatchQueue.main.async { MainActor.assumeIsolated { self?.inputFailed(name, detail) } }

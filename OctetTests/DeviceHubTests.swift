@@ -358,4 +358,9 @@ final class DeviceHubTests: XCTestCase {
         XCTAssertEqual(DeviceCommands.failureDetail("  "), "The command failed with no output.")
         XCTAssertEqual(DeviceCommands.failureDetail(String(repeating: "x", count: 300), limit: 10), "xxxxxxxxxx…")
     }
+
+    func testAutomationWarmupIsRetried() {
+        XCTAssertTrue(DeviceCommands.isAutomationWarmup("Error: Timed out creating the simulator remote automation session"))
+        XCTAssertFalse(DeviceCommands.isAutomationWarmup("Error: Simulator not booted"))
+    }
 }
