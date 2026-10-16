@@ -256,6 +256,77 @@ enum DeviceHub {
     }
 }
 
+// MARK: - Floating preview
+
+/// The floating device window's geometry, after T3 Code's mini-player: a
+/// card about 300pt wide at the device's aspect, the screen inset by a
+/// thin margin that drags the window.
+enum DeviceFloatGeometry {
+    static let width: CGFloat = 300
+    static let minWidth: CGFloat = 160
+    /// The draggable margin around the screen.
+    static let inset: CGFloat = 6
+    static let cornerRadius: CGFloat = 16
+    /// Gap kept from the screen's edges when placing it.
+    static let margin: CGFloat = 20
+    /// A phone held upright, for before the first frame says otherwise.
+    static let fallbackScreen = CGSize(width: 9, height: 19.5)
+
+    /// The card at `width` for a screen of `screen`'s aspect, margin
+    /// included.
+    static func size(screen: CGSize, width: CGFloat) -> CGSize {
+        let screen = screen.width > 0 && screen.height > 0 ? screen : fallbackScreen
+        let width = max(minWidth, width)
+        let inner = width - 2 * inset
+        return CGSize(width: width, height: (inner * screen.height / screen.width + 2 * inset).rounded())
+    }
+
+    /// What a live resize from `current` toward `proposed` becomes with
+    /// the aspect kept: the edge that moved more leads, so dragging only
+    /// the bottom edge still resizes.
+    static func resize(from current: CGSize, to proposed: CGSize, screen: CGSize) -> CGSize {
+        let screen = screen.width > 0 && screen.height > 0 ? screen : fallbackScreen
+        let byWidth = size(screen: screen, width: proposed.width)
+        guard abs(proposed.height - current.height) > abs(proposed.width - current.width) else { return byWidth }
+        let inner = max(0, proposed.height - 2 * inset)
+        return size(screen: screen, width: (inner * screen.width / screen.height + 2 * inset).rounded())
+    }
+
+    /// Where the window opens: the saved frame's width and top-left when it
+    /// still lands on `visible` (the screen's usable area), else 300pt wide
+    /// in the bottom-right corner. Always at the screen's aspect and inside
+    /// `visible`, shrinking to fit a short screen.
+    static func frame(saved: CGRect?, screen: CGSize, visible: CGRect) -> CGRect {
+        let usable = saved.map { $0.width > 0 && $0.height > 0 && $0.intersects(visible) } ?? false
+        var size = size(screen: screen, width: usable ? saved!.width : width)
+        let room = CGSize(width: max(minWidth, visible.width - 2 * margin), height: max(1, visible.height - 2 * margin))
+        if size.height > room.height || size.width > room.width {
+            let screen = screen.width > 0 && screen.height > 0 ? screen : fallbackScreen
+            let byHeight = ((room.height - 2 * inset) * screen.width / screen.height + 2 * inset).rounded(.down)
+            size = self.size(screen: screen, width: min(room.width, byHeight))
+        }
+        var origin: CGPoint
+        if usable, let saved {
+            // AppKit's origin is bottom-left; the top edge stays put.
+            origin = CGPoint(x: saved.minX, y: saved.maxY - size.height)
+        } else {
+            origin = CGPoint(x: visible.maxX - margin - size.width, y: visible.minY + margin)
+        }
+        origin.x = min(max(origin.x, visible.minX), visible.maxX - size.width)
+        origin.y = min(max(origin.y, visible.minY), visible.maxY - size.height)
+        return CGRect(origin: origin, size: size)
+    }
+
+    /// The card's corners: Android's screen has square corners, so the card
+    /// rounds like a phone (14% of the short side) where that's more.
+    static func cornerRadius(size: CGSize, platform: DeviceInfo.Platform) -> CGFloat {
+        switch platform {
+        case .ios: cornerRadius
+        case .android: max(cornerRadius, min(size.width, size.height) * 0.14)
+        }
+    }
+}
+
 // MARK: - MJPEG
 
 /// Reads `axe stream-video --format mjpeg` as it arrives: an HTTP response
