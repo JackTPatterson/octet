@@ -525,7 +525,7 @@ enum OctetKeyHook {
     static var replaying = false
 
     static func paste(from pasteboard: NSPasteboard = .general, plainText: Bool = false) -> Bool {
-        guard ConfirmCenter.shared.request == nil else { return true }
+        guard ConfirmCenter.shared.request == nil, !AgentUpdateCenter.shared.presented else { return true }
         if !plainText, pasteboard === NSPasteboard.general,
            let store, PasteHandler.handleCommandV(store: store) { return true }
         guard let text = pasteboard.getOpinionatedStringContents() else {
@@ -552,6 +552,21 @@ enum OctetKeyHook {
             default: break
             }
             return true
+        }
+        // The agent updates dialog, likewise: Return for its main button,
+        // Esc for Later (or Hide while it runs).
+        if AgentUpdateCenter.shared.presented {
+            let center = AgentUpdateCenter.shared
+            let owner = center.window.flatMap { $0.isVisible ? $0 : nil } ?? MainWindow.window
+            if owner == nil || owner === event.window {
+                let plain = event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty
+                switch event.keyCode {
+                case 36 where plain, 76 where plain: center.primary()
+                case 53: center.dismiss()
+                default: break
+                }
+                return true
+            }
         }
         // Input methods and dead keys compose text over several keystrokes;
         // raw key codes would break Japanese, Chinese, Korean and Option-accents.
