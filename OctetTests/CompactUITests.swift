@@ -41,4 +41,28 @@ final class CompactUITests: XCTestCase {
         stash.remove(stash.entries[0].id)
         XCTAssertTrue(stash.entries.isEmpty)
     }
+
+    func testSearchFindsWhatWasSaidAndCutsAroundIt() throws {
+        let messages: [(fromYou: Bool, text: String)] = [
+            (true, "Please fix the token refresh in the login flow"),
+            (false, "Done. The Token now renews\nbefore it expires, and the tests pass again."),
+        ]
+        let newest = try XCTUnwrap(SidebarSearch.snippet("token", in: messages, radius: 10))
+        XCTAssertFalse(newest.fromYou)
+        XCTAssertEqual(newest.match, "Token")
+        XCTAssertEqual(newest.before, "Done. The ")
+        XCTAssertTrue(newest.after.hasPrefix(" now renews"))
+        XCTAssertTrue(newest.after.hasSuffix("…"))
+        XCTAssertEqual(SidebarSearch.snippet("login", in: messages)?.fromYou, true)
+        XCTAssertNil(SidebarSearch.snippet("x", in: messages))
+        XCTAssertNil(SidebarSearch.snippet("nowhere", in: messages))
+    }
+
+    func testProjectsGetInitialsAndAStableColour() {
+        XCTAssertEqual(SidebarSearch.monogram("octet-plugins"), "OP")
+        XCTAssertEqual(SidebarSearch.monogram("octet"), "OC")
+        XCTAssertEqual(SidebarSearch.monogram("My App"), "MA")
+        XCTAssertEqual(SidebarSearch.colorIndex("octet", count: 5), SidebarSearch.colorIndex("octet", count: 5))
+        XCTAssertTrue((0..<5).contains(SidebarSearch.colorIndex("anything", count: 5)))
+    }
 }
