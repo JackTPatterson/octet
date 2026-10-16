@@ -398,7 +398,7 @@ private struct IdleRow: View {
             IdleHoverCard(store: store, workspace: workspace) { peek.close() }
                 .onHover { peek.card($0) }
         }
-        .contextMenu { WorkspaceOrganizeMenu(store: store, workspace: workspace) { renaming = true } }
+        .octetContextMenu { WorkspaceMenu.items(store: store, workspace: workspace, window: window) { renaming = true } }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(accessibilityText)
     }

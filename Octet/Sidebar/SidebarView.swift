@@ -716,8 +716,8 @@ private struct WorkspaceCard: View {
             TabDrag.shared.begin(workspace: workspace.workspaceId, from: window)
             return NSItemProvider(object: workspace.workspaceId as NSString)
         }
-        .contextMenu {
-            WorkspaceOrganizeMenu(store: store, workspace: workspace) { renaming = true }
+        .octetContextMenu {
+            WorkspaceMenu.items(store: store, workspace: workspace, window: window) { renaming = true }
         }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
@@ -811,88 +811,114 @@ struct ControlButton: View {
     }
 }
 
-/// Context menu items shared by workspace cards and idle rows.
-struct WorkspaceOrganizeMenu: View {
-    @EnvironmentObject private var window: WindowContext
-    @ObservedObject var store: SessionStore
-    let workspace: EngineWorkspace
-    /// Starts renaming where the workspace is shown.
-    let rename: () -> Void
-
-    var body: some View {
+/// A workspace's right-click menu, in Octet's own menu rather than the
+/// system's: renaming, colour, pinning, idling and snoozing, agents,
+/// windows and closing.
+@MainActor
+enum WorkspaceMenu {
+    static func items(store: SessionStore, workspace: EngineWorkspace, window: WindowContext,
+                      rename: @escaping () -> Void) -> [OctetMenuItem] {
         let id = workspace.workspaceId
-        Button("Rename Workspace…", action: rename)
+        var items: [OctetMenuItem] = [.action("Rename Workspace…", icon: "pencil", rename)]
         if store.isWorkspaceManuallyNamed(id), SettingsStore.shared.values.autoNameWorkspaces {
-            Button("Name After Its Work") { store.resumeWorkspaceAutoNaming(id) }
+            items.append(.action("Name After Its Work", icon: "sparkles") { store.resumeWorkspaceAutoNaming(id) })
         }
-        PluginMenuItems(place: .workspace, directory: store.snapshot.directory(ofWorkspace: id), workspaceId: id)
-        Divider()
-        TabColorPicker(title: "Workspace Color", selection: Binding(
-            get: { store.workspaceColor(id) },
-            set: { store.setWorkspaceColor(id, $0) }))
-        Divider()
-        let agents = store.snapshot.agents(inWorkspace: id).filter { AgentOffer.agentId($0) != nil }
-        if agents.count == 1, let agent = agents.first {
-            Button("Open on Octet UI") { window.openOnOctetUI(agent) }
-            Divider()
-        } else if agents.count > 1 {
-            Menu("Open on Octet UI") {
-                ForEach(agents, id: \.paneId) { agent in
-                    Button(label(for: agent)) { window.openOnOctetUI(agent) }
+        if let directory = store.snapshot.directory(ofWorkspace: id) {
+            let host = OctetPluginHost.shared
+            let plugins = host.menuItems(for: .workspace, directory: directory)
+            if !plugins.isEmpty {
+                items.append(.divider)
+                items += plugins.map { entry in
+                    .action(entry.item.title, icon: "puzzlepiece") {
+                        host.perform(entry, directory: directory, workspaceId: id, in: window)
+                    }
                 }
             }
-            Divider()
         }
-        if store.isPinned(id) {
-            Button("Unpin") { store.setPinned(id, false) }
-        } else {
-            Button("Pin to Keep in View") { store.setPinned(id, true) }
+        items.append(.divider)
+        items.append(.swatches("Color", OctetMenuSwatches(
+            options: TabColor.allCases.map { .init(id: $0.rawValue, name: $0.name, color: $0.color) },
+            selected: store.workspaceColor(id)?.rawValue,
+            select: { store.setWorkspaceColor(id, $0.flatMap(TabColor.init(rawValue:))) })))
+        items.append(.divider)
+        let agents = store.snapshot.agents(inWorkspace: id).filter { AgentOffer.agentId($0) != nil }
+        if agents.count == 1, let agent = agents.first {
+            items.append(.action("Open on Octet UI", icon: "bubble.left.and.bubble.right") { window.openOnOctetUI(agent) })
+            items.append(.divider)
+        } else if agents.count > 1 {
+            items.append(.submenu("Open on Octet UI", icon: "bubble.left.and.bubble.right", agents.map { agent in
+                .action(label(for: agent, store: store), icon: nil) { window.openOnOctetUI(agent) }
+            }))
+            items.append(.divider)
         }
+        items.append(store.isPinned(id)
+            ? .action("Unpin", icon: "pin.slash") { store.setPinned(id, false) }
+            : .action("Pin to Keep in View", icon: "pin") { store.setPinned(id, true) })
         if window.idleWorkspaces.contains(where: { $0.workspaceId == id }) {
             // Back to the list, as the row's Wake does; a click opens it.
-            Button("Wake") { store.keepInView(id) }
+            items.append(.action("Wake", icon: "sun.max") { store.keepInView(id) })
         } else {
-            Button("Move to Idle") { store.markIdle(id) }
+            items.append(.action("Move to Idle", icon: "moon") { store.markIdle(id) })
         }
-        Menu("Snooze") { SnoozeMenuItems(store: store, workspaceId: id) }
-        Button("Wait for Something…") { WaitCenter.shared.compose(workspaceId: id) }
-        Button("Sleep") { IdleCenter.shared.sleep([workspace]) }
-            .help("Closes its terminals and keeps a note to bring it back as it was, agents resumed")
+        items.append(.submenu("Snooze", icon: "clock", snoozeItems(store: store, workspaceId: id)))
+        items.append(.action("Wait for Something…", icon: "hourglass") { WaitCenter.shared.compose(workspaceId: id) })
+        items.append(.action("Sleep", icon: "powersleep",
+                             help: "Closes its terminals and keeps a note to bring it back as it was, agents resumed") {
+            IdleCenter.shared.sleep([workspace])
+        })
         if IdleCenter.shared.work[id]?.mergedWorktree == true {
-            Button("Close and Remove Worktree…") { IdleCenter.shared.removeMergedWorktree(workspace, window: window) }
+            items.append(.action("Close and Remove Worktree…", icon: "trash", destructive: true) {
+                IdleCenter.shared.removeMergedWorktree(workspace, window: window)
+            })
         }
         // The workspace's Claude Code conversations, carried on in another
         // folder; see ConversationMover.
         let movable = AgentCenter.shared.sessions(in: id).filter(\.canMove)
-        Button(movable.count > 1 ? "Move \(movable.count) Conversations To…" : "Move Conversation To…") {
+        items.append(.action(movable.count > 1 ? "Move \(movable.count) Conversations To…" : "Move Conversation To…",
+                             icon: "folder", enabled: !movable.isEmpty,
+                             help: movable.isEmpty
+                                ? "Moves this workspace's Claude Code conversations to another folder; none here can move now"
+                                : "Carry on with this workspace's Claude Code conversations in another folder") {
             let from = store.snapshot.directory(ofWorkspace: id) ?? NSHomeDirectory()
             ConversationMover.moveAfterPicking(movable, from: from, window: window)
-        }
-        .disabled(movable.isEmpty)
-        .help(movable.isEmpty
-              ? "Moves this workspace's Claude Code conversations to another folder; none here can move now"
-              : "Carry on with this workspace's Claude Code conversations in another folder")
+        })
         if AgentDiscoveryStore.shared.agents.contains(where: { $0.id == "claude" && $0.executablePath != nil }) {
-            Button("New Cloud Session Here…") {
+            items.append(.action("New Cloud Session Here…", icon: "cloud") {
                 // In the window showing it, which the session will open in.
                 let target = WindowRegistry.shared.window(showing: id) ?? window
                 target.focusWorkspace(id)
                 target.ui.paletteStart = [PaletteCatalog.claudeCloudItemId]
                 target.ui.paletteVisible = true
-            }
+            })
         }
-        Divider()
+        items.append(.divider)
         if let other = WindowRegistry.shared.window(showing: id), other !== window {
-            Button("Show Window") { other.bringForward() }
+            items.append(.action("Show Window", icon: "macwindow") { other.bringForward() })
         } else {
-            Button("Move Workspace to New Window") { WindowActions.moveWorkspaceToNewWindow(id, from: window) }
+            items.append(.action("Move Workspace to New Window", icon: "macwindow.badge.plus") {
+                WindowActions.moveWorkspaceToNewWindow(id, from: window)
+            })
         }
-        Divider()
-        Button("Close Workspace") { store.closeWorkspace(id) }
+        items.append(.divider)
+        items.append(.action("Close Workspace", icon: "xmark", destructive: true) { store.closeWorkspace(id) })
+        return items
+    }
+
+    /// The snooze choices, as SnoozeMenuItems offers them.
+    static func snoozeItems(store: SessionStore, workspaceId: String) -> [OctetMenuItem] {
+        // Read when the menu opens, so "This Evening" drops out once the
+        // evening is close.
+        var items: [OctetMenuItem] = SnoozeChoice.offered().filter { $0 != .untilUsed }.map { choice in
+            .action(choice.title) { store.snooze(workspaceId, choice) }
+        }
+        items.append(.divider)
+        items.append(.action(SnoozeChoice.untilUsed.title) { store.snooze(workspaceId, .untilUsed) })
+        items.append(.action("Until Something Happens…") { WaitCenter.shared.compose(workspaceId: workspaceId, snooze: true) })
+        return items
     }
 
     /// The agent's name and its tab, to tell several apart.
-    private func label(for agent: EngineAgent) -> String {
+    private static func label(for agent: EngineAgent, store: SessionStore) -> String {
         let name = AgentBrand.forAgent(agent.agent)?.displayName ?? agent.agent ?? "Agent"
         guard let tab = store.snapshot.tabs.first(where: { $0.tabId == agent.tabId }) else { return name }
         return "\(name) · \(TabAutoName.display(label: tab.label, number: tab.number))"
