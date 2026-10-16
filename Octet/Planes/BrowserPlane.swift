@@ -31,6 +31,10 @@ struct BrowserPlane: View {
                 if current.loading { LoadingLine(width: 60).padding(.top, 2) }
             }
         }
+        // A plane opened for a request finds it on appearing; one already
+        // open hears it change.
+        .onAppear { takeRequest() }
+        .onChange(of: ui.browserRequest) { _, _ in takeRequest() }
         .onChange(of: current.url) { _, url in
             if !addressFocused { address = url?.absoluteString ?? "" }
             if let url { ui.planeBadges[Plane.make(.browser).id] = PlaneBadge(title: url.host() ?? "Browser", help: url.absoluteString) }
@@ -103,6 +107,12 @@ struct BrowserPlane: View {
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.sidebar)
+    }
+
+    private func takeRequest() {
+        guard let request = ui.browserRequest else { return }
+        ui.browserRequest = nil
+        go(request.url.absoluteString)
     }
 
     private func go(_ text: String) {

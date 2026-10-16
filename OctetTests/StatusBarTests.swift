@@ -90,3 +90,19 @@ final class StatusChipsPluginTests: XCTestCase {
         XCTAssertNil(OctetPlugins.validate(manifest))
     }
 }
+
+final class StatusBarLayoutTests: XCTestCase {
+    func testPortsAreReadFromThePortsChipsText() {
+        XCTAssertEqual(StatusBarItems.ports(in: ":3000 :5173"), [3000, 5173])
+        XCTAssertEqual(StatusBarItems.ports(in: ":8799"), [8799])
+        XCTAssertEqual(StatusBarItems.ports(in: "nothing :0 :70000"), [])
+    }
+
+    func testHairlinesGoOnlyWhereTheGroupChanges() {
+        let ids = ["builtin.agent", "builtin.lastCommand", "builtin.branch", "builtin.changes",
+                   "plugin.status-chips.ports", "plugin.status-chips.ahead-behind", "builtin.ci"]
+        XCTAssertEqual(StatusBarItems.dividers(before: ids), [2, 4, 6])
+        XCTAssertEqual(StatusBarItems.dividers(before: []), [])
+        XCTAssertEqual(StatusBarItems.dividers(before: ["builtin.branch"]), [])
+    }
+}

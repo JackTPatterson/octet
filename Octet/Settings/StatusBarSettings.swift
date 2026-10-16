@@ -123,7 +123,7 @@ private struct StatusChipPreview: View {
 
     var body: some View {
         Button(action: perform) {
-            StatusChip(color: descriptor.color, tone: tone, help: "\(descriptor.name): \(descriptor.summary)") {
+            StatusChip(tone: tone, help: "\(descriptor.name): \(descriptor.summary)") {
                 icon
                 Text(descriptor.sample).lineLimit(1)
                 Image(systemName: action == .add ? "plus" : "xmark")
@@ -146,21 +146,21 @@ private struct StatusChipPreview: View {
     private var icon: some View {
         switch descriptor.id {
         case "builtin.runtime":
-            if let badge = host.runtimeBadge(id: "node") { RuntimeIcon(badge: badge, size: 11) }
+            if let badge = host.runtimeBadge(id: "node") { RuntimeIcon(badge: badge, size: 13) }
         case "builtin.agent":
-            if let brand = AgentBrand.forAgent("claude") { AgentLogo(brand: brand, size: 11) }
+            if let brand = AgentBrand.forAgent("claude") { AgentLogo(brand: brand, size: 13) }
         case "builtin.branch":
-            OctetIcon("arrow.triangle.branch", size: 10)
+            OctetIcon("branch", size: 13)
         case "builtin.worktree":
-            OctetIcon("square.stack.3d.up", size: 10)
+            OctetIcon("square.stack.3d.up", size: 13)
         case "builtin.changes":
-            OctetIcon("doc", size: 10)
+            OctetIcon("doc.diff", size: 13)
         case "builtin.pullRequest":
-            OctetIcon("arrow.triangle.pull", size: 10)
+            OctetIcon("pull.request", size: 13).foregroundStyle(PullRequestTone.open.color)
         case "builtin.ci":
-            Image(systemName: "gearshape.2").font(.system(size: 10, weight: .medium))
+            OctetIcon("checkmark", size: 11).foregroundStyle(Color(hex: AgentStateColor.done))
         default:
-            StatusItemIcon(descriptor: descriptor)
+            StatusItemIcon(descriptor: descriptor, size: 13, tinted: true)
         }
     }
 }

@@ -9,6 +9,8 @@ struct DiffStatLabel: View {
     let added: Int
     let removed: Int
     var compactCounts = true
+    /// Caption size in lists; the status bar sets its own 11.5pt.
+    var font: Font = Theme.captionFont
 
     var body: some View {
         HStack(spacing: 4) {
@@ -19,7 +21,7 @@ struct DiffStatLabel: View {
                 Text("\u{2212}" + format(removed)).foregroundStyle(Theme.danger)
             }
         }
-        .font(Theme.captionFont.monospacedDigit())
+        .font(font.monospacedDigit())
         .help("\(added) line\(added == 1 ? "" : "s") added, \(removed) removed")
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(added) additions, \(removed) deletions")

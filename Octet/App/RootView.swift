@@ -527,6 +527,18 @@ struct RootView: View {
                 }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) { openSettings() }
             }
+            // "status-preview" fills the status bar with sample items;
+            // ":running" or ":failed" picks the CI state shown.
+            if let open = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], open.hasPrefix("status-preview") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    let overall: CIStatus.Overall = switch open.split(separator: ":").dropFirst().first {
+                    case "running": .running
+                    case "failed": .failed
+                    default: .passed
+                    }
+                    statusBar.debugShowSample(ci: overall)
+                }
+            }
             if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "agents" {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) { AgentCenter.shared.showingBoard = true }
             }
@@ -896,7 +908,7 @@ struct RootView: View {
                 .background(Theme.terminalBackground.opacity(settings.values.effectiveBackgroundOpacity))
                 if settings.values.repoContextBar,
                    StatusBar.hasContent(model: statusBar, ssh: focusedSSH, agent: focusedAgent) {
-                    StatusBar(model: statusBar, store: store, ssh: focusedSSH, agent: focusedAgent,
+                    StatusBar(model: statusBar, store: store, ui: ui, ssh: focusedSSH, agent: focusedAgent,
                               openOnOctetUI: { window.openOnOctetUI($0) })
                 }
             }
@@ -1039,6 +1051,21 @@ final class UIState: ObservableObject {
     func showPlane(_ kind: PlaneKind, number: Int? = nil) {
         addPlane(kind, number: number)
         sidePanelAutoOpened = false
+    }
+
+    /// A page for the Browser plane to load, e.g. a dev server from the
+    /// status bar. The plane owns its web view, so it's asked through here
+    /// and takes the request (clearing it) once it's on screen.
+    struct BrowserRequest: Equatable {
+        let url: URL
+        let at = Date()
+    }
+    @Published var browserRequest: BrowserRequest?
+
+    /// Shows the Browser plane on `url`.
+    func openInBrowserPlane(_ url: URL) {
+        browserRequest = BrowserRequest(url: url)
+        showPlane(.browser)
     }
 
     /// Closes a plane; the one beside it comes forward, and closing the last
