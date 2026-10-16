@@ -309,11 +309,11 @@ struct SidePanelButton: View {
         if !ui.sidePanelVisible {
             HStack(spacing: 2) {
                 OctetIconButton(icon: "panel.bottom",
-                                help: "Toggle terminal drawer (\(OctetShortcut.terminalDrawer.display))",
+                                help: OctetShortcut.terminalDrawer.help("Toggle terminal drawer"),
                                 active: ui.terminalDrawerVisible) {
                     MotionPreferences.shared.perform(.sidebar) { ui.terminalDrawerVisible.toggle() }
                 }
-                OctetIconButton(icon: "sidebar.right", help: "Show the panel (\(OctetShortcut.togglePanel.display))") {
+                OctetIconButton(icon: "sidebar.right", help: OctetShortcut.togglePanel.help("Show the panel")) {
                     ui.sidePanelVisible = true
                 }
                 .accessibilityLabel("Show panel")

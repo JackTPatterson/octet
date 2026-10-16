@@ -170,6 +170,12 @@ struct OctetSettings: Codable, Equatable {
     var twinByDefault = false
     var showTips = true
 
+    // MARK: Keyboard (Octet's menus + renderer pass-through)
+    /// Settings › Keyboard: shortcut id to `ShortcutBinding.encoded`, with an
+    /// empty string for one the person unassigned. Only changes are kept,
+    /// so a new default reaches everyone who hasn't chosen otherwise.
+    var shortcutOverrides: [String: String] = [:]
+
     // MARK: Advanced (session server)
     var worktreesDirectory = "~/.octet/worktrees"
     /// Copy the main checkout's env files into a new worktree and run its
@@ -397,6 +403,7 @@ struct OctetSettings: Codable, Equatable {
         visualTwin = value("visualTwin", defaults.visualTwin)
         twinByDefault = value("twinByDefault", defaults.twinByDefault)
         showTips = value("showTips", defaults.showTips)
+        shortcutOverrides = value("shortcutOverrides", defaults.shortcutOverrides)
         worktreesDirectory = value("worktreesDirectory", defaults.worktreesDirectory)
         worktreeSetup = value("worktreeSetup", defaults.worktreeSetup)
         // Move off the old default unless worktrees already live there.
@@ -621,6 +628,8 @@ final class SettingsStore: ObservableObject {
             values = OctetSettings()
         }
         AccountProfiles.configure(profiles: values.accountProfiles, assignments: values.accountAssignments)
+        // Before the app builds its menus and terminal config from them.
+        ShortcutOverrides.shared.update(values.shortcutOverrides)
         EngineClient.prepareRequest = AccountProfiles.prepare
         #if DEBUG
         // Visual QA can exercise both palettes without rewriting the user's
@@ -813,7 +822,13 @@ final class SettingsStore: ObservableObject {
             themeKey = Self.makeThemeKey(values.themeName)
             OctetTerminalRuntime.setColorScheme(dark: !TerminalTheme.named(values.themeName).isLight)
         }
-        if values.rendererConfig != old.rendererConfig {
+        if values.shortcutOverrides != old.shortcutOverrides {
+            // Before the terminal config below, which is derived from it.
+            ShortcutOverrides.shared.update(values.shortcutOverrides)
+        }
+        // A rebound shortcut changes which keys the terminal lets through to
+        // the menus, so it's reapplied live like any renderer setting.
+        if values.rendererConfig != old.rendererConfig || values.shortcutOverrides != old.shortcutOverrides {
             OctetTerminalRuntime.updateConfig(overrides: values.rendererConfig + "\n" + Theme.octetShortcutUnbinds)
             refreshConfigProblems()
         }

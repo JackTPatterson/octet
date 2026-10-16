@@ -123,23 +123,23 @@ enum PaletteCatalog {
         }
 
         var items: [PaletteItem] = [
-            action("newTab", "New Tab", "plus.square", shortcut: "⌘T", keywords: ["create", "terminal"]) { window.newTab() },
-            action("closeTab", "Close Tab", "xmark.square", shortcut: "⌘W") { window.closeFocusedTab() },
-            action("nextTab", "Next Tab", "arrow.right.square", shortcut: "⌘⇧]") { window.selectAdjacentTab(offset: 1) },
-            action("previousTab", "Previous Tab", "arrow.left.square", shortcut: "⌘⇧[") { window.selectAdjacentTab(offset: -1) },
+            action("newTab", "New Tab", "plus.square", shortcut: OctetShortcut.newTab.keys, keywords: ["create", "terminal"]) { window.newTab() },
+            action("closeTab", "Close Tab", "xmark.square", shortcut: OctetShortcut.closeTab.keys) { window.closeFocusedTab() },
+            action("nextTab", "Next Tab", "arrow.right.square", shortcut: OctetShortcut.nextTab.keys) { window.selectAdjacentTab(offset: 1) },
+            action("previousTab", "Previous Tab", "arrow.left.square", shortcut: OctetShortcut.previousTab.keys) { window.selectAdjacentTab(offset: -1) },
             action("moveTabLeft", "Move Tab Left", "arrow.left.to.line", keywords: ["reorder"]) { store.moveFocusedTab(by: -1) },
             action("moveTabRight", "Move Tab Right", "arrow.right.to.line", keywords: ["reorder"]) { store.moveFocusedTab(by: 1) },
-            action("newWorkspace", "New Workspace", "rectangle.stack.badge.plus", shortcut: "⌘N", keywords: ["space"]) { window.newWorkspace() },
-            action("openFile", "Open File…", "tool.edit", shortcut: "⌘O", keywords: ["code", "editor", "search"]) { window.showFilePicker() },
-            action("openFolder", "Open Folder as Workspace…", "folder.badge.plus", shortcut: "⌘⇧O", keywords: ["project", "directory"]) { openFolder(window: window) },
-            action("saveFile", "Save File", "tool.write", shortcut: "⌘S", keywords: ["code", "editor"]) { window.editor.save() },
-            action("nextWorkspace", "Next Workspace", "chevron.down.square", shortcut: "⌃⌘↓") { window.selectAdjacentWorkspace(offset: 1) },
-            action("previousWorkspace", "Previous Workspace", "chevron.up.square", shortcut: "⌃⌘↑") { window.selectAdjacentWorkspace(offset: -1) },
-            action("splitRight", "Split Pane Right", "rectangle.split.2x1", shortcut: "⌘D", keywords: ["vertical"]) { window.splitPane(.right) },
-            action("splitDown", "Split Pane Down", "rectangle.split.1x2", shortcut: "⌘⇧D", keywords: ["horizontal"]) { window.splitPane(.down) },
-            action("zoomPane", "Toggle Pane Zoom", "arrow.up.left.and.arrow.down.right", shortcut: "⌘⇧↩", keywords: ["maximize"]) { window.toggleZoom() },
+            action("newWorkspace", "New Workspace", "rectangle.stack.badge.plus", shortcut: OctetShortcut.newWorkspace.keys, keywords: ["space"]) { window.newWorkspace() },
+            action("openFile", "Open File…", "tool.edit", shortcut: OctetShortcut.openFile.keys, keywords: ["code", "editor", "search"]) { window.showFilePicker() },
+            action("openFolder", "Open Folder as Workspace…", "folder.badge.plus", shortcut: OctetShortcut.openFolder.keys, keywords: ["project", "directory"]) { openFolder(window: window) },
+            action("saveFile", "Save File", "tool.write", shortcut: OctetShortcut.saveFile.keys, keywords: ["code", "editor"]) { window.editor.save() },
+            action("nextWorkspace", "Next Workspace", "chevron.down.square", shortcut: OctetShortcut.nextWorkspace.keys) { window.selectAdjacentWorkspace(offset: 1) },
+            action("previousWorkspace", "Previous Workspace", "chevron.up.square", shortcut: OctetShortcut.previousWorkspace.keys) { window.selectAdjacentWorkspace(offset: -1) },
+            action("splitRight", "Split Pane Right", "rectangle.split.2x1", shortcut: OctetShortcut.splitRight.keys, keywords: ["vertical"]) { window.splitPane(.right) },
+            action("splitDown", "Split Pane Down", "rectangle.split.1x2", shortcut: OctetShortcut.splitDown.keys, keywords: ["horizontal"]) { window.splitPane(.down) },
+            action("zoomPane", "Toggle Pane Zoom", "arrow.up.left.and.arrow.down.right", shortcut: OctetShortcut.toggleZoom.keys, keywords: ["maximize"]) { window.toggleZoom() },
             action("closePane", "Close Pane", "xmark.rectangle") { window.closeFocusedPane() },
-            action("newWindow", "New Window", "rectangle.on.rectangle", shortcut: "⌥⌘N",
+            action("newWindow", "New Window", "rectangle.on.rectangle", shortcut: OctetShortcut.newWindow.keys,
                    keywords: ["window", "open"]) { WindowActions.newWindow(store: store) },
             action("tabToWindow", "Move Tab to New Window", "rectangle.on.rectangle",
                    keywords: ["window", "tear", "detach", "pop out"]) { WindowActions.moveFocusedTabToNewWindow(from: window) },
@@ -149,22 +149,22 @@ enum PaletteCatalog {
                    keywords: ["window", "combine", "close"]) { WindowActions.mergeAllWindows() },
             action("paneToTab", "Move Pane to New Tab", "rectangle.on.rectangle",
                    keywords: ["break", "unsplit", "detach", "split", "pane", "tab"]) { window.moveFocusedPaneToNewTab() },
-            action("focusLeft", "Focus Pane Left", "arrow.left", shortcut: "⌘⌥←") { window.focusPane(.left) },
-            action("focusRight", "Focus Pane Right", "arrow.right", shortcut: "⌘⌥→") { window.focusPane(.right) },
-            action("focusUp", "Focus Pane Up", "arrow.up", shortcut: "⌘⌥↑") { window.focusPane(.up) },
-            action("focusDown", "Focus Pane Down", "arrow.down", shortcut: "⌘⌥↓") { window.focusPane(.down) },
-            action("toggleSidebar", "Toggle Sidebar", "sidebar.left", shortcut: "⌘B") { ui.sidebarVisible.toggle() },
+            action("focusLeft", "Focus Pane Left", "arrow.left", shortcut: OctetShortcut.focusLeft.keys) { window.focusPane(.left) },
+            action("focusRight", "Focus Pane Right", "arrow.right", shortcut: OctetShortcut.focusRight.keys) { window.focusPane(.right) },
+            action("focusUp", "Focus Pane Up", "arrow.up", shortcut: OctetShortcut.focusUp.keys) { window.focusPane(.up) },
+            action("focusDown", "Focus Pane Down", "arrow.down", shortcut: OctetShortcut.focusDown.keys) { window.focusPane(.down) },
+            action("toggleSidebar", "Toggle Sidebar", "sidebar.left", shortcut: OctetShortcut.toggleSidebar.keys) { ui.sidebarVisible.toggle() },
             action("todos", "Show Todos", "tool.todo.done",
                    keywords: ["todo", "todos", "TODO.md", "tasks", "plan", "checklist", "project"]) { ui.showSidePanel(.todos) },
-            action("sidePanel", "Toggle Panel", "sidebar.right", shortcut: OctetShortcut.togglePanel.display,
+            action("sidePanel", "Toggle Panel", "sidebar.right", shortcut: OctetShortcut.togglePanel.keys,
                    keywords: ["panel", "overview", "git", "planes", "right", "files changed", "pull request"]) { ui.sidePanelVisible.toggle() },
-            action("terminalDrawer", "Toggle Terminal Drawer", "panel.bottom", shortcut: OctetShortcut.terminalDrawer.display,
+            action("terminalDrawer", "Toggle Terminal Drawer", "panel.bottom", shortcut: OctetShortcut.terminalDrawer.keys,
                    keywords: ["terminal", "drawer", "shell", "bottom"]) {
                 MotionPreferences.shared.perform(.sidebar) { ui.terminalDrawerVisible.toggle() }
             },
             action("pullRequest", "Show Pull Request", "pull.request",
                    keywords: ["pr", "pull request", "github", "merge", "review", "checks"]) { ui.showPlane(.pullRequest) },
-            action("details", "Toggle Details", "menucard", shortcut: OctetShortcut.details.display,
+            action("details", "Toggle Details", "menucard", shortcut: OctetShortcut.details.keys,
                    keywords: ["details", "info", "branch", "changes", "servers", "workspace"]) { ui.detailsVisible.toggle() },
             action("reopenPlane", "Reopen Closed Plane", "arrow.uturn.backward",
                    keywords: ["plane", "panel", "tab", "undo", "restore"]) { ui.reopenClosedPlane() },
@@ -215,7 +215,7 @@ enum PaletteCatalog {
         ]
 
         items.append(action("broadcastTyping", BroadcastMode.shared.isOn ? "Stop Typing into All Panes" : "Type into All Panes in Tab",
-                            "rectangle.split.2x1", shortcut: "⌥⌘I",
+                            "rectangle.split.2x1", shortcut: OctetShortcut.broadcastTyping.keys,
                             keywords: ["broadcast", "synchronize", "sync", "panes", "mirror", "input"]) { BroadcastMode.shared.toggle(window: window) })
         items.append(action("popupShell", "Open Popup Terminal", "rectangle.on.rectangle",
                             keywords: ["popup", "floating", "float", "scratch", "quick", "overlay"]) { PopupTerminal.open(nil, store: store) })
@@ -229,9 +229,9 @@ enum PaletteCatalog {
         ))
         items.append(action("copyLastOutput", "Copy Last Command's Output", "doc.on.doc",
                             keywords: ["copy", "output", "result", "command", "last"]) { PromptJumper.copyLastOutput(store: store) })
-        items.append(action("hints", "Open Link or File on Screen", "tool.fetch", shortcut: "⌘⇧H",
+        items.append(action("hints", "Open Link or File on Screen", "tool.fetch", shortcut: OctetShortcut.hints.keys,
                             keywords: ["hints", "url", "link", "open", "path", "file", "hash", "quick select"]) { HintsSession.start(window: window) })
-        items.append(action("review", "Review Changes", "doc.text.magnifyingglass", shortcut: "⌘⇧R",
+        items.append(action("review", "Review Changes", "doc.text.magnifyingglass", shortcut: OctetShortcut.review.keys,
                             keywords: ["diff", "git", "changes", "comment", "code review", "agent"]) { window.toggleReview() })
         items += accountItems(window: window)
         if let item = checkpointItem(window: window) { items.append(item) }
@@ -364,7 +364,7 @@ enum PaletteCatalog {
             AgentBoardWindow.open()
         })
         items.append(action("twin", window.twin.isVisible ? "Show the Terminal" : "Visual Twin",
-                            "rectangle.on.rectangle.angled", shortcut: "⌘⇧V",
+                            "rectangle.on.rectangle.angled", shortcut: OctetShortcut.visualTwin.keys,
                             keywords: ["twin", "agent", "conversation", "native", "ui", "chat"]) {
             window.twin.toggle()
         })
@@ -384,7 +384,7 @@ enum PaletteCatalog {
         for record in store.closedTabs.records.reversed() {
             items.append(action("reopen.\(record.terminalId)", "Reopen \(record.title)", "arrow.uturn.backward",
                                 shortcut: record.terminalId == store.closedTabs.records.last?.terminalId
-                                    ? OctetShortcut.reopenClosedTab.display : nil,
+                                    ? OctetShortcut.reopenClosedTab.keys : nil,
                                 keywords: ["closed", "undo", "restore", "recent"] + (record.command.map { [$0] } ?? [])) {
                 window.reopenClosedTab(record)
             })

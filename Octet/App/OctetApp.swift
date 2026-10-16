@@ -209,6 +209,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct OctetCommands: Commands {
     let store: SessionStore
     let updater: SPUUpdater
+    /// Rebuilds the menus with the new keys when one is rebound in Settings.
+    @ObservedObject var shortcuts = ShortcutOverrides.shared
 
     var body: some Commands {
         CommandGroup(after: .appInfo) {

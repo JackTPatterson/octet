@@ -113,7 +113,7 @@ struct SidebarView: View {
                 .onKeyPress(.downArrow) { moveHighlight(1) }
                 .onKeyPress(.upArrow) { moveHighlight(-1) }
                 .onChange(of: query) { _, _ in highlighted = 0 }
-                .help("Search workspaces (\(OctetShortcut.searchWorkspaces.display))")
+                .help(OctetShortcut.searchWorkspaces.help("Search workspaces"))
             if !query.isEmpty {
                 Button(action: clearSearch) {
                     OctetIcon("xmark.circle.fill", size: 12)

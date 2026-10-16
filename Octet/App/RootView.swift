@@ -836,8 +836,8 @@ struct RootView: View {
                 runAgent: { window.startAgent($0) },
                 openFolder: { window.runInFocusedPane("cd " + shellQuote($0)) },
                 shortcuts: [
-                    .init(title: "Command Palette", keys: OctetShortcut.palette.display) { ui.paletteVisible = true },
-                    .init(title: "New Claude Conversation", keys: OctetShortcut.newConversation.display, agent: "claude") {
+                    .init(title: "Command Palette", keys: OctetShortcut.palette.keys) { ui.paletteVisible = true },
+                    .init(title: "New Claude Conversation", keys: OctetShortcut.newConversation.keys, agent: "claude") {
                         window.newConversation(replacingStarterTab: window.displayedFocusedTabId)
                     },
                     .init(title: "New Codex Conversation", agent: "codex") {
@@ -853,8 +853,8 @@ struct RootView: View {
                     .init(title: "New Qwen Conversation", agent: "qwen") {
                         window.newConversation(engine: .qwen, replacingStarterTab: window.displayedFocusedTabId)
                     },
-                    .init(title: "Split Right", keys: OctetShortcut.splitRight.display) { window.splitPane(.right) },
-                    .init(title: "Agents", keys: OctetShortcut.agents.display) { window.toggleAgentsBoard() },
+                    .init(title: "Split Right", keys: OctetShortcut.splitRight.keys) { window.splitPane(.right) },
+                    .init(title: "Agents", keys: OctetShortcut.agents.keys) { window.toggleAgentsBoard() },
                 ]
             )
             .frame(width: proxy.size.width, height: height)

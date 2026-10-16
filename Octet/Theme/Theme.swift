@@ -60,60 +60,11 @@ enum Theme {
     }
     static let monoFont = Font.system(size: 11.5, design: .monospaced)
 
-    /// Shortcuts Octet's menus own; unbound in the renderer so the surface lets them through.
-    static let octetShortcutUnbinds = [
-        "super+t",
-        "super+w",
-        "super+n",
-        "super+b",
-        "super+alt+b",
-        "super+shift+b",
-        "super+j",
-        "super+p",
-        "super+f",
-        "super+g",
-        "super+shift+g",
-        "super+shift+p",
-        "super+shift+r",
-        "super+shift+i",
-        "super+shift+h",
-        "super+alt+i",
-        "super+o",
-        "super+shift+o",
-        "super+s",
-        "super+alt+s",
-        "super+d",
-        "super+shift+d",
-        "super+shift+enter",
-        "super+alt+left",
-        "super+alt+right",
-        "super+alt+up",
-        "super+alt+down",
-        "super+shift+left_bracket",
-        "super+shift+right_bracket",
-        "ctrl+super+up",
-        "ctrl+super+down",
-        "super+shift+w",
-        "super+shift+t",
-        "super+digit_1",
-        "super+digit_2",
-        "super+digit_3",
-        "super+digit_4",
-        "super+digit_5",
-        "super+digit_6",
-        "super+digit_7",
-        "super+digit_8",
-        "super+digit_9",
-        // Font size is Octet's View menu, which changes the setting for every
-        // pane. The renderer binds the characters, so both forms are unbound.
-        "super+=",
-        "super+equal",
-        "super+plus",
-        "super+-",
-        "super+minus",
-        "super+0",
-        "super+digit_0",
-    ].map { "keybind = \($0)=unbind" }.joined(separator: "\n")
+    /// Shortcuts Octet's menus own right now; unbound in the renderer so the
+    /// surface lets them through. Derived from the effective shortcuts, so a
+    /// rebound key still reaches its menu item and a freed one goes back to
+    /// the terminal.
+    static var octetShortcutUnbinds: String { OctetShortcut.terminalPassThrough }
 }
 
 extension Color {
