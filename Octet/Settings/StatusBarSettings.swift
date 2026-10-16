@@ -87,7 +87,7 @@ struct StatusBarSettings: View {
 
         SettingsGroup(title: "Reset") {
             SettingsRow(title: "Default chips", detail: "Put back the chips the bar starts with, in their first order") {
-                Button("Reset") { host.resetStatusBar() }
+                OctetButton(title: "Reset", compact: true) { host.resetStatusBar() }
                     .disabled(!settings.values.statusBarCustomized)
             }
         }

@@ -420,10 +420,9 @@ struct DiffReviewView: View {
                 .help(model.staged.isEmpty ? "Stage every change shown and commit it" : "Commit only what's staged")
             }
             if candidates.count > 1 {
-                Picker("Send to", selection: Binding(get: { target?.paneId }, set: { targetPane = $0 })) {
-                    ForEach(candidates) { agent in Text(name(agent)).tag(Optional(agent.paneId)) }
-                }
-                .labelsHidden().frame(width: 220)
+                OctetSelect(selection: Binding(get: { target?.paneId }, set: { targetPane = $0 }),
+                            options: candidates.map { (Optional($0.paneId), name($0)) }, width: 220)
+                    .accessibilityLabel("Send to")
             }
             OctetButton(title: target.map { "Send to \(name($0))" } ?? "No agent in this project",
                         kind: target == nil ? .secondary : .primary, compact: true) {

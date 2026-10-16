@@ -43,7 +43,7 @@ struct PluginSettingsGroup: View {
                     HStack(spacing: 6) {
                         field(setting)
                         if let link = setting.linkURL {
-                            Button("Get One") { NSWorkspace.shared.open(link) }
+                            OctetButton(title: "Get One", compact: true) { NSWorkspace.shared.open(link) }
                         }
                     }
                 }
@@ -51,7 +51,7 @@ struct PluginSettingsGroup: View {
             SettingsDivider()
             SettingsRow(title: store.isComplete(plugin) ? "Connected" : "Not set up yet",
                         detail: "Saved for \(plugin.manifest.name)'s commands, which read them as environment variables. Secrets go to the Keychain.") {
-                Button("Save") {
+                OctetButton(title: "Save", kind: .primary, compact: true) {
                     store.save(drafts, for: plugin)
                     if focus.pluginId == plugin.id { focus.pluginId = nil }
                     ToastCenter.shared.info("Saved \(plugin.manifest.name)'s settings")
@@ -71,17 +71,11 @@ struct PluginSettingsGroup: View {
 
     @ViewBuilder private func field(_ setting: OctetPluginManifest.Setting) -> some View {
         let binding = Binding(get: { drafts[setting.id] ?? "" }, set: { drafts[setting.id] = $0 })
-        Group {
-            if setting.isSecret {
-                SecureField(setting.placeholder ?? "", text: binding)
-            } else {
-                TextField(setting.placeholder ?? "", text: binding)
-            }
+        OctetTextField(placeholder: setting.placeholder ?? "", text: binding, secure: setting.isSecret,
+                       label: setting.title) {
+            if changed { store.save(drafts, for: plugin) }
         }
-        .textFieldStyle(.roundedBorder)
         .frame(width: 240)
-        .labelsHidden()
-        .onSubmit { if changed { store.save(drafts, for: plugin) } }
     }
 
     private func load() {
@@ -134,8 +128,8 @@ struct PluginSetupPopover: View {
                     Text("Secrets stay in the Keychain.").font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
                 }
                 Spacer(minLength: 8)
-                Button("Cancel", action: done).keyboardShortcut(.cancelAction)
-                Button("Save") {
+                OctetButton(title: "Cancel", kind: .ghost, compact: true, action: done).keyboardShortcut(.cancelAction)
+                OctetButton(title: "Save", kind: .primary, compact: true) {
                     store.save(drafts, for: plugin)
                     done()
                 }
@@ -155,14 +149,8 @@ struct PluginSetupPopover: View {
 
     @ViewBuilder private func field(_ setting: OctetPluginManifest.Setting) -> some View {
         let binding = Binding(get: { drafts[setting.id] ?? "" }, set: { drafts[setting.id] = $0 })
-        Group {
-            if setting.isSecret {
-                SecureField(setting.placeholder ?? "Paste it here", text: binding)
-            } else {
-                TextField(setting.placeholder ?? "", text: binding)
-            }
-        }
-        .textFieldStyle(.roundedBorder)
-        .focused($focused, equals: setting.id)
+        OctetTextField(placeholder: setting.placeholder ?? (setting.isSecret ? "Paste it here" : ""), text: binding,
+                       secure: setting.isSecret, label: setting.title)
+            .focused($focused, equals: setting.id)
     }
 }

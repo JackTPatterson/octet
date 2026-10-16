@@ -79,13 +79,9 @@ struct PastePreviewDialog: View {
                 .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textPrimary)
             Text("Edit it here first if you like. \(request.text.count.formatted()) characters.")
                 .font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
-            TextEditor(text: Binding(get: { center.request?.text ?? "" }, set: { center.request?.text = $0 }))
-                .font(Theme.monoFont)
-                .scrollContentBackground(.hidden)
-                .padding(6)
-                .background(RoundedRectangle(cornerRadius: 6).fill(Theme.terminalBackground))
-                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.border, lineWidth: 1))
-                .frame(height: 360)
+            OctetTextEditor(placeholder: "Pasted text",
+                            text: Binding(get: { center.request?.text ?? "" }, set: { center.request?.text = $0 }),
+                            minHeight: 360, maxHeight: 360, font: Theme.monoFont)
             HStack {
                 Spacer()
                 OctetButton(title: "Cancel", kind: .ghost, compact: true) { center.cancel() }

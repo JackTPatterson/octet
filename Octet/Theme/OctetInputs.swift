@@ -304,6 +304,8 @@ struct OctetTextEditor: View {
     var minHeight: CGFloat = 72
     var maxHeight: CGFloat? = 200
     var font: Font = Theme.uiFont
+    /// Takes focus when it appears, e.g. a composer opened to write in.
+    var autofocus = false
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -328,5 +330,6 @@ struct OctetTextEditor: View {
         .padding(.vertical, 6)
         .frame(minHeight: minHeight, maxHeight: maxHeight)
         .octetFieldShell(focused: focused, height: nil)
+        .onAppear { if autofocus { focused = true } }
     }
 }

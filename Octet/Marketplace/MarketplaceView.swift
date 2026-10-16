@@ -93,38 +93,29 @@ struct MarketplaceView: View {
                 .font(Theme.uiFont)
                 .foregroundStyle(Theme.textPrimary)
             if store.pendingReload {
-                Button("Reload Agents") { store.reloadAgents() }
-                    .controlSize(.small)
+                OctetButton(title: "Reload Agents", kind: .primary, compact: true) { store.reloadAgents() }
                     .help("Restart running agents with --resume so the new configuration loads")
             }
-            Button {
+            OctetButton(title: addTitle, icon: "plus", compact: true) {
                 switch store.section {
                 case .mcp: addingServer = true
                 case .plugins: editing = LibraryDraft(kind: .prompt, marketplaceSource: true)
                 case .skills: editing = LibraryDraft(kind: .skill)
                 case .prompts: editing = LibraryDraft(kind: .prompt)
                 }
-            } label: {
-                Label { Text(addTitle) } icon: { OctetIcon("plus", size: 13) }
             }
-            .controlSize(.small)
             if store.section == .prompts {
-                Button("Import…") { importPrompts() }
-                    .controlSize(.small)
+                OctetButton(title: "Import…", compact: true) { importPrompts() }
                     .help("Copy a folder of .md prompts into your library")
             }
-            Button {
+            OctetIconButton(icon: "arrow.clockwise", help: "Refresh") {
                 if store.section == .plugins {
                     store.loadPlugins(force: true)
                     pluginHost.loadRegistry(force: true)
                 } else {
                     store.refreshAll()
                 }
-            } label: {
-                OctetIcon("arrow.clockwise", size: 13)
             }
-            .controlSize(.small)
-            .help("Refresh")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
@@ -334,8 +325,7 @@ private struct PluginUpdatesBanner: View {
                 .font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
                 .lineLimit(1).truncationMode(.tail)
             Spacer(minLength: 8)
-            Button(updates.count == 1 ? "Update" : "Update All") { host.update(updates) }
-                .controlSize(.small)
+            OctetButton(title: updates.count == 1 ? "Update" : "Update All", kind: .primary, compact: true) { host.update(updates) }
                 .disabled(!host.installing.isEmpty)
         }
         .padding(10)
@@ -419,26 +409,24 @@ private struct TerminalPluginRow: View {
                     LoadingLine(width: 14)
                 } else if let installed {
                     if let update = host.update(for: installed) {
-                        Button("Update") { host.install(update) }.controlSize(.small)
+                        OctetButton(title: "Update", kind: .primary, compact: true) { host.install(update) }
                     }
                     if installed.manifest.settings?.isEmpty == false, host.isEnabled(installed) {
-                        Button("Settings") { PluginSettingsOpener.show(pluginId: installed.id) }.controlSize(.small)
+                        OctetButton(title: "Settings", compact: true) { PluginSettingsOpener.show(pluginId: installed.id) }
                     }
                     if !installed.isBundled {
-                        Button("Remove") {
+                        OctetButton(title: "Remove", kind: .ghost, compact: true) {
                             ConfirmCenter.shared.ask(title: "Remove \(plugin.name)?", message: "Deletes it from your plugin folder.",
                                                      confirmTitle: "Remove", destructive: true) { _ in host.uninstall(installed) }
                         }
-                        .controlSize(.small)
                         .opacity(hovered ? 1 : 0.5)
                     }
                     Toggle(plugin.name, isOn: Binding(get: { host.isEnabled(installed) },
                                                       set: { host.setEnabled(installed, $0) }))
                         .labelsHidden()
                         .toggleStyle(OctetSwitchStyle())
-                        .controlSize(.small)
                 } else if let entry = plugin.entry {
-                    Button("Install") { host.install(entry) }.controlSize(.small)
+                    OctetButton(title: "Install", kind: .primary, compact: true) { host.install(entry) }
                 }
             }
         }
@@ -480,8 +468,7 @@ private struct MarketplaceEmptyState: View {
                 .textSelection(.enabled)
                 .frame(maxWidth: 420)
             if let actionTitle, let action {
-                Button(actionTitle, action: action)
-                    .controlSize(.small)
+                OctetButton(title: actionTitle, compact: true, action: action)
                     .padding(.top, 2)
             }
         }
@@ -517,7 +504,7 @@ private struct LoadErrorBanner: View {
             if retrying {
                 LoadingLine(width: 18)
             } else {
-                Button("Retry", action: retry).controlSize(.small)
+                OctetButton(title: "Retry", compact: true, action: retry)
             }
         }
         .padding(10)
@@ -621,7 +608,7 @@ private struct EntryRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             Spacer(minLength: 8)
             if entry.isInstalled {
-                Button("Remove") {
+                OctetButton(title: "Remove", kind: .ghost, compact: true) {
                     let hosts = store.hosts.filter { entry.installedIn.contains($0.id) }
                     ConfirmCenter.shared.ask(
                         title: "Remove \(entry.name)?",
@@ -630,7 +617,6 @@ private struct EntryRow: View {
                         destructive: true
                     ) { _ in store.remove(entry, from: hosts) }
                 }
-                .controlSize(.small)
                 .opacity(hovered ? 1 : 0.5)
                 .disabled(store.isBusy(entry))
             }
@@ -735,12 +721,11 @@ private struct LibraryRow: View {
             Spacer(minLength: 8)
             HStack(spacing: 4) {
                 if item.kind == .prompt, let agent = store.promptTarget {
-                    Button("Run") { store.runPrompt(item) }
-                        .controlSize(.small)
+                    OctetButton(title: "Run", kind: .primary, compact: true) { store.runPrompt(item) }
                         .help("Send this prompt to \(AgentBrand.forAgent(agent.agent)?.displayName ?? "the focused agent")")
                 }
-                Button("Edit", action: edit).controlSize(.small)
-                Button("Delete") {
+                OctetButton(title: "Edit", compact: true, action: edit)
+                OctetButton(title: "Delete", kind: .ghost, compact: true) {
                     ConfirmCenter.shared.ask(
                         title: "Delete \(item.name)?",
                         message: "Deletes it from the library and uninstalls it from every agent that has it. This can't be undone.",
@@ -748,7 +733,6 @@ private struct LibraryRow: View {
                         destructive: true
                     ) { _ in store.deleteLibraryItem(item) }
                 }
-                .controlSize(.small)
             }
             .opacity(hovered ? 1 : 0.5)
         }
@@ -777,8 +761,7 @@ private struct ImportRow: View {
                             Text(slug).font(Theme.uiFont).foregroundStyle(Theme.textSecondary)
                             Text(group.host.displayName).font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
                             Spacer()
-                            Button("Add to Library") { store.adopt(kind: kind, slug: slug, from: group.host) }
-                                .controlSize(.small)
+                            OctetButton(title: "Add to Library", compact: true) { store.adopt(kind: kind, slug: slug, from: group.host) }
                         }
                     }
                 }
@@ -831,23 +814,18 @@ private struct LibraryEditor: View {
             if draft.marketplaceSource {
                 Text("A GitHub repo, URL, or local path holding a plugin marketplace.")
                     .font(Theme.captionFont).foregroundStyle(Theme.textSecondary)
-                TextField("owner/repo", text: $source)
-                    .textFieldStyle(.roundedBorder)
+                OctetTextField(placeholder: "owner/repo", text: $source, label: "Marketplace source")
                 hostPicker
             } else {
-                TextField("name", text: $draft.slug)
-                    .textFieldStyle(.roundedBorder)
+                OctetTextField(placeholder: "name", text: $draft.slug, label: "Name")
                     .disabled(!draft.isNew)
-                TextEditor(text: $draft.text)
-                    .font(Theme.monoFont)
-                    .frame(minHeight: 260)
-                    .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Theme.border, lineWidth: 1))
+                OctetTextEditor(placeholder: "Contents", text: $draft.text, minHeight: 260, maxHeight: nil, font: Theme.monoFont)
                 hostPicker
             }
             HStack {
-                Button("Cancel", action: close).keyboardShortcut(.cancelAction)
+                OctetButton(title: "Cancel", kind: .ghost, compact: true, action: close).keyboardShortcut(.cancelAction)
                 Spacer()
-                Button("Save", action: save)
+                OctetButton(title: "Save", kind: .primary, compact: true, action: save)
                     .keyboardShortcut(.defaultAction)
                     .disabled(draft.marketplaceSource ? source.isEmpty : draft.slug.isEmpty)
             }
@@ -912,11 +890,9 @@ private struct ServerEditor: View {
             Text("Add an MCP server").font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary)
             Text("A command to run, or an HTTP URL. Octet adds it in each agent's own syntax.")
                 .font(Theme.captionFont).foregroundStyle(Theme.textSecondary)
-            TextField("name", text: $name).textFieldStyle(.roundedBorder)
+            OctetTextField(placeholder: "name", text: $name, label: "Name")
                 .disabled(submitting)
-            TextField("npx -y @acme/mcp-server  ·  https://mcp.example.com/mcp", text: $command)
-                .textFieldStyle(.roundedBorder)
-                .font(Theme.monoFont)
+            OctetTextField(placeholder: "npx -y @acme/mcp-server  ·  https://mcp.example.com/mcp", text: $command, label: "Command or URL")
                 .disabled(submitting)
             VStack(alignment: .leading, spacing: 6) {
                 Text("Add to").font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
@@ -942,13 +918,13 @@ private struct ServerEditor: View {
                 .accessibilityElement(children: .combine)
             }
             HStack {
-                Button("Cancel", action: close).keyboardShortcut(.cancelAction)
+                OctetButton(title: "Cancel", kind: .ghost, compact: true, action: close).keyboardShortcut(.cancelAction)
                 Spacer()
                 if submitting {
                     LoadingLine(width: 18)
                     Text("Adding…").font(Theme.captionFont).foregroundStyle(Theme.textSecondary)
                 }
-                Button("Add", action: add)
+                OctetButton(title: "Add", kind: .primary, compact: true, action: add)
                     .keyboardShortcut(.defaultAction)
                     .disabled(submitting || name.trimmingCharacters(in: .whitespaces).isEmpty
                         || command.trimmingCharacters(in: .whitespaces).isEmpty)

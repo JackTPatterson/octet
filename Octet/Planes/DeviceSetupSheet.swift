@@ -150,13 +150,15 @@ struct DeviceSetupSheet: View {
     }
 
     @ViewBuilder private var agent: some View {
-        Toggle(isOn: $agentAccess) {
+        HStack(alignment: .top, spacing: 12) {
             Text("Let agents in Octet see and drive the simulators you open here.")
                 .font(Theme.uiFont).foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+            Toggle("Let agents in Octet see and drive the simulators you open here.", isOn: $agentAccess)
+                .labelsHidden()
+                .toggleStyle(OctetSwitchStyle())
         }
-        .toggleStyle(.switch)
-        .controlSize(.small)
         Text(agentAccess
              ? "Send Screenshot to Agent is on in the device's controls, and the agent is told which device it's looking at."
              : "Agents won't be sent this device's screen.")

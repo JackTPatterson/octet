@@ -159,11 +159,9 @@ struct WaitEditorSheet: View {
             Rectangle().fill(Theme.divider).frame(height: 1)
             VStack(alignment: .leading, spacing: 12) {
                 field("Until") {
-                    Picker("Kind", selection: $draft.kind) {
-                        ForEach(WaitCondition.Kind.allCases) { Text($0.title).tag($0) }
-                    }
-                    .labelsHidden()
-                    .frame(width: 200)
+                    OctetSelect(selection: $draft.kind,
+                                options: WaitCondition.Kind.allCases.map { ($0, $0.title) }, width: 200)
+                        .accessibilityLabel("Until")
                 }
                 conditionFields
                 Text(draft.help).font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
@@ -174,20 +172,13 @@ struct WaitEditorSheet: View {
                 if !draft.snooze {
                     VStack(alignment: .leading, spacing: 5) {
                         Text("Then").font(Theme.uiFontMedium).foregroundStyle(Theme.textSecondary)
-                        TextEditor(text: $draft.next)
-                            .font(Theme.uiFont)
-                            .scrollContentBackground(.hidden)
-                            .padding(6)
-                            .frame(height: 84)
-                            .background(Theme.terminalBackground)
-                            .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius + 1).strokeBorder(Theme.border, lineWidth: 1))
-                            .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius + 1))
+                        OctetTextEditor(placeholder: "The next step", text: $draft.next, minHeight: 84, maxHeight: 84)
                         Text("Sent to the agent when it happens, so write it as the message you'd send: what to do next, and anything it will need to know.")
                             .font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Toggle("Carry on by itself when it happens", isOn: $draft.autoContinue)
-                        .toggleStyle(.checkbox).font(Theme.uiFont).foregroundStyle(Theme.textSecondary)
+                        .toggleStyle(OctetCheckboxStyle())
                 }
                 Text("Comes back to " + where_)
                     .font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
@@ -224,10 +215,9 @@ struct WaitEditorSheet: View {
         case .pullRequest:
             field("Pull request") { OctetTextField(placeholder: draft.placeholder, text: $draft.target) }
             field("Until it") {
-                Picker("Event", selection: $draft.event) {
-                    ForEach(WaitCondition.PullRequestEvent.allCases, id: \.self) { Text($0.title).tag($0) }
-                }
-                .labelsHidden().frame(width: 200)
+                OctetSelect(selection: $draft.event,
+                            options: WaitCondition.PullRequestEvent.allCases.map { ($0, $0.title) }, width: 200)
+                    .accessibilityLabel("Until it")
             }
         case .package:
             field("Registry") {
