@@ -300,7 +300,7 @@ private struct GeneralSettings: View {
         SettingsGroup(title: "Idle workspaces") {
             SettingsRow(
                 title: "Move to Idle after",
-                detail: "Unused workspaces drop into the Idle dock at the bottom of the sidebar. Pinned workspaces, the one you're in, and agents that are working or waiting on you never go idle."
+                detail: "Unused workspaces move to the Idle shelf at the bottom of the sidebar. Pinned workspaces, the one you're in, and agents that are working or waiting on you never go idle. To set one aside until a time, snooze it: it waits under Snoozed and comes back by itself."
             ) {
                 OctetSelect(selection: $store.idleAfter,
                             options: presets.map { ($0.1, $0.0) }

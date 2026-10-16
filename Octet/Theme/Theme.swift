@@ -29,6 +29,9 @@ enum Theme {
     static var onAccent: Color { palette.color(\.onAccent) }
     /// Errors and destructive actions, from the theme's own red.
     static var danger: Color { palette.color(\.danger) }
+    /// T3 Code's info tone (blue-400; blue-600 on light, where 400 is too
+    /// faint to read), for things set aside with a time, like Snoozed.
+    static var info: Color { Color(hex: palette.isLight ? "2563EB" : "60A5FA") }
     static var isLight: Bool { palette.isLight }
     static var colorScheme: ColorScheme { palette.isLight ? .light : .dark }
 

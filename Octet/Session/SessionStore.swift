@@ -48,6 +48,9 @@ final class SessionStore: ObservableObject {
     @Published private(set) var idleWorkspaces: [EngineWorkspace] = []
     @Published private(set) var activity = WorkspaceActivity()
     @Published private(set) var pinnedWorkspaceIds: Set<String> = []
+    /// Snoozed workspaces' wake times: moved to Idle until then. Always a
+    /// subset of the parked set, so leaving Idle any way forgets the time.
+    @Published private(set) var snoozedUntil: [String: Date] = [:]
     /// Colours picked by hand: a workspace's, and each tab's by workspace.
     @Published private(set) var workspaceColors: [String: String] = [:]
     @Published private(set) var tabColors: [String: [String: String]] = [:]
@@ -65,16 +68,17 @@ final class SessionStore: ObservableObject {
     private static let stampsKey = "octet.activity.stamps" + keySuffix
     private static let pinnedKey = "octet.activity.pinned" + keySuffix
     private static let parkedKey = "octet.activity.parked" + keySuffix
+    private static let snoozedKey = "octet.activity.snoozed" + keySuffix
     private static let workspaceColorsKey = "octet.colors.workspaces" + keySuffix
     private static let tabColorsKey = "octet.colors.tabs" + keySuffix
     private static let idleAfterKey = "octet.activity.idleAfter" + keySuffix
     private var lastStampSave = Date.distantPast
-    /// Workspaces marked idle by hand: viewing them doesn't count as use
-    /// until the user focuses them again.
     /// Workspaces moved to Idle by hand. They stay there, however busy,
     /// until they're focused, pinned, kept in view, or an agent in them
     /// newly needs input.
     private var parkedWorkspaceIds: Set<String> = []
+    /// Fires at the soonest snooze wake time.
+    private var snoozeTimer: Timer?
     private var lastFocusedWorkspaceId: String?
     /// Tabs the user named, which auto-naming leaves alone.
     private var manuallyNamedTabIds: Set<String> = []
@@ -154,6 +158,9 @@ final class SessionStore: ObservableObject {
         }
         pinnedWorkspaceIds = Set(defaults.stringArray(forKey: Self.pinnedKey) ?? [])
         parkedWorkspaceIds = Set(defaults.stringArray(forKey: Self.parkedKey) ?? [])
+        if let raw = defaults.dictionary(forKey: Self.snoozedKey) as? [String: Double] {
+            snoozedUntil = IdleShelves.reconcile(raw.mapValues { Date(timeIntervalSince1970: $0) }, parked: parkedWorkspaceIds)
+        }
         workspaceColors = defaults.dictionary(forKey: Self.workspaceColorsKey) as? [String: String] ?? [:]
         tabColors = defaults.dictionary(forKey: Self.tabColorsKey) as? [String: [String: String]] ?? [:]
         manuallyNamedTabIds = Set(defaults.stringArray(forKey: Self.manualNamesKey) ?? [])
@@ -162,6 +169,7 @@ final class SessionStore: ObservableObject {
         seenTips = Set(defaults.stringArray(forKey: Self.seenTipsKey) ?? [])
         let storedIdleAfter = defaults.double(forKey: Self.idleAfterKey)
         if storedIdleAfter > 0 { idleAfter = storedIdleAfter }
+        scheduleSnoozeWake()
     }
 
     var focusedWorkspace: EngineWorkspace? {
@@ -883,6 +891,8 @@ final class SessionStore: ObservableObject {
     /// Stamps activity. The focused workspace counts as in use only while
     /// Octet is the active app, so leaving Octet open overnight doesn't keep it fresh.
     private func observeActivity(_ snapshot: EngineSnapshot) {
+        // First: waking touches its stamp, which the copy below would undo.
+        wakeDueSnoozes(in: snapshot)
         var updated = activity
         // The window in front's workspace: with several, the engine's focus
         // is only whichever moved last.
@@ -1011,11 +1021,17 @@ final class SessionStore: ObservableObject {
         repartition()
     }
 
-    /// Moves a workspace to Idle now, and keeps it there until it's used.
-    func markIdle(_ workspaceId: String) {
+    /// Moves a workspace to Idle now, and keeps it there until it's used,
+    /// or until `wakeAt` when snoozed. Moving it again replaces an earlier
+    /// wake time, so the last choice wins.
+    func markIdle(_ workspaceId: String, wakeAt: Date? = nil) {
         setPinned(workspaceId, false)
         parkedWorkspaceIds.insert(workspaceId)
         saveParked()
+        if snoozedUntil[workspaceId] != wakeAt {
+            snoozedUntil[workspaceId] = wakeAt
+            saveSnoozes()
+        }
         let showing = keyWindow?.focusedWorkspace?.workspaceId ?? snapshot.focusedWorkspaceId
         let elsewhere = WindowRegistry.shared.shownWorkspaceIds()
         if workspaceId == showing,
@@ -1038,13 +1054,71 @@ final class SessionStore: ObservableObject {
         repartition()
     }
 
+    /// Snoozes a workspace: to Idle now, back by itself at `choice`'s wake
+    /// time (or, for "until I use it", when it's used). A snooze until
+    /// something happens is replaced, so there is one way back at a time.
+    func snooze(_ workspaceId: String, _ choice: SnoozeChoice) {
+        WaitCenter.shared.cancelSnooze(of: workspaceId)
+        let wake = choice.wakeTime()
+        markIdle(workspaceId, wakeAt: wake)
+        // Said, with a way back: snoozing the workspace on screen moves
+        // away from it, which is easy to do by mistake.
+        guard let wake, let label = snapshot.workspaces.first(where: { $0.workspaceId == workspaceId })?.label else { return }
+        ToastCenter.shared.info("\(label) is snoozed", detail: "Back " + IdleShelves.wakeDescription(wake), after: 6,
+                                action: .init(title: "Undo") { [weak self] in self?.keepInView(workspaceId) })
+    }
+
     private func unpark(_ workspaceId: String) {
+        // Out of Idle any way, its snooze is over too, timed or a wait;
+        // a wait left behind brought it "back" later from where it already was.
+        WaitCenter.shared.cancelSnooze(of: workspaceId)
         guard parkedWorkspaceIds.remove(workspaceId) != nil else { return }
         saveParked()
     }
 
     private func saveParked() {
         UserDefaults.standard.set(Array(parkedWorkspaceIds), forKey: Self.parkedKey)
+        let kept = IdleShelves.reconcile(snoozedUntil, parked: parkedWorkspaceIds)
+        if kept != snoozedUntil {
+            snoozedUntil = kept
+            saveSnoozes()
+        }
+    }
+
+    private func saveSnoozes() {
+        UserDefaults.standard.set(snoozedUntil.mapValues { $0.timeIntervalSince1970 }, forKey: Self.snoozedKey)
+        scheduleSnoozeWake()
+    }
+
+    /// One timer, for the soonest wake. Each snapshot checks as well, which
+    /// catches up when the Mac slept through a wake time.
+    private func scheduleSnoozeWake() {
+        snoozeTimer?.invalidate()
+        snoozeTimer = nil
+        guard let next = IdleShelves.nextWake(snoozedUntil) else { return }
+        // A second late, so the time has passed when it fires.
+        let timer = Timer(fire: next.addingTimeInterval(1), interval: 0, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.wakeDueSnoozes(in: self.snapshot)
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        snoozeTimer = timer
+    }
+
+    /// Brings back snoozed workspaces whose time has come, and says so.
+    private func wakeDueSnoozes(in snapshot: EngineSnapshot) {
+        let due = IdleShelves.due(snoozedUntil)
+        // An empty snapshot is the engine not having answered yet: wait for
+        // one, so the workspace can be named.
+        guard !due.isEmpty, !snapshot.workspaces.isEmpty else { return }
+        for id in due {
+            keepInView(id)
+            guard let workspace = snapshot.workspaces.first(where: { $0.workspaceId == id }) else { continue }
+            ToastCenter.shared.info("\(workspace.label) is back from Snoozed", after: 8,
+                                    action: .init(title: "Show") { WindowRegistry.shared.key?.focusWorkspace(id) })
+        }
     }
 
     /// Lets go of parked workspaces that closed, and of those where an agent
@@ -1060,13 +1134,15 @@ final class SessionStore: ObservableObject {
         // workspace closing.
         if !present.isEmpty { kept.formIntersection(present) }
         guard kept != parkedWorkspaceIds else { return }
+        for released in parkedWorkspaceIds.subtracting(kept) { WaitCenter.shared.cancelSnooze(of: released) }
         parkedWorkspaceIds = kept
         saveParked()
     }
 
-    /// Project name for a workspace, for compact idle rows.
+    /// Project name for a workspace, for compact idle rows. None for the
+    /// catch-all group: "Other" beside every loose workspace says nothing.
     func projectName(of workspaceId: String) -> String? {
-        groups.first { $0.workspaces.contains { $0.workspaceId == workspaceId } }?.name
+        groups.first { $0.id != ProjectGroup.otherId && $0.workspaces.contains { $0.workspaceId == workspaceId } }?.name
     }
 
     func closeIdleWorkspaces() {
