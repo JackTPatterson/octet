@@ -71,6 +71,11 @@ struct TabBarView: View {
                 }
                 // Never a scroller, even with "Always show scroll bars".
                 .scrollIndicators(.never)
+                // The selection surface slides to the new tab, as the planes
+                // strip's does, however the focus changed.
+                .animation(MotionPreferences.shared.animation(.tabs, .smooth(duration: 0.2)), value: focusedId)
+                .animation(MotionPreferences.shared.animation(.tabs, .smooth(duration: 0.2)), value: agents.active(in: workspaceId)?.id)
+                .animation(MotionPreferences.shared.animation(.tabs, .smooth(duration: 0.2)), value: window.editor.isPresented)
                 .onChange(of: focusedId) { _, id in
                     guard let id else { return }
                     proxy.scrollTo(id)

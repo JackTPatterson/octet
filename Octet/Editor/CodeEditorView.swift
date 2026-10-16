@@ -6,6 +6,7 @@ import SwiftUI
 struct CodeEditorView: View {
     @ObservedObject var workspace: EditorWorkspace
     let rootDirectory: String
+    @Namespace private var tabSelection
 
     var body: some View {
         VStack(spacing: 0) {
@@ -47,9 +48,10 @@ struct CodeEditorView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 0) {
                     ForEach(workspace.documents) { document in
-                        EditorFileTab(document: document, workspace: workspace)
+                        EditorFileTab(document: document, workspace: workspace, selection: tabSelection)
                     }
                 }
+                .animation(MotionPreferences.shared.animation(.tabs, .smooth(duration: 0.2)), value: workspace.activeID)
             }
             Spacer(minLength: 0)
             Button { workspace.filePickerVisible = true } label: {
@@ -192,6 +194,7 @@ private struct MarkdownPreview: View {
 private struct EditorFileTab: View {
     @ObservedObject var document: EditorDocument
     @ObservedObject var workspace: EditorWorkspace
+    let selection: Namespace.ID
     @State private var hovered = false
 
     var body: some View {
@@ -214,9 +217,19 @@ private struct EditorFileTab: View {
         }
         .padding(.horizontal, 10)
         .frame(minWidth: 120, maxWidth: 210, minHeight: 32, maxHeight: 32)
-        .background(active ? Theme.terminalBackground : hovered ? Theme.hover : Color.clear)
-        .overlay(alignment: .bottom) {
-            if active { Rectangle().fill(Color.white.opacity(0.82)).frame(height: 2) }
+        .background {
+            ZStack {
+                if hovered && !active { Theme.hover }
+                // One selection surface slides between the tabs, as in the
+                // tab bar and the planes strip.
+                if active {
+                    ZStack(alignment: .top) {
+                        Theme.terminalBackground
+                        Rectangle().fill(Color.white.opacity(0.9)).frame(height: 2)
+                    }
+                    .matchedGeometryEffect(id: "selectedFile", in: selection)
+                }
+            }
         }
         .overlay(alignment: .trailing) { Rectangle().fill(Theme.divider).frame(width: 1) }
         .contentShape(Rectangle())

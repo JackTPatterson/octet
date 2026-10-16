@@ -176,6 +176,7 @@ private struct DrawerTerminalSidebar: View {
     let workspace: String
 
     static let width: CGFloat = 144
+    @Namespace private var selection
 
     var body: some View {
         let layout = terminals.layout(workspace)
@@ -199,6 +200,7 @@ private struct DrawerTerminalSidebar: View {
                             DrawerTerminalRow(
                                 label: layout.label(of: id, title: terminals.title(of: id, workspace: workspace)),
                                 active: id == layout.active,
+                                selection: selection,
                                 onSelect: { terminals.select(id, workspace: workspace) },
                                 onClose: { terminals.perform(.close, workspace: workspace, terminal: id) })
                             .padding(.leading, layout.showsGroupHeaders ? 8 : 0)
@@ -206,6 +208,8 @@ private struct DrawerTerminalSidebar: View {
                     }
                 }
                 .padding(4)
+                // The selection slides between rows, as tabs' do.
+                .animation(MotionPreferences.shared.animation(.tabs, .smooth(duration: 0.2)), value: layout.active)
             }
         }
         .frame(width: Self.width)
@@ -241,6 +245,7 @@ private struct DrawerGroupHeader: View {
 private struct DrawerTerminalRow: View {
     let label: String
     let active: Bool
+    let selection: Namespace.ID
     let onSelect: () -> Void
     let onClose: () -> Void
     @State private var hovered = false
@@ -265,8 +270,15 @@ private struct DrawerTerminalRow: View {
         }
         .padding(.horizontal, 8)
         .frame(height: 24)
-        .background(RoundedRectangle(cornerRadius: Theme.controlRadius)
-            .fill(active ? Theme.cardSelected : hovered ? Theme.hover : .clear))
+        .background {
+            ZStack {
+                if hovered && !active { RoundedRectangle(cornerRadius: Theme.controlRadius).fill(Theme.hover) }
+                if active {
+                    RoundedRectangle(cornerRadius: Theme.controlRadius).fill(Theme.cardSelected)
+                        .matchedGeometryEffect(id: "selectedDrawerTerminal", in: selection)
+                }
+            }
+        }
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
         .onTapGesture(perform: onSelect)
