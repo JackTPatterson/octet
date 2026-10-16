@@ -1,97 +1,16 @@
 import AppKit
 import SwiftUI
 
-/// What the Peer panel remembers while it's closed: each Mac's agents as
-/// last read, and the tasks given from here with their answers.
-@MainActor
-final class PeerPanelModel: ObservableObject {
-    static let shared = PeerPanelModel()
-
-    struct Task: Identifiable {
-        let id: String
-        let machine: String
-        let summary: String
-        var status: String
-        var result: String?
-    }
-
-    @Published private(set) var agents: [String: [PeerProtocol.Agent]] = [:]
-    @Published private(set) var loading: Set<String> = []
-    @Published private(set) var errors: [String: String] = [:]
-    @Published private(set) var tasks: [Task] = []
-    /// What the menu asked the window to show: a Mac to open, and whether
-    /// to start a task there.
-    @Published var focusMachine: String?
-    @Published var startTaskOn: String?
-
-    /// Reads which agents run on `machine`.
-    func loadAgents(_ machine: String) {
-        loading.insert(machine)
-        PeerCenter.shared.request(.agents, ["machine": machine]) { [weak self] answer in
-            guard let self else { return }
-            self.loading.remove(machine)
-            if let error = answer["error"] as? String {
-                self.errors[machine] = error
-                return
-            }
-            self.errors[machine] = nil
-            self.agents[machine] = ((answer["result"] as? [String: Any])?["agents"] as? [[String: Any]] ?? [])
-                .compactMap(PeerProtocol.Agent.init)
-        }
-    }
-
-    func send(_ text: String, to agent: PeerProtocol.Agent, on machine: String) {
-        PeerCenter.shared.request(.send, ["machine": machine, "agent": agent.id, "text": text]) { answer in
-            if let error = answer["error"] as? String {
-                ToastCenter.shared.fail(nil, "Couldn't message \(agent.name) on \(machine)", detail: error)
-            } else {
-                ToastCenter.shared.info("Sent to \(agent.name) on \(machine)")
-            }
-        }
-    }
-
-    func read(_ agent: PeerProtocol.Agent, on machine: String, lines: Int = 120, done: @escaping (String) -> Void) {
-        PeerCenter.shared.request(.read, ["machine": machine, "agent": agent.id, "lines": lines]) { answer in
-            if let error = answer["error"] as? String { return done("Couldn't read it: \(error)") }
-            let text = (answer["result"] as? [String: Any])?["text"] as? String ?? ""
-            done(text.isEmpty ? "Nothing on screen yet." : text)
-        }
-    }
-
-    /// Starts an agent on `machine` with `task`, then waits for its answer.
-    func delegate(_ task: String, agent: String, folder: String, on machine: String) {
-        PeerCenter.shared.request(.delegate, ["machine": machine, "agent_type": agent, "folder": folder, "task": task]) { [weak self] answer in
-            guard let self else { return }
-            if let error = answer["error"] as? String {
-                return ToastCenter.shared.fail(nil, "\(machine) didn't take the task", detail: error)
-            }
-            guard let id = (answer["result"] as? [String: Any])?["task"] as? String else { return }
-            self.tasks.insert(Task(id: id, machine: machine, summary: task, status: "working"), at: 0)
-            self.wait(for: id)
-        }
-    }
-
-    private func wait(for id: String) {
-        PeerCenter.shared.request(.wait, ["task": id, "timeout_seconds": 3600]) { [weak self] answer in
-            guard let self, let index = self.tasks.firstIndex(where: { $0.id == id }) else { return }
-            let result = answer["result"] as? [String: Any] ?? [:]
-            self.tasks[index].status = result["status"] as? String ?? self.tasks[index].status
-            self.tasks[index].result = result["result"] as? String ?? (answer["error"] as? String)
-            if result["note"] != nil { self.wait(for: id) }  // Still going: keep waiting.
-        }
-    }
-
-    func clearFinished() { tasks.removeAll { $0.status != "working" } }
-}
-
-/// The Peer window's content: your paired Macs and their agents, to read,
-/// message and hand tasks to, the tasks given from here, and pairing.
+/// The Peer window's content, after T3 Code's environment list: each
+/// paired Mac as a card with its status line, its agents (to read, message
+/// or hand a task to), the tasks given from here with their live status,
+/// and pairing.
 struct PeerPanel: View {
     let folder: String?
     @ObservedObject private var center = PeerCenter.shared
     @ObservedObject private var model = PeerPanelModel.shared
+    @ObservedObject private var motion = MotionPreferences.shared
     @State private var open: Set<String> = []
-    @State private var address = ""
     /// What's read from an agent, shown over the list.
     @State private var reading: (title: String, text: String, machine: String, agent: PeerProtocol.Agent)?
     @State private var messaging: String?
@@ -100,28 +19,36 @@ struct PeerPanel: View {
     @State private var taskAgent = "claude"
     @State private var taskFolder = ""
     @State private var taskText = ""
+    @State private var hoveredAgent: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 0) {
             header
+            Rectangle().fill(Theme.divider).frame(height: 1)
             if let reading {
                 output(reading)
+                    .transition(motion.animates(.connections) ? .opacity.combined(with: .offset(x: 8)) : .identity)
             } else {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 16) {
                         if !center.running {
-                            note("Other Macs is starting, or couldn't start. Check Settings › Plugins.")
+                            offState
+                        } else {
+                            macs
+                            if !model.tasks.isEmpty { tasks }
+                            if !center.nearby.isEmpty { nearby }
                         }
-                        macs
-                        if !model.tasks.isEmpty { tasks }
-                        pairing
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(14)
                 }
+                .octetScrollIndicators()
+                .transition(motion.animates(.connections) ? .opacity : .identity)
             }
         }
-        .padding(12)
-        .frame(minWidth: 380, maxWidth: .infinity, minHeight: 300, maxHeight: .infinity, alignment: .topLeading)
+        .frame(minWidth: 400, maxWidth: .infinity, minHeight: 320, maxHeight: .infinity, alignment: .topLeading)
         .background(Theme.chrome)
+        .animation(motion.animation(.connections, .smooth(duration: 0.22)), value: reading?.title)
         .onAppear {
             for peer in center.paired where center.online.contains(peer.device) {
                 open.insert(peer.device)
@@ -144,120 +71,226 @@ struct PeerPanel: View {
         if let machine = model.startTaskOn {
             reading = nil
             if let peer = center.paired.first(where: { $0.name == machine }) { open.insert(peer.device) }
-            tasking = machine
-            taskFolder = folder.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "~/"
-            taskText = ""
+            beginTask(on: machine)
             model.startTaskOn = nil
         }
     }
 
-    private var header: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "desktopcomputer").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-            Text("Peer").font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary)
-            Text("this Mac: \(center.machineName)").font(Theme.captionFont).foregroundStyle(Theme.textTertiary).lineLimit(1)
-            Spacer(minLength: 6)
-            Button {
-                PluginSettingsOpener.show(pluginId: "other-macs")
-            } label: { Image(systemName: "gearshape") }
-                .buttonStyle(.plain).foregroundStyle(Theme.textSecondary)
-                .help("Other Macs settings")
+    private func beginTask(on machine: String) {
+        MotionPreferences.shared.perform(.connections, .smooth(duration: 0.22)) {
+            tasking = machine
         }
+        taskFolder = folder.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "~/"
+        taskText = ""
+        model.clearTaskError(machine)
+    }
+
+    // MARK: Header
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            Text("Other Macs").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textPrimary)
+            HStack(spacing: 5) {
+                PeerStatusDot(tone: center.running ? .online : .idle, size: 6)
+                Text(center.machineName).font(Theme.captionFont).foregroundStyle(Theme.textSecondary).lineLimit(1)
+            }
+            .padding(.horizontal, 6)
+            .frame(height: 20)
+            .background(RoundedRectangle(cornerRadius: 6).fill(Theme.hover.opacity(0.6)))
+            .help("This Mac, as your other Macs see it")
+            Spacer(minLength: 6)
+            if center.running {
+                OctetButton(title: "Pair a Mac…", icon: "plus", kind: .ghost, compact: true) {
+                    PeerPairingModel.shared.present()
+                }
+            }
+            OctetIconButton(icon: "gearshape", help: "Other Macs Settings") {
+                PluginSettingsOpener.show(pluginId: "other-macs")
+            }
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 44)
+    }
+
+    private var offState: some View {
+        PeerEmptyState(icon: "wifi.slash", title: "Other Macs is off",
+                       message: "Turn on Talk to Other Macs in Settings to pair this Mac with your others.") {
+            OctetButton(title: "Open Settings", kind: .secondary, compact: true) {
+                PluginSettingsOpener.show(pluginId: "other-macs")
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 240)
     }
 
     // MARK: Paired Macs
 
     @ViewBuilder private var macs: some View {
         if center.paired.isEmpty {
-            note("No Macs paired yet. Pair one below: open Octet there with Other Macs on, and it shows up as nearby.")
-        }
-        ForEach(center.paired) { peer in
-            let online = center.online.contains(peer.device)
-            VStack(alignment: .leading, spacing: 6) {
-                Button {
-                    if open.remove(peer.device) == nil {
-                        open.insert(peer.device)
-                        model.loadAgents(peer.name)
-                    }
-                } label: {
-                    HStack(spacing: 7) {
-                        Circle().fill(online ? Color(hex: AgentStateColor.done) : Theme.textTertiary.opacity(0.5)).frame(width: 7, height: 7)
-                        Text(peer.name).font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary)
-                        Text(online ? "connected" : "not connected").font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
-                        Spacer(minLength: 4)
-                        if model.loading.contains(peer.name) { ProgressView().controlSize(.mini) }
-                        OctetIcon("chevron.right", size: 10).foregroundStyle(Theme.textTertiary)
-                            .rotationEffect(.degrees(open.contains(peer.device) ? 90 : 0))
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                if open.contains(peer.device) {
-                    machineDetail(peer.name, online: online)
+            PeerEmptyState(icon: "desktopcomputer", title: "No other Macs paired",
+                           message: "Pair one to let agents here work with agents there.") {
+                OctetButton(title: "Pair a Mac…", icon: "plus", kind: .primary, compact: true) {
+                    PeerPairingModel.shared.present()
                 }
             }
-            .padding(8)
-            .background(Theme.card)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .background(RoundedRectangle(cornerRadius: 12).fill(Theme.card.opacity(0.55)))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.border.opacity(0.7), lineWidth: 1))
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                PeerSectionHeader(title: "Paired Macs")
+                ForEach(center.paired) { peer in machineCard(PeerMachineState(peer, center: center, model: model)) }
+            }
         }
     }
 
-    @ViewBuilder private func machineDetail(_ machine: String, online: Bool) -> some View {
-        if let error = model.errors[machine] {
-            note(error)
-        } else if let agents = model.agents[machine] {
-            if agents.isEmpty { note("No agents running there.") }
-            ForEach(agents, id: \.id) { agent in agentRow(agent, machine: machine) }
-        }
-        if tasking == machine {
-            taskForm(machine)
-        } else {
-            HStack(spacing: 6) {
-                OctetButton(title: "New Task…", icon: "plus", kind: .secondary, compact: true) {
-                    tasking = machine
-                    taskFolder = folder.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "~/"
-                    taskText = ""
+    private func machineCard(_ state: PeerMachineState) -> some View {
+        let peer = state.peer
+        let isOpen = open.contains(peer.device)
+        let status = state.status()
+        return VStack(alignment: .leading, spacing: 0) {
+            Button {
+                MotionPreferences.shared.perform(.connections, .smooth(duration: 0.22)) {
+                    if open.remove(peer.device) == nil { open.insert(peer.device) }
                 }
-                OctetButton(title: "Refresh", kind: .ghost, compact: true) { model.loadAgents(machine) }
+                if open.contains(peer.device) { model.loadAgents(peer.name) }
+            } label: {
+                HStack(spacing: 9) {
+                    PeerMachineIcon(name: peer.name)
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text(peer.name).font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                            PeerStatusDot(tone: status.tone, size: 6)
+                        }
+                        Text(statusLine(state, status))
+                            .font(Theme.captionFont)
+                            .foregroundStyle(status.tone.textColor)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 4)
+                    if model.loading.contains(peer.name) { ProgressView().controlSize(.mini) }
+                    OctetIcon("chevron.right", size: 10)
+                        .foregroundStyle(Theme.textTertiary)
+                        .rotationEffect(.degrees(isOpen ? 90 : 0))
+                }
+                .padding(.horizontal, 12)
+                .frame(minHeight: 46)
+                .contentShape(Rectangle())
             }
-            .disabled(!online)
+            .buttonStyle(.plain)
+            .help(state.details)
+            if isOpen {
+                Rectangle().fill(Theme.divider.opacity(0.8)).frame(height: 1)
+                machineDetail(state)
+                    .padding(12)
+                    .transition(motion.animates(.connections) ? .opacity.combined(with: .offset(y: -4)) : .identity)
+            }
+        }
+        .background(RoundedRectangle(cornerRadius: 12).fill(Theme.card.opacity(0.55)))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.border.opacity(0.7), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    /// The status, with the version and round trip when they're known.
+    private func statusLine(_ state: PeerMachineState, _ status: PeerPresentation.Status) -> String {
+        var parts = [status.text]
+        if state.online, state.issue == nil, let latency = state.latency { parts.append(PeerPresentation.latency(latency)) }
+        return parts.joined(separator: " · ")
+    }
+
+    @ViewBuilder private func machineDetail(_ state: PeerMachineState) -> some View {
+        let machine = state.peer.name
+        VStack(alignment: .leading, spacing: 10) {
+            if let issue = state.issue, !(issue == .offline && state.online) {
+                PeerIssueBanner(issue: issue, machine: machine) { model.loadAgents(machine) }
+            } else if !state.online {
+                PeerIssueBanner(issue: .offline, machine: machine) { model.loadAgents(machine) }
+            }
+            if let agents = state.agents, state.issue == nil {
+                if agents.isEmpty {
+                    Text("No agents running on \(machine). Start one with a task below.")
+                        .font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
+                } else {
+                    VStack(spacing: 2) {
+                        ForEach(agents, id: \.id) { agent in agentRow(agent, machine: machine) }
+                    }
+                }
+            }
+            if tasking == machine {
+                taskForm(machine)
+                    .transition(motion.animates(.connections) ? .opacity.combined(with: .offset(y: -4)) : .identity)
+            } else {
+                HStack(spacing: 6) {
+                    OctetButton(title: "New Task on \(machine)…", icon: "plus", kind: .secondary, compact: true) {
+                        beginTask(on: machine)
+                    }
+                    OctetButton(title: "Refresh", icon: "arrow.clockwise", kind: .ghost, compact: true) { model.loadAgents(machine) }
+                    Spacer()
+                }
+                .disabled(!state.online)
+            }
         }
     }
 
     private func agentRow(_ agent: PeerProtocol.Agent, machine: String) -> some View {
         let key = machine + "\u{0}" + agent.id
-        return VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 6) {
-                if let brand = AgentBrand.forAgent(agent.agent) { AgentLogo(brand: brand, size: 12) }
+        let hovered = hoveredAgent == key || messaging == key
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Group {
+                    if let brand = AgentBrand.forAgent(agent.agent) { AgentLogo(brand: brand, size: 14) }
+                    else { OctetIcon("sparkle", size: 14).foregroundStyle(Theme.textSecondary) }
+                }
+                .frame(width: 18)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(agent.name).font(Theme.uiFont).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                    Text("\(agent.project) · \(agent.status)").font(Theme.captionFont).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                    Text(agent.project.isEmpty ? agent.folder : agent.project)
+                        .font(Theme.captionFont).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                        .help(agent.folder)
                 }
                 Spacer(minLength: 4)
-                Button("Read") {
-                    model.read(agent, on: machine) { text in
-                        reading = ("\(agent.name) on \(machine)", text, machine, agent)
+                if hovered {
+                    HStack(spacing: 2) {
+                        OctetButton(title: "Read", icon: "eye", kind: .ghost, compact: true) {
+                            model.read(agent, on: machine) { text in
+                                reading = ("\(agent.name) on \(machine)", text, machine, agent)
+                            }
+                        }
+                        OctetButton(title: "Message", icon: "message", kind: .ghost, compact: true) {
+                            MotionPreferences.shared.perform(.connections, .smooth(duration: 0.2)) {
+                                messaging = messaging == key ? nil : key
+                            }
+                            message = ""
+                        }
                     }
+                    .transition(.opacity)
+                } else {
+                    agentStatus(agent.status)
                 }
-                .controlSize(.small)
-                Button("Message") {
-                    messaging = messaging == key ? nil : key
-                    message = ""
-                }
-                .controlSize(.small)
             }
             if messaging == key {
                 HStack(spacing: 6) {
-                    TextField("Message for \(agent.name)", text: $message)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit { sendMessage(agent, machine) }
-                    Button("Send") { sendMessage(agent, machine) }
-                        .controlSize(.small)
+                    OctetTextField(placeholder: "Message for \(agent.name)", text: $message) { sendMessage(agent, machine) }
+                    OctetButton(title: "Send", kind: .primary, compact: true) { sendMessage(agent, machine) }
                         .disabled(message.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
+                .padding(.leading, 26)
             }
         }
-        .padding(.leading, 14)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(RoundedRectangle(cornerRadius: Theme.controlRadius).fill(hoveredAgent == key ? Theme.hover.opacity(0.6) : .clear))
+        .contentShape(Rectangle())
+        .onHover { inside in
+            MotionPreferences.shared.perform(.connections, .easeOut(duration: 0.15)) {
+                hoveredAgent = inside ? key : (hoveredAgent == key ? nil : hoveredAgent)
+            }
+        }
+    }
+
+    private func agentStatus(_ raw: String) -> some View {
+        HStack(spacing: 5) {
+            AgentStateGlyph(status: EngineAgentStatus(rawValue: raw) ?? .unknown, size: 9)
+            Text(PeerPresentation.agentStatus(raw)).font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
+        }
     }
 
     private func sendMessage(_ agent: PeerProtocol.Agent, _ machine: String) {
@@ -269,106 +302,107 @@ struct PeerPanel: View {
     }
 
     private func taskForm(_ machine: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("New task on \(machine)").font(Theme.captionFont.weight(.medium)).foregroundStyle(Theme.textSecondary)
+        let starting = model.starting.contains(machine)
+        let ready = !taskText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !taskFolder.trimmingCharacters(in: .whitespaces).isEmpty
+        return VStack(alignment: .leading, spacing: 9) {
+            Text("New Task on \(machine)").font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary)
             OctetSegmented(selection: $taskAgent, items: [("claude", "Claude Code"), ("codex", "Codex")])
-            OctetTextField(placeholder: "Folder there, e.g. ~/code/app", text: $taskFolder)
-            TextField("What should it do?", text: $taskText, axis: .vertical)
-                .lineLimit(3...6)
-                .textFieldStyle(.roundedBorder)
-            HStack {
-                Text("It runs in a tab there; the answer comes back here.").font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
-                Spacer()
-                Button("Cancel") { tasking = nil }.controlSize(.small)
-                Button("Start") {
-                    model.delegate(taskText, agent: taskAgent, folder: taskFolder, on: machine)
-                    tasking = nil
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Folder on \(machine)").font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
+                OctetTextField(placeholder: "~/code/app", text: $taskFolder)
+            }
+            PeerTextArea(placeholder: "What should it do?", text: $taskText)
+            if let error = model.taskErrors[machine] {
+                Text(error).font(Theme.captionFont).foregroundStyle(Theme.danger).fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(spacing: 8) {
+                if starting {
+                    ProgressView().controlSize(.mini)
+                    Text("Waiting for \(machine) to take it…").font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
+                } else {
+                    Text("It runs in a tab there; the answer comes back here.")
+                        .font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
                 }
-                .controlSize(.small)
+                Spacer(minLength: 6)
+                OctetButton(title: "Cancel", kind: .ghost, compact: true) {
+                    MotionPreferences.shared.perform(.connections, .smooth(duration: 0.2)) { tasking = nil }
+                }
+                OctetButton(title: starting ? "Starting…" : "Start", kind: .primary, compact: true) {
+                    model.delegate(taskText, agent: taskAgent, folder: taskFolder, on: machine) { started in
+                        guard started else { return }
+                        MotionPreferences.shared.perform(.connections, .smooth(duration: 0.2)) { tasking = nil }
+                    }
+                }
                 .keyboardShortcut(.defaultAction)
-                .disabled(taskText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                          || taskFolder.trimmingCharacters(in: .whitespaces).isEmpty)
+                .disabled(!ready || starting)
             }
         }
-        .padding(8)
-        .background(Theme.chrome)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Theme.terminalBackground.opacity(0.35)))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.border.opacity(0.7), lineWidth: 1))
     }
 
     // MARK: Tasks given from here
 
     private var tasks: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("TASKS").font(Theme.headerFont).foregroundStyle(Theme.textTertiary)
-                Spacer()
+        VStack(alignment: .leading, spacing: 8) {
+            PeerSectionHeader(title: "Tasks") {
                 if model.tasks.contains(where: { $0.status != "working" }) {
-                    Button("Clear Finished") { model.clearFinished() }.buttonStyle(.link).font(Theme.captionFont)
+                    OctetButton(title: "Clear Finished", kind: .ghost, compact: true) { model.clearFinished() }
                 }
             }
-            ForEach(model.tasks) { task in
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        if task.status == "working" { ProgressView().controlSize(.mini) }
-                        Text(task.summary).font(Theme.uiFont).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                        Spacer(minLength: 4)
-                        Text("\(task.machine) · \(task.status)").font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
-                    }
-                    if let result = task.result, !result.isEmpty {
-                        Text(result).font(Theme.monoFont).foregroundStyle(Theme.textSecondary)
-                            .lineLimit(6).textSelection(.enabled)
-                    }
+            VStack(spacing: 0) {
+                ForEach(Array(model.tasks.enumerated()), id: \.element.id) { index, task in
+                    if index > 0 { SettingsDivider() }
+                    PeerTaskRow(task: task)
                 }
-                .padding(8)
-                .background(Theme.card)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
             }
+            .background(RoundedRectangle(cornerRadius: 12).fill(Theme.card.opacity(0.55)))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.border.opacity(0.7), lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
         }
     }
 
-    // MARK: Pairing
+    // MARK: Nearby
 
-    private var pairing: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("PAIR A MAC").font(Theme.headerFont).foregroundStyle(Theme.textTertiary)
-            ForEach(center.nearby) { found in
-                HStack {
-                    Text(found.name).font(Theme.uiFont).foregroundStyle(Theme.textPrimary)
-                    Text("nearby").font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
-                    Spacer()
-                    Button("Pair…") { center.pair(with: found.endpoint, name: found.name) }.controlSize(.small)
+    private var nearby: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            PeerSectionHeader(title: "Nearby, Not Paired")
+            VStack(spacing: 0) {
+                ForEach(Array(center.nearby.enumerated()), id: \.element.id) { index, found in
+                    if index > 0 { SettingsDivider() }
+                    HStack(spacing: 9) {
+                        PeerMachineIcon(name: found.name)
+                        Text(found.name).font(Theme.uiFont).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                        Spacer()
+                        OctetButton(title: "Pair…", kind: .secondary, compact: true) {
+                            PeerPairingModel.shared.present()
+                            PeerPairingModel.shared.pair(with: found)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .frame(height: 40)
                 }
             }
-            HStack(spacing: 6) {
-                TextField("Or an address, e.g. studio.local:52100", text: $address)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit(pairAddress)
-                Button("Pair", action: pairAddress).controlSize(.small)
-                    .disabled(address.trimmingCharacters(in: .whitespaces).isEmpty)
-            }
-            if let status = center.pairingStatus { note(status) }
+            .background(RoundedRectangle(cornerRadius: 12).fill(Theme.card.opacity(0.55)))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.border.opacity(0.7), lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
         }
-    }
-
-    private func pairAddress() {
-        let value = address.trimmingCharacters(in: .whitespaces)
-        guard !value.isEmpty else { return }
-        center.pair(address: value)
-        address = ""
     }
 
     // MARK: Reading an agent
 
     private func output(_ shown: (title: String, text: String, machine: String, agent: PeerProtocol.Agent)) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Button { reading = nil } label: { Label("Back", systemImage: "chevron.left") }.buttonStyle(.link)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                OctetIconButton(icon: "chevron.left", help: "Back") { reading = nil }
+                if let brand = AgentBrand.forAgent(shown.agent.agent) { AgentLogo(brand: brand, size: 13) }
                 Text(shown.title).font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary).lineLimit(1)
                 Spacer()
-                Button("Refresh") {
+                OctetButton(title: "Refresh", icon: "arrow.clockwise", kind: .ghost, compact: true) {
                     model.read(shown.agent, on: shown.machine) { text in reading = (shown.title, text, shown.machine, shown.agent) }
                 }
-                .controlSize(.small)
             }
             ScrollView {
                 Text(shown.text)
@@ -376,15 +410,69 @@ struct PeerPanel: View {
                     .foregroundStyle(Theme.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
+                    .padding(10)
             }
+            .octetScrollIndicators()
             .frame(maxHeight: .infinity)
-            .padding(8)
-            .background(Theme.terminalBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .background(RoundedRectangle(cornerRadius: 10).fill(Theme.terminalBackground))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.border.opacity(0.7), lineWidth: 1))
         }
+        .padding(14)
     }
+}
 
-    private func note(_ text: String) -> some View {
-        Text(text).font(Theme.captionFont).foregroundStyle(Theme.textTertiary).fixedSize(horizontal: false, vertical: true)
+/// A task given from here: what it was, where, its live status and, once
+/// it finishes, the end of the agent's screen to read.
+private struct PeerTaskRow: View {
+    let task: PeerPanelModel.Task
+    @State private var expanded = false
+
+    var body: some View {
+        let status = PeerPresentation.taskStatus(task.status)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Group {
+                    if task.status == "working" {
+                        ProgressView().controlSize(.mini)
+                    } else {
+                        PeerStatusDot(tone: status.tone, size: 6)
+                    }
+                }
+                .frame(width: 16)
+                if let brand = AgentBrand.forAgent(task.agent) { AgentLogo(brand: brand, size: 12) }
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(task.summary).font(Theme.uiFont).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                    TimelineView(.periodic(from: .now, by: 30)) { context in
+                        Text("\(task.machine) · \(status.text) · \(PeerPresentation.elapsed(since: task.started, now: context.date))")
+                            .font(Theme.captionFont).foregroundStyle(status.tone == .online ? Theme.textTertiary : status.tone.textColor)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 4)
+                if let result = task.result, !result.isEmpty {
+                    OctetIcon("chevron.right", size: 10)
+                        .foregroundStyle(Theme.textTertiary)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                guard task.result?.isEmpty == false else { return }
+                MotionPreferences.shared.perform(.connections, .smooth(duration: 0.2)) { expanded.toggle() }
+            }
+            if expanded, let result = task.result, !result.isEmpty {
+                ScrollView {
+                    Text(result).font(Theme.monoFont).foregroundStyle(Theme.textSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                        .padding(8)
+                }
+                .frame(maxHeight: 180)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Theme.terminalBackground))
+                .transition(.opacity)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
     }
 }
