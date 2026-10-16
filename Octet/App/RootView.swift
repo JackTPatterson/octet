@@ -331,10 +331,6 @@ struct RootView: View {
             }
             .id(settings.themeKey)
         }
-        .sheet(isPresented: $ui.usageBreakdownVisible) {
-            UsageBreakdownView { ui.usageBreakdownVisible = false }
-                .environmentObject(window)
-        }
         // A wait being written, in the window that asked for it.
         .sheet(item: Binding(
             get: { waitCenter.draft.flatMap { $0.windowId == nil || $0.windowId == window.id ? $0 : nil } },
@@ -575,6 +571,11 @@ struct RootView: View {
                     statusBar.debugShowSample(ci: overall)
                 }
             }
+            // "usage" opens the usage page; "usage:tokens:week" also picks
+            // its mode and period.
+            if let open = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], open.hasPrefix("usage") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { ui.usageBreakdownVisible = true }
+            }
             if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "agents" {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) { AgentCenter.shared.showingBoard = true }
             }
@@ -664,6 +665,14 @@ struct RootView: View {
         ZStack {
                     if let agent = window.agentUIHandoff {
                         AgentUIHandoffView(agent: agent)
+                    } else if ui.usageBreakdownVisible {
+                        // Usage is a page over the content area, not a sheet.
+                        UsagePage {
+                            ui.usageBreakdownVisible = false
+                            OctetTerminalRuntime.focusTerminal()
+                        }
+                        .onAppear { DebugSnapshot.overlay("usage", true) }
+                        .onDisappear { DebugSnapshot.overlay("usage", false) }
                     } else if let review = ui.review {
                         DiffReviewView(model: review, store: store) { window.toggleReview() }
                             .id(review.directory)
