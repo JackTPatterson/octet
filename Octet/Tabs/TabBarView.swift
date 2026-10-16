@@ -251,33 +251,37 @@ private struct TabItem: View {
         .animation(motion.animation(.connections, .spring(response: 0.4, dampingFraction: 0.7)), value: ssh)
         .animation(motion.animation(.connections, .spring(response: 0.4, dampingFraction: 0.7)),
                    value: store.agentLocation(inTab: tab.tabId))
-        .padding(.leading, 12)
-        .padding(.trailing, 6)
+        .padding(.leading, 10)
+        .padding(.trailing, 4)
         // One width for every tab, so after a close the next tab's close
         // button slides under the pointer.
-        .frame(width: Theme.tabWidth)
-        .frame(maxHeight: .infinity)
+        .frame(width: Theme.tabWidth - 4, height: 26)
+        // T3 Code's tab chip: rounded, filled under the pointer, and a
+        // filled surface for the tab in front that slides between tabs.
         .background {
+            let shape = RoundedRectangle(cornerRadius: Theme.controlRadius)
             ZStack {
-                if hovered && !isActive { Theme.hover }
+                if hovered && !isActive { shape.fill(Theme.hover) }
                 if let hue, !isActive {
-                    Color(hex: hue).opacity(hovered ? Theme.tabColorHoverOpacity : Theme.tabColorOpacity)
+                    shape.fill(Color(hex: hue).opacity(hovered ? Theme.tabColorHoverOpacity : Theme.tabColorOpacity))
                 }
-                // A single selection surface slides between tabs.
                 if isActive {
-                    ZStack(alignment: .top) {
-                        Theme.terminalBackground
-                        if let hue { Color(hex: hue).opacity(picked == nil ? 0.08 : 0.12) }
-                        Rectangle()
-                            .fill(picked?.color ?? Color.white.opacity(0.9))
-                            .frame(height: 2)
+                    ZStack {
+                        shape.fill(Theme.cardSelected)
+                        if let hue { shape.fill(Color(hex: hue).opacity(picked == nil ? 0.12 : 0.2)) }
+                    }
+                    .overlay(alignment: .top) {
+                        // T3 Code's lit top edge.
+                        Rectangle().fill(Color.white.opacity(0.05)).frame(height: 1)
+                            .padding(.horizontal, Theme.controlRadius)
                     }
                     .matchedGeometryEffect(id: "selectedTab", in: selection)
                 }
             }
             .animation(motion.animation(.tabs, .easeOut(duration: 0.12)), value: hovered)
         }
-        .overlay(alignment: .trailing) { Rectangle().fill(Theme.divider).frame(width: 1) }
+        .padding(.horizontal, 2)
+        .frame(maxHeight: .infinity)
         .overlay { MiddleClickCatcher { window.closeTab(tab.tabId) } }
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
@@ -328,11 +332,11 @@ private struct TabCloseButton: View {
 
     var body: some View {
         Button(action: action) {
-            OctetIcon("xmark", size: 15)
+            OctetIcon("xmark", size: 14)
                 .foregroundStyle(hovered ? Theme.textPrimary : Theme.textSecondary)
                 .frame(width: 18, height: 18)
-                .background(hovered ? Theme.cardSelected : Color.clear)
-                .clipShape(RoundedRectangle(cornerRadius: 3))
+                .background(hovered ? Theme.hover : Color.clear)
+                .clipShape(RoundedRectangle(cornerRadius: 5))
         }
         .buttonStyle(.plain)
         .onHover { hovered = $0 }
@@ -657,23 +661,7 @@ private struct ConversationTab: View {
             TabCloseButton { AgentCenter.shared.close(session) }
                 .opacity(hovered || isActive ? 1 : 0)
         }
-        .padding(.leading, 12)
-        .padding(.trailing, 6)
-        .frame(width: Theme.tabWidth)
-        .frame(maxHeight: .infinity)
-        .background {
-            ZStack {
-                if hovered && !isActive { Theme.hover }
-                if isActive {
-                    ZStack(alignment: .top) {
-                        Theme.terminalBackground
-                        Rectangle().fill(Color.white.opacity(0.9)).frame(height: 2)
-                    }
-                    .matchedGeometryEffect(id: "selectedTab", in: selection)
-                }
-            }
-        }
-        .overlay(alignment: .trailing) { Rectangle().fill(Theme.divider).frame(width: 1) }
+        .tabChip(isActive: isActive, hovered: hovered, selection: selection)
         .overlay { MiddleClickCatcher { AgentCenter.shared.close(session) } }
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
@@ -723,21 +711,7 @@ private struct EditorOuterTab: View {
             TabCloseButton { workspace.closeEditor() }
                 .opacity(hovered || isActive ? 1 : 0)
         }
-        .padding(.leading, 12).padding(.trailing, 6)
-        .frame(width: Theme.tabWidth).frame(maxHeight: .infinity)
-        .background {
-            ZStack {
-                if hovered && !isActive { Theme.hover }
-                if isActive {
-                    ZStack(alignment: .top) {
-                        Theme.terminalBackground
-                        Rectangle().fill(Color.white.opacity(0.9)).frame(height: 2)
-                    }
-                    .matchedGeometryEffect(id: "selectedTab", in: selection)
-                }
-            }
-        }
-        .overlay(alignment: .trailing) { Rectangle().fill(Theme.divider).frame(width: 1) }
+        .tabChip(isActive: isActive, hovered: hovered, selection: selection)
         .contentShape(Rectangle())
         .onTapGesture { window.showEditor() }
         .onHover { hovered = $0 }
@@ -751,5 +725,32 @@ private struct EditorOuterTab: View {
         .accessibilityLabel("Editor")
         .accessibilityAddTraits(isActive ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { window.showEditor() }
+    }
+}
+
+extension View {
+    /// A tab's chip in the tab bar, after T3 Code's: rounded, filled under
+    /// the pointer, and the selection surface sliding to the tab in front.
+    func tabChip(isActive: Bool, hovered: Bool, selection: Namespace.ID) -> some View {
+        let shape = RoundedRectangle(cornerRadius: Theme.controlRadius)
+        return self
+            .padding(.leading, 10)
+            .padding(.trailing, 4)
+            .frame(width: Theme.tabWidth - 4, height: 26)
+            .background {
+                ZStack {
+                    if hovered && !isActive { shape.fill(Theme.hover) }
+                    if isActive {
+                        shape.fill(Theme.cardSelected)
+                            .overlay(alignment: .top) {
+                                Rectangle().fill(Color.white.opacity(0.05)).frame(height: 1)
+                                    .padding(.horizontal, Theme.controlRadius)
+                            }
+                            .matchedGeometryEffect(id: "selectedTab", in: selection)
+                    }
+                }
+            }
+            .padding(.horizontal, 2)
+            .frame(maxHeight: .infinity)
     }
 }
