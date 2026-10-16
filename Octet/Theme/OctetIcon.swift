@@ -205,8 +205,14 @@ struct OctetIcon: View {
         "device.send": .symbol("paperplane"),
     ]
 
+    /// A name Octet has no art for draws the SF Symbol of that name, if
+    /// there is one, rather than a placeholder.
+    private static func systemArt(_ name: String) -> Art {
+        NSImage(systemSymbolName: name, accessibilityDescription: nil) != nil ? .symbol(name) : .symbol("ellipsis")
+    }
+
     var body: some View {
-        let art = Self.map[name] ?? .symbol("ellipsis")
+        let art = Self.map[name] ?? Self.systemArt(name)
         Group {
             if let glyph = art.glyph {
                 OctetGlyph(kind: glyph)

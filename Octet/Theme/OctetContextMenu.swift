@@ -124,6 +124,10 @@ enum OctetContextMenu {
     private static var observers: [NSObjectProtocol] = []
 
     static var isOpen: Bool { panel != nil }
+    #if DEBUG
+    /// The open menu, for verification hooks.
+    static var debugModel: OctetMenuModel?
+    #endif
 
     static func present(_ items: [OctetMenuItem], at location: NSPoint = NSEvent.mouseLocation) {
         close()
@@ -133,6 +137,9 @@ enum OctetContextMenu {
         let frame = screen.frame
         let origin = CGPoint(x: location.x - frame.minX, y: frame.maxY - location.y)
         let model = OctetMenuModel(items: items, origin: origin)
+        #if DEBUG
+        debugModel = model
+        #endif
         let panel = MenuPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.isOpaque = false
         panel.backgroundColor = .clear
@@ -140,6 +147,7 @@ enum OctetContextMenu {
         panel.level = .popUpMenu
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         panel.isReleasedWhenClosed = false
+        panel.title = "Octet Menu"
         let host = NSHostingView(rootView: OctetMenuOverlay(model: model).preferredColorScheme(Theme.colorScheme))
         host.frame = NSRect(origin: .zero, size: frame.size)
         panel.contentView = host
@@ -193,6 +201,10 @@ final class OctetMenuModel: ObservableObject {
     @Published var path: [UUID] = []
     /// The row under the pointer or the keyboard, per level.
     @Published var highlighted: [Int: UUID] = [:]
+    /// Where each submenu row sits on the overlay, for placing its submenu.
+    @Published var rowFrames: [UUID: CGRect] = [:]
+
+    static let space = "octetMenu"
 
     init(items: [OctetMenuItem], origin: CGPoint) {
         self.items = items
@@ -272,12 +284,6 @@ final class OctetMenuModel: ObservableObject {
     }
 }
 
-private struct MenuRowFrameKey: PreferenceKey {
-    static var defaultValue: [UUID: Anchor<CGRect>] = [:]
-    static func reduce(value: inout [UUID: Anchor<CGRect>], nextValue: () -> [UUID: Anchor<CGRect>]) {
-        value.merge(nextValue()) { $1 }
-    }
-}
 
 /// The whole screen: a click-away layer, the menu at the pointer and each
 /// open submenu beside its row.
@@ -306,32 +312,40 @@ private struct OctetMenuOverlay: View {
                     .opacity(shown ? 1 : 0)
             }
             .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
-            .overlayPreferenceValue(MenuRowFrameKey.self) { anchors in
-                ZStack(alignment: .topLeading) {
-                    ForEach(Array(model.path.enumerated()), id: \.element) { index, id in
-                        if let anchor = anchors[id] {
-                            let row = proxy[anchor]
-                            OctetMenuList(model: model, level: index + 1)
-                                .fixedSize()
-                                .alignmentGuide(.leading) { menu in
-                                    let right = row.maxX + 4
-                                    return right + menu.width <= proxy.size.width - 6 ? -right : -max(6, row.minX - menu.width - 4)
-                                }
-                                .alignmentGuide(.top) { menu in
-                                    let top = row.minY - 5
-                                    return -min(max(6, top), proxy.size.height - menu.height - 6)
-                                }
-                                .transition(.opacity)
-                        }
-                    }
-                }
-                .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
-            }
+            SubmenuLayer(model: model, size: proxy.size)
         }
+        .coordinateSpace(name: OctetMenuModel.space)
         .ignoresSafeArea()
         .onAppear {
             withAnimation(MotionPreferences.shared.animation(.palette, .easeOut(duration: 0.12))) { shown = true }
         }
+    }
+}
+
+/// Each open submenu, beside the row that opened it.
+private struct SubmenuLayer: View {
+    @ObservedObject var model: OctetMenuModel
+    let size: CGSize
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            Color.clear.allowsHitTesting(false)
+            ForEach(Array(model.path.enumerated()), id: \.element) { index, id in
+                if let row = model.rowFrames[id] {
+                    OctetMenuList(model: model, level: index + 1)
+                        .fixedSize()
+                        .alignmentGuide(.leading) { menu in
+                            let right = row.maxX + 4
+                            return right + menu.width <= size.width - 6 ? -right : -max(6, row.minX - menu.width - 4)
+                        }
+                        .alignmentGuide(.top) { menu in
+                            -min(max(6, row.minY - 5), size.height - menu.height - 6)
+                        }
+                        .transition(.opacity)
+                }
+            }
+        }
+        .frame(width: size.width, height: size.height, alignment: .topLeading)
     }
 }
 
@@ -372,7 +386,16 @@ private struct OctetMenuList: View {
                     open: model.path.count > level && model.path[level] == item.id,
                     hover: { model.hover(item, level: level) },
                     activate: { model.activate(item, level: level) })
-                .anchorPreference(key: MenuRowFrameKey.self, value: .bounds) { [item.id: $0] }
+                .background {
+                    if case .submenu = item.kind {
+                        GeometryReader { geometry in
+                            let frame = geometry.frame(in: .named(OctetMenuModel.space))
+                            Color.clear
+                                .onAppear { model.rowFrames[item.id] = frame }
+                                .onChange(of: frame) { _, new in model.rowFrames[item.id] = new }
+                        }
+                    }
+                }
         }
     }
 }

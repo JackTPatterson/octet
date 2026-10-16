@@ -449,6 +449,20 @@ struct RootView: View {
                     NotificationCenter.default.post(name: WorkspacePeek.debugOpen, object: nil)
                 }
             }
+            // "context-menu" opens the focused workspace's menu beside the
+            // sidebar; "context-menu:<title>" also opens that submenu.
+            if let open = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], open.hasPrefix("context-menu") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                    guard let workspace = window.focusedWorkspace, let frame = window.nsWindow?.frame else { return }
+                    OctetContextMenu.present(WorkspaceMenu.items(store: store, workspace: workspace, window: window) {},
+                                             at: NSPoint(x: frame.minX + 180, y: frame.maxY - 220))
+                    let title = open.split(separator: ":").dropFirst().first.map(String.init)
+                    if let title, let model = OctetContextMenu.debugModel,
+                       let item = model.items.first(where: { $0.title == title }) {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { model.activate(item, level: 0) }
+                    }
+                }
+            }
             // Verification hook: "newtab" opens a tab, to see its splash.
             if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "newtab" {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) { window.newTab() }
