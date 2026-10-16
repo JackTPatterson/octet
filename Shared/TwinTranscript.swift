@@ -329,8 +329,12 @@ enum TwinTranscript {
                 let id = payload["id"] as? String ?? UUID().uuidString
                 switch payload["type"] as? String {
                 case "message":
-                    let role: TwinMessage.Role = (payload["role"] as? String) == "user" ? .user : .assistant
-                    let blocks = codexBlocks(payload["content"])
+                    // Codex's own setup (permissions, skills, collaboration
+                    // mode) is written as developer messages; never a turn.
+                    let rawRole = payload["role"] as? String
+                    guard rawRole == "user" || rawRole == "assistant" else { continue }
+                    let role: TwinMessage.Role = rawRole == "user" ? .user : .assistant
+                    let blocks = codexBlocks(payload["content"], role: role)
                     guard !blocks.isEmpty else { continue }
                     conversation.messages.append(TwinMessage(
                         id: id, role: role, blocks: blocks, at: date(object["timestamp"])
@@ -374,9 +378,21 @@ enum TwinTranscript {
         return conversation
     }
 
-    private static func codexBlocks(_ content: Any?) -> [TwinMessage.Block] {
+    private static func codexBlocks(_ content: Any?, role: TwinMessage.Role) -> [TwinMessage.Block] {
+        var content = content
+        if role == .user, let parts = content as? [[String: Any]] {
+            content = parts.filter { !isCodexInjected($0["text"] as? String ?? "") }
+        }
         let text = codexText(content)
         return text.isEmpty ? [] : [.text(text)]
+    }
+
+    /// Context Codex adds to the user's side of the thread (the folder and
+    /// shell, AGENTS.md), which the person never typed.
+    static func isCodexInjected(_ text: String) -> Bool {
+        let start = text.drop { $0.isWhitespace }
+        return ["<environment_context>", "<user_instructions>", "# AGENTS.md instructions", "<INSTRUCTIONS>"]
+            .contains { start.hasPrefix($0) }
     }
 
     private static func codexText(_ content: Any?) -> String {
