@@ -609,7 +609,8 @@ private struct PullRequestHeader: View {
                 .lineLimit(1)
             Spacer(minLength: 6)
             if detail.isOpen {
-                OctetCopyText(text: "gh pr checkout \(detail.number)")
+                // Another repository's PR needs -R to check out anywhere.
+                OctetCopyText(text: "gh pr checkout \(detail.number)" + (model.repo.map { " -R \($0)" } ?? ""))
                     .layoutPriority(-1)
             }
         }
