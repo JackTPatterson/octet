@@ -689,6 +689,13 @@ struct RootView: View {
                         }
                         .onAppear { DebugSnapshot.overlay("usage", true) }
                         .onDisappear { DebugSnapshot.overlay("usage", false) }
+                    } else if ui.marketplaceVisible, let marketplace = MarketplaceWindow.store {
+                        MarketplaceView(store: marketplace, close: {
+                            ui.marketplaceVisible = false
+                            OctetTerminalRuntime.focusTerminal()
+                        })
+                        .onAppear { DebugSnapshot.overlay("marketplace", true) }
+                        .onDisappear { DebugSnapshot.overlay("marketplace", false) }
                     } else if let review = ui.review {
                         DiffReviewView(model: review, store: store) { window.toggleReview() }
                             .id(review.directory)
@@ -1040,6 +1047,8 @@ final class UIState: ObservableObject {
     @Published var sidebarSearchRequest = 0
     /// The usage breakdown sheet.
     @Published var usageBreakdownVisible = false
+    /// The Marketplace, as a page over the content area.
+    @Published var marketplaceVisible = false
     @Published var sidebarVisible = UserDefaults.standard.object(forKey: "octet.sidebarVisible") as? Bool ?? true {
         didSet { UserDefaults.standard.set(sidebarVisible, forKey: "octet.sidebarVisible") }
     }

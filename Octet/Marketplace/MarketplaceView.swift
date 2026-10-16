@@ -8,8 +8,18 @@ struct MarketplaceView: View {
     @ObservedObject private var pluginHost = OctetPluginHost.shared
     @State private var editing: LibraryDraft?
     @State private var addingServer = false
+    /// Set when the Marketplace is a page over the content area, as Usage
+    /// and Settings are; the separate window is only a fallback.
+    var close: (() -> Void)?
+    @StateObject private var dropdowns = OctetDropdownState()
+    @FocusState private var focused: Bool
 
     var body: some View {
+        if close != nil { page } else { window }
+    }
+
+    /// In a window of its own.
+    private var window: some View {
         HStack(spacing: 0) {
             sidebar
             Rectangle().fill(Theme.divider).frame(width: 1)
@@ -26,31 +36,67 @@ struct MarketplaceView: View {
         .background(DarkTransparentTitleBar())
         .background(ThemedWindow(themeName: SettingsStore.shared.themeKey))
         .preferredColorScheme(Theme.colorScheme)
-        .onAppear {
-            store.refreshAll()
-            #if DEBUG
-            if let name = ProcessInfo.processInfo.environment["OCTET_MARKETPLACE_SECTION"],
-               let section = MarketplaceStore.Section(rawValue: name) {
-                store.section = section
-            }
-            #endif
-        }
-        .sheet(item: $editing) { draft in
-            LibraryEditor(store: store, draft: draft) { editing = nil }
-        }
-        .sheet(isPresented: $addingServer) {
-            ServerEditor(store: store) { addingServer = false }
-        }
+        .modifier(MarketplaceLifecycle(view: self))
     }
+
+    /// A page over the content area: the shared page header with a
+    /// breadcrumb, then the sections beside what they hold.
+    private var page: some View {
+        VStack(spacing: 0) {
+            PageHeader(crumbs: [.title("Marketplace"), .title(store.section.title)], dropdowns: dropdowns, close: close) {
+                actions
+            }
+            Rectangle().fill(Theme.divider).frame(height: 1)
+            HStack(spacing: 0) {
+                sidebar
+                Rectangle().fill(Theme.divider).frame(width: 1)
+                VStack(spacing: 0) {
+                    OctetTextField(placeholder: "Search \(store.section.title)", text: $store.query,
+                                   label: "Search \(store.section.title)")
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                    content
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.terminalBackground)
+        .octetDropdownHost(dropdowns)
+        // Takes keyboard focus so Esc reaches the page, not the shell under it.
+        .focusable()
+        .focusEffectDisabled()
+        .focused($focused)
+        .onExitCommand {
+            if dropdowns.openId != nil { dropdowns.openId = nil } else { close?() }
+        }
+        .modifier(MarketplaceLifecycle(view: self))
+        .onAppear { focused = true }
+    }
+
+    fileprivate func appeared() {
+        store.refreshAll()
+        #if DEBUG
+        if let name = ProcessInfo.processInfo.environment["OCTET_MARKETPLACE_SECTION"],
+           let section = MarketplaceStore.Section(rawValue: name) {
+            store.section = section
+        }
+        #endif
+    }
+
+    fileprivate var editingBinding: Binding<LibraryDraft?> { $editing }
+    fileprivate var addingServerBinding: Binding<Bool> { $addingServer }
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text("MARKETPLACE")
-                .font(Theme.headerFont)
-                .foregroundStyle(Theme.textTertiary)
-                .padding(.horizontal, 12)
-                .padding(.top, 30)
-                .padding(.bottom, 6)
+            // The page's breadcrumb already names it.
+            if close == nil {
+                Text("MARKETPLACE")
+                    .font(Theme.headerFont)
+                    .foregroundStyle(Theme.textTertiary)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 30)
+                    .padding(.bottom, 6)
+            }
             ForEach(MarketplaceStore.Section.allCases) { section in
                 SidebarRow(
                     title: section.title,
@@ -67,31 +113,38 @@ struct MarketplaceView: View {
                     .foregroundStyle(Theme.textTertiary)
                     .padding(.horizontal, 12)
                     .padding(.bottom, 4)
-                ForEach(store.hosts) { host in
-                    HStack(spacing: 6) {
-                        if let brand = AgentBrand.forAgent(host.id) { AgentLogo(brand: brand, size: 12) }
-                        Text(host.displayName)
-                            .font(Theme.uiFont)
-                            .foregroundStyle(Theme.textSecondary)
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(store.hosts) { host in
+                        HStack(spacing: 6) {
+                            if let brand = AgentBrand.forAgent(host.id) { AgentLogo(brand: brand, size: 12) }
+                            Text(host.displayName)
+                                .font(Theme.uiFont)
+                                .foregroundStyle(Theme.textSecondary)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 3)
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 3)
                 }
                 .padding(.bottom, 10)
             }
         }
+        .padding(.top, close == nil ? 0 : 10)
         .frame(width: 190)
         .background(Theme.sidebar)
     }
 
     private var header: some View {
         HStack(spacing: 8) {
-            OctetIcon("magnifyingglass", size: 15)
-                .foregroundStyle(Theme.textTertiary)
-            TextField("Search \(store.section.title)", text: $store.query)
-                .textFieldStyle(.plain)
-                .font(Theme.uiFont)
-                .foregroundStyle(Theme.textPrimary)
+            OctetTextField(placeholder: "Search \(store.section.title)", text: $store.query,
+                           label: "Search \(store.section.title)")
+            actions
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+    }
+
+    /// Reload, add, import and refresh, for the section in view.
+    @ViewBuilder private var actions: some View {
             if store.pendingReload {
                 OctetButton(title: "Reload Agents", kind: .primary, compact: true) { store.reloadAgents() }
                     .help("Restart running agents with --resume so the new configuration loads")
@@ -116,9 +169,6 @@ struct MarketplaceView: View {
                     store.refreshAll()
                 }
             }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
     }
 
     private func importPrompts() {
@@ -991,5 +1041,21 @@ private struct ChipFlowLayout: Layout {
             usedWidth = max(usedWidth, max(0, x - spacing))
         }
         return (points, min(usedWidth, width), y + rowHeight)
+    }
+}
+
+/// What both forms of the Marketplace do on appearing, and its editors.
+private struct MarketplaceLifecycle: ViewModifier {
+    let view: MarketplaceView
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear { view.appeared() }
+            .sheet(item: view.editingBinding) { draft in
+                LibraryEditor(store: view.store, draft: draft) { view.editingBinding.wrappedValue = nil }
+            }
+            .sheet(isPresented: view.addingServerBinding) {
+                ServerEditor(store: view.store) { view.addingServerBinding.wrappedValue = false }
+            }
     }
 }

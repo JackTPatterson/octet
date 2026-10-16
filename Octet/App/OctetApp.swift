@@ -485,9 +485,18 @@ enum MarketplaceWindow {
         store?.pluginFilter = .all
     }
 
+    /// A page in the terminal window in front, like Usage and Settings; a
+    /// window of its own only when there's no terminal window to show it in.
     static func open() {
         NSApp.activate(ignoringOtherApps: true)
-        opener?()
+        if let window = WindowRegistry.shared.key ?? WindowRegistry.shared.windows.first {
+            window.ui.settingsVisible = false
+            window.ui.usageBreakdownVisible = false
+            window.ui.marketplaceVisible = true
+            window.nsWindow?.makeKeyAndOrderFront(nil)
+        } else {
+            opener?()
+        }
     }
 }
 
