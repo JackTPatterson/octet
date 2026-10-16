@@ -1036,17 +1036,18 @@ struct ItemRow: View, Equatable {
                         .textSelection(.enabled)
                 }
             }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                // T3 Code's message bubble: right-aligned, 18pt round, no border.
+                .padding(12)
                 .background(item.queued ? Theme.accent.opacity(0.07) : Theme.card)
                 .overlay {
                     if item.queued {
-                        RoundedRectangle(cornerRadius: 6)
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
                             .strokeBorder(Theme.accent.opacity(0.35), lineWidth: 1)
                     }
                 }
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .frame(maxWidth: 560, alignment: .trailing)
+                .frame(maxWidth: .infinity, alignment: .trailing)
         case .text(let text):
             AssistantMessage(text: text)
         case .thinking(let text):
@@ -2049,21 +2050,35 @@ private struct Composer: View {
                 Spacer()
                 let empty = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty
                 if running {
-                    OctetButton(title: "Stop", icon: "pause.circle", kind: .secondary, compact: true) { confirmInterrupt() }
+                    RoundComposerButton(kind: .stop) { confirmInterrupt() }
                         .keyboardShortcut(".", modifiers: .command)
                         .help("Stop this turn (Esc or ⌘.)")
+                        .accessibilityLabel("Stop")
                 }
                 if !running || !empty {
                     // While Claude works, a message queues for the next turn.
-                    OctetButton(title: running ? "Queue" : "Send", icon: "arrow.up", kind: .primary, compact: true) { submit() }
+                    RoundComposerButton(kind: .send) { submit() }
                         .disabled(empty)
-                        .help(running ? "Send when this turn ends (Return)" : "Send (Return)")
+                        .help(running ? "Queue for when this turn ends (Return)" : "Send (Return)")
+                        .accessibilityLabel(running ? "Queue" : "Send")
                 }
             }
         }
-        .padding(12)
-        .background(Theme.card)
-        .overlay(alignment: .top) { Rectangle().fill(Theme.divider).frame(height: 1) }
+        // T3 Code's composer: a floating card, 22pt round, a hairline and a
+        // lit top edge, set in from the conversation's edges.
+        .padding(.horizontal, 14)
+        .padding(.top, 12)
+        .padding(.bottom, 10)
+        .background {
+            let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
+            shape.fill(Theme.card)
+                .overlay(shape.strokeBorder(Theme.border, lineWidth: 1))
+                .overlay(alignment: .top) {
+                    Rectangle().fill(Color.white.opacity(0.04)).frame(height: 1).padding(.horizontal, 22)
+                }
+        }
+        .padding(.horizontal, 12)
+        .padding(.bottom, 12)
         .onAppear {
             #if DEBUG
             if ConversationDebug.openDropdown == "reference" {
@@ -2698,5 +2713,42 @@ private struct AssistantMessage: View {
             }
             .onHover { inside in withAnimation(.easeOut(duration: 0.12)) { hovered = inside } }
             .contextMenu { MessageCopyMenu(text: text) }
+    }
+}
+
+/// The composer's round action, after T3 Code's: send in the accent with an
+/// up arrow, growing a touch under the pointer; stop in red with a square.
+private struct RoundComposerButton: View {
+    enum Kind { case send, stop }
+    let kind: Kind
+    let action: () -> Void
+    @State private var hovered = false
+    @Environment(\.isEnabled) private var enabled
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                Circle().fill(kind == .send ? Theme.accent : Theme.danger.opacity(0.9))
+                if kind == .send {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.onAccent)
+                } else {
+                    RoundedRectangle(cornerRadius: 2.5).fill(Color.white).frame(width: 10, height: 10)
+                }
+            }
+            .overlay(alignment: .top) {
+                // The lit top edge filled buttons have.
+                Capsule().fill(Color.white.opacity(0.18)).frame(width: 14, height: 1).padding(.top, 1)
+            }
+            .frame(width: 30, height: 30)
+            .shadow(color: (kind == .send ? Theme.accent : Theme.danger).opacity(enabled ? 0.28 : 0), radius: 2, y: 1)
+            .scaleEffect(hovered && enabled ? 1.05 : 1)
+            .opacity(enabled ? 1 : 0.64)
+            .contentShape(Circle())
+        }
+        .buttonStyle(OctetPressStyle())
+        .onHover { hovered = $0 }
+        .animation(.easeOut(duration: 0.15), value: hovered)
     }
 }

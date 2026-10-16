@@ -730,7 +730,8 @@ private struct WorkspaceCard: View {
         ZStack {
             (isSelected ? Theme.cardSelected : (hovered ? Theme.hover : Color.clear))
             if let hue {
-                Color(hex: hue).opacity(hovered || isSelected ? Theme.tabColorHoverOpacity : Theme.tabColorOpacity * 0.6)
+                // A hint of the colour, not a wash: the fill says which is in front.
+                Color(hex: hue).opacity(hovered ? Theme.tabColorOpacity : isSelected ? Theme.tabColorOpacity * 0.7 : Theme.tabColorOpacity * 0.4)
             }
         }
     }
