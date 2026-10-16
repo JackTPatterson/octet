@@ -1225,6 +1225,7 @@ private struct ToolCard: View {
     let call: AgentToolCall
     let running: Bool
     @State private var startLine: Int?
+    @State private var hovered = false
 
     var body: some View {
         let diff = call.diff
@@ -1263,11 +1264,11 @@ private struct ToolCard: View {
                 }
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(Theme.card.opacity(0.6))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.border, lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        // T3 Code's work log: a quiet line, no box, a fill under the pointer.
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .background(RoundedRectangle(cornerRadius: Theme.controlRadius).fill(hovered ? Theme.hover.opacity(0.6) : .clear))
+        .onHover { hovered = $0 }
     }
 
     @ViewBuilder private func status(_ diff: [LineDiff.Line]?) -> some View {
