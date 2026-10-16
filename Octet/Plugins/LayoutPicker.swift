@@ -14,7 +14,7 @@ struct LayoutPickerButton: View {
 
     var body: some View {
         let layouts = host.layouts
-        if !layouts.isEmpty {
+        if true {
             Button { open.toggle() } label: {
                 MonitorGlyph()
                     .foregroundStyle(open || hovered ? Theme.textPrimary : Theme.textSecondary)
@@ -27,9 +27,9 @@ struct LayoutPickerButton: View {
             .help("Arrange windows on this screen")
             .accessibilityLabel("Window layouts")
             .popover(isPresented: $open, arrowEdge: .bottom) {
-                LayoutPickerGrid(layouts: layouts) { layout in
+                LayoutPickerGrid(layouts: layouts, screen: window.nsWindow?.screen) { frames in
                     open = false
-                    PaneLayoutActions.arrangeWindows(layout, from: window)
+                    PaneLayoutActions.arrange(frames, from: window)
                 }
             }
         }
@@ -81,38 +81,116 @@ struct MonitorGlyph: View {
 /// Every layout, a row per pane count, each drawn as its panes.
 struct LayoutPickerGrid: View {
     let layouts: [OctetPluginHost.Layout]
-    let pick: (PaneLayoutContribution) -> Void
+    /// The display the window is on.
+    let screen: NSScreen?
+    /// The chosen windows' frames, in global screen coordinates.
+    let pick: ([CGRect]) -> Void
+
+    private var displays: [CGRect] { NSScreen.screens.map(\.visibleFrame) }
+    private var current: Int { screen.flatMap { NSScreen.screens.firstIndex(of: $0) } ?? 0 }
+    private var here: CGRect { screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero }
 
     var body: some View {
+        let arrangements = MonitorArrangement.across(displays, current: current)
+        let portrait = here.height > here.width
         let groups = Dictionary(grouping: layouts) { $0.layout.layout.paneCount }
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Arrange windows on this screen").font(Theme.captionFont.weight(.semibold)).foregroundStyle(Theme.textTertiary)
-            ForEach(groups.keys.sorted(), id: \.self) { count in
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(count == 1 ? "1 window" : "\(count) windows").font(Theme.captionFont).foregroundStyle(Theme.textSecondary)
-                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(46), spacing: 6), count: 6), alignment: .leading, spacing: 6) {
-                        ForEach((groups[count] ?? []).map { $0.layout }) { layout in
-                            LayoutThumbnail(layout: layout) { pick(layout) }
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(displays.count > 1 ? "Your \(displays.count) displays" : "Your display")
+                    .font(Theme.captionFont.weight(.semibold)).foregroundStyle(Theme.textTertiary)
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 96), spacing: 8)], alignment: .leading, spacing: 8) {
+                    ForEach(arrangements) { arrangement in
+                        DisplaysThumbnail(displays: displays, windows: arrangement.frames, title: arrangement.title) {
+                            pick(arrangement.frames)
+                        }
+                    }
+                }
+            }
+            if !groups.isEmpty {
+                Rectangle().fill(Theme.divider).frame(height: 1)
+                Text(portrait ? "This display (turned for portrait)" : "This display")
+                    .font(Theme.captionFont.weight(.semibold)).foregroundStyle(Theme.textTertiary)
+                ForEach(groups.keys.sorted(), id: \.self) { count in
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(count == 1 ? "1 window" : "\(count) windows").font(Theme.captionFont).foregroundStyle(Theme.textSecondary)
+                        LazyVGrid(columns: Array(repeating: GridItem(.fixed(46), spacing: 6), count: 6), alignment: .leading, spacing: 6) {
+                            ForEach((groups[count] ?? []).map { $0.layout }) { layout in
+                                let rects = MonitorArrangement.fitted(layout.layout.rects(), toPortrait: portrait)
+                                LayoutThumbnail(layout: layout, rects: rects) {
+                                    pick(rects.map { $0.windowFrame(in: here) })
+                                }
+                            }
                         }
                     }
                 }
             }
         }
         .padding(12)
-        .frame(width: 330, alignment: .leading)
+        .frame(width: 360, alignment: .leading)
         .background(Theme.chrome)
+    }
+}
+
+/// Every display drawn where it sits, with an arrangement's windows inside:
+/// the first, this window, in the accent.
+private struct DisplaysThumbnail: View {
+    let displays: [CGRect]
+    let windows: [CGRect]
+    let title: String
+    let pick: () -> Void
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: pick) {
+            VStack(alignment: .leading, spacing: 4) {
+                Canvas { context, size in
+                    let bounds = displays.reduce(CGRect.null) { $0.union($1) }
+                    guard bounds.width > 0, bounds.height > 0 else { return }
+                    let scale = min(size.width / bounds.width, size.height / bounds.height)
+                    let offset = CGPoint(x: (size.width - bounds.width * scale) / 2, y: (size.height - bounds.height * scale) / 2)
+                    // Screen coordinates rise upward; the picture's go down.
+                    func place(_ rect: CGRect) -> CGRect {
+                        CGRect(x: offset.x + (rect.minX - bounds.minX) * scale,
+                               y: offset.y + (bounds.maxY - rect.maxY) * scale,
+                               width: rect.width * scale, height: rect.height * scale)
+                    }
+                    for display in displays {
+                        context.stroke(Path(roundedRect: place(display), cornerRadius: 2.5),
+                                       with: .color(Theme.textTertiary.opacity(0.7)), lineWidth: 1)
+                    }
+                    for (index, window) in windows.enumerated() {
+                        let frame = place(window).insetBy(dx: 1.5, dy: 1.5)
+                        let shape = Path(roundedRect: frame, cornerRadius: 1.5)
+                        let tint = index == 0 ? Theme.accent : Theme.textSecondary
+                        context.fill(shape, with: .color(tint.opacity(hovered ? 0.45 : 0.28)))
+                        context.stroke(shape, with: .color(tint.opacity(0.8)), lineWidth: 1)
+                    }
+                }
+                .frame(height: 44)
+                Text(title).font(Theme.captionFont).foregroundStyle(hovered ? Theme.textPrimary : Theme.textSecondary)
+                    .lineLimit(1)
+            }
+            .padding(6)
+            .background(RoundedRectangle(cornerRadius: Theme.controlRadius).fill(hovered ? Theme.hover : Theme.card.opacity(0.6)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
+        .help(title)
+        .accessibilityLabel(title)
     }
 }
 
 /// One layout as a small picture of its panes.
 struct LayoutThumbnail: View {
     let layout: PaneLayoutContribution
+    var rects: [PaneLayoutNode.Rect]? = nil
     let pick: () -> Void
     @State private var hovered = false
 
     var body: some View {
         Button(action: pick) {
-            LayoutPicture(rects: layout.layout.rects(), highlighted: hovered)
+            LayoutPicture(rects: rects ?? layout.layout.rects(), highlighted: hovered)
             .frame(width: 46, height: 32)
             .padding(3)
             .background(RoundedRectangle(cornerRadius: 4).fill(hovered ? Theme.hover : .clear))
@@ -152,12 +230,17 @@ enum PaneLayoutActions {
     /// it was picked from takes the first place, and each other place gets a
     /// new window with a workspace of its own in the same folder.
     static func arrangeWindows(_ layout: PaneLayoutContribution, from window: WindowContext) {
-        guard let nsWindow = window.nsWindow,
-              let visible = (nsWindow.screen ?? NSScreen.main)?.visibleFrame else { return }
+        guard let visible = (window.nsWindow?.screen ?? NSScreen.main)?.visibleFrame else { return }
+        let portrait = visible.height > visible.width
+        arrange(MonitorArrangement.fitted(layout.layout.rects(), toPortrait: portrait).map { $0.windowFrame(in: visible) },
+                from: window)
+    }
+
+    /// Puts this window at the first frame and a new window at each other.
+    static func arrange(_ frames: [CGRect], from window: WindowContext) {
+        guard let nsWindow = window.nsWindow, let first = frames.first else { return }
         // A full-screen window can't share its space.
         if nsWindow.styleMask.contains(.fullScreen) { nsWindow.toggleFullScreen(nil) }
-        let frames = layout.layout.rects().map { $0.windowFrame(in: visible) }
-        guard let first = frames.first else { return }
         nsWindow.setFrame(first, display: true, animate: true)
         let store = window.store
         let snapshot = store.snapshot
