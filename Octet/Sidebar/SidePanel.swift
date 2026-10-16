@@ -235,7 +235,20 @@ struct SidePanel: View {
                              detail: "Open a tab in a repository to see its pull requests.")
             }
         case .device:
-            PlaneUnavailable(kind: plane.kind)
+            DevicePlane(deviceId: plane.deviceId,
+                        visible: ui.sidePanelVisible && ui.activePlane?.id == plane.id,
+                        onOpen: { device in
+                            ui.setPlaneDevice(plane.id, deviceId: device.id)
+                            let badge = PlaneBadge(title: device.name,
+                                                   help: [device.name, device.version].filter { !$0.isEmpty }.joined(separator: " · "),
+                                                   icon: device.platform == .android ? "device.android"
+                                                       : device.isTablet ? "device.ipad" : "device.iphone")
+                            if ui.planeBadges[plane.id] != badge { ui.planeBadges[plane.id] = badge }
+                        },
+                        askAgent: { prompt in
+                            if let directory = planeDirectory { askAgent(prompt, in: directory) }
+                            else { ToastCenter.shared.info("No agent here to ask", detail: "Start an agent in a project, then try again.") }
+                        })
         }
     }
 

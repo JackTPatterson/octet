@@ -77,7 +77,8 @@ struct Plane: Codable, Identifiable, Equatable {
     static func make(_ kind: PlaneKind, number: Int? = nil, deviceId: String? = nil) -> Plane {
         switch kind {
         case .pullRequest: Plane(id: "pr:" + (number.map(String.init) ?? "branch"), kind: kind, number: number)
-        case .device: Plane(id: "device:" + (deviceId ?? "pick"), kind: kind, deviceId: deviceId)
+        // Several can be open, one per device; each its own tab.
+        case .device: Plane(id: "device:" + UUID().uuidString, kind: kind, deviceId: deviceId)
         default: Plane(id: kind.rawValue, kind: kind)
         }
     }

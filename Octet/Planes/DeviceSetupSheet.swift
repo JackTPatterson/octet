@@ -72,7 +72,17 @@ struct DeviceSetupSheet: View {
 
     // MARK: Stepper
 
+    /// Every step named when there's room; in a narrow panel, the current one.
     private var stepper: some View {
+        ViewThatFits(in: .horizontal) {
+            stepperRow(allTitles: true)
+            stepperRow(allTitles: false)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Step \(step.rawValue + 1) of 3, \(step.title)")
+    }
+
+    private func stepperRow(allTitles: Bool) -> some View {
         HStack(spacing: 6) {
             ForEach(DeviceSetup.Step.allCases, id: \.self) { item in
                 let reached = item.rawValue <= step.rawValue
@@ -82,10 +92,13 @@ struct DeviceSetupSheet: View {
                         .foregroundStyle(item == step ? Theme.onAccent : reached ? Theme.textPrimary : Theme.textTertiary)
                         .frame(width: 18, height: 18)
                         .background(Circle().fill(item == step ? Theme.accent : Theme.card))
-                    Text(item.title)
-                        .font(Theme.captionFont)
-                        .foregroundStyle(reached ? Theme.textPrimary : Theme.textTertiary)
-                        .lineLimit(1)
+                    if allTitles || item == step {
+                        Text(item.title)
+                            .font(Theme.captionFont)
+                            .foregroundStyle(reached ? Theme.textPrimary : Theme.textTertiary)
+                            .lineLimit(1)
+                            .fixedSize()
+                    }
                 }
                 if item != DeviceSetup.Step.allCases.last {
                     Rectangle().fill(reached && item != step ? Theme.accent.opacity(0.6) : Theme.divider)
@@ -94,8 +107,6 @@ struct DeviceSetupSheet: View {
                 }
             }
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Step \(step.rawValue + 1) of 3, \(step.title)")
     }
 
     // MARK: Steps

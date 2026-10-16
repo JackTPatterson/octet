@@ -1012,6 +1012,13 @@ final class UIState: ObservableObject {
         }
     }
 
+    /// A device plane's device, once picked; its tab keeps its identity, so
+    /// the stream that started for it carries on.
+    func setPlaneDevice(_ id: String, deviceId: String?) {
+        guard let index = planes.firstIndex(where: { $0.id == id }) else { return }
+        planes[index].deviceId = deviceId
+    }
+
     /// Drag and drop in the strip: `id` goes just before `target`.
     func movePlane(_ id: String, before target: String) {
         guard id != target, let from = planes.firstIndex(where: { $0.id == id }) else { return }

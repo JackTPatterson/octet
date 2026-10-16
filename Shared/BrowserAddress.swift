@@ -10,7 +10,9 @@ enum BrowserAddress {
             return URL(string: "http://localhost:\(input)")
         }
         if input.contains("://") { return URL(string: input) }
-        let host = input.split(separator: "/").first.map(String.init) ?? input
+        let authority = input.split(separator: "/").first.map(String.init) ?? input
+        // The host without its port, so "mailpit.lan:8025" still reads as local.
+        let host = authority.split(separator: ":").first.map(String.init) ?? authority
         let local = host.hasPrefix("localhost") || host.hasPrefix("127.0.0.1") || host.hasPrefix("0.0.0.0")
             || host.hasSuffix(".local") || host.hasSuffix(".lan") || host.hasSuffix(".ts.net")
         if local { return URL(string: "http://" + input) }
