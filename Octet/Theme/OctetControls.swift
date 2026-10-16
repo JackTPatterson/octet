@@ -218,7 +218,15 @@ struct OctetTextField: View {
     let placeholder: String
     @Binding var text: String
     var secure = false
+    /// What VoiceOver calls the field when the placeholder isn't its name,
+    /// e.g. "Shell" for a field whose placeholder is "Login shell".
+    var label: String?
+    /// Rings the field in the danger colour: a value it won't take.
+    var invalid = false
     var onSubmit: () -> Void = {}
+    /// Told when the field gains or loses focus, e.g. to commit a draft.
+    /// After `onSubmit` so a trailing closure still means Return.
+    var onFocusChange: ((Bool) -> Void)?
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -238,16 +246,12 @@ struct OctetTextField: View {
                 .foregroundStyle(Theme.textPrimary)
                 .focused($focused)
                 .onSubmit(onSubmit)
-                .accessibilityLabel(placeholder)
+                .accessibilityLabel(label ?? placeholder)
         }
         .padding(.horizontal, 10)
-        .frame(height: 28)
-        .background(Theme.terminalBackground.opacity(0.7))
         // A hairline at rest; focused, T3 Code's inset ring in the accent.
-        .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius)
-            .strokeBorder(focused ? Theme.accent.opacity(0.85) : Theme.border, lineWidth: focused ? 1.5 : 1))
-        .clipShape(RoundedRectangle(cornerRadius: Theme.controlRadius))
-        .animation(.easeOut(duration: 0.12), value: focused)
+        .octetFieldShell(focused: focused, invalid: invalid)
+        .onChange(of: focused) { _, now in onFocusChange?(now) }
     }
 }
 

@@ -103,6 +103,10 @@ struct OctetIcon: View {
         "arrow.right.to.line": .init("arrow-square-right"),
         "arrow.clockwise": .init("rotate-right"),
         "arrow.uturn.backward": .init("rotate-right"),
+        /// T3 Code's rotate-ccw: Restore Defaults.
+        "rotate.ccw": .init("rotate-right", mirrored: true),
+        /// T3 Code's undo-2: a row's Reset to Default.
+        "undo": .symbol("arrow.uturn.backward"),
         "arrow.counterclockwise.circle": .init("refresh-circle"),
         "arrow.counterclockwise.circle.fill": .init("refresh-circle"),
         "clock.arrow.circlepath": .init("clock"),

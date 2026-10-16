@@ -272,6 +272,8 @@ struct OctetCommands: Commands {
         }
         CommandGroup(after: .textEditing) {
             Button("Find…") {
+                // With Settings in front, ⌘F searches settings, as T3 Code's does.
+                if SettingsView.claimFind() { return }
                 KeyWindow.act { context in
                     context.editor.isPresented ? context.editor.find() : context.findOutput()
                 }
