@@ -22,8 +22,8 @@ struct PeersSettingsGroup: View {
                 }
                 SettingsDivider()
                 SettingsRow(title: "This Mac's name", detail: "What your other Macs see. Leave empty for the computer's name.") {
-                    CommittedTextField(label: "This Mac's name", placeholder: Host.current().localizedName ?? "This Mac",
-                                       value: $settings.values.peerName, width: 220, validate: { _ in nil })
+                    PeerNameField(placeholder: Host.current().localizedName ?? "This Mac", value: $settings.values.peerName)
+                        .frame(width: 220)
                 }
             }
             if center.running {
@@ -187,5 +187,28 @@ private struct PeerSettingsRow: View {
                                  confirmTitle: "Forget", destructive: true) { _ in
             MotionPreferences.shared.perform(.connections, .smooth(duration: 0.22)) { center.forget(peer.device) }
         }
+    }
+}
+
+/// This Mac's name in an OctetTextField that applies only on Return or
+/// when the field goes away: each change of name restarts Other Macs, so
+/// it mustn't apply on every keystroke. (CommittedTextField does this with
+/// a system field; this keeps Settings › Other Macs on Octet's controls.)
+private struct PeerNameField: View {
+    let placeholder: String
+    @Binding var value: String
+    @State private var draft = ""
+
+    var body: some View {
+        OctetTextField(placeholder: placeholder, text: $draft, onSubmit: commit)
+            .onAppear { draft = value }
+            .onChange(of: value) { _, new in if new != draft { draft = new } }
+            .onDisappear(perform: commit)
+            .help("Press Return to apply")
+    }
+
+    private func commit() {
+        let trimmed = draft.trimmingCharacters(in: .whitespaces)
+        if trimmed != value { value = trimmed }
     }
 }
