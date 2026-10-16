@@ -308,6 +308,8 @@ struct OctetCommands: Commands {
                 }
             }
             .keyboardShortcut(OctetShortcut.terminalDrawer.keyboardShortcut)
+            Button(OctetShortcut.details.title) { KeyWindow.act { $0.ui.detailsVisible.toggle() } }
+                .keyboardShortcut(OctetShortcut.details.keyboardShortcut)
             Button("Show Recap") { RecapCenter.shared.showLatest() }
             Button(OctetShortcut.searchWorkspaces.title) {
                 KeyWindow.act { context in

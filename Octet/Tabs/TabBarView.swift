@@ -78,7 +78,11 @@ struct TabBarView: View {
             }
             Spacer(minLength: 0)
             // Every agent, from any tab: at the far right.
-            AgentsHubButton(store: store).padding(.trailing, 8)
+            AgentsHubButton(store: store).padding(.trailing, 4)
+            // T3 Code's thread-details toggle.
+            OctetIconButton(icon: "menucard", help: "Toggle details (\(OctetShortcut.details.display))",
+                            active: ui.detailsVisible) { ui.detailsVisible.toggle() }
+                .padding(.trailing, 4)
             // One button for the right panel: Todos, Git, the agents' runtime
             // and plugins' panels are its tabs and sections, not buttons here.
             SidePanelButton(ui: ui)

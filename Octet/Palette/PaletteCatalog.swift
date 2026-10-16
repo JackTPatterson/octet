@@ -164,6 +164,8 @@ enum PaletteCatalog {
             },
             action("pullRequest", "Show Pull Request", "pull.request",
                    keywords: ["pr", "pull request", "github", "merge", "review", "checks"]) { ui.showPlane(.pullRequest) },
+            action("details", "Toggle Details", "menucard", shortcut: OctetShortcut.details.display,
+                   keywords: ["details", "info", "branch", "changes", "servers", "workspace"]) { ui.detailsVisible.toggle() },
             action("reopenPlane", "Reopen Closed Plane", "arrow.uturn.backward",
                    keywords: ["plane", "panel", "tab", "undo", "restore"]) { ui.reopenClosedPlane() },
             action("pullRequests", "Show Pull Requests", "list",

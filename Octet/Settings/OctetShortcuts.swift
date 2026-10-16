@@ -64,6 +64,7 @@ extension OctetShortcut {
     static let toggleSidebar = OctetShortcut(title: "Toggle Sidebar", key: "b")
     static let togglePanel = OctetShortcut(title: "Toggle Panel", key: "b", modifiers: [.command, .option])
     static let terminalDrawer = OctetShortcut(title: "Toggle Terminal Drawer", key: "j")
+    static let details = OctetShortcut(title: "Toggle Details", key: "b", modifiers: [.command, .shift])
     static let searchWorkspaces = OctetShortcut(title: "Search Workspaces", key: "f", modifiers: [.command, .shift])
     static let visualTwin = OctetShortcut(title: "Visual Twin / Terminal", key: "v", modifiers: [.command, .shift])
     static let review = OctetShortcut(title: "Review Changes", key: "r", modifiers: [.command, .shift])
@@ -106,7 +107,7 @@ extension OctetShortcut {
     static let groups: [(title: String, shortcuts: [OctetShortcut])] = [
         ("Octet", [settings, marketplace, quit]),
         ("File", [newTab, newConversation, agents, newWorkspace, newWindow, openFile, openFolder, saveFile, closeTab, reopenClosedTab]),
-        ("View", [palette, paletteAll, toggleSidebar, togglePanel, terminalDrawer, searchWorkspaces, visualTwin, review, broadcast, broadcastTyping, hints, increaseFontSize, decreaseFontSize, resetFontSize]),
+        ("View", [palette, paletteAll, toggleSidebar, togglePanel, terminalDrawer, details, searchWorkspaces, visualTwin, review, broadcast, broadcastTyping, hints, increaseFontSize, decreaseFontSize, resetFontSize]),
         ("Pane", [splitRight, splitDown, toggleZoom, focusLeft, focusRight, focusUp, focusDown]),
         ("Navigate", [nextTab, previousTab, nextWorkspace, previousWorkspace, tabNumber, lastTab]),
         ("Terminal", [copy, paste, terminalPrefix]),

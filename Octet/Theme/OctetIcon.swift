@@ -173,6 +173,7 @@ struct OctetIcon: View {
         "list": .symbol("list.bullet"),
         "iphone": .symbol("iphone"),
         "lock": .symbol("lock"),
+        "menucard": .symbol("menucard"),
         // The Device plane. Prefixed so they can't collide with keys other
         // planes add; SF Symbols until iconsax marks are imported.
         "device.iphone": .symbol("iphone"),

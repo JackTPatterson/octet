@@ -203,6 +203,15 @@ struct RootView: View {
                                 .id(AgentOffer.key(offer))
                         }
                         contentArea
+                            .overlay(alignment: .topTrailing) {
+                                if ui.detailsVisible {
+                                    DetailsCard(model: statusBar, store: store, ui: ui)
+                                        .padding(12)
+                                        .transition(motion.animates(.sidebar)
+                                            ? .opacity.combined(with: .scale(scale: 0.98, anchor: .topTrailing)) : .identity)
+                                }
+                            }
+                            .animation(motion.animation(.sidebar, .easeOut(duration: 0.15)), value: ui.detailsVisible)
                         // Not re-identified per theme: that would restart its shells.
                         TerminalDrawerHost(store: store, ui: ui)
                     }
@@ -486,6 +495,7 @@ struct RootView: View {
                     case "files": ui.showPlane(.files)
                     case "browser": ui.showPlane(.browser)
                     case "terminal": ui.showPlane(.terminal)
+                    case "details": ui.detailsVisible = true
                     case "device": ui.showPlane(.device)
                     default: break
                     }
@@ -1053,6 +1063,11 @@ final class UIState: ObservableObject {
     func showSidePanel(_ section: SidePanelSection) {
         showPlane(section == .files ? .git : .overview)
         sidePanelJump = SidePanelJump(section: section)
+    }
+
+    /// The details card over the terminal (⌘⇧B), after T3 Code's thread details.
+    @Published var detailsVisible = UserDefaults.standard.bool(forKey: "octet.detailsVisible") {
+        didSet { UserDefaults.standard.set(detailsVisible, forKey: "octet.detailsVisible") }
     }
 
     // MARK: Terminal drawer
