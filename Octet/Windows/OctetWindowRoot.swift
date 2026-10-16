@@ -48,9 +48,22 @@ private struct WindowAccessor: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(context: context, origin: origin, frame: frame) }
 
     func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        DispatchQueue.main.async { context.coordinator.attach(to: view.window) }
+        let view = AttachView()
+        // Placed the moment the view joins its window, before the window is
+        // shown: a frame set a turn later shows the window at its default
+        // size first, then jumps and reflows the terminal.
+        let coordinator = context.coordinator
+        view.joined = { coordinator.attach(to: $0) }
+        DispatchQueue.main.async { coordinator.attach(to: view.window) }
         return view
+    }
+
+    final class AttachView: NSView {
+        var joined: ((NSWindow?) -> Void)?
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            joined?(window)
+        }
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
@@ -81,7 +94,7 @@ private struct WindowAccessor: NSViewRepresentable {
             // Reopened as it was, when that still fits a screen.
             if let frame, NSScreen.screens.contains(where: { $0.visibleFrame.intersects(frame) }) {
                 self.frame = nil
-                window.setFrame(frame, display: true)
+                place(window, at: frame)
             } else if let origin {
                 self.origin = nil
                 var frame = window.frame
@@ -90,7 +103,7 @@ private struct WindowAccessor: NSViewRepresentable {
                     frame.origin.x = min(max(frame.origin.x, visible.minX), visible.maxX - frame.width)
                     frame.origin.y = min(max(frame.origin.y, visible.minY), visible.maxY - frame.height)
                 }
-                window.setFrame(frame, display: true)
+                place(window, at: frame)
             }
             let context = self.context
             let becameKey = NotificationCenter.default.addObserver(
@@ -116,6 +129,20 @@ private struct WindowAccessor: NSViewRepresentable {
                 WindowRegistry.shared.becameKey(context)
                 MainWindow.window = window
             }
+        }
+
+        /// Moves the window without showing the move: one already on screen
+        /// is hidden until its content has laid out at the new size.
+        private func place(_ window: NSWindow, at frame: CGRect) {
+            guard window.frame != frame else { return }
+            guard window.isVisible else {
+                window.setFrame(frame, display: false)
+                return
+            }
+            window.alphaValue = 0
+            window.setFrame(frame, display: false)
+            window.contentView?.layoutSubtreeIfNeeded()
+            DispatchQueue.main.async { window.alphaValue = 1 }
         }
 
         deinit {

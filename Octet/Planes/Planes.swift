@@ -192,7 +192,7 @@ private struct PlaneChip: View {
                 .foregroundStyle(active ? Theme.textPrimary : Theme.textSecondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
-            Spacer(minLength: 4)
+                .frame(maxWidth: 160, alignment: .leading)
             Button { ui.closePlane(plane.id) } label: {
                 OctetIcon("xmark", size: 15)
                     .foregroundStyle(closeHovered ? Theme.textPrimary : Theme.textSecondary)
@@ -208,7 +208,6 @@ private struct PlaneChip: View {
         }
         .padding(.leading, 12)
         .padding(.trailing, 6)
-        .frame(width: 150)
         .frame(maxHeight: .infinity)
         .background {
             ZStack {

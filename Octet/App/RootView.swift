@@ -410,6 +410,22 @@ struct RootView: View {
                     }
                 }
             }
+            // "arrange:<n>" picks the nth monitor arrangement, to watch new windows open.
+            if let open = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], open.hasPrefix("arrange:"),
+               !Self.debugHotkeyPressed, let index = Int(open.dropFirst(8)) {
+                Self.debugHotkeyPressed = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                    let screens = NSScreen.screens
+                    let current = window.nsWindow?.screen.flatMap { screens.firstIndex(of: $0) } ?? 0
+                    let all = MonitorArrangement.across(screens.map(\.visibleFrame), current: current)
+                    if all.indices.contains(index) { PaneLayoutActions.arrange(all[index].frames, from: window) }
+                }
+            }
+            // "newwindow" opens a plain new window, as ⌘N does.
+            if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "newwindow", !Self.debugHotkeyPressed {
+                Self.debugHotkeyPressed = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 4) { WindowActions.newWindow(store: store) }
+            }
             // Verification hook: "newtab" opens a tab, to see its splash.
             if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "newtab" {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) { window.newTab() }
