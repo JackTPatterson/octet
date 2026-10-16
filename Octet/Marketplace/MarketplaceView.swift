@@ -435,7 +435,7 @@ private struct TerminalPluginRow: View {
                     Toggle(plugin.name, isOn: Binding(get: { host.isEnabled(installed) },
                                                       set: { host.setEnabled(installed, $0) }))
                         .labelsHidden()
-                        .toggleStyle(.switch)
+                        .toggleStyle(OctetSwitchStyle())
                         .controlSize(.small)
                 } else if let entry = plugin.entry {
                     Button("Install") { host.install(entry) }.controlSize(.small)

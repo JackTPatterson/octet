@@ -71,11 +71,7 @@ struct SettingsView: View {
             Rectangle().fill(Theme.divider).frame(width: 1)
             ScrollViewReader { proxy in
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 18) {
-                        Text(searching ? "Search Results" : section.title)
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(Theme.textPrimary)
-                            .accessibilityAddTraits(.isHeader)
+                    VStack(alignment: .leading, spacing: 32) {
                         if searching {
                             SettingsSearchResults(query: query, results: results, open: open)
                         } else {
@@ -94,11 +90,12 @@ struct SettingsView: View {
                         }
                     }
                     .padding(.horizontal, 24)
-                    .padding(.top, 40)
-                    .padding(.bottom, 24)
+                    .padding(.top, 20)
+                    .padding(.bottom, 48)
                     .frame(maxWidth: 760, alignment: .leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: .infinity)
                 }
+                .safeAreaInset(edge: .top, spacing: 0) { breadcrumb }
                 .background(Theme.terminalBackground)
                 .environment(\.settingsHighlight, highlighted)
                 .onChange(of: highlighted) { _, anchor in
@@ -132,26 +129,56 @@ struct SettingsView: View {
             SettingsSearchField(query: $query, focus: $focus, focusValue: .search) {
                 if let first = results.first { open(first) }
             }
-            .padding(.horizontal, 10)
-            List(selection: sidebarSelection) {
-                ForEach(Section.allCases) { item in
-                    let selected = !searching && section == item
-                    Label { Text(item.title) } icon: { OctetIcon(item.symbol, size: 16) }
-                        .font(Theme.uiFontMedium)
-                        .padding(.vertical, 2)
-                        .tag(item)
-                        .accessibilityAddTraits(selected ? .isSelected : [])
+            .padding(.horizontal, 8)
+            ScrollView {
+                VStack(spacing: 2) {
+                    ForEach(Section.allCases) { item in
+                        SettingsNavRow(title: item.title, icon: item.symbol,
+                                       selected: !searching && section == item) {
+                            sidebarSelection.wrappedValue = item
+                        }
+                    }
                 }
+                .padding(.horizontal, 8)
             }
-            .listStyle(.sidebar)
-            .scrollContentBackground(.hidden)
+            .scrollIndicators(.never)
+            .focusable()
+            .focusEffectDisabled()
             .focused($focus, equals: .sidebar)
+            .onKeyPress(.downArrow) { step(1); return .handled }
+            .onKeyPress(.upArrow) { step(-1); return .handled }
+            .accessibilityElement(children: .contain)
             .accessibilityLabel("Settings sections")
         }
-        .padding(.top, 40)
-        .frame(width: 200)
+        .padding(.top, 44)
+        .frame(width: 220)
         .frame(maxHeight: .infinity)
         .background(Theme.sidebar)
+    }
+
+    /// "Settings / General", after T3 Code's page header.
+    private var breadcrumb: some View {
+        HStack(spacing: 8) {
+            Text("Settings").foregroundStyle(Theme.textTertiary)
+            Text("/").foregroundStyle(Theme.textMuted)
+            Text(searching ? "Search Results" : section.title)
+                .foregroundStyle(Theme.textPrimary)
+                .accessibilityAddTraits(.isHeader)
+            Spacer()
+        }
+        .font(.system(size: 13, weight: .medium))
+        .padding(.horizontal, 24)
+        .frame(height: 52)
+        .frame(maxWidth: .infinity)
+        .background(Theme.terminalBackground.opacity(0.92))
+    }
+
+    /// Arrow keys in the section list.
+    private func step(_ delta: Int) {
+        let all = Section.allCases
+        guard let index = all.firstIndex(of: section) else { return }
+        section = all[(index + delta + all.count) % all.count]
+        query = ""
     }
 
     /// Jumps from a search result to its row.
@@ -169,12 +196,14 @@ private struct SettingsSearchField<Value: Hashable>: View {
     var focus: FocusState<Value?>.Binding
     let focusValue: Value
     let submit: () -> Void
+    @State private var hovered = false
 
     var body: some View {
         HStack(spacing: 6) {
             OctetIcon("magnifyingglass", size: 15)
                 .foregroundStyle(Theme.textTertiary)
             TextField("Search", text: $query)
+                .font(.system(size: 13, weight: .medium))
                 .textFieldStyle(.plain)
                 .font(Theme.uiFont)
                 .foregroundStyle(Theme.textPrimary)
@@ -193,10 +222,12 @@ private struct SettingsSearchField<Value: Hashable>: View {
                 .accessibilityLabel("Clear search")
             }
         }
-        .padding(.horizontal, 8)
-        .frame(height: 26)
-        .background(RoundedRectangle(cornerRadius: Theme.rowRadius).fill(Theme.card))
-        .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius).strokeBorder(Theme.border, lineWidth: 1))
+        // T3 Code's search row: no box, just a fill under the pointer or focus.
+        .padding(.horizontal, 10)
+        .frame(height: 32)
+        .background(RoundedRectangle(cornerRadius: Theme.controlRadius)
+            .fill(focus.wrappedValue == focusValue ? Theme.cardSelected : hovered ? Theme.hover : .clear))
+        .onHover { hovered = $0 }
     }
 }
 
@@ -229,21 +260,18 @@ private struct GeneralSettings: View {
                 title: "Show tips",
                 detail: "A card at the foot of the sidebar with one thing Octet does that is easy to miss. Click it for another."
             ) {
-                Toggle("Show tips", isOn: $settings.values.showTips).labelsHidden().toggleStyle(.switch)
+                Toggle("Show tips", isOn: $settings.values.showTips).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             SettingsDivider()
             SettingsRow(title: "Confirm before quitting", detail: "Quitting Octet leaves terminals and agents running in the background.") {
-                Toggle("Confirm before quitting", isOn: $settings.values.confirmQuit).labelsHidden().toggleStyle(.switch)
+                Toggle("Confirm before quitting", isOn: $settings.values.confirmQuit).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             SettingsDivider()
             SettingsRow(
                 title: "Hotkey from any app",
                 detail: "Brings Octet to the front from whatever you're in, and hides it again when it's already there."
             ) {
-                Picker("Hotkey from any app", selection: $settings.values.globalHotkey) {
-                    ForEach(GlobalHotkey.Choice.allCases, id: \.self) { Text($0.title).tag($0) }
-                }
-                .labelsHidden().frame(width: 190)
+                OctetSelect(selection: $settings.values.globalHotkey, options: GlobalHotkey.Choice.allCases.map { ($0, $0.title) }, width: 190)
             }
             SettingsDivider()
             SettingsRow(
@@ -251,18 +279,13 @@ private struct GeneralSettings: View {
                 detail: "The hotkey slides a window down over the top of the screen, even over a full-screen app, and slides it away again."
             ) {
                 Toggle("Drop down from the top", isOn: $settings.values.hotkeyDropDown)
-                    .labelsHidden().toggleStyle(.switch)
+                    .labelsHidden().toggleStyle(OctetSwitchStyle())
                     .disabled(settings.values.globalHotkey == .off)
             }
         }
         SettingsGroup(title: "New panes & shells") {
             SettingsRow(title: "Start new tabs and workspaces in", detail: "Follow uses the focused pane's folder.") {
-                Picker("Start new tabs and workspaces in", selection: $settings.values.newPaneDirectory) {
-                    Text("Focused pane's folder").tag(OctetSettings.NewPaneDirectory.follow)
-                    Text("Home folder").tag(OctetSettings.NewPaneDirectory.home)
-                    Text("The terminal's folder").tag(OctetSettings.NewPaneDirectory.current)
-                }
-                .labelsHidden().frame(width: 190)
+                OctetSelect(selection: $settings.values.newPaneDirectory, options: [(OctetSettings.NewPaneDirectory.follow, "Focused pane's folder"), (OctetSettings.NewPaneDirectory.home, "Home folder"), (OctetSettings.NewPaneDirectory.current, "The terminal's folder")], width: 190)
             }
             SettingsDivider()
             SettingsRow(title: "Shell", detail: "Leave empty to use your login shell. Applies to new panes.") {
@@ -271,12 +294,7 @@ private struct GeneralSettings: View {
             }
             SettingsDivider()
             SettingsRow(title: "Shell startup mode", detail: "Login shells read your profile files.") {
-                Picker("Shell startup mode", selection: $settings.values.shellMode) {
-                    Text("Automatic").tag(OctetSettings.ShellMode.auto)
-                    Text("Login").tag(OctetSettings.ShellMode.login)
-                    Text("Non-login").tag(OctetSettings.ShellMode.nonLogin)
-                }
-                .labelsHidden().frame(width: 190)
+                OctetSelect(selection: $settings.values.shellMode, options: [(OctetSettings.ShellMode.auto, "Automatic"), (OctetSettings.ShellMode.login, "Login"), (OctetSettings.ShellMode.nonLogin, "Non-login")], width: 190)
             }
         }
         SettingsGroup(title: "Idle workspaces") {
@@ -284,29 +302,18 @@ private struct GeneralSettings: View {
                 title: "Move to Idle after",
                 detail: "Unused workspaces drop into the Idle dock at the bottom of the sidebar. Pinned workspaces, the one you're in, and agents that are working or waiting on you never go idle."
             ) {
-                Picker("Move to Idle after", selection: $store.idleAfter) {
-                    ForEach(presets, id: \.1) { label, seconds in
-                        Text(label).tag(seconds)
-                    }
-                    if !presets.contains(where: { $0.1 == store.idleAfter }) {
-                        Text(IdleDock.thresholdLabel(store.idleAfter)).tag(store.idleAfter)
-                    }
-                }
-                .labelsHidden().frame(width: 190)
+                OctetSelect(selection: $store.idleAfter,
+                            options: presets.map { ($0.1, $0.0) }
+                                + (presets.contains(where: { $0.1 == store.idleAfter })
+                                    ? [] : [(store.idleAfter, IdleDock.thresholdLabel(store.idleAfter))]),
+                            width: 190)
             }
             SettingsDivider()
             SettingsRow(
                 title: "Sleep idle workspaces after",
                 detail: "A sleeping workspace's terminals are closed, so it uses nothing, and it comes back as it was when you wake it from Idle: its tabs, its folders, and its agents' conversations resumed. Only workspaces where nothing would be lost sleep by themselves: no agent working or asking, nothing running in a terminal, no server listening, not pinned. Files are never touched."
             ) {
-                Picker("Sleep idle workspaces after", selection: $settings.values.sleepIdleAfterDays) {
-                    Text("Never").tag(0)
-                    Text("3 days").tag(3)
-                    Text("1 week").tag(7)
-                    Text("2 weeks").tag(14)
-                    Text("1 month").tag(30)
-                }
-                .labelsHidden().frame(width: 190)
+                OctetSelect(selection: $settings.values.sleepIdleAfterDays, options: [(0, "Never"), (3, "3 days"), (7, "1 week"), (14, "2 weeks"), (30, "1 month")], width: 190)
             }
             SettingsDivider()
             SettingsRow(title: "Pinned workspaces", detail: "Pin from a workspace's context menu or the command palette.") {
@@ -414,22 +421,18 @@ private struct AppearanceSettings: View {
             SettingsRow(title: "Match system appearance",
                         detail: "Switch between a light and a dark theme when macOS does.") {
                 Toggle("Match system appearance", isOn: $settings.values.matchSystemAppearance)
-                    .labelsHidden().toggleStyle(.switch)
+                    .labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             if settings.values.matchSystemAppearance {
                 SettingsDivider()
                 SettingsRow(title: "Light theme") {
-                    Picker("Light theme", selection: $settings.values.lightThemeName) {
-                        ForEach(TerminalTheme.selectable.filter(\.isLight)) { Text($0.name).tag($0.name) }
-                    }
-                    .labelsHidden().frame(width: 190)
+                    OctetSelect(selection: $settings.values.lightThemeName,
+                                options: TerminalTheme.selectable.filter(\.isLight).map { ($0.name, $0.name) }, width: 190)
                 }
                 SettingsDivider()
                 SettingsRow(title: "Dark theme") {
-                    Picker("Dark theme", selection: $settings.values.darkThemeName) {
-                        ForEach(TerminalTheme.selectable.filter { !$0.isLight }) { Text($0.name).tag($0.name) }
-                    }
-                    .labelsHidden().frame(width: 190)
+                    OctetSelect(selection: $settings.values.darkThemeName,
+                                options: TerminalTheme.selectable.filter { !$0.isLight }.map { ($0.name, $0.name) }, width: 190)
                 }
             }
             SettingsDivider()
@@ -442,19 +445,13 @@ private struct AppearanceSettings: View {
         }
         SettingsGroup(title: "Text") {
             SettingsRow(title: "Terminal font", detail: "Panes, the prompt editor and code.") {
-                Picker("Terminal font", selection: $settings.values.fontFamily) {
-                    Text("Default (JetBrains Mono)").tag("")
-                    ForEach(terminalFamilies, id: \.self) { Text($0).tag($0) }
-                }
-                .labelsHidden().frame(width: 220)
+                OctetSelect(selection: $settings.values.fontFamily,
+                            options: [("", "Default (JetBrains Mono)")] + terminalFamilies.map { ($0, $0) }, width: 220)
             }
             SettingsDivider()
             SettingsRow(title: "Interface font", detail: "The sidebar, tabs, panels and Settings.") {
-                Picker("Interface font", selection: $settings.values.interfaceFontFamily) {
-                    Text("System (SF Pro)").tag("")
-                    ForEach(interfaceFamilies, id: \.self) { Text($0).tag($0) }
-                }
-                .labelsHidden().frame(width: 220)
+                OctetSelect(selection: $settings.values.interfaceFontFamily,
+                            options: [("", "System (SF Pro)")] + interfaceFamilies.map { ($0, $0) }, width: 220)
             }
             SettingsDivider()
             SettingsRow(title: "Add a font", detail: "A .ttf, .otf or .ttc file. It's installed for you, as Font Book does, and works in every app.") {
@@ -474,21 +471,16 @@ private struct AppearanceSettings: View {
             }
             SettingsDivider()
             SettingsRow(title: "Thicken text", detail: "Heavier strokes, useful on non-Retina displays.") {
-                Toggle("Thicken text", isOn: $settings.values.fontThicken).labelsHidden().toggleStyle(.switch)
+                Toggle("Thicken text", isOn: $settings.values.fontThicken).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
         }
         SettingsGroup(title: "Cursor") {
             SettingsRow(title: "Shape") {
-                Picker("Cursor shape", selection: $settings.values.cursorStyle) {
-                    Text("Block").tag(OctetSettings.CursorStyle.block)
-                    Text("Bar").tag(OctetSettings.CursorStyle.bar)
-                    Text("Underline").tag(OctetSettings.CursorStyle.underline)
-                }
-                .pickerStyle(.segmented).labelsHidden().frame(width: 220)
+                OctetSegmented(selection: $settings.values.cursorStyle, items: [(OctetSettings.CursorStyle.block, "Block"), (OctetSettings.CursorStyle.bar, "Bar"), (OctetSettings.CursorStyle.underline, "Underline")])
             }
             SettingsDivider()
             SettingsRow(title: "Blink") {
-                Toggle("Cursor blink", isOn: $settings.values.cursorBlink).labelsHidden().toggleStyle(.switch)
+                Toggle("Cursor blink", isOn: $settings.values.cursorBlink).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
         }
         SettingsGroup(title: "Window") {
@@ -497,35 +489,25 @@ private struct AppearanceSettings: View {
             }
             SettingsDivider()
             SettingsRow(title: "Blur behind terminal", detail: "Applies when opacity is below 100%.") {
-                Toggle("Blur behind terminal", isOn: $settings.values.backgroundBlur).labelsHidden().toggleStyle(.switch)
+                Toggle("Blur behind terminal", isOn: $settings.values.backgroundBlur).labelsHidden().toggleStyle(OctetSwitchStyle())
                     .disabled(settings.values.backgroundOpacity >= 1)
             }
             SettingsDivider()
             SettingsRow(title: "Padding") {
-                Picker("Window padding", selection: $settings.values.windowPadding) {
-                    Text("Compact").tag(OctetSettings.WindowPadding.compact)
-                    Text("Normal").tag(OctetSettings.WindowPadding.normal)
-                    Text("Roomy").tag(OctetSettings.WindowPadding.roomy)
-                }
-                .pickerStyle(.segmented).labelsHidden().frame(width: 220)
+                OctetSegmented(selection: $settings.values.windowPadding, items: [(OctetSettings.WindowPadding.compact, "Compact"), (OctetSettings.WindowPadding.normal, "Normal"), (OctetSettings.WindowPadding.roomy, "Roomy")])
             }
         }
         SettingsGroup(title: "Split panes") {
             SettingsRow(title: "Borders") {
-                Picker("Split pane borders", selection: $settings.values.paneBorders) {
-                    Text("Splits only").tag(OctetSettings.PaneBorders.auto)
-                    Text("Always").tag(OctetSettings.PaneBorders.always)
-                    Text("Off").tag(OctetSettings.PaneBorders.off)
-                }
-                .pickerStyle(.segmented).labelsHidden().frame(width: 220)
+                OctetSegmented(selection: $settings.values.paneBorders, items: [(OctetSettings.PaneBorders.auto, "Splits only"), (OctetSettings.PaneBorders.always, "Always"), (OctetSettings.PaneBorders.off, "Off")])
             }
             SettingsDivider()
             SettingsRow(title: "Gaps between panes") {
-                Toggle("Gaps between panes", isOn: $settings.values.paneGaps).labelsHidden().toggleStyle(.switch)
+                Toggle("Gaps between panes", isOn: $settings.values.paneGaps).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             SettingsDivider()
             SettingsRow(title: "Pane scrollbars") {
-                Toggle("Pane scrollbars", isOn: $settings.values.paneScrollbars).labelsHidden().toggleStyle(.switch)
+                Toggle("Pane scrollbars", isOn: $settings.values.paneScrollbars).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
         }
     }
@@ -544,14 +526,7 @@ private struct TerminalSettings: View {
                 title: "Terminal text",
                 detail: "Where output sits while it doesn't fill the pane. Bottom keeps the prompt where you look; Top is how a terminal normally fills."
             ) {
-                Picker("Terminal text position", selection: $settings.values.textPosition) {
-                    ForEach(OctetSettings.TextPosition.allCases, id: \.self) { position in
-                        Text(position.title).tag(position)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .frame(width: 150)
+                OctetSegmented(selection: $settings.values.textPosition, items: OctetSettings.TextPosition.allCases.map { ($0, $0.title) })
             }
             SettingsDivider()
             SettingsRow(
@@ -560,46 +535,46 @@ private struct TerminalSettings: View {
             ) {
                 Toggle("Start new tabs with shortcuts", isOn: $settings.values.newTabSplash)
                     .labelsHidden()
-                    .toggleStyle(.switch)
+                    .toggleStyle(OctetSwitchStyle())
             }
             SettingsDivider()
             SettingsRow(title: "Copy on select", detail: "Copy text as soon as you select it with the mouse.") {
-                Toggle("Copy on select", isOn: $settings.values.copyOnSelect).labelsHidden().toggleStyle(.switch)
+                Toggle("Copy on select", isOn: $settings.values.copyOnSelect).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             SettingsDivider()
             SettingsRow(
                 title: "Confirm copies",
                 detail: "Show an Octet toast with what landed on the clipboard. Copying looks the same whether or not it worked."
             ) {
-                Toggle("Confirm copies", isOn: $settings.values.clipboardToasts).labelsHidden().toggleStyle(.switch)
+                Toggle("Confirm copies", isOn: $settings.values.clipboardToasts).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             SettingsDivider()
             SettingsRow(
                 title: "Tidy text copied from agents",
                 detail: "Copying from a pane running an agent leaves its layout behind: the indent under its bullets, the ⏺ and ⎿ marks, box edges and trailing spaces. Code keeps its own indentation."
             ) {
-                Toggle("Tidy text copied from agents", isOn: $settings.values.tidyAgentCopies).labelsHidden().toggleStyle(.switch)
+                Toggle("Tidy text copied from agents", isOn: $settings.values.tidyAgentCopies).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             SettingsDivider()
             SettingsRow(
                 title: "Shell integration",
                 detail: "zsh, bash and fish in Octet's panes mark each prompt and command (OSC 133), so ⌘↑/⌘↓ jump exactly between commands and each command's exit status and time show. Your own startup files load as usual. Applies to new panes."
             ) {
-                Toggle("Shell integration", isOn: $settings.values.shellIntegration).labelsHidden().toggleStyle(.switch)
+                Toggle("Shell integration", isOn: $settings.values.shellIntegration).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             SettingsDivider()
             SettingsRow(
                 title: "Secure input at password prompts",
                 detail: "While sudo, ssh or anything else asks for a password in the pane in front, macOS Secure Keyboard Entry is on, so other apps can't read the keystrokes. It turns off as soon as the prompt ends."
             ) {
-                Toggle("Secure input at password prompts", isOn: $settings.values.secureInputAtPasswords).labelsHidden().toggleStyle(.switch)
+                Toggle("Secure input at password prompts", isOn: $settings.values.secureInputAtPasswords).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             SettingsDivider()
             SettingsRow(
                 title: "Preview long pastes into agents",
                 detail: "A paste of 25 lines or more into a pane running an agent opens first, so you can read and edit it; agents fold long pastes into a line you can't open."
             ) {
-                Toggle("Preview long pastes into agents", isOn: $settings.values.previewLongPastes).labelsHidden().toggleStyle(.switch)
+                Toggle("Preview long pastes into agents", isOn: $settings.values.previewLongPastes).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             SettingsDivider()
             SettingsRow(title: "Lines per scroll wheel notch") {
@@ -612,35 +587,24 @@ private struct TerminalSettings: View {
         }
         SettingsGroup(title: "Keyboard & mouse") {
             SettingsRow(title: "Use Option as Alt", detail: "Sends Alt/Meta sequences instead of typing special characters.") {
-                Picker("Use Option as Alt", selection: $settings.values.optionAsAlt) {
-                    Text("Off").tag(OctetSettings.OptionAsAlt.off)
-                    Text("Left").tag(OctetSettings.OptionAsAlt.left)
-                    Text("Right").tag(OctetSettings.OptionAsAlt.right)
-                    Text("Both").tag(OctetSettings.OptionAsAlt.both)
-                }
-                .pickerStyle(.segmented).labelsHidden().frame(width: 220)
+                OctetSegmented(selection: $settings.values.optionAsAlt, items: [(OctetSettings.OptionAsAlt.off, "Off"), (OctetSettings.OptionAsAlt.left, "Left"), (OctetSettings.OptionAsAlt.right, "Right"), (OctetSettings.OptionAsAlt.both, "Both")])
             }
             SettingsDivider()
             SettingsRow(title: "Hide mouse pointer while typing") {
-                Toggle("Hide mouse pointer while typing", isOn: $settings.values.hideMouseWhileTyping).labelsHidden().toggleStyle(.switch)
+                Toggle("Hide mouse pointer while typing", isOn: $settings.values.hideMouseWhileTyping).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
         }
         SettingsGroup(title: "Clipboard & graphics") {
             SettingsRow(title: "Warn before pasting risky text", detail: "Multi-line pastes and text that could run commands.") {
-                Toggle("Warn before pasting risky text", isOn: $settings.values.pasteProtection).labelsHidden().toggleStyle(.switch)
+                Toggle("Warn before pasting risky text", isOn: $settings.values.pasteProtection).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             SettingsDivider()
             SettingsRow(title: "Programs reading the clipboard", detail: "Terminal programs requesting clipboard contents (OSC 52).") {
-                Picker("Programs reading the clipboard", selection: $settings.values.clipboardRead) {
-                    Text("Ask").tag(OctetSettings.ClipboardAccess.ask)
-                    Text("Allow").tag(OctetSettings.ClipboardAccess.allow)
-                    Text("Deny").tag(OctetSettings.ClipboardAccess.deny)
-                }
-                .pickerStyle(.segmented).labelsHidden().frame(width: 220)
+                OctetSegmented(selection: $settings.values.clipboardRead, items: [(OctetSettings.ClipboardAccess.ask, "Ask"), (OctetSettings.ClipboardAccess.allow, "Allow"), (OctetSettings.ClipboardAccess.deny, "Deny")])
             }
             SettingsDivider()
             SettingsRow(title: "Inline images", detail: "Kitty graphics protocol in panes.") {
-                Toggle("Inline images", isOn: $settings.values.kittyGraphics).labelsHidden().toggleStyle(.switch)
+                Toggle("Inline images", isOn: $settings.values.kittyGraphics).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
         }
         SettingsGroup(title: "Sidebar terminal") {
@@ -649,7 +613,7 @@ private struct TerminalSettings: View {
                 detail: "The shell in the right panel, where you run servers, builds and tests. While this is on, an agent can read its latest output: Claude Code, Codex, Gemini, Qwen, OpenCode, Cursor and Copilot get a read_sidebar_terminal tool through the octet-terminal MCP server, and any other agent can run octet-cli terminal read. Off by default, since a terminal can hold secrets. A note shows over the terminal while it's on."
             ) {
                 Toggle("Let agents read the sidebar terminal", isOn: $settings.values.agentsReadSidebarTerminal)
-                    .labelsHidden().toggleStyle(.switch)
+                    .labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             SettingsDivider()
             SettingsRow(
@@ -657,7 +621,7 @@ private struct TerminalSettings: View {
                 detail: "An agent can open the sidebar terminal and type a command at its prompt, for example one that needs your password or that you'd rather watch. It is never run for you: you read it and press Return, or Run. It only goes in when the terminal is waiting at a prompt. Tool: suggest_sidebar_command, or octet-cli terminal suggest. Off by default."
             ) {
                 Toggle("Let agents suggest commands", isOn: $settings.values.agentsSuggestSidebarCommands)
-                    .labelsHidden().toggleStyle(.switch)
+                    .labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             if settings.values.agentsReadSidebarTerminal || settings.values.agentsSuggestSidebarCommands {
                 SettingsDivider()
@@ -729,16 +693,11 @@ private struct AgentSettings: View {
                 title: "Quick answers",
                 detail: "Open a small panel in the window corner when an agent needs a choice, answer, or permission."
             ) {
-                Toggle("Quick answers", isOn: $settings.values.agentQuickAnswers).labelsHidden().toggleStyle(.switch)
+                Toggle("Quick answers", isOn: $settings.values.agentQuickAnswers).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             SettingsDivider()
             SettingsRow(title: "When an agent finishes or needs you") {
-                Picker("When an agent finishes or needs you", selection: $settings.values.notifications) {
-                    Text("macOS notification").tag(OctetSettings.NotificationDelivery.system)
-                    Text("In Octet").tag(OctetSettings.NotificationDelivery.banner)
-                    Text("Off").tag(OctetSettings.NotificationDelivery.off)
-                }
-                .labelsHidden().frame(width: 190)
+                OctetSelect(selection: $settings.values.notifications, options: [(OctetSettings.NotificationDelivery.system, "macOS notification"), (OctetSettings.NotificationDelivery.banner, "In Octet"), (OctetSettings.NotificationDelivery.off, "Off")], width: 190)
             }
             SettingsDivider()
             SettingsRow(title: "Wait before notifying", detail: "Skipped if you return to the agent first.") {
@@ -753,7 +712,7 @@ private struct AgentSettings: View {
                 title: "Recap when you come back",
                 detail: "When you come back after being away (the screen locked, Octet out of sight, or the Mac untouched), a strip at the top says what every agent did meanwhile. It opens by itself only when something needs you or is stuck. View › Show Recap brings it back."
             ) {
-                Toggle("Recap when you come back", isOn: $settings.values.recap).labelsHidden().toggleStyle(.switch)
+                Toggle("Recap when you come back", isOn: $settings.values.recap).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             SettingsDivider()
             SettingsRow(title: "Away for at least", detail: "Shorter breaks don't get a recap. Not touching the Mac this long counts as away too.") {
@@ -766,16 +725,12 @@ private struct AgentSettings: View {
             }
             SettingsDivider()
             SettingsRow(title: "Play sounds", detail: "When agents in other workspaces change state.") {
-                Toggle("Play sounds", isOn: $settings.values.agentSounds).labelsHidden().toggleStyle(.switch)
+                Toggle("Play sounds", isOn: $settings.values.agentSounds).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             SettingsDivider()
             SettingsRow(title: "Subagent finished sound", detail: "Played by a subagent's tab when it finishes, so it sounds different from a main agent. Follows Play sounds.") {
-                Picker("Subagent finished sound", selection: $settings.values.subagentFinishedSound) {
-                    Text("None").tag("")
-                    ForEach(SubagentWatch.sounds, id: \.self) { Text($0).tag($0) }
-                }
-                .labelsHidden()
-                .frame(width: 140)
+                OctetSelect(selection: $settings.values.subagentFinishedSound,
+                            options: [("", "None")] + SubagentWatch.sounds.map { ($0, $0) }, width: 140)
                 .disabled(!settings.values.agentSounds)
                 .onChange(of: settings.values.subagentFinishedSound) { _, name in
                     if let path = SubagentWatch.soundPath(name), !name.isEmpty {
@@ -789,7 +744,7 @@ private struct AgentSettings: View {
                 title: "Let agents set waits",
                 detail: "When work can't go on until something outside it happens (a pull request merged, a release, a deploy, a date, someone's answer), an agent writes down what it waits for and the next step. Octet checks it with nothing running and brings the work back when it happens. Claude Code, Codex, Gemini, Qwen, OpenCode, Cursor and Copilot get a wait_for tool through the octet-waits MCP server; any other agent can run octet-cli wait add. Waits show in the sidebar."
             ) {
-                Toggle("Let agents set waits", isOn: $settings.values.agentsSetWaits).labelsHidden().toggleStyle(.switch)
+                Toggle("Let agents set waits", isOn: $settings.values.agentsSetWaits).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             if settings.values.agentsSetWaits {
                 SettingsDivider()
@@ -805,7 +760,7 @@ private struct AgentSettings: View {
                 title: "Offer a wait from a reply",
                 detail: "When an agent ends with something like \"once the PR is merged, we can remove the old endpoint\", a banner over its composer offers to set a wait for it."
             ) {
-                Toggle("Offer a wait from a reply", isOn: $settings.values.suggestWaits).labelsHidden().toggleStyle(.switch)
+                Toggle("Offer a wait from a reply", isOn: $settings.values.suggestWaits).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
         }
         SettingsGroup(title: "Recovery") {
@@ -813,90 +768,71 @@ private struct AgentSettings: View {
                 title: "Resume agents after a restart",
                 detail: "When the terminal restarts (e.g. your Mac shut down), agents with an installed integration reopen their conversation."
             ) {
-                Toggle("Resume agents after a restart", isOn: $settings.values.resumeAgentsOnRestore).labelsHidden().toggleStyle(.switch)
+                Toggle("Resume agents after a restart", isOn: $settings.values.resumeAgentsOnRestore).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             SettingsDivider()
             SettingsRow(
                 title: "Offer to recover lost sessions",
                 detail: "Octet records every agent's session, and every terminal that's running something with its recent output. If the terminal server stops and they end with it, Octet lists them so you can bring them back. A command is put back on the prompt, never rerun."
             ) {
-                Toggle("Offer to recover lost sessions", isOn: $settings.values.offerRecovery).labelsHidden().toggleStyle(.switch)
+                Toggle("Offer to recover lost sessions", isOn: $settings.values.offerRecovery).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             SettingsDivider()
             SettingsRow(
                 title: "Move agents to the project they work in",
                 detail: "When a Claude or Codex agent's last 3 commands all ran in another repository (cd ~/code/api && …), Octet restarts it there once its turn ends, in the same tab with its conversation resumed. For an agent started in the wrong folder."
             ) {
-                Toggle("Move agents to the project they work in", isOn: $settings.values.relocateAgents).labelsHidden().toggleStyle(.switch)
+                Toggle("Move agents to the project they work in", isOn: $settings.values.relocateAgents).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             SettingsDivider()
             SettingsRow(
                 title: "Keep the Mac awake while agents work",
                 detail: "While any agent is working, the Mac doesn't go to sleep on its own, so long tasks finish. The display can still turn off, and closing the lid still sleeps. It lets go as soon as the last agent stops."
             ) {
-                Picker("Keep the Mac awake while agents work", selection: $settings.values.keepAwake) {
-                    ForEach(KeepAwake.Mode.allCases, id: \.self) { mode in
-                        Text(mode.title).tag(mode)
-                    }
-                }
-                .labelsHidden().frame(width: 190)
+                OctetSelect(selection: $settings.values.keepAwake,
+                            options: KeepAwake.Mode.allCases.map { ($0, $0.title) }, width: 190)
             }
             SettingsDivider()
             SettingsRow(
                 title: "Checkpoint before each agent turn",
                 detail: "As an agent starts working, Octet snapshots the project's files (tracked and untracked, not ignored) so the turn can be undone with Restore a Checkpoint in the command palette, including edits made through the shell. Snapshots are kept in the repository under refs/octet/checkpoints, the last 50 per worktree. Your branch, index and stash aren't touched."
             ) {
-                Toggle("Checkpoint before each agent turn", isOn: $settings.values.checkpointTurns).labelsHidden().toggleStyle(.switch)
+                Toggle("Checkpoint before each agent turn", isOn: $settings.values.checkpointTurns).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             SettingsDivider()
             SettingsRow(
                 title: "Keep closed tabs running",
                 detail: "Close a tab or pane while something runs in it and it keeps running out of sight for this long. ⌘⇧T, or Reopen on the notice, brings it back as it was."
             ) {
-                Picker("Keep closed tabs running", selection: $settings.values.keepClosedTabsMinutes) {
-                    Text("Off").tag(0.0)
-                    Text("5 minutes").tag(5.0)
-                    Text("15 minutes").tag(15.0)
-                    Text("30 minutes").tag(30.0)
-                    Text("1 hour").tag(60.0)
-                    Text("4 hours").tag(240.0)
-                }
-                .labelsHidden().frame(width: 190)
+                OctetSelect(selection: $settings.values.keepClosedTabsMinutes, options: [(0.0, "Off"), (5.0, "5 minutes"), (15.0, "15 minutes"), (30.0, "30 minutes"), (60.0, "1 hour"), (240.0, "4 hours")], width: 190)
             }
             SettingsDivider()
             SettingsRow(
                 title: "Remote Control for Claude conversations",
                 detail: "Every Claude conversation in Octet is listed in claude.ai and the Claude app, to continue from your phone or another computer. What you send there shows up here. Each conversation's header also turns it on and off. Claude Code's own \"enable for all sessions\" setting turns it on too."
             ) {
-                Toggle("Remote Control for Claude conversations", isOn: $settings.values.claudeRemoteControl).labelsHidden().toggleStyle(.switch)
+                Toggle("Remote Control for Claude conversations", isOn: $settings.values.claudeRemoteControl).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             SettingsDivider()
             SettingsRow(
                 title: "When you run an agent in a terminal",
                 detail: "Typing claude, codex or opencode on its own at a prompt opens the agent's own interface in the terminal, or Octet's conversation view. With a flag or a prompt it always runs in the terminal as typed. Octet's view needs Octet's command line, below."
             ) {
-                Picker("When you run an agent in a terminal", selection: $settings.values.agentOpening) {
-                    ForEach(OctetSettings.AgentOpening.allCases, id: \.self) { opening in
-                        Text(opening.title).tag(opening)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .frame(width: 190)
+                OctetSegmented(selection: $settings.values.agentOpening, items: OctetSettings.AgentOpening.allCases.map { ($0, $0.title) })
             }
             SettingsDivider()
             SettingsRow(
                 title: "Offer Octet's view over a running agent",
                 detail: "A banner above the terminal, while an agent runs in its own interface, offers to continue its session in Octet's conversation view."
             ) {
-                Toggle("Offer Octet's view over a running agent", isOn: $settings.values.agentBanner).labelsHidden().toggleStyle(.switch)
+                Toggle("Offer Octet's view over a running agent", isOn: $settings.values.agentBanner).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             SettingsDivider()
             SettingsRow(
                 title: "Octet's command line",
                 detail: "At a shell prompt, Octet edits the line itself: highlighted as you type, with a suggestion from your history. Anything it doesn't handle goes straight to the shell."
             ) {
-                Toggle("Octet's command line", isOn: $settings.values.promptEditor).labelsHidden().toggleStyle(.switch)
+                Toggle("Octet's command line", isOn: $settings.values.promptEditor).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             SettingsDivider()
             SettingsRow(
@@ -904,7 +840,7 @@ private struct AgentSettings: View {
                 detail: "Turn off to send Tab to your shell while keeping Octet's command-line editing and history suggestions. The shell takes over the current line after Tab."
             ) {
                 Toggle("Octet's Tab completions", isOn: $settings.values.promptCompletions)
-                    .labelsHidden().toggleStyle(.switch)
+                    .labelsHidden().toggleStyle(OctetSwitchStyle())
                     .disabled(!settings.values.promptEditor)
             }
             SettingsDivider()
@@ -912,10 +848,7 @@ private struct AgentSettings: View {
                 title: "Accept a suggestion with",
                 detail: "The key that takes the grey suggestion from your history at the end of the line. ⌥→ takes one word of it either way."
             ) {
-                Picker("Accept a suggestion with", selection: $settings.values.suggestionAcceptKey) {
-                    ForEach(OctetSettings.SuggestionAcceptKey.allCases, id: \.self) { Text($0.title).tag($0) }
-                }
-                .labelsHidden().frame(width: 130)
+                OctetSelect(selection: $settings.values.suggestionAcceptKey, options: OctetSettings.SuggestionAcceptKey.allCases.map { ($0, $0.title) }, width: 130)
                 .disabled(!settings.values.promptEditor)
             }
             SettingsDivider()
@@ -923,7 +856,7 @@ private struct AgentSettings: View {
                 title: "Paste images as files",
                 detail: "⌘V with an image on the clipboard writes it out and pastes the path, which is what agents can actually read."
             ) {
-                Toggle("Paste images as files", isOn: $settings.values.pasteImagesAsFiles).labelsHidden().toggleStyle(.switch)
+                Toggle("Paste images as files", isOn: $settings.values.pasteImagesAsFiles).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             SettingsDivider()
             SettingsRow(
@@ -938,7 +871,7 @@ private struct AgentSettings: View {
                 title: "Visual twin",
                 detail: "⌘⇧V draws Octet's own interface over an agent's pane, read from the session the agent is already writing. What you type there goes to the real agent, so nothing about it changes."
             ) {
-                Toggle("Visual twin", isOn: $settings.values.visualTwin).labelsHidden().toggleStyle(.switch)
+                Toggle("Visual twin", isOn: $settings.values.visualTwin).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             SettingsDivider()
             SettingsRow(
@@ -946,7 +879,7 @@ private struct AgentSettings: View {
                 detail: "Start an agent and its pane opens in the twin rather than the terminal. Closing the twin for a pane keeps it closed."
             ) {
                 Toggle("", isOn: $settings.values.twinByDefault)
-                    .labelsHidden().toggleStyle(.switch)
+                    .labelsHidden().toggleStyle(OctetSwitchStyle())
                     .disabled(!settings.values.visualTwin)
             }
             SettingsDivider()
@@ -954,28 +887,28 @@ private struct AgentSettings: View {
                 title: "Name tabs after their work",
                 detail: "Tabs follow what their pane reports it is doing, so a tab stops reading as the task you started with. A tab you rename yourself keeps its name."
             ) {
-                Toggle("Name tabs after their work", isOn: $settings.values.autoNameTabs).labelsHidden().toggleStyle(.switch)
+                Toggle("Name tabs after their work", isOn: $settings.values.autoNameTabs).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             SettingsDivider()
             SettingsRow(
                 title: "Name workspaces after their work",
                 detail: "A workspace takes the task its agents report, else what its conversation is about, else its branch. A workspace you rename yourself keeps its name."
             ) {
-                Toggle("Name workspaces after their work", isOn: $settings.values.autoNameWorkspaces).labelsHidden().toggleStyle(.switch)
+                Toggle("Name workspaces after their work", isOn: $settings.values.autoNameWorkspaces).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             SettingsDivider()
             SettingsRow(
                 title: "Hold Space to talk",
                 detail: "In a conversation's message box, hold Space and speak; let go and what you said is typed in. A tap still types a space. Speech is recognized on this Mac where the language allows."
             ) {
-                Toggle("Hold Space to talk", isOn: $settings.values.holdSpaceToTalk).labelsHidden().toggleStyle(.switch)
+                Toggle("Hold Space to talk", isOn: $settings.values.holdSpaceToTalk).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             SettingsDivider()
             SettingsRow(
                 title: "Restore recent terminal output",
                 detail: "Saves pane contents so they reappear after a restart. Output can include secrets."
             ) {
-                Toggle("Restore recent terminal output", isOn: $settings.values.paneHistory).labelsHidden().toggleStyle(.switch)
+                Toggle("Restore recent terminal output", isOn: $settings.values.paneHistory).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
         }
         SettingsGroup(title: "Usage") {
@@ -985,7 +918,7 @@ private struct AgentSettings: View {
             ) {
                 Toggle("Read live usage from your Claude account", isOn: $settings.values.readClaudeAccountUsage)
                     .labelsHidden()
-                    .toggleStyle(.switch)
+                    .toggleStyle(OctetSwitchStyle())
                     .onChange(of: settings.values.readClaudeAccountUsage) { _, on in
                         if on { AccountStore.shared.accountUsageSettingChanged() }
                     }
@@ -1039,7 +972,7 @@ private struct AgentSettings: View {
                 detail: "Once a day, check installed agent tools for newer releases. Octet asks before you run any update command."
             ) {
                 Toggle("Prompt for agent updates", isOn: $settings.values.checkForAgentUpdates)
-                    .labelsHidden().toggleStyle(.switch)
+                    .labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             SettingsDivider()
             SettingsRow(
@@ -1094,14 +1027,7 @@ private struct AgentSettings: View {
                 title: "When a subagent finishes",
                 detail: "Keep its tab open until you close it, or close it two minutes after the subagent finishes. A tab you're looking at stays open, and a subagent that's sent more work starts the wait again."
             ) {
-                Picker("When a subagent finishes", selection: $settings.values.subagentTabClosing) {
-                    ForEach(OctetSettings.SubagentTabClosing.allCases, id: \.self) { closing in
-                        Text(closing.title).tag(closing)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .frame(width: 230)
+                OctetSegmented(selection: $settings.values.subagentTabClosing, items: OctetSettings.SubagentTabClosing.allCases.map { ($0, $0.title) })
             }
         }
         .onAppear {
@@ -1169,7 +1095,7 @@ private struct MotionSettings: View {
     var body: some View {
         SettingsGroup(title: "Animations") {
             SettingsRow(title: "Enable animations", detail: "Turn off to make every change in Octet instant.") {
-                Toggle("Enable animations", isOn: $motion.enabled).labelsHidden().toggleStyle(.switch)
+                Toggle("Enable animations", isOn: $motion.enabled).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             SettingsDivider()
             SettingsRow(
@@ -1178,14 +1104,14 @@ private struct MotionSettings: View {
                     ? "Reduce Motion is on in System Settings, so animations are off."
                     : "Turns animations off whenever Reduce Motion is on in System Settings › Accessibility."
             ) {
-                Toggle("Follow system Reduce Motion", isOn: $motion.followSystemReduceMotion).labelsHidden().toggleStyle(.switch)
+                Toggle("Follow system Reduce Motion", isOn: $motion.followSystemReduceMotion).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
         }
         SettingsGroup(title: "Animate") {
             ForEach(Array(MotionPreferences.Area.allCases.enumerated()), id: \.element) { index, area in
                 if index > 0 { SettingsDivider() }
                 SettingsRow(title: area.title, detail: area.detail) {
-                    Toggle(area.title, isOn: motion.binding(area)).labelsHidden().toggleStyle(.switch)
+                    Toggle(area.title, isOn: motion.binding(area)).labelsHidden().toggleStyle(OctetSwitchStyle())
                 }
                 .opacity(motion.enabled ? 1 : 0.45)
                 .disabled(!motion.enabled)
@@ -1225,24 +1151,20 @@ private struct AdvancedSettings: View {
                 title: "Set up new worktrees",
                 detail: "Copies the git-ignored .env files from the main checkout, then runs the project's .octet/setup (or the setup script in conductor.json) in the new worktree, with OCTET_ROOT_PATH, OCTET_WORKTREE_PATH and OCTET_PORT set. OCTET_PORT is the first of ten ports no other worktree has. Octet asks before running a project's script for the first time."
             ) {
-                Toggle("Set up new worktrees", isOn: $settings.values.worktreeSetup).labelsHidden().toggleStyle(.switch)
+                Toggle("Set up new worktrees", isOn: $settings.values.worktreeSetup).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
         }
         SettingsGroup(title: "Terminal engine") {
             SettingsRow(title: "Check for engine updates") {
-                Toggle("Check for engine updates", isOn: $settings.values.checkForEngineUpdates).labelsHidden().toggleStyle(.switch)
+                Toggle("Check for engine updates", isOn: $settings.values.checkForEngineUpdates).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             SettingsDivider()
             SettingsRow(title: "Update channel") {
-                Picker("Update channel", selection: $settings.values.updateChannel) {
-                    Text("Stable").tag(OctetSettings.UpdateChannel.stable)
-                    Text("Preview").tag(OctetSettings.UpdateChannel.preview)
-                }
-                .pickerStyle(.segmented).labelsHidden().frame(width: 160)
+                OctetSegmented(selection: $settings.values.updateChannel, items: [(OctetSettings.UpdateChannel.stable, "Stable"), (OctetSettings.UpdateChannel.preview, "Preview")])
             }
             SettingsDivider()
             SettingsRow(title: "Allow a nested session", detail: "Lets you run another terminal session inside an Octet pane.") {
-                Toggle("Allow a nested session", isOn: $settings.values.allowNestedSessions).labelsHidden().toggleStyle(.switch)
+                Toggle("Allow a nested session", isOn: $settings.values.allowNestedSessions).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             SettingsDivider()
             SettingsRow(title: "Session", detail: "Octet runs its own session, separate from terminals you open elsewhere.") {
@@ -1328,16 +1250,21 @@ private struct SliderControl: View {
     let label: (Double) -> String
 
     var body: some View {
+        // T3 Code's slider: the value in a small mono pill, then the track.
         HStack(spacing: 10) {
+            Text(label(value))
+                .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+                .monospacedDigit()
+                .foregroundStyle(Theme.textPrimary)
+                .padding(.horizontal, 8)
+                .frame(minWidth: 48, minHeight: 22)
+                .background(RoundedRectangle(cornerRadius: Theme.controlRadius).fill(Theme.cardSelected))
+                .accessibilityHidden(true)
             Slider(value: $value, in: range, step: step)
-                .frame(width: 160)
+                .tint(Theme.accent)
+                .frame(width: 150)
                 .accessibilityLabel(title)
                 .accessibilityValue(label(value))
-            Text(label(value))
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(Theme.textSecondary)
-                .frame(width: 44, alignment: .trailing)
-                .accessibilityHidden(true)
         }
     }
 }
@@ -1349,15 +1276,18 @@ struct SettingsGroup<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title.uppercased())
-                .font(Theme.headerFont)
-                .kerning(0.4)
-                .foregroundStyle(Theme.textTertiary)
+        // T3 Code's sections: a quiet title over a softly bordered card.
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.textSecondary)
+                .padding(.horizontal, 16)
+                .accessibilityAddTraits(.isHeader)
             VStack(spacing: 0) { content }
-                .background(Theme.card)
-                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.border, lineWidth: 1))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .background(Theme.card.opacity(0.55))
+                .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.border.opacity(0.7), lineWidth: 1))
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .shadow(color: .black.opacity(0.05), radius: 1, y: 1)
         }
         // Search jumps scroll to a group by its title.
         .id(title)
@@ -1371,21 +1301,22 @@ struct SettingsRow<Control: View>: View {
     @Environment(\.settingsHighlight) private var highlighted
 
     var body: some View {
-        HStack(alignment: .center, spacing: 16) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.system(size: 13)).foregroundStyle(Theme.textPrimary)
+        HStack(alignment: .center, spacing: 32) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.textPrimary)
                 if let detail {
                     Text(detail)
-                        .font(.system(size: 11))
+                        .font(.system(size: 11.5))
                         .foregroundStyle(Theme.textTertiary)
+                        .frame(maxWidth: 520, alignment: .leading)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            Spacer(minLength: 12)
+            Spacer(minLength: 0)
             control
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
         .background(Theme.accent.opacity(highlighted == title ? 0.16 : 0))
         .animation(.easeOut(duration: 0.4), value: highlighted == title)
         // Search jumps scroll to a row by its title.
@@ -1395,7 +1326,7 @@ struct SettingsRow<Control: View>: View {
 
 struct SettingsDivider: View {
     var body: some View {
-        Rectangle().fill(Theme.divider).frame(height: 1).padding(.leading, 14)
+        Rectangle().fill(Theme.divider.opacity(0.8)).frame(height: 1)
     }
 }
 
@@ -1503,5 +1434,37 @@ private struct ConfigProblemsBanner: View {
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .accessibilityElement(children: .combine)
         }
+    }
+}
+
+/// A section in Settings' list, after T3 Code's: a 32pt row, the icon dim
+/// until hovered or chosen, the chosen one filled.
+private struct SettingsNavRow: View {
+    let title: String
+    let icon: String
+    let selected: Bool
+    let action: () -> Void
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                OctetIcon(icon, size: 15)
+                    .foregroundStyle(selected || hovered ? Theme.textPrimary : Theme.textTertiary)
+                    .frame(width: 18)
+                Text(title)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(selected || hovered ? Theme.textPrimary : Theme.textSecondary)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 32)
+            .background(RoundedRectangle(cornerRadius: Theme.controlRadius)
+                .fill(selected ? Theme.cardSelected : hovered ? Theme.hover : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
     }
 }

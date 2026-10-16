@@ -484,6 +484,13 @@ struct RootView: View {
                     }
                 }
             }
+            if let open = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], open.hasPrefix("settings") {
+                // "settings" or "settings:appearance" (a section's raw value).
+                if open.hasPrefix("settings:") {
+                    UserDefaults.standard.set(String(open.dropFirst(9)), forKey: SettingsView.sectionKey)
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { openSettings() }
+            }
             if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "agents" {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) { AgentCenter.shared.showingBoard = true }
             }

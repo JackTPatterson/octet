@@ -240,3 +240,100 @@ struct GitHubAvatar: View {
         .accessibilityHidden(true)
     }
 }
+
+// MARK: - Switch
+
+/// Octet's switch, after T3 Code's: a 30×18 pill, the accent when on, a
+/// white thumb that stretches a little while pressed.
+struct OctetSwitchStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        OctetSwitch(configuration: configuration)
+    }
+}
+
+private struct OctetSwitch: View {
+    let configuration: ToggleStyleConfiguration
+    @Environment(\.isEnabled) private var enabled
+    @State private var pressed = false
+
+    var body: some View {
+        let on = configuration.isOn
+        // The label is for VoiceOver: rows say what a switch is for, and
+        // labelsHidden() reaches only the system's own styles.
+        HStack(spacing: 8) {
+            ZStack(alignment: on ? .trailing : .leading) {
+                Capsule().fill(on ? Theme.accent : Theme.cardSelected)
+                Capsule()
+                    // Dark on the accent, as T3 Code's thumb is: readable
+                    // whatever colour the theme's accent is.
+                    .fill(on ? Theme.terminalBackground : Theme.textSecondary)
+                    .shadow(color: .black.opacity(0.25), radius: 1, y: 0.5)
+                    .frame(width: pressed ? 16 : 14, height: 14)
+                    .padding(2)
+            }
+            .frame(width: 30, height: 18)
+            .animation(.easeOut(duration: 0.15), value: on)
+            .animation(.easeOut(duration: 0.1), value: pressed)
+            .contentShape(Capsule())
+            .onTapGesture { configuration.isOn.toggle() }
+            .onLongPressGesture(minimumDuration: 0, maximumDistance: 8, pressing: { pressed = $0 }, perform: {})
+        }
+        .opacity(enabled ? 1 : 0.64)
+        .background { configuration.label.hidden() }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityValue(on ? "On" : "Off")
+        .accessibilityAction { configuration.isOn.toggle() }
+    }
+}
+
+// MARK: - Select
+
+/// Octet's dropdown for a choice among several, after T3 Code's select: a
+/// 28pt bordered trigger with the current choice and a small chevron, its
+/// menu the system's (keyboard, type-to-select and VoiceOver come free).
+struct OctetSelect<Value: Hashable>: View {
+    @Binding var selection: Value
+    let options: [(value: Value, title: String)]
+    var width: CGFloat?
+    @State private var hovered = false
+
+    private var current: String {
+        options.first { $0.value == selection }?.title ?? ""
+    }
+
+    var body: some View {
+        Menu {
+            Picker("", selection: $selection) {
+                ForEach(options, id: \.value) { option in Text(option.title).tag(option.value) }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        } label: {
+            HStack(spacing: 6) {
+                Text(current)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 4)
+                OctetIcon("chevron.down", size: 10).foregroundStyle(Theme.textTertiary)
+            }
+            .padding(.horizontal, 10)
+            .frame(width: width, height: 28)
+            .background(RoundedRectangle(cornerRadius: Theme.popoverRadius)
+                .fill(hovered ? Theme.hover : Theme.terminalBackground.opacity(0.55)))
+            .overlay(RoundedRectangle(cornerRadius: Theme.popoverRadius).strokeBorder(Theme.border, lineWidth: 1))
+            .overlay(alignment: .top) {
+                Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1).padding(.horizontal, Theme.popoverRadius)
+            }
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize(horizontal: width == nil, vertical: true)
+        .onHover { hovered = $0 }
+        .accessibilityValue(current)
+    }
+}

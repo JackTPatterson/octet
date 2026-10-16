@@ -14,7 +14,7 @@ struct PeersSettingsGroup: View {
                 title: "Talk to other Macs",
                 detail: "Pair with Octet on your other Macs over this network, so agents on each can message the other's agents and hand them tasks. Nothing leaves your network: the Macs talk directly, encrypted. Each paired Mac asks before anything reaches an agent here, unless you allow it below."
             ) {
-                Toggle("Talk to other Macs", isOn: $settings.values.peersEnabled).labelsHidden().toggleStyle(.switch)
+                Toggle("Talk to other Macs", isOn: $settings.values.peersEnabled).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             SettingsDivider()
             SettingsRow(title: "This Mac's name", detail: "What your other Macs see. Leave empty for the computer's name.") {
@@ -72,10 +72,9 @@ struct PeersSettingsGroup: View {
                         .font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
                 }
                 Spacer()
-                Picker("What \(peer.name) may do", selection: Binding(get: { peer.trust }, set: { center.setTrust($0, for: peer.device) })) {
-                    ForEach(PeerTrust.allCases, id: \.self) { Text($0.title).tag($0) }
-                }
-                .labelsHidden().frame(width: 190)
+                OctetSelect(selection: Binding(get: { peer.trust }, set: { center.setTrust($0, for: peer.device) }),
+                            options: PeerTrust.allCases.map { ($0, $0.title) }, width: 190)
+                    .accessibilityLabel("What \(peer.name) may do")
                 OctetButton(title: "Forget", kind: .ghost, compact: true) {
                     ConfirmCenter.shared.ask(title: "Forget \(peer.name)?",
                                              message: "It can't reach agents here until you pair again.",

@@ -15,7 +15,7 @@ struct StatusBarSettings: View {
 
         SettingsGroup(title: "Status bar") {
             SettingsRow(title: "Show status bar", detail: "Chips under the terminal about the focused pane: where it is, what it runs, and what's changed") {
-                Toggle("Show status bar", isOn: $settings.values.repoContextBar).labelsHidden().toggleStyle(.switch)
+                Toggle("Show status bar", isOn: $settings.values.repoContextBar).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
         }
 

@@ -36,7 +36,7 @@ struct PluginSettings: View {
                     Button("Check Now") { host.checkForUpdates(manual: true) }
                         .disabled(host.registryLoading)
                     Toggle("Update plugins automatically", isOn: $settings.values.autoUpdatePlugins)
-                        .labelsHidden().toggleStyle(.switch)
+                        .labelsHidden().toggleStyle(OctetSwitchStyle())
                 }
             }
         }
@@ -50,7 +50,7 @@ struct PluginSettings: View {
                     SettingsRow(title: plugin.manifest.name, detail: plugin.manifest.description) {
                         Toggle(plugin.manifest.name, isOn: Binding(get: { host.isEnabled(plugin) },
                                                                    set: { host.setEnabled(plugin, $0) }))
-                            .labelsHidden().toggleStyle(.switch)
+                            .labelsHidden().toggleStyle(OctetSwitchStyle())
                     }
                 }
             }
