@@ -58,7 +58,8 @@ enum SettingsSearchIndex {
 
     private static let appearance: [SettingsSearchEntry] = [
         .init(.appearance, "Follow your terminal's colours", ["import", "theme", "config", "colors"]),
-        .init(.appearance, "Match system appearance", ["theme", "light", "dark", "mode", "auto", "system"]),
+        .init(.appearance, "Color scheme", ["theme", "light", "dark", "mode", "auto", "system", "appearance", "match"]),
+        .init(.appearance, "Match system appearance", anchor: "Color scheme", ["theme", "light", "dark", "mode", "auto", "system"]),
         .init(.appearance, "Theme", ["theme", "color", "colour", "palette", "scheme", "swatch"]),
         .init(.appearance, "Font", ["font", "typeface", "family", "monospace", "jetbrains"]),
         .init(.appearance, "Font size", ["font", "text size", "zoom", "bigger", "smaller", "points", "pt"]),
@@ -166,75 +167,46 @@ enum SettingsSearchIndex {
     ]
 }
 
-/// Search results in place of a page: the matching rows of every section,
-/// grouped under the section they live in.
-struct SettingsSearchResults: View {
-    let query: String
-    let results: [SettingsSearchEntry]
-    let open: (SettingsSearchEntry) -> Void
-
-    var body: some View {
-        if results.isEmpty {
-            VStack(spacing: 8) {
-                OctetIcon("magnifyingglass", size: 35)
-                    .foregroundStyle(Theme.textTertiary)
-                Text("No settings match")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Theme.textPrimary)
-                Text("Nothing is called \u{201C}\(query.trimmingCharacters(in: .whitespaces))\u{201D}. Try a shorter or different word.")
-                    .font(Theme.uiFont)
-                    .foregroundStyle(Theme.textSecondary)
-                    .multilineTextAlignment(.center)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.top, 60)
-            .accessibilityElement(children: .combine)
-        } else {
-            ForEach(SettingsView.Section.allCases) { section in
-                let rows = results.filter { $0.section == section }
-                if !rows.isEmpty {
-                    SettingsGroup(title: section.title) {
-                        ForEach(Array(rows.enumerated()), id: \.element.id) { index, entry in
-                            if index > 0 { SettingsDivider() }
-                            SearchResultRow(entry: entry, isFirst: entry == results.first) { open(entry) }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-private struct SearchResultRow: View {
+/// A search result in Settings' sidebar, after T3 Code's: the section's
+/// icon, then two lines, the setting and the section it lives in. `active`
+/// is the one Return opens, which the pointer and ↑/↓ both move.
+struct SettingsSearchResultRow: View {
     let entry: SettingsSearchEntry
-    /// Return in the search field opens the first result.
-    let isFirst: Bool
+    let active: Bool
+    let hover: () -> Void
     let action: () -> Void
-    @State private var hovered = false
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 10) {
+            HStack(alignment: .top, spacing: 8) {
                 OctetIcon(entry.section.symbol, size: 15)
-                    .foregroundStyle(Theme.textTertiary)
-                    .frame(width: 16)
-                Text(entry.title).font(.system(size: 13)).foregroundStyle(Theme.textPrimary)
-                Spacer(minLength: 8)
-                if isFirst {
-                    Text("↩").font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
+                    .foregroundStyle(active ? Theme.textPrimary : Theme.textTertiary)
+                    .frame(width: 18)
+                    .padding(.top, 2)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(entry.title)
+                        .font(Theme.interfaceFont(14, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                    Text(entry.section.title)
+                        .font(Theme.interfaceFont(11))
+                        .foregroundStyle(Theme.textTertiary)
+                        .lineLimit(1)
                 }
-                OctetIcon("chevron.right", size: 14)
-                    .foregroundStyle(Theme.textTertiary)
+                Spacer(minLength: 0)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
-            .background(hovered ? Theme.hover : Color.clear)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .frame(minHeight: 40)
+            .background(RoundedRectangle(cornerRadius: Theme.controlRadius)
+                .fill(active ? Theme.cardSelected : .clear))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .onHover { hovered = $0 }
+        .onHover { if $0 { hover() } }
         .accessibilityLabel("\(entry.title), in \(entry.section.title)")
         .accessibilityHint("Opens the \(entry.section.title) settings")
+        .accessibilityAddTraits(active ? [.isButton, .isSelected] : .isButton)
     }
 }
 
