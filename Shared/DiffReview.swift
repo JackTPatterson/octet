@@ -259,21 +259,25 @@ struct ReviewDiff: Equatable {
     // MARK: - Reading a working tree
 
     /// The diff for the tree `directory` is in, or nil outside a repository.
-    static func read(in directory: String, base: Base, git: Git = Git()) -> ReviewDiff? {
+    static func read(in directory: String, base: Base, ignoreWhitespace: Bool = false, git: Git = Git()) -> ReviewDiff? {
         guard let top = git.topLevel(directory), let tree = try? Checkpoints.snapshotTree(top: top, git: git) else { return nil }
         guard let (commit, name) = resolveBase(base, top: top, git: git) else {
             // No commits yet: everything is new.
             let empty = (try? git.run(["hash-object", "-t", "tree", "/dev/null"], in: top)) ?? "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
-            let text = (try? git.run(diffArguments(empty, tree), in: top)) ?? ""
+            let text = (try? git.run(diffArguments(empty, tree, ignoreWhitespace: ignoreWhitespace), in: top)) ?? ""
             return ReviewDiff(files: parse(text), baseCommit: empty, baseName: "nothing")
         }
-        let text = (try? git.run(diffArguments(commit, tree), in: top)) ?? ""
+        let text = (try? git.run(diffArguments(commit, tree, ignoreWhitespace: ignoreWhitespace), in: top)) ?? ""
         return ReviewDiff(files: parse(text), baseCommit: commit, baseName: name)
     }
 
-    static func diffArguments(_ from: String, _ to: String) -> [String] {
+    /// `ignoreWhitespace` leaves out lines that changed only in spacing, as
+    /// T3 Code's diff does; the review that stages hunks never asks for it,
+    /// since such a hunk wouldn't apply.
+    static func diffArguments(_ from: String, _ to: String, ignoreWhitespace: Bool = false) -> [String] {
         // Unicode paths as they are, not octal-escaped.
-        ["-c", "core.quotepath=off", "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", "-U3", from, to]
+        ["-c", "core.quotepath=off", "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", "-U3"]
+            + (ignoreWhitespace ? ["-w"] : []) + [from, to]
     }
 
     /// HEAD, or where HEAD's branch left the default branch.

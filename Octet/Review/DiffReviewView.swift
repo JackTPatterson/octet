@@ -7,6 +7,8 @@ import SwiftUI
 final class DiffReviewModel: ObservableObject {
     let directory: String
     @Published var base: ReviewDiff.Base = .uncommitted { didSet { if base != oldValue { refresh() } } }
+    /// Only the Diff plane sets it: staged hunks need whitespace intact.
+    @Published var ignoreWhitespace = false { didSet { if ignoreWhitespace != oldValue { refresh() } } }
     @Published private(set) var diff: ReviewDiff?
     @Published private(set) var loading = false
     @Published private(set) var notARepository = false
@@ -51,10 +53,10 @@ final class DiffReviewModel: ObservableObject {
 
     func refresh(quietly: Bool = false) {
         generation += 1
-        let generation = self.generation, directory = self.directory, base = self.base
+        let generation = self.generation, directory = self.directory, base = self.base, ignoreWhitespace = self.ignoreWhitespace
         if !quietly { loading = true }
         DispatchQueue.global(qos: .userInitiated).async {
-            let diff = ReviewDiff.read(in: directory, base: base)
+            let diff = ReviewDiff.read(in: directory, base: base, ignoreWhitespace: ignoreWhitespace)
             let staged = ReviewDiff.stagedPaths(in: directory)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {

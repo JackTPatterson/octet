@@ -60,6 +60,8 @@ private struct DiffPlaneBody: View {
     /// Paths seen, so a file that turns up later starts folded or not by the
     /// same rule as the rest, and folding survives refreshes.
     @State private var seen: Set<String> = []
+    /// Kept across launches, as T3 Code keeps it.
+    @AppStorage("octet.diff.hideWhitespace") private var hideWhitespace = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -71,6 +73,7 @@ private struct DiffPlaneBody: View {
                 notesFooter
             }
         }
+        .onAppear { if model.ignoreWhitespace != hideWhitespace { model.ignoreWhitespace = hideWhitespace } }
         .onChange(of: model.diff?.files.map(\.path) ?? [], initial: true) { _, paths in
             // Many files start folded, so the list reads as a summary first.
             let fresh = paths.filter { !seen.contains($0) }
@@ -116,6 +119,11 @@ private struct DiffPlaneBody: View {
             }
             Spacer(minLength: 4)
             if model.loading { ProgressView().controlSize(.mini) }
+            OctetIconButton(icon: "pilcrow", help: model.ignoreWhitespace ? "Show whitespace changes" : "Hide whitespace changes",
+                            active: model.ignoreWhitespace) {
+                model.ignoreWhitespace.toggle()
+                hideWhitespace = model.ignoreWhitespace
+            }
             OctetIconButton(icon: "arrow.clockwise", help: "Refresh diff") { model.refresh() }
             let allFolded = model.diff.map { $0.files.allSatisfy { folded.contains($0.path) } } ?? false
             OctetIconButton(icon: allFolded ? "chevron.down.square" : "chevron.up.square",

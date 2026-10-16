@@ -15,4 +15,10 @@ final class FileTreeTests: XCTestCase {
         XCTAssertEqual(open.map(\.node.path), ["a", "a/b.txt", "c.txt"])
         XCTAssertEqual(open[1].depth, 1)
     }
+
+    func testDiffArgumentsIgnoreWhitespaceOnlyWhenAsked() {
+        XCTAssertFalse(ReviewDiff.diffArguments("a", "b").contains("-w"))
+        let args = ReviewDiff.diffArguments("a", "b", ignoreWhitespace: true)
+        XCTAssertEqual(Array(args.suffix(3)), ["-w", "a", "b"])
+    }
 }
