@@ -18,10 +18,22 @@ struct OctetIcon: View {
         var rotation: Double = 0
         /// The iconsax style: "linear" by default, "bold" for filled marks.
         var style = "linear"
-        init(_ asset: String, rotation: Double = 0, style: String = "linear") {
+        /// An SF Symbol drawn instead, for marks the bundled set lacks.
+        var symbol: String?
+        /// Drawn flipped left to right, e.g. the sidebar mark for the right.
+        var mirrored = false
+        init(_ asset: String, rotation: Double = 0, style: String = "linear", mirrored: Bool = false) {
             self.asset = asset
             self.rotation = rotation
             self.style = style
+            self.mirrored = mirrored
+        }
+
+        /// An SF Symbol stand-in until the iconsax mark is imported.
+        static func symbol(_ name: String) -> Art {
+            var art = Art("more")
+            art.symbol = name
+            return art
         }
 
         /// The asset catalog name; other styles carry a suffix.
@@ -130,16 +142,46 @@ struct OctetIcon: View {
         "square.stack.3d.up": .init("layer"),
         "text.bubble": .init("message-text"),
         "graduationcap": .init("teacher"),
+        // Planes and pull requests. SF Symbols stand in where the bundled
+        // iconsax set has no mark (scripts/import-icons.py needs its source).
+        "sidebar.right": .init("sidebar-left", mirrored: true),
+        "panel.bottom": .symbol("rectangle.bottomthird.inset.filled"),
+        "arrow.down.right.and.arrow.up.left": .symbol("arrow.down.right.and.arrow.up.left"),
+        "pull.request": .symbol("arrow.triangle.pull"),
+        "merge": .symbol("arrow.triangle.merge"),
+        "branch": .init("hierarchy-3"),
+        "commit": .symbol("smallcircle.filled.circle"),
+        "tag": .symbol("tag"),
+        "person.badge.plus": .symbol("person.badge.plus"),
+        "person.2": .init("profile-2user"),
+        "arrow.up.right": .symbol("arrow.up.right"),
+        "doc.diff": .symbol("plus.forwardslash.minus"),
+        "message": .init("message-text"),
+        "ellipsis": .init("more"),
+        "check": .symbol("checkmark"),
+        "circle.check": .symbol("checkmark.circle"),
+        "circle.x": .symbol("xmark.circle"),
+        "circle.dot": .symbol("circle.dotted"),
+        "list": .symbol("list.bullet"),
     ]
 
     var body: some View {
         let art = Self.map[name] ?? .init("more")
-        Image("Icons/" + art.assetName)
-            .renderingMode(.template)
-            .resizable()
-            .interpolation(.high)
-            .frame(width: size, height: size)
-            .rotationEffect(.degrees(art.rotation))
-            .accessibilityHidden(true)
+        Group {
+            if let symbol = art.symbol {
+                Image(systemName: symbol)
+                    .font(.system(size: size * 0.86, weight: .regular))
+                    .frame(width: size, height: size)
+            } else {
+                Image("Icons/" + art.assetName)
+                    .renderingMode(.template)
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: size, height: size)
+            }
+        }
+        .scaleEffect(x: art.mirrored ? -1 : 1, y: 1)
+        .rotationEffect(.degrees(art.rotation))
+        .accessibilityHidden(true)
     }
 }
