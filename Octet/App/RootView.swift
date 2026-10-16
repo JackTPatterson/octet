@@ -23,6 +23,8 @@ struct RootView: View {
     @State private var connecting: SSHTarget?
     @ObservedObject private var tabDrag = TabDrag.shared
     @ObservedObject private var recapCenter = RecapCenter.shared
+    /// The last terminal failure shown, so a repeat isn't shown again.
+    private static var lastFailure: (message: String, at: Date)?
     /// The panes of the tab showing, fetched when a tab drag starts.
     @State private var dropLayout: PaneLayout?
     @ObservedObject private var agents = AgentCenter.shared
@@ -243,8 +245,12 @@ struct RootView: View {
         ))
         .onChange(of: store.lastError) { _, error in
             guard let error else { return }
-            ToastCenter.shared.fail(nil, "Terminal request failed", detail: error)
             store.lastError = nil
+            // The same failure again soon after is the same news: once.
+            let now = Date()
+            if let last = Self.lastFailure, last.message == error, now.timeIntervalSince(last.at) < 60 { return }
+            Self.lastFailure = (error, now)
+            ToastCenter.shared.fail(nil, "Terminal request failed", detail: error)
         }
         .onChange(of: confirmations.request?.id) { _, id in DebugSnapshot.overlay("confirmation", id != nil) }
         // Hide the engine's chrome before drawing the prompt and completions;

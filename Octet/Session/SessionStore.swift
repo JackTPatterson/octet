@@ -226,14 +226,7 @@ final class SessionStore: ObservableObject {
                         Task { @MainActor [weak self] in self?.scheduleRefresh() }
                     })
                 } catch {
-                    Task { @MainActor [weak self] in
-                        guard let self else { return }
-                        if self.isConnected {
-                            self.recovery.connectionLost()
-                            self.shellRecovery.connectionLost()
-                        }
-                        self.isConnected = false
-                    }
+                    Task { @MainActor [weak self] in self?.lostConnection() }
                 }
                 Thread.sleep(forTimeInterval: 0.5)
             }
@@ -244,11 +237,38 @@ final class SessionStore: ObservableObject {
         // Agent state changes are per-pane subscriptions in the session server; a light
         // periodic snapshot keeps state glyphs current.
         pollTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.scheduleRefresh() }
+            // While the engine can't be reached, polling only fails; the
+            // event connection says when it's back, and refreshes then.
+            MainActor.assumeIsolated { if self?.isConnected == true { self?.scheduleRefresh() } }
         }
         // Workspaces cross the idle threshold with no snapshot change.
         clockTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.repartition() }
+        }
+    }
+
+    /// The engine stopped answering: what was running is noted for when it
+    /// comes back, and the title bar shows Octet connecting.
+    private func lostConnection() {
+        if isConnected {
+            recovery.connectionLost()
+            shellRecovery.connectionLost()
+        }
+        isConnected = false
+    }
+
+    /// A background request's failure: shown, unless it's only that the
+    /// engine can't be reached, which the title bar already says.
+    private func report(_ error: Error) {
+        if Self.isUnreachable(error) { lostConnection() } else { lastError = String(describing: error) }
+    }
+
+    /// An error that means the engine couldn't be reached at all, rather
+    /// than a request it turned down.
+    nonisolated static func isUnreachable(_ error: Error) -> Bool {
+        switch error as? EngineSocketError {
+        case .connectFailed, .writeFailed, .closed: return true
+        default: return false
         }
     }
 
@@ -524,6 +544,8 @@ final class SessionStore: ObservableObject {
                 guard let self else { return }
                 switch result {
                 case .success(let snapshot):
+                    // It answered, so it's there, whatever the events said.
+                    if !self.isConnected { self.isConnected = true }
                     if process != self.focusedProcess { self.focusedProcess = process }
                     if focusedPaneId != self.focusedProcessPaneId { self.focusedProcessPaneId = focusedPaneId }
                     // Closed tabs wait in a workspace nothing else sees.
@@ -537,7 +559,13 @@ final class SessionStore: ObservableObject {
                     self.apply(visible, branches: branches ?? [:], locations: locations ?? [:])
                     PromptQueueCenter.shared.observe(visible)
                 case .failure(let error):
-                    self.lastError = String(describing: error)
+                    if Self.isUnreachable(error) {
+                        // Not a request that went wrong: the engine isn't
+                        // there. The title bar says it's connecting.
+                        self.lostConnection()
+                    } else {
+                        self.lastError = String(describing: error)
+                    }
                 }
                 then?()
             }
@@ -1110,6 +1138,8 @@ final class SessionStore: ObservableObject {
                         self.toasts.fail(handle, text.failure, detail: message)
                     } else if let failureTitle {
                         self.toasts.fail(nil, failureTitle, detail: message)
+                    } else if Self.isUnreachable(error) {
+                        self.lostConnection()
                     } else {
                         self.lastError = message
                     }
@@ -1523,7 +1553,7 @@ final class SessionStore: ObservableObject {
                 }
                 try client.call("tab.focus", ["tab_id": tab.tabId])
             } catch {
-                DispatchQueue.main.async { self?.lastError = String(describing: error) }
+                DispatchQueue.main.async { self?.report(error) }
             }
             DispatchQueue.main.async { self?.scheduleRefresh() }
         }
@@ -1616,7 +1646,7 @@ final class SessionStore: ObservableObject {
                 let data = try JSONSerialization.data(withJSONObject: result["plugins"] ?? [])
                 plugins = try JSONDecoder().decode([EnginePlugin].self, from: data)
             } catch {
-                DispatchQueue.main.async { self?.lastError = String(describing: error) }
+                DispatchQueue.main.async { self?.report(error) }
                 return
             }
             DispatchQueue.main.async {
