@@ -492,7 +492,7 @@ enum MarketplaceWindow {
         if let window = WindowRegistry.shared.key ?? WindowRegistry.shared.windows.first {
             window.ui.settingsVisible = false
             window.ui.usageBreakdownVisible = false
-            window.ui.marketplaceVisible = true
+            MotionPreferences.shared.perform(.palette, .easeOut(duration: 0.15)) { window.ui.marketplaceVisible = true }
             window.nsWindow?.makeKeyAndOrderFront(nil)
         } else {
             opener?()

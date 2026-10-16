@@ -259,6 +259,15 @@ struct RootView: View {
                     .transition(motion.animates(.palette) ? .opacity : .identity)
                     .onAppear { DebugSnapshot.overlay("settings", true) }
                     .onDisappear { DebugSnapshot.overlay("settings", false) }
+                } else if ui.marketplaceVisible, let marketplace = MarketplaceWindow.store {
+                    // The Marketplace too: a page of its own over everything.
+                    MarketplaceView(store: marketplace, close: {
+                        MotionPreferences.shared.perform(.palette, .easeOut(duration: 0.15)) { ui.marketplaceVisible = false }
+                        OctetTerminalRuntime.focusTerminal()
+                    })
+                    .transition(motion.animates(.palette) ? .opacity : .identity)
+                    .onAppear { DebugSnapshot.overlay("marketplace", true) }
+                    .onDisappear { DebugSnapshot.overlay("marketplace", false) }
                 }
             }
         }
@@ -708,13 +717,6 @@ struct RootView: View {
                         }
                         .onAppear { DebugSnapshot.overlay("usage", true) }
                         .onDisappear { DebugSnapshot.overlay("usage", false) }
-                    } else if ui.marketplaceVisible, let marketplace = MarketplaceWindow.store {
-                        MarketplaceView(store: marketplace, close: {
-                            ui.marketplaceVisible = false
-                            OctetTerminalRuntime.focusTerminal()
-                        })
-                        .onAppear { DebugSnapshot.overlay("marketplace", true) }
-                        .onDisappear { DebugSnapshot.overlay("marketplace", false) }
                     } else if let review = ui.review {
                         DiffReviewView(model: review, store: store) { window.toggleReview() }
                             .id(review.directory)
@@ -809,7 +811,7 @@ struct RootView: View {
     @ViewBuilder
     /// The maximized panel lies over the terminal; what's drawn on the
     /// terminal from the root would show through it.
-    private var panelCoversTerminal: Bool { (ui.sidePanelVisible && ui.sidePanelMaximized) || ui.settingsVisible }
+    private var panelCoversTerminal: Bool { (ui.sidePanelVisible && ui.sidePanelMaximized) || ui.settingsVisible || ui.marketplaceVisible }
 
     private var promptOverlay: some View {
         ZStack(alignment: .topLeading) {
