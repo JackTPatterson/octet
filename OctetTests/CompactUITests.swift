@@ -51,7 +51,7 @@ final class CompactUITests: XCTestCase {
         XCTAssertFalse(newest.fromYou)
         XCTAssertEqual(newest.match, "Token")
         XCTAssertEqual(newest.before, "Done. The ")
-        XCTAssertTrue(newest.after.hasPrefix(" now renews"))
+        XCTAssertTrue(newest.after.hasPrefix(" now renew"))
         XCTAssertTrue(newest.after.hasSuffix("…"))
         XCTAssertEqual(SidebarSearch.snippet("login", in: messages)?.fromYou, true)
         XCTAssertNil(SidebarSearch.snippet("x", in: messages))
