@@ -527,6 +527,13 @@ struct RootView: View {
                 }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) { openSettings() }
             }
+            // "update-preview" shows the update dialog with sample notes;
+            // ":checking", ":downloading" or ":ready" opens it at that stage.
+            if let open = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], open.hasPrefix("update-preview") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    OctetUpdateDriver.showPreview(stage: open.split(separator: ":").dropFirst().first.map(String.init))
+                }
+            }
             // "status-preview" fills the status bar with sample items;
             // ":running" or ":failed" picks the CI state shown.
             if let open = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], open.hasPrefix("status-preview") {

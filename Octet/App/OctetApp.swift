@@ -9,18 +9,25 @@ struct OctetApp: App {
     @StateObject private var marketplace: MarketplaceStore
     @StateObject private var prompt: PromptEditor
     private let session: EngineSession?
-    private let updaterController: SPUStandardUpdaterController
+    private let updater: SPUUpdater
+    /// Draws Sparkle's prompts in Octet's style; kept for the app's life,
+    /// as the updater holds it weakly.
+    private let updateDriver: OctetUpdateDriver
 
     @MainActor private static var started = false
 
     init() {
-        // Sparkle owns the native update-found, install, and relaunch prompts.
-        // Its schedule and signing configuration live in Info.plist.
-        updaterController = SPUStandardUpdaterController(
-            startingUpdater: true,
-            updaterDelegate: nil,
-            userDriverDelegate: nil
-        )
+        // Sparkle checks, downloads and installs; OctetUpdateDriver shows it
+        // in Octet's own update card. Its schedule and signing configuration
+        // live in Info.plist.
+        let updateDriver = OctetUpdateDriver()
+        self.updateDriver = updateDriver
+        updater = SPUUpdater(hostBundle: .main, applicationBundle: .main, userDriver: updateDriver, delegate: nil)
+        do {
+            try updater.start()
+        } catch {
+            NSLog("Octet: the updater couldn't start: \(error.localizedDescription)")
+        }
         // IDEs and parent agents commonly export NO_COLOR for their own logs,
         // and a terminal Octet was started from leaves its own variables.
         // Octet is a real PTY: neither may reach Claude, Codex, shells, or any
@@ -85,7 +92,7 @@ struct OctetApp: App {
         // window: a second view of the same session, with the file nowhere.
         .handlesExternalEvents(matching: [])
         .commands {
-            OctetCommands(store: store, updater: updaterController.updater)
+            OctetCommands(store: store, updater: updater)
             // Apart from OctetCommands, which holds as many as a builder takes.
             PeerCommands(settings: SettingsStore.shared, center: PeerCenter.shared)
         }
