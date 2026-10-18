@@ -812,27 +812,27 @@ struct AgentsHubButton: View {
         let workspace = window.focusedWorkspace?.workspaceId
         let showing = center.board(in: workspace) != nil
         Button { center.setBoard(showing ? nil : .all, in: workspace) } label: {
-            // Drawn as the icon buttons beside it are: a 14pt line icon in
-            // the same greys, the same hover and pressed fills.
-            HStack(spacing: 5) {
-                OctetIcon("brain", size: 14)
-                    .accessibilityHidden(true)
-                Text("Agents").font(Theme.uiFont)
-                if waiting > 0 {
-                    Text("\(waiting)")
-                        .font(.system(size: 10, weight: .bold).monospacedDigit())
-                        .foregroundStyle(Theme.terminalBackground)
-                        .padding(.horizontal, 5)
-                        .frame(height: 15)
-                        .background(Capsule().fill(HubStyle.waiting))
+            // An icon button like those beside it: a 14pt line icon in a
+            // 24pt square, with how many agents wait on you as a badge.
+            OctetIcon("brain", size: 14)
+                .accessibilityHidden(true)
+                .foregroundStyle(showing || hovered ? Theme.textPrimary : Theme.textSecondary)
+                .frame(width: 24, height: 24)
+                .background(RoundedRectangle(cornerRadius: Theme.controlRadius)
+                    .fill(showing ? Theme.cardSelected : hovered ? Theme.hover : .clear))
+                .overlay(alignment: .topTrailing) {
+                    if waiting > 0 {
+                        Text("\(waiting)")
+                            .font(.system(size: 9, weight: .bold).monospacedDigit())
+                            .foregroundStyle(Theme.terminalBackground)
+                            .padding(.horizontal, 3.5)
+                            .frame(minWidth: 13, minHeight: 13)
+                            .background(Capsule().fill(HubStyle.waiting))
+                            .offset(x: 4, y: -2)
+                            .allowsHitTesting(false)
+                    }
                 }
-            }
-            .foregroundStyle(showing || hovered ? Theme.textPrimary : Theme.textSecondary)
-            .padding(.horizontal, 6)
-            .frame(height: 24)
-            .background(RoundedRectangle(cornerRadius: Theme.controlRadius)
-                .fill(showing ? Theme.cardSelected : hovered ? Theme.hover : .clear))
-            .contentShape(Rectangle())
+                .contentShape(Rectangle())
         }
         .buttonStyle(OctetPressStyle())
         .onHover { hovered = $0 }
