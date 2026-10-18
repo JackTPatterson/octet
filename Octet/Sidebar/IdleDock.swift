@@ -14,6 +14,7 @@ struct SnoozeMenuItems: View {
         ForEach(SnoozeChoice.offered().filter { $0 != .untilUsed }) { choice in
             Button(choice.title) { store.snooze(workspaceId, choice) }
         }
+        Button("Pick a Time…") { SnoozePickerCenter.shared.ask(store: store, workspaceId: workspaceId) }
         Divider()
         Button(SnoozeChoice.untilUsed.title) { store.snooze(workspaceId, .untilUsed) }
         Button("Until Something Happens…") { WaitCenter.shared.compose(workspaceId: workspaceId, snooze: true) }

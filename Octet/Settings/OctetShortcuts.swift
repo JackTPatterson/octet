@@ -136,6 +136,8 @@ extension OctetShortcut {
     static let terminalDrawer = OctetShortcut("terminalDrawer", "Toggle Terminal Drawer", key: "j")
     static let details = OctetShortcut("details", "Toggle Details", key: "b", modifiers: [.command, .shift])
     static let searchWorkspaces = OctetShortcut("searchWorkspaces", "Search Workspaces", key: "f", modifiers: [.command, .shift])
+    /// ⌥⌘F: ⌘⇧F, T3 Code's key for it, is Search Workspaces here.
+    static let searchInProject = OctetShortcut("searchInProject", "Search in Project…", key: "f", modifiers: [.command, .option])
     static let visualTwin = OctetShortcut("visualTwin", "Visual Twin / Terminal", key: "v", modifiers: [.command, .shift])
     static let review = OctetShortcut("review", "Review Changes", key: "r", modifiers: [.command, .shift])
     static let broadcast = OctetShortcut("broadcast", "Broadcast to Agents…", key: "i", modifiers: [.command, .shift])
@@ -180,7 +182,7 @@ extension OctetShortcut {
     static let groups: [(title: String, shortcuts: [OctetShortcut])] = [
         ("Octet", [settings, marketplace, quit]),
         ("File", [newTab, newConversation, agents, newWorkspace, newWindow, openFile, openFolder, saveFile, closeTab, reopenClosedTab]),
-        ("View", [palette, paletteAll, toggleSidebar, togglePanel, terminalDrawer, details, searchWorkspaces, visualTwin, review, broadcast, broadcastTyping, hints, increaseFontSize, decreaseFontSize, resetFontSize]),
+        ("View", [palette, paletteAll, toggleSidebar, togglePanel, terminalDrawer, details, searchWorkspaces, searchInProject, visualTwin, review, broadcast, broadcastTyping, hints, increaseFontSize, decreaseFontSize, resetFontSize]),
         ("Pane", [splitRight, splitDown, toggleZoom, focusLeft, focusRight, focusUp, focusDown]),
         ("Navigate", [nextTab, previousTab, nextWorkspace, previousWorkspace, tabNumber, lastTab]),
         ("Terminal", [copy, paste, terminalPrefix]),

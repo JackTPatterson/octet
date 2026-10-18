@@ -1975,6 +1975,13 @@ private struct Composer: View {
                     }
                     .onChange(of: session.editorRequest?.id) { _, _ in
                         guard let request = session.editorRequest else { return }
+                        session.editorRequestTaken = request.id
+                        text = request.text
+                        focused = true
+                    }
+                    .onAppear {
+                        guard let request = session.editorRequest, session.editorRequestTaken != request.id else { return }
+                        session.editorRequestTaken = request.id
                         text = request.text
                         focused = true
                     }

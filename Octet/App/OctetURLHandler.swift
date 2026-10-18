@@ -28,6 +28,8 @@ enum OctetURLHandler {
                 message: "A link asked Octet to start it\(path.map { " in \(($0 as NSString).abbreviatingWithTildeInPath)" } ?? ""). Only go ahead if you opened it.",
                 detail: prompt, confirmTitle: "Start"
             ) { _ in start() }
+        case .new(let prompt, let dir, let agent):
+            PromptLinks.open(prompt: prompt, dir: dir, agent: agent, window: window)
         case .send(let text):
             guard let pane = window.store.keyPaneId else { return }
             ConfirmCenter.shared.ask(
