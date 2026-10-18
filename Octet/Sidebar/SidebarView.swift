@@ -355,6 +355,7 @@ struct SidebarView: View {
         VStack(alignment: .leading, spacing: 4) {
             ProjectGroupHeader(
                 group: group, collapsed: collapsed, isRepository: Self.isRepository(group), help: Self.groupHelp(group),
+                iconDirectories: [group.id] + group.workspaces.compactMap { store.snapshot.directory(ofWorkspace: $0.workspaceId) },
                 toggle: {
                     motion.perform(.sidebar) {
                         if collapsed { collapsedGroups.remove(group.id) } else { collapsedGroups.insert(group.id) }
@@ -509,7 +510,6 @@ private struct WorkspaceCard: View {
     @StateObject private var peek = HoverIntent()
     @ObservedObject private var conversations = AgentCenter.shared
     @ObservedObject private var portsWatcher = PortsWatcher.shared
-    @ObservedObject private var workspaceIcons = WorkspaceIconStore.shared
     @ObservedObject private var motion = MotionPreferences.shared
     @Environment(\.openURL) private var openURL
 
@@ -560,13 +560,11 @@ private struct WorkspaceCard: View {
         let directory = snapshot.directory(ofWorkspace: workspace.workspaceId)
 
         let receded = !isSelected && (status == .idle || status == .unknown)
-        // A plugin's picture of the project (its favicon or app icon), with
-        // the agent's state as a dot on its corner. With no agent here, a
-        // running server's logo takes the empty state's place.
+        // The agent's state; with no agent here, a running server's logo
+        // takes the empty state's place. The project's favicon is on the
+        // group's header, not on each of its workspaces.
         let mark = Group {
-            if let projectIcon = workspaceIcons.image(for: directory) {
-                WorkspaceProjectIcon(image: projectIcon, status: status, size: 16)
-            } else if status == .unknown,
+            if status == .unknown,
                let logo = LanguageLogo(service: portsWatcher.service(inWorkspace: workspace.workspaceId, snapshot: snapshot), size: 13) {
                 logo.help("Serving on localhost")
             } else {
@@ -1027,52 +1025,6 @@ struct WorkspaceCloseButton: View {
         .accessibilityLabel("Close workspace")
     }
 }
-
-/// A workspace's project icon in the sidebar, and its agent's state as a dot
-/// on the corner: accent while working, amber when it needs you, green when
-/// it's done.
-private struct WorkspaceProjectIcon: View {
-    let image: NSImage
-    let status: EngineAgentStatus
-    var size: CGFloat = 12
-
-    var body: some View {
-        Image(nsImage: image)
-            .resizable()
-            .interpolation(.high)
-            .aspectRatio(contentMode: .fit)
-            .frame(width: size, height: size)
-            .clipShape(RoundedRectangle(cornerRadius: size * 0.22))
-            .overlay(alignment: .bottomTrailing) {
-                if let color = dot {
-                    Circle().fill(color)
-                        .frame(width: 6, height: 6)
-                        .overlay(Circle().strokeBorder(Theme.sidebar, lineWidth: 1.2))
-                        .offset(x: 2.5, y: 2.5)
-                }
-            }
-            .help(help)
-    }
-
-    private var dot: Color? {
-        switch status {
-        case .working: Theme.accent
-        case .blocked: Color(hex: AgentStateColor.blocked)
-        case .done: Color(hex: AgentStateColor.done)
-        default: nil
-        }
-    }
-
-    private var help: String {
-        switch status {
-        case .working: "Agent working"
-        case .blocked: "Agent needs you"
-        case .done: "Agent done"
-        default: "Project icon"
-        }
-    }
-}
-
 /// A project's header in the sidebar: its badge and name, and on hover a
 /// count and a button for a new workspace there; collapsed, it keeps the
 /// count so you know what's folded away.
@@ -1081,8 +1033,12 @@ private struct ProjectGroupHeader: View {
     let collapsed: Bool
     let isRepository: Bool
     let help: String
+    /// Folders to look in for the project's favicon: the group's own, then
+    /// where its workspaces are.
+    let iconDirectories: [String]
     let toggle: () -> Void
     let newWorkspace: (() -> Void)?
+    @ObservedObject private var workspaceIcons = WorkspaceIconStore.shared
     @State private var hovered = false
 
     var body: some View {
@@ -1091,6 +1047,15 @@ private struct ProjectGroupHeader: View {
                 HStack(spacing: 6) {
                     if group.id == ProjectGroup.otherId {
                         OctetIcon("folder", size: 11).foregroundStyle(Theme.textTertiary).frame(width: 16, height: 16)
+                    } else if let icon = iconDirectories.lazy.compactMap({ workspaceIcons.image(for: $0) }).first {
+                        // A plugin's picture of the project (its favicon or app icon).
+                        Image(nsImage: icon)
+                            .resizable()
+                            .interpolation(.high)
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 16, height: 16)
+                            .clipShape(RoundedRectangle(cornerRadius: 16 * 0.22))
+                            .accessibilityHidden(true)
                     } else {
                         ProjectMonogram(name: group.name)
                     }
