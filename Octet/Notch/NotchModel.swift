@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import SwiftUI
+import os
 
 // What the Octet Notch shows, gathered from the stores Octet already keeps:
 // agents (the hub's list), runtimes, waits and check-ins, usage and recent
@@ -32,6 +33,13 @@ struct NotchCheckInRow: Equatable, Identifiable {
 }
 
 struct NotchUsageRow: Equatable, Identifiable {
+    // The timestamp isn't displayed; a background refresh alone must not
+    // invalidate an otherwise identical island.
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.agent == rhs.agent && lhs.name == rhs.name && lhs.plan == rhs.plan
+            && lhs.note == rhs.note && lhs.windows == rhs.windows
+    }
+
     struct Window: Equatable {
         let name: String
         let title: String
@@ -62,6 +70,7 @@ struct NotchSnapshot: Equatable {
     var checkIns: [NotchCheckInRow] = []
     var usage: [NotchUsageRow] = []
     var folders: [NotchFolder] = []
+    var focus: NotchAgentRow?
 
     var activity: NotchActivity {
         let counts = NotchAgentOrdering.activity(of: agents)
@@ -93,7 +102,11 @@ final class NotchModel: ObservableObject {
     private var statusSince: [String: (status: NotchAgentRow.Status, at: Date)] = [:]
     private var subscriptions: Set<AnyCancellable> = []
     private var storeSubscriptions: [ObjectIdentifier: AnyCancellable] = [:]
-    private let trigger = PassthroughSubject<Void, Never>()
+    private var focusSubscriptions: [ObjectIdentifier: AnyCancellable] = [:]
+    private var invalidation = NotchInvalidation()
+    private var refreshWork: DispatchWorkItem?
+    private var folderTask: Task<Void, Never>?
+    private var foldersLoadedAt: Date?
     private var running = false
 
     // MARK: Lifecycle
@@ -101,45 +114,79 @@ final class NotchModel: ObservableObject {
     func start() {
         guard !running, !isSample else { return }
         running = true
-        let sources: [AnyPublisher<Void, Never>] = [
-            AgentCenter.shared.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
-            AgentsStore.shared.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
-            CodexAgentsStore.shared.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
-            WaitCenter.shared.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
-            CheckInCenter.shared.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
-            AccountStore.shared.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
-            AgentDiscoveryStore.shared.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
-        ]
-        Publishers.MergeMany(sources).subscribe(trigger).store(in: &subscriptions)
+        // AgentCenter forwards conversation changes; project everything else onto
+        // only fields the island reads, not store loading flags, drafts or history.
+        AgentCenter.shared.objectWillChange.sink { [weak self] in self?.invalidate(.agents) }.store(in: &subscriptions)
+        observe(AgentsStore.shared.$agents.removeDuplicates(), section: .agents)
+        observe(AgentsStore.shared.$lastLines.removeDuplicates(), section: .agents)
+        observe(CodexAgentsStore.shared.$agents.removeDuplicates(), section: .agents)
+        observe(CodexAgentsStore.shared.$previews.removeDuplicates(), section: .agents)
+        observe(WaitCenter.shared.$waits.removeDuplicates(), section: .work)
+        observe(AccountStore.shared.$accounts.removeDuplicates(), section: .usage)
+        observe(AgentDiscoveryStore.shared.$agents.removeDuplicates(), section: .usage)
         WindowRegistry.shared.$windows
             .sink { [weak self] windows in self?.watch(windows) }
             .store(in: &subscriptions)
-        // Coalesced: stores publish on every engine snapshot.
-        trigger
-            .debounce(for: .milliseconds(300), scheduler: DispatchQueue.main)
-            .sink { [weak self] in self?.refresh() }
+        NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)
+            .filter { !($0.object is NotchPanel) }
+            .sink { [weak self] _ in self?.invalidate(.agents) }
             .store(in: &subscriptions)
         refresh()
     }
 
     func stop() {
         running = false
+        refreshWork?.cancel()
+        refreshWork = nil
+        _ = invalidation.drain()
+        folderTask?.cancel()
+        folderTask = nil
         subscriptions.removeAll()
         storeSubscriptions.removeAll()
+        focusSubscriptions.removeAll()
         hub = [:]
         owners = [:]
-        statusSince = [:]
-        if !isSample { snapshot = NotchSnapshot(folders: snapshot.folders) }
+        // Keep the last immutable snapshot while hidden; refresh on resume.
     }
 
     private func watch(_ windows: [WindowContext]) {
+        let windowIDs = Set(windows.map { ObjectIdentifier($0) })
+        focusSubscriptions = focusSubscriptions.filter { windowIDs.contains($0.key) }
+        for window in windows where focusSubscriptions[ObjectIdentifier(window)] == nil {
+            focusSubscriptions[ObjectIdentifier(window)] = Publishers.CombineLatest(window.$workspaceId, window.$tabId)
+                .removeDuplicates { $0.0 == $1.0 && $0.1 == $1.1 }
+                .sink { [weak self] _ in self?.invalidate(.agents) }
+        }
         let live = Set(windows.map { ObjectIdentifier($0.store) })
         storeSubscriptions = storeSubscriptions.filter { live.contains($0.key) }
         for window in windows where storeSubscriptions[ObjectIdentifier(window.store)] == nil {
-            storeSubscriptions[ObjectIdentifier(window.store)] = window.store.objectWillChange
-                .sink { [weak self] _ in self?.trigger.send() }
+            let store = window.store
+            let agents = store.$snapshot.map { NotchSessionInput($0) }.removeDuplicates()
+                .map { _ in NotchInvalidation.Section.agents }.eraseToAnyPublisher()
+            let runtimes = store.$terminalRuntimes.removeDuplicates()
+                .map { _ in NotchInvalidation.Section.work }.eraseToAnyPublisher()
+            let activity = store.usageTracker.$lastActivity.removeDuplicates()
+                .map { _ in NotchInvalidation.Section.agents }.eraseToAnyPublisher()
+            storeSubscriptions[ObjectIdentifier(store)] = Publishers.MergeMany(agents, runtimes, activity)
+                .sink { [weak self] section in self?.invalidate(section) }
         }
-        trigger.send()
+        invalidate(.agents)
+        invalidate(.work)
+    }
+
+    private func observe<P: Publisher>(_ publisher: P, section: NotchInvalidation.Section) where P.Failure == Never {
+        publisher.sink { [weak self] _ in self?.invalidate(section) }.store(in: &subscriptions)
+    }
+
+    private func invalidate(_ section: NotchInvalidation.Section) {
+        guard running, invalidation.insert(section) else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.running else { return }
+            self.refreshWork = nil
+            self.refresh(sections: self.invalidation.drain())
+        }
+        refreshWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + NotchInvalidation.delay, execute: work)
     }
 
     /// Debug sample: replaces everything with `sample` and stops reading live state.
@@ -152,51 +199,82 @@ final class NotchModel: ObservableObject {
     // MARK: Building
 
     func refresh() {
-        guard !isSample else { return }
+        refreshWork?.cancel()
+        refreshWork = nil
+        _ = invalidation.drain()
+        refresh(sections: [.agents, .work, .usage])
+    }
+
+    private func refresh(sections: Set<NotchInvalidation.Section>) {
+        guard running, !isSample else { return }
+        #if DEBUG
+        NotchMetrics.recomputes += 1
+        let started = CFAbsoluteTimeGetCurrent()
+        os_signpost(.begin, log: NotchMetrics.log, name: "Snapshot")
+        defer {
+            NotchMetrics.refreshMS += (CFAbsoluteTimeGetCurrent() - started) * 1000
+            os_signpost(.end, log: NotchMetrics.log, name: "Snapshot")
+        }
+        #endif
         let now = Date()
         let windows = WindowRegistry.shared.windows.filter { !$0.closing }
-        var seen = Set<String>()
-        var entries: [HubAgent] = []
-        var owners: [String: SessionStore] = [:]
-        var runtimes: [String: HandoffRuntime] = [:]
-        for window in windows {
-            for agent in AgentsHubList.agents(store: window.store) where seen.insert(agent.id).inserted {
-                entries.append(agent)
-                owners[agent.id] = window.store
-            }
-            for list in window.store.terminalRuntimes.values {
-                for runtime in list where runtimes[runtime.id] == nil { runtimes[runtime.id] = runtime }
-            }
-        }
-        hub = Dictionary(entries.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        self.owners = owners
-
-        var rows = entries.map { row(for: $0, now: now) }
-        statusSince = statusSince.filter { entry in rows.contains { $0.id == entry.key } }
-        rows = NotchAgentOrdering.sorted(rows)
-
         var next = snapshot
-        next.agents = rows
-        next.runtimes = runtimes.values
-            .sorted { ($0.startedAt ?? .distantFuture) < ($1.startedAt ?? .distantFuture) }
-            .prefix(8)
-            .map { NotchRuntimeRow(id: $0.id, kind: Self.title(of: $0.kind), title: $0.title, since: $0.startedAt) }
-        let waits = WaitCenter.shared
-        next.readyWaits = waits.ready.prefix(4).map {
-            NotchWaitRow(id: $0.id, title: $0.title, next: HandoffBrief.clip($0.next.replacingOccurrences(of: "\n", with: " "), 90),
-                         readyAt: $0.readyAt)
-        }
-        next.waitingCount = waits.waiting.count
-        next.checkIns = CheckInCenter.shared.checkIns
-            .filter { $0.checkIn.map { !$0.paused && !$0.isFinished } ?? false }
-            .prefix(4)
-            .map { wait in
-                NotchCheckInRow(id: wait.id, title: wait.title, due: wait.checkIn?.hasReminder == true, nextAt: wait.nextCheckAt,
-                                canSkip: wait.checkIn?.recurrence != nil,
-                                schedule: wait.checkIn?.recurrence?.summary ?? "Once")
+        if sections.contains(.agents) {
+            var seen = Set<String>()
+            var entries: [HubAgent] = []
+            var owners: [String: SessionStore] = [:]
+            for window in windows {
+                for agent in AgentsHubList.agents(store: window.store) where seen.insert(agent.id).inserted {
+                    entries.append(agent)
+                    owners[agent.id] = window.store
+                }
             }
-        next.usage = usageRows()
-        if next != snapshot { snapshot = next }
+            hub = Dictionary(entries.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            self.owners = owners
+
+            var rows = entries.map { row(for: $0, now: now) }
+            statusSince = statusSince.filter { seen.contains($0.key) }
+            rows = NotchAgentOrdering.sorted(rows)
+
+            next.agents = rows
+            let window = WindowRegistry.shared.key
+            let chat = AgentCenter.shared.active(in: window?.focusedWorkspace?.workspaceId)
+            let focusID = chat.map { "chat:" + $0.id } ?? window?.focusedPaneId.map { "pane:" + $0 }
+            next.focus = rows.first { $0.id == focusID }
+        }
+        if sections.contains(.work) {
+            var runtimes: [String: HandoffRuntime] = [:]
+            for window in windows {
+                for list in window.store.terminalRuntimes.values {
+                    for runtime in list where runtimes[runtime.id] == nil { runtimes[runtime.id] = runtime }
+                }
+            }
+            next.runtimes = runtimes.values
+                .sorted { ($0.startedAt ?? .distantFuture) < ($1.startedAt ?? .distantFuture) }
+                .prefix(8)
+                .map { NotchRuntimeRow(id: $0.id, kind: Self.title(of: $0.kind), title: $0.title, since: $0.startedAt) }
+            let waits = WaitCenter.shared
+            next.readyWaits = waits.ready.prefix(4).map {
+                NotchWaitRow(id: $0.id, title: $0.title, next: HandoffBrief.clip($0.next.replacingOccurrences(of: "\n", with: " "), 90),
+                             readyAt: $0.readyAt)
+            }
+            next.waitingCount = waits.waiting.count
+            next.checkIns = CheckInCenter.shared.checkIns
+                .filter { $0.checkIn.map { !$0.paused && !$0.isFinished } ?? false }
+                .prefix(4)
+                .map { wait in
+                    NotchCheckInRow(id: wait.id, title: wait.title, due: wait.checkIn?.hasReminder == true, nextAt: wait.nextCheckAt,
+                                    canSkip: wait.checkIn?.recurrence != nil,
+                                    schedule: wait.checkIn?.recurrence?.summary ?? "Once")
+                }
+        }
+        if sections.contains(.usage) { next.usage = usageRows() }
+        if next != snapshot {
+            #if DEBUG
+            NotchMetrics.publications += 1
+            #endif
+            snapshot = next
+        }
     }
 
     private func row(for agent: HubAgent, now: Date) -> NotchAgentRow {
@@ -253,16 +331,41 @@ final class NotchModel: ObservableObject {
 
     /// Recent project folders for the Actions page, read off the main thread.
     func loadFolders() {
-        guard !isSample else { return }
-        Task {
+        guard running, !isSample, folderTask == nil,
+              foldersLoadedAt.map({ Date().timeIntervalSince($0) > 60 }) ?? true else { return }
+        folderTask = Task { [weak self] in
             let folders = await RecentFolders.load()
+            guard let self, !Task.isCancelled, self.running else { return }
+            self.folderTask = nil
+            self.foldersLoadedAt = Date()
             let mapped = folders.prefix(6).map { NotchFolder(path: $0.path) }
-            if mapped != snapshot.folders { snapshot.folders = mapped }
+            if mapped != self.snapshot.folders { self.snapshot.folders = mapped }
         }
     }
+
+    #if DEBUG
+    var debugSubscriptions: Int { subscriptions.count + storeSubscriptions.count + focusSubscriptions.count }
+    var debugPendingWork: Int { (refreshWork == nil ? 0 : 1) + (folderTask == nil ? 0 : 1) }
+    #endif
 
     // MARK: Lookups for actions
 
     func hubAgent(_ id: String) -> HubAgent? { hub[id] }
     func store(for id: String) -> SessionStore? { owners[id] }
+}
+
+/// Ignore layout, scroll, connection and process-poll changes.
+private struct NotchSessionInput: Equatable {
+    let agents: [EngineAgent]
+    let tabs: [EngineTab]
+    let workspaces: [EngineWorkspace]
+    let focusedPaneID: String?
+    let focusedWorkspaceID: String?
+    init(_ snapshot: EngineSnapshot) {
+        focusedPaneID = snapshot.focusedPaneId
+        focusedWorkspaceID = snapshot.focusedWorkspaceId
+        agents = snapshot.agents
+        tabs = snapshot.tabs
+        workspaces = snapshot.workspaces
+    }
 }

@@ -24,6 +24,12 @@ struct NotchSettingsPage: View {
                             options: NotchSettings.Expand.allCases.map { ($0, $0.title) }, width: 190)
             }
             SettingsDivider()
+            SettingsRow(title: "Hover delay", detail: "Milliseconds before opening; 120 feels immediate without opening as you pass.",
+                        setting: \.notch.hoverDelayMS, disabled: !settings.values.notch.enabled) {
+                OctetNumberField(label: "Hover delay in milliseconds", value: Binding(get: { Double(settings.values.notch.hoverDelayMS) },
+                    set: { settings.values.notch.hoverDelayMS = Int($0) }), range: 0...600)
+            }
+            SettingsDivider()
             SettingsRow(
                 title: "Show on",
                 detail: "Main is the display with the menu bar. The display with the pointer follows you between screens.",
