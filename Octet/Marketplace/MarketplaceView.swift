@@ -106,6 +106,27 @@ struct MarketplaceView: View {
                             store.section = section
                         }
                     }
+                    if store.hosts.isEmpty, !store.loaded.contains(store.section) || !store.loading.isEmpty {
+                        // The agents aren't known yet: their rows hold the
+                        // place, so the list doesn't pop in under the sections.
+                        Text("Agents")
+                            .font(Theme.interfaceFont(11, weight: .medium))
+                            .foregroundStyle(Theme.textTertiary)
+                            .padding(.horizontal, 10)
+                            .padding(.top, 18)
+                            .padding(.bottom, 4)
+                        ForEach(0..<5, id: \.self) { index in
+                            HStack(spacing: 8) {
+                                SkeletonBlock(width: 18, height: 14, radius: 4)
+                                SkeletonBlock(width: [96, 70, 84, 60, 78][index], height: 10, radius: 5)
+                                Spacer(minLength: 4)
+                                SkeletonBlock(width: 16, height: 9, radius: 4)
+                            }
+                            .padding(.horizontal, 10)
+                            .frame(height: 30)
+                        }
+                        .accessibilityHidden(true)
+                    }
                     if !store.hosts.isEmpty {
                         Text("Agents")
                             .font(Theme.interfaceFont(11, weight: .medium))
