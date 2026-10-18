@@ -103,6 +103,16 @@ final class ProjectGroupingTests: XCTestCase {
         )
     }
 
+    func testProjectIdentityDoesNotFollowPaneFocus() {
+        let second = EnginePane(paneId: "w1:p2", tabId: "w1:t1", workspaceId: "w1", focused: true,
+                                cwd: "/r/other", foregroundCwd: nil, agentStatus: .idle, terminalTitle: nil)
+        let snapshot = EngineSnapshot(workspaces: [workspace("w1", 1, "api")], tabs: [],
+                                      panes: [pane("w1", cwd: "/r/api"), second], agents: [],
+                                      focusedWorkspaceId: "w1", focusedTabId: "w1:t1", focusedPaneId: "w1:p2")
+        XCTAssertEqual(snapshot.directory(ofWorkspace: "w1"), "/r/other")
+        XCTAssertEqual(ProjectGrouping.groups(snapshot: snapshot, resolveRoot: { $0 }).first?.id, "/r/api")
+    }
+
     func testGroupsByProjectRootInWorkspaceOrder() {
         let snapshot = EngineSnapshot(
             workspaces: [workspace("w1", 1, "api"), workspace("w2", 2, "notes"), workspace("w3", 3, "api tests")],

@@ -313,6 +313,7 @@ func makeTerminalView(command: String, environment: [String: String], workingDir
 /// process) is created once when the view is first made and lives as long as
 /// the SwiftUI view identity; give it a new `.id(...)` to restart.
 struct OctetTerminalView: NSViewRepresentable {
+    var retainedSurface: TerminalEngine.SurfaceView?
     let command: String
     let environment: [String: String]
     let workingDirectory: String?
@@ -326,6 +327,7 @@ struct OctetTerminalView: NSViewRepresentable {
     var onSurface: (TerminalEngine.SurfaceView) -> Void = { _ in }
 
     init(
+        retainedSurface: TerminalEngine.SurfaceView? = nil,
         command: String,
         environment: [String: String],
         workingDirectory: String?,
@@ -335,6 +337,7 @@ struct OctetTerminalView: NSViewRepresentable {
         onExit: @escaping () -> Void = {},
         onSurface: @escaping (TerminalEngine.SurfaceView) -> Void = { _ in }
     ) {
+        self.retainedSurface = retainedSurface
         self.command = command
         self.environment = environment
         self.workingDirectory = workingDirectory
@@ -347,7 +350,7 @@ struct OctetTerminalView: NSViewRepresentable {
 
     @MainActor
     func makeNSView(context: Context) -> NSView {
-        let view = OctetTerminalRuntime.shared.makeSurfaceView(
+        let view = retainedSurface ?? OctetTerminalRuntime.shared.makeSurfaceView(
             command: command,
             environment: environment,
             workingDirectory: workingDirectory

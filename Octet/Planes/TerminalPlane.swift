@@ -17,22 +17,28 @@ struct TerminalPlane: View {
     /// its welcome if the surface never reports a cell size.
     @State private var warming = true
 
-    private var shown: Bool { ui.sidePanelVisible && ui.activePlane?.id == planeId }
+    private var shown: Bool { ui.sidePanelVisible && ui.visiblePlaneIds.contains(planeId) }
 
     var body: some View {
         ZStack {
             Theme.terminalBackground
             if let folder {
                 OctetTerminalView(
+                    retainedSurface: ui.panelTerminalSurfaces[planeId],
                     command: Self.shellCommand,
                     environment: Self.environment,
                     workingDirectory: folder,
                     anchor: anchor,
-                    onTitleChange: { title in
+                    onTitleChange: { [weak ui, planeId] title in
+                        guard let ui else { return }
                         let badge = PlaneBadge(title: title.isEmpty ? "Terminal" : title, help: title)
                         if ui.planeBadges[planeId] != badge { ui.planeBadges[planeId] = badge }
                     },
-                    onExit: { exited = true }
+                    onExit: { [weak ui, planeId, exitState = $exited] in
+                        ui?.panelTerminalExited.insert(planeId)
+                        exitState.wrappedValue = true
+                    },
+                    onSurface: { [weak ui, planeId] in ui?.panelTerminalSurfaces[planeId] = $0 }
                 )
                 .id(generation)
             }
@@ -43,6 +49,8 @@ struct TerminalPlane: View {
                 VStack(spacing: 8) {
                     Text("The shell exited").font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary)
                     OctetButton(title: "Start Again", kind: .secondary, compact: true) {
+                        ui.panelTerminalSurfaces.removeValue(forKey: planeId)
+                        ui.panelTerminalExited.remove(planeId)
                         exited = false
                         folder = directory ?? folder
                         generation += 1
@@ -52,8 +60,12 @@ struct TerminalPlane: View {
                 .octetGlass(cornerRadius: Theme.popoverRadius, fill: Theme.chrome)
             }
         }
-        .onAppear { if folder == nil { folder = directory ?? NSHomeDirectory() } }
+        .onAppear {
+            if folder == nil { folder = directory ?? NSHomeDirectory() }
+            exited = ui.panelTerminalExited.contains(planeId)
+        }
         .task(id: generation) {
+            if ui.panelTerminalSurfaces[planeId] != nil { warming = false; return }
             warming = true
             try? await Task.sleep(for: .seconds(1.5))
             warming = false

@@ -10,11 +10,17 @@ struct BrowserPlane: View {
     @ObservedObject var ui: UIState
     /// The project folder in front, whose recent pages are listed.
     var directory: String?
-    @StateObject private var page = BrowserPage(private: false)
+    @StateObject private var page: BrowserPage
     /// T3 Code's browser profiles, as Safari's: a private page keeps no
     /// cookies, storage or history once the plane closes.
     @StateObject private var privatePage = BrowserPage(private: true)
     @State private var isPrivate = false
+
+    init(ui: UIState, directory: String?) {
+        self.ui = ui
+        self.directory = directory
+        _page = StateObject(wrappedValue: ui.workspaceBrowserPage())
+    }
 
     private var current: BrowserPage { isPrivate ? privatePage : page }
     @ObservedObject private var ports = PortsWatcher.shared
@@ -60,6 +66,7 @@ struct BrowserPlane: View {
         // A plane opened for a request finds it on appearing; one already
         // open hears it change.
         .onAppear {
+            address = current.pageURL?.absoluteString ?? ""
             takeRequest()
             runDebugHook()
         }

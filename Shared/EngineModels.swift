@@ -268,6 +268,11 @@ struct EngineSnapshot: Codable, Equatable {
             ?? panes.first { $0.paneId == paneId }?.effectiveCwd
     }
 
+    /// Stable project identity, independent of which pane currently has focus.
+    func projectDirectory(ofWorkspace workspaceId: String) -> String? {
+        panes.first { $0.workspaceId == workspaceId }.flatMap { $0.cwd ?? $0.foregroundCwd }
+    }
+
     /// The directory that best describes a workspace: its first pane's cwd.
     func directory(ofWorkspace workspaceId: String) -> String? {
         let ordered = panes.filter { $0.workspaceId == workspaceId }

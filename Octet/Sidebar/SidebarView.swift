@@ -54,7 +54,7 @@ struct SidebarView: View {
                     }
                 }
                 .padding(.vertical, 8)
-                .animation(motion.animation(.sidebar), value: window.activeGroups)
+                .animation(motion.animation(.sidebar), value: window.activeGroups.map { ($0.id + $0.workspaces.map(\.workspaceId).joined(separator: ",")) })
             }
             .scrollIndicators(.hidden)
             // Double-click empty sidebar space for a new workspace.
@@ -360,7 +360,7 @@ struct SidebarView: View {
         VStack(alignment: .leading, spacing: 4) {
             ProjectGroupHeader(
                 group: group, collapsed: collapsed, isRepository: Self.isRepository(group), help: Self.groupHelp(group),
-                iconDirectories: [group.id] + group.workspaces.compactMap { store.snapshot.directory(ofWorkspace: $0.workspaceId) },
+                iconDirectories: [group.id] + group.workspaces.compactMap { store.snapshot.projectDirectory(ofWorkspace: $0.workspaceId) }.sorted(),
                 toggle: {
                     motion.perform(.sidebar) {
                         if collapsed { collapsedGroups.remove(group.id) } else { collapsedGroups.insert(group.id) }

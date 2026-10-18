@@ -49,6 +49,9 @@ struct OctetIcon: View {
     }
 
     static let map: [String: Art] = [
+        "ci": .init("task-square"),
+        "containers": .init("layer"),
+        "tickets": .init("note-2"),
         "xmark": .init("add", rotation: 45),
         "xmark.bin": .init("trash"),
         "xmark.bin.fill": .init("trash"),

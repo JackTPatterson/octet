@@ -20,10 +20,11 @@ struct TabBarView: View {
         let currentIds = tabs.map { "terminal:\($0.tabId)" }
             + conversations.map { "conversation:\($0.id)" }
             + (window.editor.documents.isEmpty ? [] : ["editor:\(window.id.uuidString)"])
+            + window.workspaceContainerLogs.map(\.visualID)
         let orderedIds = window.orderedVisualTabs(currentIds)
         let showingConversation = agents.active(in: workspaceId) != nil
         // A conversation in front means no terminal tab is.
-        let focusedId = (showingConversation || window.editor.isPresented) ? nil : window.displayedFocusedTabId
+        let focusedId = (showingConversation || window.editor.isPresented || window.activeContainerLog != nil) ? nil : window.displayedFocusedTabId
 
         HStack(spacing: 0) {
             ScrollViewReader { proxy in
@@ -52,12 +53,15 @@ struct TabBarView: View {
                             } else if id.hasPrefix("conversation:"),
                                       let session = conversations.first(where: { "conversation:\($0.id)" == id }) {
                                 ConversationTab(session: session,
-                                                isActive: agents.active(in: workspaceId)?.id == session.id,
+                                                isActive: window.activeContainerLog == nil && agents.active(in: workspaceId)?.id == session.id,
                                                 selection: selection)
                                     .id(session.id)
+                            } else if let log = window.workspaceContainerLogs.first(where: { $0.visualID == id }) {
+                                ContainerLogWorkspaceTab(tab: log, isActive: window.activeContainerLog?.id == log.id, selection: selection)
+                                    .id(id)
                             } else if id.hasPrefix("editor:") {
                                 EditorOuterTab(workspace: window.editor,
-                                               isActive: window.editor.isPresented,
+                                               isActive: window.activeContainerLog == nil && window.editor.isPresented,
                                                selection: selection)
                                     .id(id)
                             }
@@ -76,6 +80,9 @@ struct TabBarView: View {
                 .animation(MotionPreferences.shared.animation(.tabs, .smooth(duration: 0.2)), value: focusedId)
                 .animation(MotionPreferences.shared.animation(.tabs, .smooth(duration: 0.2)), value: agents.active(in: workspaceId)?.id)
                 .animation(MotionPreferences.shared.animation(.tabs, .smooth(duration: 0.2)), value: window.editor.isPresented)
+                .onChange(of: window.activeContainerLog?.id) { _, id in
+                    if let tab = window.workspaceContainerLogs.first(where: { $0.id == id }) { proxy.scrollTo(tab.visualID) }
+                }
                 .onChange(of: focusedId) { _, id in
                     guard let id else { return }
                     proxy.scrollTo(id)
@@ -688,6 +695,7 @@ private struct ConversationTab: View {
         .onHover { hovered = $0 }
         .onTapGesture {
             window.editor.dismiss()
+            window.containerLogs.activeID = nil
             AgentCenter.shared.activeId = session.id
         }
         .contextMenu {
@@ -701,6 +709,7 @@ private struct ConversationTab: View {
         .accessibilityAddTraits(isActive ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction {
             window.editor.dismiss()
+            window.containerLogs.activeID = nil
             AgentCenter.shared.activeId = session.id
         }
         .accessibilityAction(named: "Close") { AgentCenter.shared.close(session) }
@@ -760,5 +769,51 @@ private struct EditorOuterTab: View {
         .accessibilityLabel("Editor")
         .accessibilityAddTraits(isActive ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { window.showEditor() }
+    }
+}
+
+/// Uses the same outer-tab chrome as the editor and conversations.
+private struct ContainerLogWorkspaceTab: View {
+    let tab: WorkspaceContainerLog
+    let isActive: Bool
+    let selection: Namespace.ID
+    @EnvironmentObject private var window: WindowContext
+    @State private var hovered = false
+
+    var body: some View {
+        HStack(spacing: 7) {
+            OctetIcon("tool.read", size: 13)
+                .foregroundStyle(isActive ? Theme.textPrimary : Theme.textSecondary)
+            Text(tab.title).font(Theme.uiFont).fontWeight(isActive ? .medium : .regular)
+                .foregroundStyle(isActive ? Theme.textPrimary : Theme.textSecondary)
+                .lineLimit(1).truncationMode(.tail)
+            Spacer(minLength: 4)
+            TabCloseButton { window.closeContainerLogs(tab.id) }.opacity(hovered || isActive ? 1 : 0)
+        }
+        .padding(.leading, 12).padding(.trailing, 6)
+        .frame(width: Theme.tabWidth).frame(maxHeight: .infinity)
+        .background {
+            ZStack {
+                if hovered && !isActive { Theme.hover }
+                if isActive {
+                    ZStack(alignment: .top) {
+                        Theme.terminalBackground
+                        Rectangle().fill(Color.white.opacity(0.9)).frame(height: 2)
+                    }.matchedGeometryEffect(id: "selectedTab", in: selection)
+                }
+            }
+        }
+        .overlay(alignment: .trailing) { Rectangle().fill(Theme.divider).frame(width: 1) }
+        .overlay { MiddleClickCatcher { window.closeContainerLogs(tab.id) } }
+        .contentShape(Rectangle())
+        .onTapGesture { window.focusContainerLogs(tab.id) }
+        .onHover { hovered = $0 }
+        .octetContextMenu { [.action("Close Logs", icon: "xmark") { window.closeContainerLogs(tab.id) }] }
+        .help("\(tab.name) · \(tab.context)")
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(tab.title)
+        .accessibilityAddTraits(isActive ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction { window.focusContainerLogs(tab.id) }
+        .accessibilityAction(named: "Close") { window.closeContainerLogs(tab.id) }
     }
 }

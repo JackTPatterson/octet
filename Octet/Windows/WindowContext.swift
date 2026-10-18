@@ -38,6 +38,7 @@ final class WindowContext: ObservableObject, Identifiable {
     let pluginPanels = PluginPanelModel()
     let terminalQuestions = TerminalQuestionWatcher()
     let editor = EditorWorkspace()
+    let containerLogs: ContainerLogWorkspace
     private(set) lazy var twin = TwinSession(window: self)
     weak var nsWindow: NSWindow?
     /// This window's terminal, the only way to move this window's client.
@@ -84,12 +85,14 @@ final class WindowContext: ObservableObject, Identifiable {
     /// but share one strip. Keep their visual chronology on the window rather
     /// than in TabBarView state so a rebuilt view never briefly falls back to
     /// "all terminals, then all conversations" on its first frame.
-    private var visualTabOrder: [String] = []
+    private var visualTabOrders: [String: [String]] = [:]
 
     func orderedVisualTabs(_ ids: [String]) -> [String] {
-        visualTabOrder = visualTabOrder.filter(ids.contains)
-            + ids.filter { !visualTabOrder.contains($0) }
-        return visualTabOrder
+        let workspace = focusedWorkspace?.workspaceId ?? ""
+        let previous = visualTabOrders[workspace] ?? []
+        let order = previous.filter(ids.contains) + ids.filter { !previous.contains($0) }
+        visualTabOrders[workspace] = order
+        return order
     }
     /// Empty terminal tabs retained only to keep a conversation's workspace
     /// alive. The tab bar hides them until the conversation closes or the
@@ -103,14 +106,17 @@ final class WindowContext: ObservableObject, Identifiable {
     fileprivate var expected: (workspace: String, tab: String?)?
     private var watch: AnyCancellable?
     private var editorWatch: AnyCancellable?
+    private var containerLogsWatch: AnyCancellable?
 
     init(spec: OctetWindowSpec, store: SessionStore) {
         id = spec.id
         self.store = store
+        containerLogs = ContainerLogWorkspace(key: "octet.workspaceContainerLogs.\(spec.id.uuidString)")
         pendingWorkspace = spec.workspaceId
         // The chrome reads through here, so a store change is a change here.
         watch = store.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
         editorWatch = editor.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
+        containerLogsWatch = containerLogs.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
     }
 
     private var registry: WindowRegistry { .shared }
@@ -191,6 +197,7 @@ final class WindowContext: ObservableObject, Identifiable {
     // MARK: - Moving this window
 
     func focusTab(_ id: String) {
+        containerLogs.activeID = nil
         editor.dismiss()
         DebugSnapshot.overlay("editor", false)
         conversationBackingTabs = conversationBackingTabs.filter { $0.value != id }
@@ -216,6 +223,7 @@ final class WindowContext: ObservableObject, Identifiable {
     }
 
     func focusTabAnywhere(_ tab: EngineTab) {
+        containerLogs.activeID = nil
         guard steers else { return store.focusTabAnywhere(tab) }
         if let other = registry.window(showing: tab.workspaceId) ?? registry.home(of: tab.workspaceId), other !== self {
             other.bringForward()
@@ -226,6 +234,7 @@ final class WindowContext: ObservableObject, Identifiable {
 
     /// A banner's pane: its tab, in whichever window has its workspace.
     func focusAgent(paneId: String) {
+        containerLogs.activeID = nil
         guard steers else { return store.focusAgent(paneId: paneId) }
         guard let pane = store.snapshot.panes.first(where: { $0.paneId == paneId }),
               let tab = store.snapshot.tabs.first(where: { $0.tabId == pane.tabId }) else { return }
@@ -239,6 +248,12 @@ final class WindowContext: ObservableObject, Identifiable {
     }
 
     func selectTab(number: Int) {
+        if !workspaceContainerLogs.isEmpty {
+            let tabs = logAwareVisualTabs
+            let index = number >= 9 ? tabs.count - 1 : number - 1
+            if tabs.indices.contains(index) { focusVisualTab(tabs[index]) }
+            return
+        }
         guard steers else { return store.selectTab(number: number) }
         let tabs = focusedWorkspaceTabs
         guard !tabs.isEmpty else { return }
@@ -248,6 +263,13 @@ final class WindowContext: ObservableObject, Identifiable {
     }
 
     func selectAdjacentTab(offset: Int) {
+        if !workspaceContainerLogs.isEmpty {
+            let tabs = logAwareVisualTabs
+            guard !tabs.isEmpty else { return }
+            let current = activeVisualTab.flatMap { tabs.firstIndex(of: $0) } ?? 0
+            focusVisualTab(tabs[((current + offset) % tabs.count + tabs.count) % tabs.count])
+            return
+        }
         guard steers else { return store.selectAdjacentTab(offset: offset) }
         let tabs = focusedWorkspaceTabs
         guard !tabs.isEmpty else { return }
@@ -279,6 +301,7 @@ final class WindowContext: ObservableObject, Identifiable {
     }
 
     func newTab() {
+        containerLogs.activeID = nil
         editor.dismiss()
         if let workspaceId = focusedWorkspace?.workspaceId,
            let session = AgentCenter.shared.active(in: workspaceId),
@@ -295,6 +318,7 @@ final class WindowContext: ObservableObject, Identifiable {
     }
 
     func newTab(running agent: DiscoveredAgent, arguments: [String] = [], label: String? = nil) {
+        containerLogs.activeID = nil
         editor.dismiss()
         guard steers else { return store.newTab(running: agent, arguments: arguments, label: label) }
         guard let params = store.agentTabParams(agent, workspaceId: workspaceId,
@@ -410,6 +434,7 @@ final class WindowContext: ObservableObject, Identifiable {
     }
 
     func closeFocusedTab() {
+        if let log = activeContainerLog { closeContainerLogs(log.id); return }
         if editor.isPresented {
             editor.closeEditor()
             return
@@ -487,6 +512,7 @@ final class WindowContext: ObservableObject, Identifiable {
 
     func newConversation(engine: AgentSession.Engine = .claude, cwd: String? = nil,
                          replacingStarterTab starterTabId: String? = nil) {
+        containerLogs.activeID = nil
         editor.dismiss()
         guard let workspace = focusedWorkspace else { return }
         let folder = cwd ?? store.snapshot.directory(ofWorkspace: workspace.workspaceId) ?? NSHomeDirectory()
@@ -511,6 +537,7 @@ final class WindowContext: ObservableObject, Identifiable {
     }
 
     func showEditor() {
+        containerLogs.activeID = nil
         guard !editor.documents.isEmpty else {
             editor.filePickerVisible = true
             return
@@ -523,6 +550,7 @@ final class WindowContext: ObservableObject, Identifiable {
     }
 
     func openFile(_ url: URL, presentation: EditorWorkspace.Presentation = .split) {
+        containerLogs.activeID = nil
         AgentCenter.shared.setActive(nil, in: focusedWorkspace?.workspaceId)
         AgentCenter.shared.setBoard(nil, in: focusedWorkspace?.workspaceId)
         twin.hide()
