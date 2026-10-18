@@ -216,30 +216,7 @@ enum SlashCommands {
     /// Filters one level for the typed text. With a query it searches the
     /// whole subtree, so `amend` finds `/git:amend` from the top.
     static func matching(_ query: String, in commands: [SlashCommand]) -> [SlashCommand] {
-        let needle = query.trimmingCharacters(in: .whitespaces)
-        guard !needle.isEmpty else { return commands }
-        let searchable = commands.flatMap(\.flattened)
-        var seen = Set<String>()
-        return searchable.compactMap { command -> (SlashCommand, Int)? in
-            guard seen.insert(command.id).inserted else { return nil }
-            let haystack = command.insertion.hasPrefix("/") ? String(command.insertion.dropFirst()) : command.insertion
-            // The best of the name and its aliases.
-            let scores = ([haystack] + command.aliases).compactMap { name -> Int? in
-                guard let match = FuzzyMatcher.match(needle, in: name) else { return nil }
-                return match.score + (name.lowercased().hasPrefix(needle.lowercased()) ? 500 : 0)
-            }
-            guard let best = scores.max() else {
-                guard !command.summary.isEmpty, FuzzyMatcher.match(needle, in: command.summary) != nil else { return nil }
-                return (command, -1000)
-            }
-            return (command, best)
-        }
-        .sorted { first, second in
-            first.1 == second.1
-                ? first.0.insertion.localizedCaseInsensitiveCompare(second.0.insertion) == .orderedAscending
-                : first.1 > second.1
-        }
-        .map(\.0)
+        SlashCommandSearch.search(query, in: commands).map(\.command)
     }
 }
 

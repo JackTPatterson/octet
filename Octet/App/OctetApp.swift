@@ -260,7 +260,11 @@ struct OctetCommands: Commands {
             Button("Recover Sessions…") { store.recoveryCenter.reopen() }
         }
         CommandGroup(replacing: .saveItem) {
-            Button(OctetShortcut.saveFile.title) { KeyWindow.act { $0.editor.save() } }
+            // In a conversation's message box, ⌘S stashes the prompt instead.
+            Button(OctetShortcut.saveFile.title) {
+                if ComposerStash.stashFocused() { return }
+                KeyWindow.act { $0.editor.save() }
+            }
                 .keyboardShortcut(OctetShortcut.saveFile.keyboardShortcut)
             Button("Save All") { KeyWindow.act { $0.editor.saveAll() } }
                 .keyboardShortcut("s", modifiers: [.command, .option])

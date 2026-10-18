@@ -1696,7 +1696,13 @@ private struct Composer: View {
     @ObservedObject private var motion = MotionPreferences.shared
     /// The commands on show, changed inside an animation so the list, the
     /// composer card around it and the transcript above all move together.
-    @State private var shownSuggestions: [SlashCommand] = []
+    @State private var shownSuggestions: [SlashCommandSearch.Result] = []
+    /// Where ↑ and ↓ are in this project's sent prompts.
+    @State private var historyCursor = ComposerHistoryCursor()
+    /// The plan whose follow-up banner was closed.
+    @State private var dismissedPlan: String?
+    /// Refine was picked with nothing typed: the box asks for the changes.
+    @State private var refiningPlan = false
 
     /// Hold Space to talk: a tap types, a hold listens until let go.
     private func holdSpace(_ press: KeyPress) -> KeyPress.Result {
@@ -1737,15 +1743,77 @@ private struct Composer: View {
         attach(panel.urls.compactMap(NSImage.init(contentsOf:)))
     }
 
-    /// Commands matching a `/` at the start of the message, until a space.
-    private var suggestions: [SlashCommand] {
+    /// Commands matching a `/` at the start of the message, until a space,
+    /// ranked as T3 Code ranks them.
+    private var suggestions: [SlashCommandSearch.Result] {
         guard text.hasPrefix("/"), !text.contains(" "), !text.contains("\n"), dismissedFor != text else { return [] }
-        return Array(SlashCommands.matching(String(text.dropFirst()), in: session.slashCommands).prefix(8))
+        return Array(SlashCommandSearch.search(String(text.dropFirst()), in: session.slashCommands).prefix(8))
+    }
+
+    /// ↑ and ↓ through this project's sent prompts, when the caret is where
+    /// they can't move it (see `ComposerHistoryCursor`).
+    private func walkHistory(_ direction: ComposerHistoryCursor.Direction) -> KeyPress.Result {
+        let entries = PromptHistoryStore.shared.entries(for: session.cwd)
+        guard let recalled = historyCursor.step(direction, entries: entries, text: text, caret: ComposerCaret.current()) else {
+            return .ignored
+        }
+        text = recalled
+        // A recalled `/command` shouldn't pop the command menu open.
+        dismissedFor = recalled
+        ComposerCaret.place(atStart: direction == .back)
+        return .handled
+    }
+
+    /// The plan the last turn ended on, while still in plan mode.
+    private var followUpPlan: ComposerPlanFollowUp.Plan? {
+        guard session.pendingPermission == nil, session.pendingQuestion == nil else { return nil }
+        let planMode = switch session.engine {
+        case .claude: session.permissionMode == .plan
+        case .opencode: session.agentName?.lowercased() == "plan"
+        default: false
+        }
+        guard let plan = ComposerPlanFollowUp.latestPlan(in: session.conversation.items, planMode: planMode,
+                                                         running: session.conversation.isRunning),
+              plan.id != dismissedPlan else { return nil }
+        return plan
+    }
+
+    private func implement(_ plan: ComposerPlanFollowUp.Plan) {
+        dismissedPlan = plan.id
+        refiningPlan = false
+        // Out of plan mode, asking before edits, as Approve does.
+        switch session.engine {
+        case .claude: session.permissionMode = .default
+        case .opencode: session.agentName = nil
+        default: break
+        }
+        session.send(ComposerPlanFollowUp.implementationPrompt(plan))
+    }
+
+    private func refine(_ plan: ComposerPlanFollowUp.Plan) {
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            refiningPlan = true
+            focused = true
+        } else {
+            dismissedPlan = plan.id
+            submit()
+        }
+    }
+
+    /// What's left of the context window, when the agent has said.
+    private var contextLeft: Int? {
+        guard let window = session.conversation.contextWindow, let used = session.conversation.contextUsed else { return nil }
+        return max(0, window - used)
     }
 
     private func refreshSuggestions() {
         let next = suggestions
-        guard next.map(\.id) != shownSuggestions.map(\.id) else { return }
+        guard next != shownSuggestions else { return }
+        // The same commands with new letters lit don't need to move.
+        if next.map(\.id) == shownSuggestions.map(\.id) {
+            shownSuggestions = next
+            return
+        }
         motion.perform(.palette, .smooth(duration: 0.22)) { shownSuggestions = next }
     }
 
@@ -1780,7 +1848,8 @@ private struct Composer: View {
         highlighted = 0
     }
 
-    private func accept(_ command: SlashCommand) {
+    private func accept(_ result: SlashCommandSearch.Result) {
+        let command = result.command
         highlighted = 0
         // Picking one of Octet's or the terminal's commands runs it, as the
         // agent's own menu does; one that takes arguments waits for them.
@@ -1841,7 +1910,17 @@ private struct Composer: View {
         let running = session.conversation.isRunning
         let matches = shownSuggestions
         let references = referenceSuggestions
+        let plan = followUpPlan
+        let length = ComposerPromptLength.check(text, contextLeft: contextLeft)
         VStack(spacing: 8) {
+            if let plan, !running {
+                PlanFollowUpBanner(plan: plan,
+                                   hasDraft: !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                                   implement: { implement(plan) },
+                                   refine: { refine(plan) },
+                                   dismiss: { withAnimation(.easeOut(duration: 0.18)) { dismissedPlan = plan.id } })
+                    .transition(.opacity.combined(with: .offset(y: 6)))
+            }
             if !matches.isEmpty {
                 SlashSuggestions(commands: matches,
                                  highlighted: min(highlighted, matches.count - 1),
@@ -1867,7 +1946,8 @@ private struct Composer: View {
             ShellModeStrip(session: session, typingCommand: text.hasPrefix("!") && session.engine != .opencode)
             ZStack(alignment: .topLeading) {
                 if text.isEmpty {
-                    Text("Message \(session.engine.displayName), or ! to run a command")
+                    Text(refiningPlan && plan != nil ? "What should change in the plan?"
+                         : "Message \(session.engine.displayName), or ! to run a command")
                         .font(.system(size: 13))
                         .foregroundStyle(Theme.textTertiary)
                         .padding(.leading, 5)
@@ -1888,6 +1968,14 @@ private struct Composer: View {
                         holdSpace(press)
                     }
                     .onChange(of: focused) { _, isFocused in
+                        // ⌘S stashes while the message box has the keyboard.
+                        if isFocused {
+                            ComposerStash.focus(session.id) {
+                                ComposerStash.stash(text: $text, attachments: $attachments, project: session.cwd)
+                            }
+                        } else {
+                            ComposerStash.blur(session.id)
+                        }
                         // Space's release goes elsewhere once focus does.
                         guard !isFocused, spaceHold.listening else { return }
                         _ = spaceHold.up()
@@ -1940,15 +2028,22 @@ private struct Composer: View {
                         AgentCenter.shared.sendToBackground(session)
                         return .handled
                     }
-                    .onKeyPress(.upArrow) {
+                    .onKeyPress(.upArrow, phases: [.down, .repeat]) { press in
                         let count = referenceSuggestions.isEmpty ? suggestions.count : referenceSuggestions.count
-                        guard count > 0 else { return .ignored }
+                        guard count > 0 else {
+                            // Earlier prompts, as a shell's history.
+                            guard press.modifiers.isDisjoint(with: [.shift, .command, .option, .control]) else { return .ignored }
+                            return walkHistory(.back)
+                        }
                         highlighted = (min(highlighted, count - 1) - 1 + count) % count
                         return .handled
                     }
-                    .onKeyPress(.downArrow) {
+                    .onKeyPress(.downArrow, phases: [.down, .repeat]) { press in
                         let count = referenceSuggestions.isEmpty ? suggestions.count : referenceSuggestions.count
-                        guard count > 0 else { return .ignored }
+                        guard count > 0 else {
+                            guard press.modifiers.isDisjoint(with: [.shift, .command, .option, .control]) else { return .ignored }
+                            return walkHistory(.forward)
+                        }
                         highlighted = (min(highlighted, count - 1) + 1) % count
                         return .handled
                     }
@@ -1979,6 +2074,9 @@ private struct Composer: View {
                         focused = true
                     }
                     .accessibilityLabel("Message \(session.engine.displayName)")
+            }
+            if length != .fine {
+                PromptLengthNotice(verdict: length)
             }
             HStack(spacing: 6) {
                 // Model, effort and permission mode are Claude Code's own
@@ -2046,7 +2144,7 @@ private struct Composer: View {
                 OctetButton(title: "", icon: "paperclip", kind: .ghost, compact: true) { pickImages() }
                     .help("Attach images (or paste or drop them here)")
                     .accessibilityLabel("Attach images")
-                PromptStashButton(text: $text)
+                ComposerStashControls(project: session.cwd, text: $text, attachments: $attachments, dropdowns: dropdowns)
                 MCPProblemChip(session: session)
                 Spacer()
                 let empty = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty
@@ -2086,10 +2184,15 @@ private struct Composer: View {
                 text = "@"
                 refreshReferences()
             }
+            ComposerDebugHooks.run(ConversationDebug.openDropdown, session: session, dropdowns: dropdowns) { text = $0 }
             #endif
             DispatchQueue.main.async { focused = true }
         }
-        .onDisappear { referenceTask?.cancel() }
+        .onDisappear {
+            referenceTask?.cancel()
+            ComposerStash.blur(session.id)
+        }
+        .animation(motion.animation(.palette, .smooth(duration: 0.2)), value: plan?.id)
         .onPasteCommand(of: [.image, .fileURL]) { providers in load(providers) }
         .onDrop(of: [.image, .fileURL], isTargeted: nil) { providers in
             load(providers)
@@ -2122,9 +2225,22 @@ private struct Composer: View {
         .bypassPermissions: "Never asks. Use with care",
     ]
 
-    private func submit() {
+    private func submit(confirmedLength: Bool = false) {
         let message = text
         guard !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty else { return }
+        // A very long prompt asks first, where T3 Code's length check stops one.
+        if !confirmedLength, case .tooLong(_, let why) = ComposerPromptLength.check(message, contextLeft: contextLeft) {
+            ConfirmCenter.shared.ask(
+                title: "Send a very long prompt?",
+                message: why + " Shorten or split it if it doesn't all need to go at once.",
+                confirmTitle: "Send Anyway",
+                destructive: false
+            ) { _ in submit(confirmedLength: true) }
+            return
+        }
+        PromptHistoryStore.shared.record(message, project: session.cwd)
+        historyCursor.reset()
+        refiningPlan = false
         if attachments.isEmpty,
            let (command, arguments) = SlashCommands.invoked(message.trimmingCharacters(in: .whitespacesAndNewlines),
                                                              in: session.slashCommands),
@@ -2171,24 +2287,36 @@ private struct PiWidgets: View {
     }
 }
 
-/// Slash commands matching what's typed, above the message field.
+/// Slash commands matching what's typed, above the message field, with the
+/// letters that matched lit.
 private struct SlashSuggestions: View {
-    let commands: [SlashCommand]
+    let commands: [SlashCommandSearch.Result]
     let highlighted: Int
     let highlight: (Int) -> Void
-    let choose: (SlashCommand) -> Void
+    let choose: (SlashCommandSearch.Result) -> Void
 
     var body: some View {
         OctetPalettePanel(divider: .bottom) {
-            OctetAnimatedList(items: commands, highlighted: highlighted, highlight: highlight, choose: choose) { command, _ in
+            OctetAnimatedList(items: commands, highlighted: highlighted, highlight: highlight, choose: choose) { result, _ in
+                let command = result.command
                 HStack(spacing: 10) {
-                    Text(command.insertion)
+                    MatchHighlightedText(text: command.insertion, indices: result.nameIndices,
+                                         base: result.nameIndices.isEmpty ? Theme.textPrimary : Theme.textTertiary,
+                                         lit: Theme.textPrimary)
                         .font(Theme.monoFont)
-                        .foregroundStyle(Theme.textPrimary)
-                    if !command.summary.isEmpty {
-                        Text(command.summary)
-                            .font(Theme.captionFont)
+                        .fixedSize()
+                    if !command.argumentHint.isEmpty {
+                        Text(command.argumentHint)
+                            .font(Theme.monoFont)
                             .foregroundStyle(Theme.textTertiary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .layoutPriority(-1)
+                    }
+                    if !command.summary.isEmpty {
+                        MatchHighlightedText(text: command.summary, indices: result.summaryIndices,
+                                             base: Theme.textTertiary, lit: Theme.textPrimary)
+                            .font(Theme.captionFont)
                             .lineLimit(1)
                     }
                     Spacer(minLength: 8)
