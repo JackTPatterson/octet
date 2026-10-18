@@ -13,6 +13,9 @@ struct TerminalPlane: View {
     @State private var folder: String?
     @State private var generation = 0
     @State private var exited = false
+    /// The shell is still starting. Bounded, so the skeleton can't outstay
+    /// its welcome if the surface never reports a cell size.
+    @State private var warming = true
 
     private var shown: Bool { ui.sidePanelVisible && ui.activePlane?.id == planeId }
 
@@ -33,7 +36,7 @@ struct TerminalPlane: View {
                 )
                 .id(generation)
             }
-            if PlaneLoadingPreview.shows("terminal") || (!exited && anchor.cellSize == .zero) {
+            if PlaneLoadingPreview.shows("terminal") || (warming && !exited && anchor.cellSize == .zero) {
                 TerminalPlaneSkeleton().allowsHitTesting(false)
             }
             if exited {
@@ -50,6 +53,11 @@ struct TerminalPlane: View {
             }
         }
         .onAppear { if folder == nil { folder = directory ?? NSHomeDirectory() } }
+        .task(id: generation) {
+            warming = true
+            try? await Task.sleep(for: .seconds(1.5))
+            warming = false
+        }
         .onChange(of: shown) { _, shown in
             // Keys belong to the main terminal again, not the one now hidden.
             if !shown { OctetTerminalRuntime.focusTerminal() }
