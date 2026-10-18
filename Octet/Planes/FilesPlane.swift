@@ -190,8 +190,11 @@ private struct FileRow: View {
                     }
                 }
                 .frame(width: 10)
-                OctetIcon(isFolder ? "folder" : "doc", size: 13)
-                    .foregroundStyle(isFolder ? Theme.textSecondary : Theme.textTertiary)
+                if isFolder {
+                    OctetIcon("folder", size: 13).foregroundStyle(Theme.textSecondary)
+                } else {
+                    FileTypeIcon(name: name)
+                }
                 Text(name)
                     .font(Theme.uiFont)
                     .foregroundStyle(Theme.textPrimary)
