@@ -619,7 +619,15 @@ struct RootView: View {
                     case "max": ui.sidePanelVisible = true; ui.sidePanelMaximized = true
                     case "pr", "pullRequest": ui.showPlane(.pullRequest, number: parts.count > 2 ? Int(parts[2]) : nil)
                     case "prs", "pullRequests": ui.showPlane(.pullRequests)
-                    case "overview": ui.showPlane(.overview)
+                    case "overview":
+                        ui.showPlane(.overview)
+                        #if DEBUG
+                        // ":sample" fills it with made-up work, to see it populated.
+                        if parts.count > 2, parts[2] == "sample" {
+                            RuntimePanel.debugSample = true
+                            window.todos.loadSample()
+                        }
+                        #endif
                     case "git":
                         // "planes:git" opens the Git plane; ":sample" fills it
                         // with made-up checkouts, ":sample:open" with every

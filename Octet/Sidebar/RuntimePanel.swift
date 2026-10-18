@@ -69,6 +69,49 @@ struct RuntimePanel: View {
         .onReceive(refresh) { _ in reload() }
     }
 
+    #if DEBUG
+    nonisolated(unsafe) static var debugSample = false
+
+    /// Made-up subagents, background tasks, monitors and shells.
+    private static var sampleEntries: [RuntimeEntry] {
+        func entry(_ id: String, _ kind: RuntimeKind, _ title: String, _ detail: String, location: String = "Fix the upload retry",
+                   command: String? = nil, prompt: String? = nil, output: String? = nil, process: String? = nil,
+                   depth: Int = 0, seed: Int = 0, agent: String? = nil, model: String? = nil,
+                   since: TimeInterval? = nil) -> RuntimeEntry {
+            RuntimeEntry(id: id, kind: kind, title: title, detail: detail, location: location, command: command,
+                         prompt: prompt, output: output, process: process, depth: depth, accentSeed: seed,
+                         agentID: agent, modelName: model, paneId: nil,
+                         liveSince: since.map { Date().addingTimeInterval(-$0) })
+        }
+        return [
+            entry("s1", .agent, "Explore the retry logic", "Working", command: nil,
+                  prompt: "Find every place uploads are retried and report what backoff each one uses.",
+                  output: "Found 3 call sites: Uploader.retry, Queue.drain and the share extension.",
+                  process: "Reading Sources/App/Uploader.swift", seed: 0, agent: "claude", model: "Sonnet 5.5", since: 94),
+            entry("s2", .agent, "Write the backoff tests", "Working", prompt: "Cover the cap at 30 seconds and the jitter.",
+                  output: "RetryTests.swift: 4 cases written, running them now.", process: "Running swift test",
+                  depth: 0, seed: 1, agent: "claude", model: "Opus 5.5", since: 41),
+            entry("s3", .agent, "Check the share extension", "Finished", prompt: "Does the extension use the same retry path?",
+                  output: "It does not: it has its own loop in ShareViewController.", process: "Finished",
+                  depth: 1, seed: 2, agent: "claude", model: "Haiku 5.5"),
+            entry("t1", .task, "swift test --parallel", "Running", command: "swift test --parallel",
+                  output: "Test Suite 'All tests' started\nTest Case 'RetryTests.testCap' passed (0.002 seconds)",
+                  process: "swift-test", since: 63),
+            entry("t2", .task, "xcodebuild archive", "Running", command: "xcodebuild -scheme App archive",
+                  output: "Compiling 214 files…", process: "xcodebuild", since: 212),
+            entry("m1", .monitor, "Watching build/ for changes", "Active", command: "fswatch -o build",
+                  output: "3 events in the last minute", process: "fswatch", since: 1480),
+            entry("m2", .monitor, "Tailing the dev server", "Active", command: "tail -f logs/dev.log",
+                  output: "GET /api/upload 200 41ms\nPOST /api/upload 503 (retry 2 of 5)", process: "tail", since: 905),
+            entry("m3", .monitor, "CI: Build and test on master", "Waiting", command: "gh run watch",
+                  output: "Build and test in progress (2m 11s)", process: "gh", since: 130),
+            entry("h1", .shell, "zsh", "Active", location: "Fix the upload retry", command: "zsh"),
+            entry("h2", .shell, "bash", "Active", location: "Dev server", command: "bash"),
+            entry("h3", .shell, "fish", "Active", location: "Scratch", command: "fish"),
+        ]
+    }
+    #endif
+
     /// One stack, so the modifiers on it run once, not per section.
     private var runtimeContent: some View {
         VStack(alignment: .leading, spacing: 6) { runtimeList(entries) }
@@ -158,6 +201,10 @@ struct RuntimePanel: View {
     }
 
     private var entries: [RuntimeEntry] {
+        #if DEBUG
+        // Verification and demos: "planes:overview:sample" shows made-up work.
+        if Self.debugSample { return Self.sampleEntries }
+        #endif
         let snapshot = store.snapshot
         var result: [RuntimeEntry] = []
 

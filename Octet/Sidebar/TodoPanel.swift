@@ -31,6 +31,41 @@ final class TodoModel: ObservableObject {
     private var rollouts: [String: (modified: Date, plan: [AgentTodo]?)] = [:]
     static let interval: TimeInterval = 2.5
 
+    #if DEBUG
+    /// Verification and demos: made-up plans and a made-up TODO.md.
+    func loadSample() {
+        sampling = true
+        sections = [
+            Section(id: "sample-claude", agent: "claude", title: "Fix the upload retry", todos: [
+                AgentTodo(id: "a1", text: "Find every retry call site", activeText: nil, status: .completed, detail: nil),
+                AgentTodo(id: "a2", text: "Cap the backoff at 30 seconds", activeText: nil, status: .completed, detail: nil),
+                AgentTodo(id: "a3", text: "Add jitter to the delay", activeText: "Adding jitter to the delay", status: .inProgress, detail: nil),
+                AgentTodo(id: "a4", text: "Write tests for both", activeText: nil, status: .pending, detail: nil),
+                AgentTodo(id: "a5", text: "Update the share extension", activeText: nil, status: .pending, detail: nil),
+            ]),
+            Section(id: "sample-codex", agent: "codex", title: "Review the auth flow", todos: [
+                AgentTodo(id: "b1", text: "Read the session code", activeText: nil, status: .completed, detail: nil),
+                AgentTodo(id: "b2", text: "List the places a token is logged", activeText: "Listing the places a token is logged", status: .inProgress, detail: nil),
+                AgentTodo(id: "b3", text: "Propose fixes", activeText: nil, status: .pending, detail: nil),
+            ]),
+        ]
+        projectRoot = NSHomeDirectory()
+        project = ProjectTodoList(path: NSHomeDirectory() + "/TODO.md", items: [
+            .init(line: 0, text: "Ship build 21", status: .inProgress, section: "Release"),
+            .init(line: 1, text: "Renew the notarization password", status: .pending, section: "Release"),
+            .init(line: 2, text: "Write the release notes", status: .pending, section: "Release"),
+            .init(line: 4, text: "Branch picker in the Git panel", status: .pending, section: "Later"),
+            .init(line: 5, text: "Agent cursor in the browser", status: .pending, section: "Later"),
+            .init(line: 7, text: "Project content search", status: .completed, section: "Done"),
+            .init(line: 8, text: "Composer stash", status: .completed, section: "Done"),
+        ])
+        loaded = true
+    }
+    #endif
+
+    /// Set while the sample is up, so reading the real lists doesn't replace it.
+    private var sampling = false
+
     /// All steps across the sections, for the tab bar's count.
     var todos: [AgentTodo] { sections.flatMap(\.todos) }
 
@@ -53,6 +88,9 @@ final class TodoModel: ObservableObject {
     }
 
     func refresh() {
+        #if DEBUG
+        if sampling { return }
+        #endif
         guard let window, !loading else { return }
         let store = window.store
         var sources: [(id: String, agent: String?, title: String, source: Source)] = []
@@ -137,6 +175,9 @@ extension TodoModel {
     /// Re-reads the project's `TODO.md` when the project in front or the
     /// file has changed.
     fileprivate func refreshProject(_ window: WindowContext) {
+        #if DEBUG
+        if sampling { return }
+        #endif
         let directory = window.focusedWorkspace.flatMap { window.store.snapshot.directory(ofWorkspace: $0.workspaceId) }
         let root = directory.map { GitBranch.location(for: $0)?.root ?? $0 }
         if root != projectRoot {
