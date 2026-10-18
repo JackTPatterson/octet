@@ -206,10 +206,8 @@ struct SidePanel: View {
         switch plane.kind {
         case .overview: overview
         case .git:
-            ScrollView {
-                GitPanel(model: window.git, ui: ui).padding(12)
-            }
-            .scrollIndicators(.hidden)
+            // The panel scrolls itself, so its header and commit box stay put.
+            GitPanel(model: window.git, ui: ui)
         case .diff: DiffPlane(store: store, ui: ui)
         case .files: FilesPlane(ui: ui, directory: planeDirectory)
         case .browser: BrowserPlane(ui: ui, directory: planeDirectory)
