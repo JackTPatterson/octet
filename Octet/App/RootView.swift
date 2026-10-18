@@ -723,7 +723,7 @@ struct RootView: View {
             }
             // Verification hook: open a window at launch without a click.
             if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == MarketplaceWindow.id {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { MarketplaceWindow.open() }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 4) { MarketplaceWindow.open() }
             }
             if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "banner" {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) {

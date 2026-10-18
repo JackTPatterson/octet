@@ -28,50 +28,13 @@ extension View {
 
 private struct CardSlotModifier: ViewModifier {
     let slot: CardSlot
-    static let radius: CGFloat = 14
-
     func body(content: Content) -> some View {
-        let radius = Self.radius
-        let shape = UnevenRoundedRectangle(
-            topLeadingRadius: slot.isTop ? radius : 0, bottomLeadingRadius: slot.isBottom ? radius : 0,
-            bottomTrailingRadius: slot.isBottom ? radius : 0, topTrailingRadius: slot.isTop ? radius : 0
-        )
+        // Flat: a hairline above every row, and one below the last.
         content
-            .background(shape.fill(Theme.card.opacity(0.4)))
-            .clipShape(shape)
-            .overlay(alignment: .top) {
-                if !slot.isTop { Rectangle().fill(Theme.border.opacity(0.5)).frame(height: 1) }
+            .overlay(alignment: .top) { Rectangle().fill(Theme.border.opacity(0.5)).frame(height: 1) }
+            .overlay(alignment: .bottom) {
+                if slot.isBottom { Rectangle().fill(Theme.border.opacity(0.5)).frame(height: 1) }
             }
-            .overlay(CardEdge(slot: slot, radius: radius).stroke(Theme.border.opacity(0.6), lineWidth: 1))
-    }
-}
-
-/// The card's outline where it passes a row: both sides, and the rounded
-/// top or bottom when the row is at an end.
-private struct CardEdge: Shape {
-    let slot: CardSlot
-    let radius: CGFloat
-
-    func path(in bounds: CGRect) -> Path {
-        let rect = bounds.insetBy(dx: 0.5, dy: 0.5)
-        let r = radius - 0.5
-        var path = Path()
-        path.move(to: CGPoint(x: rect.minX, y: slot.isTop ? rect.minY + r : bounds.minY))
-        path.addLine(to: CGPoint(x: rect.minX, y: slot.isBottom ? rect.maxY - r : bounds.maxY))
-        if slot.isBottom {
-            path.addArc(tangent1End: CGPoint(x: rect.minX, y: rect.maxY), tangent2End: CGPoint(x: rect.minX + r, y: rect.maxY), radius: r)
-            path.addLine(to: CGPoint(x: rect.maxX - r, y: rect.maxY))
-            path.addArc(tangent1End: CGPoint(x: rect.maxX, y: rect.maxY), tangent2End: CGPoint(x: rect.maxX, y: rect.maxY - r), radius: r)
-        } else {
-            path.move(to: CGPoint(x: rect.maxX, y: bounds.maxY))
-        }
-        path.addLine(to: CGPoint(x: rect.maxX, y: slot.isTop ? rect.minY + r : bounds.minY))
-        if slot.isTop {
-            path.addArc(tangent1End: CGPoint(x: rect.maxX, y: rect.minY), tangent2End: CGPoint(x: rect.maxX - r, y: rect.minY), radius: r)
-            path.addLine(to: CGPoint(x: rect.minX + r, y: rect.minY))
-            path.addArc(tangent1End: CGPoint(x: rect.minX, y: rect.minY), tangent2End: CGPoint(x: rect.minX, y: rect.minY + r), radius: r)
-        }
-        return path
     }
 }
 
@@ -335,8 +298,9 @@ struct MarketplaceBanner<Trailing: View>: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .background(RoundedRectangle(cornerRadius: 14).fill(tint.opacity(0.1)))
-        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(tint.opacity(0.45), lineWidth: 1))
+        .background(tint.opacity(0.08))
+        .overlay(alignment: .top) { Rectangle().fill(tint.opacity(0.4)).frame(height: 1) }
+        .overlay(alignment: .bottom) { Rectangle().fill(tint.opacity(0.4)).frame(height: 1) }
         .accessibilityElement(children: .contain)
     }
 }
@@ -355,8 +319,6 @@ struct MarketplaceEmptyState: View {
             OctetIcon(symbol, size: 28)
                 .foregroundStyle(Theme.textTertiary)
                 .frame(width: 52, height: 52)
-                .background(RoundedRectangle(cornerRadius: 14).fill(Theme.card.opacity(0.6)))
-                .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.border.opacity(0.6), lineWidth: 1))
             Text(title)
                 .font(Theme.interfaceFont(14, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)

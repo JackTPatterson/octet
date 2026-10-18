@@ -85,8 +85,7 @@ struct SettingsView: View {
                 header
                 ScrollViewReader { proxy in
                     ScrollView {
-                        // T3 Code's readable page: 896pt at most, centred,
-                        // 24pt in from the sides, 32pt between sections.
+                        // Full width, 24pt in from the sides, 32pt between sections.
                         VStack(alignment: .leading, spacing: 32) {
                             ConfigProblemsBanner(settings: settings)
                             switch section {
@@ -101,11 +100,10 @@ struct SettingsView: View {
                             case .advanced: AdvancedSettings(store: store, settings: settings)
                             }
                         }
-                        .frame(maxWidth: 896, alignment: .leading)
                         .padding(.horizontal, 24)
                         .padding(.top, 24)
                         .padding(.bottom, 48)
-                        .frame(maxWidth: .infinity)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .octetScrollIndicators()
                     .environment(\.settingsHighlight, highlighted)
@@ -1461,9 +1459,8 @@ private struct ThemeSwatch: View {
 
 // MARK: - Building blocks
 
-/// A titled card of rows, after T3 Code's SettingsSection: the title in
-/// 14pt at 70% outside the card, 10pt above it; the card rounded 14 with a
-/// soft border, a faint fill and hairlines between rows.
+/// A titled list of rows, flat and full width: the title in 14pt at 70%,
+/// 10pt above the rows, with a hairline above, between and below them.
 struct SettingsGroup<Content: View>: View {
     let title: String
     @ViewBuilder let content: Content
@@ -1476,13 +1473,13 @@ struct SettingsGroup<Content: View>: View {
                 .padding(.horizontal, 16)
                 .frame(minHeight: 20, alignment: .leading)
                 .accessibilityAddTraits(.isHeader)
-            VStack(spacing: 0) { content }
-                .background(Theme.card.opacity(0.4))
-                .clipShape(RoundedRectangle(cornerRadius: 14))
-                .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.border.opacity(0.6), lineWidth: 1))
-                .shadow(color: .black.opacity(0.05), radius: 1, y: 1)
-                // A search that lands on the whole group pulses the card.
-                .settingsPulse(title, cornerRadius: 14)
+            VStack(spacing: 0) {
+                SettingsDivider()
+                content
+                SettingsDivider()
+            }
+            // A search that lands on the whole group pulses it.
+            .settingsPulse(title, cornerRadius: 0)
         }
         // Search jumps scroll to a group by its title.
         .id(title)

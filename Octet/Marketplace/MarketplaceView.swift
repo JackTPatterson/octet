@@ -306,10 +306,9 @@ struct MarketplaceView: View {
                 case .prompts: librarySection(.prompt)
                 }
             }
-            .frame(maxWidth: 896, alignment: .leading)
             .padding(.horizontal, 24)
             .padding(.bottom, 48)
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .octetScrollIndicators()
         .id(store.section)
