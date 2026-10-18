@@ -56,6 +56,9 @@ struct OctetIcon: View {
         "xmark.circle.fill": .init("close-circle"),
         "trash": .init("trash"),
         "paperclip": .init("paperclip"),
+        // The Agents button's brain, and the composer's add-images mark.
+        "brain": .symbol("brain.head.profile"),
+        "attach.image": .symbol("photo.badge.plus"),
         "tool.read": .init("document-text"),
         "tool.edit": .init("edit-2"),
         "tool.write": .init("document-normal"),

@@ -2213,7 +2213,7 @@ private struct Composer: View {
                             .foregroundStyle(Theme.textSecondary)
                     }
                 }
-                OctetButton(title: "", icon: "paperclip", kind: .ghost, compact: true) { pickImages() }
+                OctetButton(title: "", icon: "attach.image", kind: .ghost, compact: true) { pickImages() }
                     .help("Attach images (or paste or drop them here)")
                     .accessibilityLabel("Attach images")
                 ComposerStashControls(project: session.cwd, text: $text, attachments: $attachments, dropdowns: dropdowns)
