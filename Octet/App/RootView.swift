@@ -268,8 +268,32 @@ struct RootView: View {
                     .transition(motion.animates(.palette) ? .opacity : .identity)
                     .onAppear { DebugSnapshot.overlay("marketplace", true) }
                     .onDisappear { DebugSnapshot.overlay("marketplace", false) }
+                } else if ui.usageBreakdownVisible {
+                    // Pages about every workspace (Settings, Marketplace, Usage,
+                    // Pull Requests, Agents) cover the sidebar and the tabs;
+                    // a workspace's own (its review, a conversation, the
+                    // editor) sits under them, in the terminal's place.
+                    UsagePage {
+                        MotionPreferences.shared.perform(.palette, .easeOut(duration: 0.15)) { ui.usageBreakdownVisible = false }
+                        OctetTerminalRuntime.focusTerminal()
+                    }
+                    .transition(motion.animates(.palette) ? .opacity : .identity)
+                    .onAppear { DebugSnapshot.overlay("usage", true) }
+                    .onDisappear { DebugSnapshot.overlay("usage", false) }
+                } else if let pullRequests = ui.pullRequests {
+                    PullRequestsPage(model: pullRequests, store: store) { window.togglePullRequests() }
+                        .transition(motion.animates(.palette) ? .opacity : .identity)
+                        .onAppear { DebugSnapshot.overlay("pullRequests", true) }
+                        .onDisappear { DebugSnapshot.overlay("pullRequests", false) }
+                } else if boardHere != nil {
+                    AgentsHub(store: store)
+                        .background(Theme.terminalBackground)
+                        .transition(motion.animates(.palette) ? .opacity : .identity)
+                        .onAppear { DebugSnapshot.overlay("agents", true) }
+                        .onDisappear { DebugSnapshot.overlay("agents", false) }
                 }
             }
+            .animation(motion.animation(.palette, .easeOut(duration: 0.15)), value: boardHere)
         }
         .overlay(alignment: .topTrailing) {
             AgentBannerStack(center: AgentBannerCenter.shared) { event in
@@ -783,30 +807,13 @@ struct RootView: View {
         ZStack {
                     if let agent = window.agentUIHandoff {
                         AgentUIHandoffView(agent: agent)
-                    } else if ui.usageBreakdownVisible {
-                        // Usage is a page over the content area, not a sheet.
-                        UsagePage {
-                            ui.usageBreakdownVisible = false
-                            OctetTerminalRuntime.focusTerminal()
-                        }
-                        .onAppear { DebugSnapshot.overlay("usage", true) }
-                        .onDisappear { DebugSnapshot.overlay("usage", false) }
                     } else if let review = ui.review {
                         DiffReviewView(model: review, store: store) { window.toggleReview() }
                             .id(review.directory)
                             .onAppear { DebugSnapshot.overlay("review", true) }
                             .onDisappear { DebugSnapshot.overlay("review", false) }
-                    } else if let pullRequests = ui.pullRequests {
-                        PullRequestsPage(model: pullRequests, store: store) { window.togglePullRequests() }
-                            .onAppear { DebugSnapshot.overlay("pullRequests", true) }
-                            .onDisappear { DebugSnapshot.overlay("pullRequests", false) }
                     } else if window.editor.isPresented, window.editor.presentation == .full {
                         CodeEditorView(workspace: window.editor, rootDirectory: window.editorRootDirectory)
-                    } else if boardHere != nil {
-                        AgentsHub(store: store)
-                            .transition(motion.animates(.sidebar) ? .move(edge: .leading).combined(with: .opacity) : .identity)
-                            .onAppear { DebugSnapshot.overlay("agents", true) }
-                            .onDisappear { DebugSnapshot.overlay("agents", false) }
                     } else if let conversation = agents.active(in: window.focusedWorkspace?.workspaceId) {
                         ConversationView(session: conversation, client: store.client)
                             .id(conversation.id)
