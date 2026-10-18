@@ -812,12 +812,12 @@ struct AgentsHubButton: View {
         let workspace = window.focusedWorkspace?.workspaceId
         let showing = center.board(in: workspace) != nil
         Button { center.setBoard(showing ? nil : .all, in: workspace) } label: {
+            // Drawn as the icon buttons beside it are: a 14pt line icon in
+            // the same greys, the same hover and pressed fills.
             HStack(spacing: 5) {
-                Image(systemName: Self.brain)
-                    .font(.system(size: 11, weight: .semibold))
-                    .frame(width: 12, height: 12)
+                OctetIcon("brain", size: 14)
                     .accessibilityHidden(true)
-                Text("Agents").font(Theme.uiFontMedium)
+                Text("Agents").font(Theme.uiFont)
                 if waiting > 0 {
                     Text("\(waiting)")
                         .font(.system(size: 10, weight: .bold).monospacedDigit())
@@ -827,19 +827,16 @@ struct AgentsHubButton: View {
                         .background(Capsule().fill(HubStyle.waiting))
                 }
             }
-            .foregroundStyle(showing ? Theme.textPrimary : Theme.textSecondary)
-            .padding(.horizontal, 7)
+            .foregroundStyle(showing || hovered ? Theme.textPrimary : Theme.textSecondary)
+            .padding(.horizontal, 6)
             .frame(height: 24)
-            .background(showing ? Theme.cardSelected : hovered ? Theme.hover : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
+            .background(RoundedRectangle(cornerRadius: Theme.controlRadius)
+                .fill(showing ? Theme.cardSelected : hovered ? Theme.hover : .clear))
+            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(OctetPressStyle())
         .onHover { hovered = $0 }
         .help("Agents (⌘⇧A)" + (waiting > 0 ? ": \(waiting) waiting on you" : ""))
         .accessibilityLabel("Agents" + (waiting > 0 ? ", \(waiting) need input" : ""))
     }
-
-    /// A filled brain; macOS versions without it get the filled head.
-    private static let brain = NSImage(systemSymbolName: "brain.fill", accessibilityDescription: nil) != nil
-        ? "brain.fill" : "brain.filled.head.profile"
 }
