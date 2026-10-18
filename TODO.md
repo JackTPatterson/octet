@@ -170,7 +170,7 @@ Claude Code and Codex. Reaction counts are GitHub 👍 as of 2026-09-25. See
   Stage/Unstage (right-click); a dot marks staged files, and the commit
   button becomes Commit Staged (n), leaving the rest (tested against a
   real repo; the controls checked with a real launch).
-- [ ] **24. Multiple accounts per agent (high).** Claude Code #18435 (991),
+- [x] **24. Multiple accounts per agent (high).** Claude Code #18435 (991),
   #36151 (1023). *Mostly done:* palette Add Claude/Codex Account (its own
   config folder, then a tab to sign in), Use Account for This Project, and
   Settings → Agents → Accounts. Every shell Octet opens in the project (its

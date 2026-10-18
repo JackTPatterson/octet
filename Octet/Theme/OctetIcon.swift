@@ -185,6 +185,13 @@ struct OctetIcon: View {
         "menucard": .symbol("menucard"),
         "pilcrow": .symbol("paragraphsign"),
         "eye.slash": .symbol("eye.slash"),
+        // Search in Project's toggles, and prompt links.
+        "search.case": .symbol("textformat"),
+        "search.word": .symbol("textformat.abc.dottedunderline"),
+        "search.regex": .symbol("asterisk"),
+        "search.filter": .init("setting-4"),
+        "prompt.link": .init("link-2"),
+        "snooze.calendar": .symbol("calendar"),
         // The Device plane. Prefixed so they can't collide with keys other
         // planes add; SF Symbols until iconsax marks are imported.
         "device.iphone": .symbol("iphone"),

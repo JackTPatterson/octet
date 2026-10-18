@@ -343,6 +343,8 @@ struct OctetCommands: Commands {
                 }
             }
                 .keyboardShortcut(OctetShortcut.searchWorkspaces.keyboardShortcut)
+            Button(OctetShortcut.searchInProject.title) { KeyWindow.act { ProjectSearchCenter.shared.toggle(in: $0) } }
+                .keyboardShortcut(OctetShortcut.searchInProject.keyboardShortcut)
             Divider()
             // The terminal's own zoom keys are unbound (Theme.octetShortcutUnbinds),
             // so these change the Font size setting instead of one pane.

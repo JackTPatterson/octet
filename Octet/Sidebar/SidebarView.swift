@@ -917,6 +917,7 @@ enum WorkspaceMenu {
         var items: [OctetMenuItem] = SnoozeChoice.offered().filter { $0 != .untilUsed }.map { choice in
             .action(choice.title) { store.snooze(workspaceId, choice) }
         }
+        items.append(pickSnoozeTime(store: store, workspaceId: workspaceId))
         items.append(.divider)
         items.append(.action(SnoozeChoice.untilUsed.title) { store.snooze(workspaceId, .untilUsed) })
         items.append(.action("Until Something Happens…") { WaitCenter.shared.compose(workspaceId: workspaceId, snooze: true) })

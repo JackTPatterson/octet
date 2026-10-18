@@ -5,12 +5,17 @@ import Foundation
 ///     octet://open?path=/Users/me/api                  a workspace on a folder
 ///     octet://run?agent=claude&path=/Users/me/api&prompt=Fix%20the%20tests
 ///                                                      an agent in a new tab there
+///     octet://new?prompt=Fix%20the%20tests&dir=/Users/me/api&agent=codex
+///                                                      a new conversation there, the
+///                                                      prompt typed in but not sent
 ///     octet://send?text=npm%20test                     typed into the pane in front
 ///     octet://plugin?id=containers                     a registry plugin, installed
 ///     octet://plugin-settings?id=issues                that plugin's settings
 enum OctetURL: Equatable {
     case open(path: String)
     case run(agent: String, path: String?, prompt: String?)
+    /// A prompt link: a new conversation with `prompt` in its composer.
+    case new(prompt: String, dir: String?, agent: String?)
     case send(text: String)
     case installPlugin(id: String)
     case pluginSettings(id: String)
@@ -34,6 +39,11 @@ enum OctetURL: Equatable {
             guard let agent = query["agent"], !agent.isEmpty,
                   agent.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }) else { return nil }
             self = .run(agent: agent, path: path(query["path"]), prompt: query["prompt"].flatMap { $0.isEmpty ? nil : $0 })
+        case "new":
+            guard let raw = query["prompt"], let prompt = PromptLink.prompt(fromLink: raw) else { return nil }
+            let agent = query["agent"].flatMap { $0.isEmpty ? nil : $0.lowercased() }
+            if let agent, !agent.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }) { return nil }
+            self = .new(prompt: prompt, dir: path(query["dir"]), agent: agent)
         case "send":
             guard let text = query["text"], !text.isEmpty else { return nil }
             self = .send(text: text)
@@ -62,6 +72,13 @@ enum OctetURL: Equatable {
             components.queryItems = [URLQueryItem(name: "agent", value: agent)]
                 + (path.map { [URLQueryItem(name: "path", value: $0)] } ?? [])
                 + (prompt.map { [URLQueryItem(name: "prompt", value: $0)] } ?? [])
+        case .new(let prompt, let dir, let agent):
+            components.host = "new"
+            components.queryItems = [URLQueryItem(name: "prompt", value: prompt)]
+                + (dir.map { [URLQueryItem(name: "dir", value: $0)] } ?? [])
+                + (agent.map { [URLQueryItem(name: "agent", value: $0)] } ?? [])
+            // Shared links get pasted where "+" reads as a space.
+            components.percentEncodedQuery = components.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
         case .send(let text):
             components.host = "send"
             components.queryItems = [URLQueryItem(name: "text", value: text)]

@@ -37,6 +37,7 @@ enum PaletteCatalog {
     /// Everything the palette offers, acting on the window it opened in.
     static func items(window: WindowContext) -> [PaletteItem] {
         actions(window: window)
+            + ProjectSearchPalette.items(window: window) + PromptLinks.paletteItems(window: window)
             + discoveredAgents(window: window)
             + workspaces(window: window)
             + tabs(window: window)

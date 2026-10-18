@@ -365,6 +365,16 @@ final class AgentSession: ObservableObject, Identifiable {
         editorRequest = EditorRequest(id: UUID().uuidString, text: passage, quoting: action)
     }
 
+    /// The editor request the composer has already taken, so one set before
+    /// the composer was on screen (a fork, a prompt link) fills it when it
+    /// appears, and only once.
+    var editorRequestTaken: String?
+
+    /// Types `text` into the composer without sending it (a prompt link).
+    func prefillComposer(_ text: String) {
+        editorRequest = EditorRequest(id: UUID().uuidString, text: text)
+    }
+
     // MARK: - Codex
 
     /// The thread the app server opened for this conversation. Codex names

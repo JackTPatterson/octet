@@ -353,6 +353,8 @@ struct RootView: View {
         // Set Up Devices, over the whole window rather than the panel.
         .overlay { if let model = ui.deviceSetup { DeviceSetupSheet(model: model) } }
         .overlay { PastePreviewDialog(center: PastePreviewCenter.shared, store: store) }
+        .overlay { ProjectSearchHost() }
+        .overlay { SnoozePickerHost() }
         .animation(motion.animation(.palette, .smooth(duration: 0.16)), value: ui.paletteVisible)
         .animation(motion.animation(.sidebar), value: ui.sidebarVisible)
         .animation(motion.animation(.sidebar), value: ui.sidePanelVisible)
@@ -549,6 +551,20 @@ struct RootView: View {
                 }
             }
             // "palette" opens the command palette as ⌘P does.
+            // "project-search" opens Search in Project; "project-search:<text>"
+            // with that typed (OCTET_SEARCH_ROOT: in that folder). "snooze-picker" opens Pick a Time… for the
+            // workspace in front.
+            if let open = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], open.hasPrefix("project-search") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    ProjectSearchCenter.shared.open(in: window, query: open.hasPrefix("project-search:") ? String(open.dropFirst(15)) : nil,
+                                                    root: ProcessInfo.processInfo.environment["OCTET_SEARCH_ROOT"])
+                }
+            }
+            if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "snooze-picker" {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    if let workspace = window.focusedWorkspace { SnoozePickerCenter.shared.ask(store: store, workspaceId: workspace.workspaceId) }
+                }
+            }
             if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "palette" {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) { ui.paletteVisible = true }
             }

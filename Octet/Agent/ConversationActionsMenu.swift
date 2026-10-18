@@ -62,6 +62,9 @@ struct ConversationActionsMenu: View {
         .disabled(session.conversation.items.isEmpty)
         Button("Save as Markdown…") { save() }
             .disabled(session.conversation.items.isEmpty)
+        Button("Copy Prompt Link") { PromptLinks.copyLink(for: session) }
+            .disabled(PromptLink.lastPrompt(in: session.conversation.items) == nil)
+            .help("A link that opens a new conversation in this folder with the last prompt typed in, not sent")
         if session.engine == .opencode {
             Button("Copy Share Link") {
                 session.shareOpenCode { result in
