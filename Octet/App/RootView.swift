@@ -1480,12 +1480,14 @@ private struct TitleBar: View {
             .accessibilityLabel(ui.sidebarVisible ? "Hide sidebar" : "Show sidebar")
             // Pane layouts from plugins (Pane Layouts ships with Octet).
             LayoutPickerButton()
+            // What the agents have left, and whether anything has an update.
+            AccountChips(runningAgents: runningAgents) { ui.usageBreakdownVisible = true }
+                .padding(.leading, 4)
+            UpdatesButton()
             Spacer()
             // A connected engine is the normal state and says nothing worth a
             // badge; only the wait for one does.
-            if !store.isConnected { connectingIndicator }
-            AccountChips(runningAgents: runningAgents) { ui.usageBreakdownVisible = true }
-                .padding(.trailing, 10)
+            if !store.isConnected { connectingIndicator.padding(.trailing, 10) }
         }
         // Centered on the window, not between the uneven side groups.
         .overlay {

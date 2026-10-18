@@ -23,6 +23,8 @@ struct OctetApp: App {
         let updateDriver = OctetUpdateDriver()
         self.updateDriver = updateDriver
         updater = SPUUpdater(hostBundle: .main, applicationBundle: .main, userDriver: updateDriver, delegate: nil)
+        let updater = updater
+        Task { @MainActor in AppUpdateStatus.shared.check = { updater.checkForUpdates() } }
         do {
             try updater.start()
         } catch {

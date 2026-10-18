@@ -44,6 +44,7 @@ final class OctetUpdateDriver: NSObject {
             answer(.dismiss)
             close()
         case .skip:
+            AppUpdateStatus.shared.version = nil
             answer(.skip)
             close()
         case .cancel:
@@ -165,6 +166,7 @@ extension OctetUpdateDriver: @preconcurrency SPUUserDriver {
         model.currentVersion = ReleaseNotes.versionLabel(display: currentDisplay, build: currentBuild,
                                                          comparedTo: appcastItem.displayVersionString)
         model.date = appcastItem.date
+        AppUpdateStatus.shared.version = appcastItem.displayVersionString
         model.critical = appcastItem.isCriticalUpdate
         model.downloaded = state.stage != .notDownloaded
         if let description = appcastItem.itemDescription, !description.isEmpty {
@@ -243,6 +245,7 @@ extension OctetUpdateDriver: @preconcurrency SPUUserDriver {
     }
 
     func showUpdateInstalledAndRelaunched(_ relaunched: Bool, acknowledgement: @escaping () -> Void) {
+        AppUpdateStatus.shared.version = nil
         handOff()
         standard.showUpdateInstalledAndRelaunched(relaunched, acknowledgement: acknowledgement)
     }

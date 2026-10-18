@@ -36,6 +36,8 @@ final class AgentUpdatePrompter {
         checking = false
         UserDefaults.standard.set(Date(), forKey: Self.checkedKey)
         let updates = AgentUpdateSelection.pending(found, skipped: Self.skipped)
+        // Kept for the title bar's updates button, whether or not it's asked about.
+        AgentUpdateCenter.shared.setWaiting(updates)
         guard !updates.isEmpty else { return }
         // The same set again is the same news: asked about once.
         let signature = AgentUpdateSelection.signature(updates)
@@ -86,6 +88,9 @@ final class AgentUpdateCenter: ObservableObject {
         case finished
     }
 
+    /// Updates found and not yet installed or skipped; the title bar's
+    /// updates button lists them after "Later".
+    @Published private(set) var waiting: [AgentUpdate] = []
     @Published private(set) var rows: [Row] = []
     @Published private(set) var phase: Phase = .choosing
     @Published private(set) var presented = false
@@ -103,6 +108,11 @@ final class AgentUpdateCenter: ObservableObject {
     var included: [Row] { rows.filter(\.included) }
     /// The rows in the current (or last) run.
     var ran: [Row] { rows.filter { $0.state != .idle } }
+
+    func setWaiting(_ updates: [AgentUpdate]) { waiting = updates }
+
+    /// Asks again about what's waiting.
+    func reopen() { present(waiting) }
 
     func present(_ updates: [AgentUpdate]) {
         guard !updates.isEmpty, phase != .running else { return }
@@ -144,7 +154,10 @@ final class AgentUpdateCenter: ObservableObject {
 
     func skip() {
         guard phase == .choosing else { return }
-        if !preview { AgentUpdatePrompter.skip(rows.map(\.update)) }
+        if !preview {
+            AgentUpdatePrompter.skip(rows.map(\.update))
+            waiting.removeAll { update in rows.contains { $0.id == update.id } }
+        }
         close()
     }
 
@@ -219,7 +232,11 @@ final class AgentUpdateCenter: ObservableObject {
             if case .failed(let error) = row.state { return "\(row.update.displayName): \(error)" }
             return nil
         }
-        if !preview, ran.contains(where: { $0.state == .done }) { AgentDiscoveryStore.shared.scan() }
+        if !preview, ran.contains(where: { $0.state == .done }) {
+            AgentDiscoveryStore.shared.scan()
+            let done = Set(ran.filter { $0.state == .done }.map(\.id))
+            waiting.removeAll { done.contains($0.id) }
+        }
         if failures.isEmpty {
             phase = .choosing
             presented = false
