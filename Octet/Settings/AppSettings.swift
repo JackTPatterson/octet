@@ -120,6 +120,20 @@ struct OctetSettings: Codable, Equatable {
     var agentsSetWaits = true
     /// Offer to turn "once X happens, we can Y" in an agent's reply into a wait.
     var suggestWaits = true
+    /// Long-haul check-ins: nothing comes round while this is on.
+    var checkInsPaused = false
+    /// What a new check-in does by default: `CheckInMode`.
+    var checkInDefaultMode = "both"
+    /// Say so when a session marked working has done nothing for this long.
+    var stallDetection = true
+    var stallHours: Double = 6
+    /// No prompts sent to agents during these hours; they wait for the end.
+    var quietHours = false
+    var quietStartMinute = 22 * 60
+    var quietEndMinute = 7 * 60
+    /// Schedule macOS notifications for upcoming check-ins, so the reminder
+    /// comes even when Octet isn't running.
+    var checkInsNotifyWhenClosed = true
     /// Put Idle workspaces to sleep (terminals closed, brought back as they
     /// were) after this many days unused; zero never does. Only those where
     /// nothing would be lost: no agent working, nothing running, no server.
@@ -379,6 +393,14 @@ struct OctetSettings: Codable, Equatable {
         agentsSuggestSidebarCommands = value("agentsSuggestSidebarCommands", defaults.agentsSuggestSidebarCommands)
         agentsSetWaits = value("agentsSetWaits", defaults.agentsSetWaits)
         suggestWaits = value("suggestWaits", defaults.suggestWaits)
+        checkInsPaused = value("checkInsPaused", defaults.checkInsPaused)
+        checkInDefaultMode = value("checkInDefaultMode", defaults.checkInDefaultMode)
+        stallDetection = value("stallDetection", defaults.stallDetection)
+        stallHours = value("stallHours", defaults.stallHours)
+        quietHours = value("quietHours", defaults.quietHours)
+        quietStartMinute = value("quietStartMinute", defaults.quietStartMinute)
+        quietEndMinute = value("quietEndMinute", defaults.quietEndMinute)
+        checkInsNotifyWhenClosed = value("checkInsNotifyWhenClosed", defaults.checkInsNotifyWhenClosed)
         sleepIdleAfterDays = value("sleepIdleAfterDays", defaults.sleepIdleAfterDays)
         delegationApproval = value("delegationApproval", defaults.delegationApproval)
         peerName = value("peerName", defaults.peerName)
@@ -815,6 +837,9 @@ final class SettingsStore: ObservableObject {
         if values.agentsSetWaits != old.agentsSetWaits {
             WaitCenter.shared.applyServer()
             AgentMCPInstaller.shared.sync(server: WaitMCP.serverName)
+        }
+        if values.checkInsPaused != old.checkInsPaused || values.checkInsNotifyWhenClosed != old.checkInsNotifyWhenClosed {
+            CheckInCenter.shared.syncNotifications()
         }
         if values.agentsReadSidebarTerminal != old.agentsReadSidebarTerminal
             || values.agentsSuggestSidebarCommands != old.agentsSuggestSidebarCommands {

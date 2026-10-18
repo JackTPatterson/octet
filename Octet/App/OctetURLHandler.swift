@@ -41,6 +41,8 @@ enum OctetURLHandler {
             OctetPluginHost.shared.installFromLink(id: id)
         case .pluginSettings(let id):
             PluginSettingsOpener.show(pluginId: id)
+        case .checkin(let id):
+            CheckInCenter.shared.open(link: id)
         }
     }
 

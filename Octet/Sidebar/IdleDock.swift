@@ -506,7 +506,7 @@ private struct IdleHoverCard: View {
                 if !age.isEmpty { meta("clock", age == "now" ? "Used just now" : "Used \(age) ago") }
                 if let wake = store.snoozedUntil[id] {
                     meta("clock", "Back " + IdleShelves.wakeDescription(wake), tint: Theme.info)
-                } else if let wait = WaitCenter.shared.waits.first(where: { $0.origin.workspaceId == id && $0.state == .waiting }) {
+                } else if let wait = WaitCenter.shared.waits.first(where: { $0.origin.workspaceId == id && $0.state == .waiting && !$0.isCheckIn }) {
                     meta("clock", (wait.isSnooze ? "Back when " : "Waiting for ") + wait.title, tint: Theme.info)
                 }
                 if let agent = store.primaryAgent(in: store.snapshot.agents(inWorkspace: id)), latest == nil {

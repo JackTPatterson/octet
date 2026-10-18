@@ -330,6 +330,20 @@ enum PaletteCatalog {
                                           session: AgentCenter.shared.active(in: workspace.workspaceId))
             })
         }
+        if let workspace = window.focusedWorkspace {
+            items.append(action("checkBack", "Check Back Later…", "clock.arrow.circlepath",
+                                keywords: ["check-in", "checkin", "remind", "days", "weeks", "long", "experiment", "paper trading", "backtest", "wake", "resume", "later"]) {
+                CheckInCenter.shared.compose(workspaceId: workspace.workspaceId,
+                                             session: AgentCenter.shared.active(in: workspace.workspaceId))
+            })
+        }
+        for wait in CheckInCenter.shared.checkIns {
+            guard let info = wait.checkIn, !info.isFinished else { continue }
+            items.append(action("checkin.run.\(wait.id)", "Run Check-in: \(wait.title)", "play.circle",
+                                keywords: ["check-in", "checkin", "check back", "wake", "resume"] + [wait.next]) {
+                CheckInCenter.shared.runNow(wait.id)
+            })
+        }
         for wait in WaitCenter.shared.ready {
             items.append(action("wait.continue.\(wait.id)", "Continue: \(wait.title)", "play.circle",
                                 keywords: ["wait", "ready", "continue", "next"] + [wait.next]) {

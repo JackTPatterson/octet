@@ -967,6 +967,7 @@ private struct AgentSettings: View {
                 Toggle("Offer a wait from a reply", isOn: $settings.values.suggestWaits).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
         }
+        CheckInSettingsGroup(settings: settings)
         SettingsGroup(title: "Recovery") {
             SettingsRow(
                 title: "Resume agents after a restart",
