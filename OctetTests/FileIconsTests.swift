@@ -23,3 +23,19 @@ final class FileIconsTests: XCTestCase {
         XCTAssertEqual(FileIcons.symbol(forName: "noextension"), "doc")
     }
 }
+
+final class AgentLocationNameTests: XCTestCase {
+    func testAgentWorktreesReadShort() {
+        XCTAssertEqual(AgentLocation.shortName(".claude/worktrees/agent-ab11ed502677cd26a"), "agent ab11")
+        XCTAssertEqual(AgentLocation.shortName("_worktrees/herd/plane-loading-skeletons"), "herd/plane-loading-skeletons")
+    }
+
+    func testPlainNamesStay() {
+        XCTAssertEqual(AgentLocation.shortName("web"), "web")
+        XCTAssertEqual(AgentLocation.shortName("server/"), "server")
+    }
+
+    func testDeepFoldersKeepTheirLastTwo() {
+        XCTAssertEqual(AgentLocation.shortName("a/b/c/d"), "…/c/d")
+    }
+}
