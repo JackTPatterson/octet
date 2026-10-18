@@ -78,7 +78,7 @@ struct LoadingLineChart: View {
     @ObservedObject private var motion = MotionPreferences.shared
 
     /// Seconds per loop: draw, rest, fade.
-    private static let cycle = 2.8
+    private static let cycle = 1.9
 
     var body: some View {
         let animates = motion.animates(.agentStatus)
@@ -86,10 +86,10 @@ struct LoadingLineChart: View {
             Canvas { canvas, size in
                 let time = context.date.timeIntervalSinceReferenceDate
                 let t = animates ? time.truncatingRemainder(dividingBy: Self.cycle) / Self.cycle : 0.6
-                // Draw over the first 55% with ease-in-out, rest, then fade
-                // over the last 25% with ease-in.
-                let drawn = animates ? Self.easeInOut(min(1, t / 0.55)) : 1
-                let fade = t < 0.75 ? 1 : 1 - Self.easeIn((t - 0.75) / 0.25)
+                // Draw over the first 72% with ease-in-out, a short hold,
+                // then fade over the last 20% with ease-in.
+                let drawn = animates ? Self.easeInOut(min(1, t / 0.72)) : 1
+                let fade = t < 0.8 ? 1 : 1 - Self.easeIn((t - 0.8) / 0.2)
 
                 for row in 0...3 {
                     let y = min(size.height * CGFloat(row) / 3, size.height - 1)
