@@ -22,19 +22,28 @@ struct DetailsCard: View {
             if let directory = model.directory ?? window.focusedDirectory {
                 folderRow(directory)
             }
-            if let repo = model.repo {
+            if PlaneLoadingPreview.shows("details") {
+                ForEach(0..<3, id: \.self) { row in
+                    PlaneSkeletonRow(width: CGFloat(110 + row * 20)).padding(.horizontal, 10)
+                }
+            } else if let repo = model.repo {
                 DetailsRow(icon: repo.linkedWorktree ? "square.stack.3d.up" : "branch",
                            title: repo.branch ?? (repo.detached ? "Detached HEAD" : "No branch"),
                            detail: repo.linkedWorktree ? "worktree" : repo.operation.isEmpty ? nil : repo.operation.label,
                            help: "Show Git") { show(.git) }
                 DetailsRow(icon: "doc.diff", title: "Changes", help: "Show the diff") { show(.diff) } trailing: {
-                    if let changes = repo.changes, !changes.isEmpty {
+                    if model.readingGit && repo.changes == nil {
+                        SkeletonBlock(width: 50, height: 11).accessibilityLabel("Loading changes")
+                    } else if let changes = repo.changes, !changes.isEmpty {
                         DiffStatLabel(added: changes.added, removed: changes.removed)
                     } else {
                         Text("None").font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
                     }
                 }
-                if let pull = repo.pullRequest {
+                if model.readingPullRequest && !model.pullRequestLoaded && repo.pullRequest == nil {
+                    PlaneSkeletonRow(width: 170).padding(.horizontal, 10)
+                        .accessibilityLabel("Loading pull request")
+                } else if let pull = repo.pullRequest {
                     let tone = PullRequestTone(state: pull.state, isDraft: pull.isDraft)
                     DetailsRow(icon: tone.icon, title: "#\(pull.number) \(pull.title)", tint: tone.color,
                                help: "Show the pull request") { show(.pullRequest, number: pull.number) }

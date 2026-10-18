@@ -620,14 +620,17 @@ struct RootView: View {
             // Verification hook: "planes:empty" closes every plane (the
             // launcher), "planes:max" maximizes the panel, "planes:pr" or
             // "planes:pr:12" opens a pull request, "planes:prs" the list.
+            // Append ":loading" to any kind (or details) to hold its skeleton.
             if let open = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], open.hasPrefix("planes:") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                     let parts = open.split(separator: ":").map(String.init)
                     switch parts.dropFirst().first {
                     case "empty": ui.closePlanes { _ in true }; ui.sidePanelVisible = true
                     case "max": ui.sidePanelVisible = true; ui.sidePanelMaximized = true
-                    case "pr": ui.showPlane(.pullRequest, number: parts.count > 2 ? Int(parts[2]) : nil)
-                    case "prs": ui.showPlane(.pullRequests)
+                    case "pr", "pullRequest": ui.showPlane(.pullRequest, number: parts.count > 2 ? Int(parts[2]) : nil)
+                    case "prs", "pullRequests": ui.showPlane(.pullRequests)
+                    case "overview": ui.showPlane(.overview)
+                    case "git": ui.showPlane(.git)
                     case "diff": ui.showPlane(.diff)
                     case "files": ui.showPlane(.files)
                     case "browser": ui.showPlane(.browser)
@@ -635,7 +638,7 @@ struct RootView: View {
                     case "details": ui.detailsVisible = true
                     case "device":
                         // "planes:device:<id>" opens straight onto that device.
-                        if parts.count > 2 {
+                        if parts.count > 2, parts[2] != "loading" {
                             let plane = Plane.make(.device, deviceId: parts[2...].joined(separator: ":"))
                             ui.planes.append(plane)
                             ui.activePlaneId = plane.id

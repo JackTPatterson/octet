@@ -33,6 +33,9 @@ struct TerminalPlane: View {
                 )
                 .id(generation)
             }
+            if PlaneLoadingPreview.shows("terminal") || (!exited && anchor.cellSize == .zero) {
+                TerminalPlaneSkeleton().allowsHitTesting(false)
+            }
             if exited {
                 VStack(spacing: 8) {
                     Text("The shell exited").font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary)

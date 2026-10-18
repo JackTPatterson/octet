@@ -53,6 +53,8 @@ final class GitPanelModel: ObservableObject {
     /// Whether anything in front is in a repository, for the tab bar button.
     @Published private(set) var hasRepository = false
     @Published private(set) var loading = false
+    @Published private(set) var loaded = false
+    private var loadedScope: [String] = []
     /// What's running in each checkout from the panel itself (Pushing…),
     /// by its top level.
     @Published private(set) var busy: [String: String] = [:]
@@ -147,6 +149,8 @@ final class GitPanelModel: ObservableObject {
         }
         guard !reading else { return }
         reading = true
+        let scope = scoped.map(\.directory).sorted()
+        if scope != loadedScope { loaded = false; loadedScope = scope }
         if groups.isEmpty { loading = true }
         generation += 1
         let generation = self.generation
@@ -192,6 +196,7 @@ final class GitPanelModel: ObservableObject {
                     self.loading = false
                     self.tops = tops
                     guard generation == self.generation else { return }
+                    self.loaded = true
                     if groups != self.groups { self.groups = groups }
                     if worktrees != self.worktrees { self.worktrees = worktrees }
                     if byWorktree != self.worktreeWorkers { self.worktreeWorkers = byWorktree }

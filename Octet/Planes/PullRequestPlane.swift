@@ -30,7 +30,7 @@ struct PullRequestPlane: View {
 
     var body: some View {
         Group {
-            switch model.phase {
+            switch PlaneLoadingPreview.shows("pullRequest") ? .loading : model.phase {
             case .loading:
                 PullRequestSkeleton()
             case .failed(let failure):

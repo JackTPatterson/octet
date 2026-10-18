@@ -84,29 +84,33 @@ private struct DevicePicker: View {
                     Text("Devices")
                         .font(Theme.interfaceFont(13, weight: .semibold))
                         .foregroundStyle(Theme.textPrimary)
-                    if model.listing { LoadingLine(width: 18) }
+                    if model.listing || PlaneLoadingPreview.shows("device") { LoadingLine(width: 18) }
                     Spacer()
                     OctetButton(title: "Refresh Devices", icon: "arrow.clockwise", compact: true) {
                         Task { await model.refresh() }
                     }
                     .disabled(model.listing)
                 }
-                if model.listedOnce && model.devices.isEmpty {
-                    VStack(alignment: .leading, spacing: 10) {
-                        note("No simulators or emulators were found on this Mac.")
-                        OctetButton(title: "Set Up Devices…", compact: true) { model.setupShowing = true }
+                if PlaneLoadingPreview.shows("device") || (model.listing && !model.listedOnce && model.devices.isEmpty) {
+                    DeviceListSkeleton()
+                } else {
+                    if model.listedOnce && model.devices.isEmpty {
+                        VStack(alignment: .leading, spacing: 10) {
+                            note("No simulators or emulators were found on this Mac.")
+                            OctetButton(title: "Set Up Devices…", compact: true) { model.setupShowing = true }
+                        }
                     }
-                }
-                if !model.iosDevices.isEmpty {
-                    group("iOS Simulators", model.iosDevices)
-                } else if model.listedOnce && model.xcodeMissing {
-                    note("iOS Simulators need Xcode.")
-                }
-                if !model.androidDevices.isEmpty {
-                    group("Android Emulators", model.androidDevices)
-                }
-                if model.listedOnce && model.androidMissing {
-                    note("Android SDK was not found. Install it with Android Studio or set ANDROID_HOME to your SDK directory.")
+                    if !model.iosDevices.isEmpty {
+                        group("iOS Simulators", model.iosDevices)
+                    } else if model.listedOnce && model.xcodeMissing {
+                        note("iOS Simulators need Xcode.")
+                    }
+                    if !model.androidDevices.isEmpty {
+                        group("Android Emulators", model.androidDevices)
+                    }
+                    if model.listedOnce && model.androidMissing {
+                        note("Android SDK was not found. Install it with Android Studio or set ANDROID_HOME to your SDK directory.")
+                    }
                 }
             }
             .padding(14)

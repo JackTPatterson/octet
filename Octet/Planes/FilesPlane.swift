@@ -49,7 +49,7 @@ struct FilesPlane: View {
                         .monospacedDigit()
                 }
                 Spacer(minLength: 4)
-                if model.loading { LoadingLine(width: 12) }
+                if model.loading || PlaneLoadingPreview.shows("files") { LoadingLine(width: 12) }
                 OctetIconButton(icon: "chevron.up.square", help: "Collapse all folders") {
                     MotionPreferences.shared.perform(.sidebar) { open = [] }
                 }
@@ -86,16 +86,14 @@ struct FilesPlane: View {
 
     @ViewBuilder
     private var content: some View {
-        if root == nil {
+        if PlaneLoadingPreview.shows("files") {
+            FilesPlaneSkeleton()
+        } else if root == nil {
             PlaneMessage(icon: "folder", title: "No project in front",
                          detail: "Open a tab in a project folder to browse its files.")
         } else if model.files.isEmpty {
-            if model.loading {
-                VStack(spacing: 8) {
-                    LoadingLine()
-                    Text("Reading files…").font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if model.loading && !model.loaded {
+                FilesPlaneSkeleton().overlay(alignment: .bottom) { LoadingLine().padding(8) }
             } else {
                 PlaneMessage(icon: "folder", title: "No files", detail: "This folder is empty.")
             }
@@ -222,10 +220,16 @@ final class FilesPlaneModel: ObservableObject {
     @Published private(set) var files: [EditorFileItem] = []
     @Published private(set) var tree: [FileTreeNode] = []
     @Published private(set) var loading = false
+    @Published private(set) var loaded = false
     private var loadedRoot: String?
 
     func load(_ root: String, force: Bool = false) {
         guard force || loadedRoot != root else { return }
+        if loadedRoot != root {
+            loaded = false
+            files = []
+            tree = []
+        }
         loadedRoot = root
         loading = true
         Task {
@@ -237,6 +241,7 @@ final class FilesPlaneModel: ObservableObject {
             self.files = files
             self.tree = tree
             self.loading = false
+            self.loaded = true
         }
     }
 }

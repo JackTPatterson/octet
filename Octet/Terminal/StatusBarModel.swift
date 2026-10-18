@@ -54,8 +54,9 @@ final class StatusBarModel: ObservableObject {
     private lazy var settingsObserver: NSObjectProtocol = NotificationCenter.default.addObserver(
         forName: PluginSettingsStore.didChange, object: nil, queue: .main
     ) { [weak self] _ in MainActor.assumeIsolated { self?.refreshPluginsNow() } }
-    private var readingGit = false
-    private var readingPullRequest = false
+    @Published private(set) var readingGit = false
+    @Published private(set) var readingPullRequest = false
+    @Published private(set) var pullRequestLoaded = false
     private var pullRequestReadAt = Date.distantPast
     private var pullRequestBranch: String?
     private var readingCI = false
@@ -293,6 +294,7 @@ final class StatusBarModel: ObservableObject {
             repo = Repo(root: location.root, gitDir: location.gitDir, linkedWorktree: location.isLinkedWorktree)
         }
         pullRequestBranch = nil
+        pullRequestLoaded = restored?.repo != nil
         ciBranch = nil
         refreshGit()
         loadVersion()
@@ -478,6 +480,7 @@ final class StatusBarModel: ObservableObject {
                 self.readingPullRequest = false
                 self.pullRequestBranch = branch
                 guard var current = self.repo, current.root == root else { return }
+                self.pullRequestLoaded = true
                 // A failed call (offline, signed out) keeps the last answer;
                 // a successful empty one means the branch has no PR.
                 let next = result.status == 0 ? value : (result.output.contains("no pull requests") ? nil : current.pullRequest)

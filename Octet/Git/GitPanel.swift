@@ -15,7 +15,10 @@ struct GitPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             heading
-            if model.groups.isEmpty {
+            if PlaneLoadingPreview.shows("git") {
+                LoadingLine(width: 18)
+                GitPanelSkeleton()
+            } else if model.groups.isEmpty {
                 empty
             } else {
                 ForEach(model.groups) { group in
@@ -56,7 +59,9 @@ struct GitPanel: View {
     private var empty: some View {
         if model.loading {
             LoadingLine(width: 18)
-        } else {
+            if !model.loaded { GitPanelSkeleton() }
+        }
+        if !model.loading || model.loaded {
             Text("Not in a repository. When the agent in this tab, or a subagent it started, works in a git repository, its changes, commits and worktrees show here.")
                 .font(Theme.captionFont)
                 .foregroundStyle(Theme.textTertiary)

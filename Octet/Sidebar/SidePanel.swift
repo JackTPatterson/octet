@@ -266,6 +266,7 @@ struct SidePanel: View {
         #if DEBUG
         // Verification hook: a project to show without a pane in it.
         if let forced = ProcessInfo.processInfo.environment["OCTET_PLANE_DIRECTORY"] { return forced }
+        if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"]?.hasSuffix(":loading") == true { return NSHomeDirectory() }
         #endif
         return window.focusedDirectory
     }
