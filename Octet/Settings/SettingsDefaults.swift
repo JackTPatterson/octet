@@ -77,6 +77,9 @@ enum SettingsDefaults {
         .init("Warn before pasting risky text", \.pasteProtection),
         .init("Programs reading the clipboard", \.clipboardRead),
         .init("Inline images", \.kittyGraphics),
+        .init("Open local links in the Browser plane", \.previewTerminalLinks),
+        .init("Open them with a plain click", \.previewLinksOnPlainClick),
+        .init("Offer to preview new servers", \.offerServerPreviews),
         .init("Let agents read the sidebar terminal", \.agentsReadSidebarTerminal),
         .init("Let agents suggest commands", \.agentsSuggestSidebarCommands),
         // Status bar
