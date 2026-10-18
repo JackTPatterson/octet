@@ -372,17 +372,8 @@ struct RootView: View {
                 .environmentObject(window)
         }
         // Above the palette, so a confirm raised while it's open isn't buried.
-        .overlay { AgentUpdateDialog(center: AgentUpdateCenter.shared) }
-        .overlay { ConfirmDialog(center: confirmations) }
-        // Set Up Devices, over the whole window rather than the panel.
-        .overlay { if let model = ui.deviceSetup { DeviceSetupSheet(model: model) } }
-        .overlay { PastePreviewDialog(center: PastePreviewCenter.shared, store: store) }
-        .overlay { ProjectSearchHost() }
-        .overlay { SnoozePickerHost() }
-        .animation(motion.animation(.palette, .smooth(duration: 0.16)), value: ui.paletteVisible)
-        .animation(motion.animation(.sidebar), value: ui.sidebarVisible)
-        .animation(motion.animation(.sidebar), value: ui.sidePanelVisible)
-        .animation(motion.animation(.sidebar), value: ui.sidePanelMaximized)
+        .modifier(RootDialogHosts(ui: ui, store: store, confirmations: confirmations))
+        .modifier(RootAnimations(ui: ui, boardShowing: boardHere != nil))
         .onAppear {
             window.todos.attach(window)
             window.projectAgent.attach(window)
@@ -390,7 +381,6 @@ struct RootView: View {
             window.pluginPanels.attach(window)
             window.terminalQuestions.attach(window)
         }
-        .animation(motion.animation(.sidebar), value: boardHere)
     }
 
     /// Once the window is up: the marketplace opener, clipboard watching, and
@@ -898,8 +888,6 @@ struct RootView: View {
         }
     }
 
-    /// Octet's own command line and its completions, drawn over the shell's prompt.
-    @ViewBuilder
     /// The maximized panel lies over the terminal; what's drawn on the
     /// terminal from the root would show through it.
     /// So do the pages over the terminal (Usage, Pull Requests, review,
@@ -913,6 +901,8 @@ struct RootView: View {
             || (window.editor.isPresented && window.editor.presentation == .full)
     }
 
+    /// Octet's own command line and its completions, drawn over the shell's prompt.
+    @ViewBuilder
     private var promptOverlay: some View {
         ZStack(alignment: .topLeading) {
             // Octet's own command line, drawn over the shell's prompt.
@@ -1597,6 +1587,41 @@ private struct RecoveryOverlay: View {
 /// and anything else that changes whether a tab is fresh, and a tab drag
 /// starting. Kept apart so the window's own view stays small enough to
 /// type-check.
+/// The dialogs and pickers drawn over the whole window, above the palette.
+/// A modifier of its own so the window's body stays quick to type-check.
+private struct RootDialogHosts: ViewModifier {
+    @ObservedObject var ui: UIState
+    let store: SessionStore
+    let confirmations: ConfirmCenter
+
+    func body(content: Content) -> some View {
+        content
+            .overlay { AgentUpdateDialog(center: AgentUpdateCenter.shared) }
+            .overlay { ConfirmDialog(center: confirmations) }
+            // Set Up Devices, over the whole window rather than the panel.
+            .overlay { if let model = ui.deviceSetup { DeviceSetupSheet(model: model) } }
+            .overlay { PastePreviewDialog(center: PastePreviewCenter.shared, store: store) }
+            .overlay { ProjectSearchHost() }
+            .overlay { SnoozePickerHost() }
+    }
+}
+
+/// What animates when the window's chrome changes.
+private struct RootAnimations: ViewModifier {
+    @ObservedObject var ui: UIState
+    let boardShowing: Bool
+    @ObservedObject private var motion = MotionPreferences.shared
+
+    func body(content: Content) -> some View {
+        content
+            .animation(motion.animation(.palette, .smooth(duration: 0.16)), value: ui.paletteVisible)
+            .animation(motion.animation(.sidebar), value: ui.sidebarVisible)
+            .animation(motion.animation(.sidebar), value: ui.sidePanelVisible)
+            .animation(motion.animation(.sidebar), value: ui.sidePanelMaximized)
+            .animation(motion.animation(.sidebar), value: boardShowing)
+    }
+}
+
 private struct TerminalWatchers: ViewModifier {
     @ObservedObject var anchor: TerminalAnchor
     @ObservedObject var tabDrag: TabDrag
