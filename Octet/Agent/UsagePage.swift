@@ -40,6 +40,8 @@ struct UsagePage: View {
             Rectangle().fill(Theme.divider).frame(height: 1)
             if mode == .limits {
                 UsageLimitsView(accounts: accounts.accounts, provider: provider)
+            } else if (history.records.isEmpty && history.scanning) || Self.debugLoading {
+                loadingReport
             } else if history.records.isEmpty {
                 placeholder
             } else {
@@ -90,6 +92,15 @@ struct UsagePage: View {
         }
     }
     #endif
+
+    /// Verification: "usage:…:loading" keeps the loading layout up.
+    private static var debugLoading: Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"]?.hasSuffix(":loading") == true
+        #else
+        false
+        #endif
+    }
 
     // MARK: Header
 
@@ -147,23 +158,96 @@ struct UsagePage: View {
         return present.sorted { UsagePalette.order($0) < UsagePalette.order($1) }
     }
 
-    private var placeholder: some View {
-        VStack(spacing: 10) {
-            if history.scanning {
-                LoadingLine(width: 48, thickness: 3)
-                Text("Reading usage")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Theme.textPrimary)
-                Text("Going through Claude Code, Codex and OpenCode logs…")
-            } else {
-                OctetIcon("clock", size: 22)
-                Text("No usage recorded in the last 90 days.")
+    /// The report's own layout in skeletons while the logs are read, with
+    /// a chart drawing itself where the real one will be.
+    private var loadingReport: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 34) {
+                HStack(alignment: .top, spacing: 40) {
+                    VStack(alignment: .leading, spacing: 22) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            SkeletonBlock(width: 210, height: 40, radius: 6)
+                            SkeletonBlock(width: 150, height: 11)
+                        }
+                        VStack(alignment: .leading, spacing: 18) {
+                            ForEach(0..<3, id: \.self) { index in
+                                HStack(alignment: .top, spacing: 10) {
+                                    Circle().fill(Theme.cardSelected).frame(width: 14, height: 14)
+                                    VStack(alignment: .leading, spacing: 7) {
+                                        SkeletonBlock(width: [150, 120, 135][index], height: 11)
+                                        SkeletonBlock(width: [180, 150, 165][index], height: 9)
+                                    }
+                                    Spacer(minLength: 0)
+                                    SkeletonBlock(width: [72, 56, 44][index], height: 11)
+                                }
+                            }
+                        }
+                    }
+                    .frame(width: 330, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 12) {
+                        sectionTitle((period.hourly ? "Hourly " : "Daily ") + (mode.measure == .cost ? "cost" : "tokens"))
+                        LoadingLineChart()
+                            .frame(height: 250)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                VStack(alignment: .leading, spacing: 14) {
+                    sectionTitle("Totals")
+                    HStack(spacing: 24) {
+                        ForEach(0..<5, id: \.self) { _ in
+                            VStack(alignment: .leading, spacing: 8) {
+                                SkeletonBlock(width: 90, height: 10)
+                                SkeletonBlock(width: 70, height: 22, radius: 5)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                }
+                VStack(alignment: .leading, spacing: 14) {
+                    sectionTitle(mode.measure == .cost ? "Cost by type" : "Tokens by type")
+                    SkeletonBlock(height: 12, radius: 6)
+                    HStack(spacing: 18) {
+                        ForEach(0..<4, id: \.self) { _ in SkeletonBlock(width: 120, height: 10) }
+                    }
+                }
+                VStack(alignment: .leading, spacing: 0) {
+                    sectionTitle("Breakdown").padding(.bottom, 14)
+                    ForEach(0..<5, id: \.self) { index in
+                        HStack(spacing: 16) {
+                            SkeletonBlock(width: 14, height: 10)
+                            VStack(alignment: .leading, spacing: 6) {
+                                SkeletonBlock(width: [170, 140, 200, 120, 155][index], height: 11)
+                                SkeletonBlock(width: [260, 200, 150, 90, 60][index], height: 2)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            SkeletonBlock(width: 70, height: 10)
+                            SkeletonBlock(width: 40, height: 10)
+                            SkeletonBlock(width: 44, height: 10)
+                        }
+                        .padding(.vertical, 12)
+                        .overlay(alignment: .bottom) { Rectangle().fill(Theme.divider).frame(height: 1) }
+                    }
+                }
             }
+            .skeletonPulse()
+            .padding(.horizontal, 28)
+            .padding(.vertical, 26)
+        }
+        .scrollIndicators(.automatic)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Reading usage from Claude Code, Codex and OpenCode logs")
+    }
+
+    private var placeholder: some View {
+        VStack(spacing: 8) {
+            OctetIcon("clock", size: 22)
+            Text("No usage recorded in the last 90 days.")
         }
         .font(Theme.uiFont)
         .foregroundStyle(Theme.textTertiary)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+
 
     // MARK: Report
 

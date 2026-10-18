@@ -885,7 +885,16 @@ struct RootView: View {
     @ViewBuilder
     /// The maximized panel lies over the terminal; what's drawn on the
     /// terminal from the root would show through it.
-    private var panelCoversTerminal: Bool { (ui.sidePanelVisible && ui.sidePanelMaximized) || ui.settingsVisible || ui.marketplaceVisible }
+    /// So do the pages over the terminal (Usage, Pull Requests, review,
+    /// agents, a conversation, the full editor): the shell's prompt line
+    /// mustn't show through them as a stray bar.
+    private var panelCoversTerminal: Bool {
+        (ui.sidePanelVisible && ui.sidePanelMaximized) || ui.settingsVisible || ui.marketplaceVisible
+            || ui.usageBreakdownVisible || ui.pullRequests != nil || ui.review != nil
+            || window.agentUIHandoff != nil || boardHere != nil
+            || agents.active(in: window.focusedWorkspace?.workspaceId) != nil
+            || (window.editor.isPresented && window.editor.presentation == .full)
+    }
 
     private var promptOverlay: some View {
         ZStack(alignment: .topLeading) {
