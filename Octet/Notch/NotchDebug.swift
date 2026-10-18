@@ -1,6 +1,31 @@
 import AppKit
+import os
 
 #if DEBUG
+@MainActor
+enum NotchMetrics {
+    static let log = OSLog(subsystem: "com.jpxsoftware.octet.notch", category: .pointsOfInterest)
+    static let began = CFAbsoluteTimeGetCurrent()
+    static var recomputes = 0
+    static var publications = 0
+    static var expandMS: [Double] = []
+    static var refreshMS = 0.0
+
+    static func expanded(in milliseconds: Double) {
+        if expandMS.count == 64 { expandMS.removeFirst() }
+        expandMS.append(milliseconds)
+    }
+    static func dump(monitors: Int, timers: Int, subscriptions: Int, sample: Bool) {
+        guard let dir = ProcessInfo.processInfo.environment["OCTET_SNAPSHOT_DIR"] else { return }
+        let elapsed = max(0.001, CFAbsoluteTimeGetCurrent() - began)
+        let text = "sample=\(sample) observationSeconds=\(elapsed) recomputes=\(recomputes) "
+            + "recomputesPerMinute=\(Double(recomputes) * 60 / elapsed) publications=\(publications) "
+            + "refreshMainMS=\(refreshMS) expandHandlerMainMS=\(expandMS) monitors=\(monitors) "
+            + "pendingOneShots=\(timers) modelSubscriptions=\(subscriptions)\n"
+        try? text.write(toFile: dir + "/notch-performance.txt", atomically: true, encoding: .utf8)
+    }
+}
+
 /// Made-up agents, work and allowances for the verification hooks. Nothing
 /// here is read from, or acted on in, a real session.
 enum NotchSample {

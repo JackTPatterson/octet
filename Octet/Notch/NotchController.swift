@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import SwiftUI
+import os
 
 /// The notch's panel: borderless and non-activating, so a click never takes
 /// focus from the app you were in. It only becomes key while a text field in
@@ -29,6 +30,30 @@ final class NotchInstance {
     var timer: DispatchWorkItem?
     var pointerInside = false
     var hosting: NotchHostingView?
+    var geometrySubscription: AnyCancellable?
+    var hoverRect = CGRect.zero
+    var hitPath: CGPath?
+    var cachedIsland = CGRect.zero
+    private var cachedEar: CGFloat = -1
+    private var cachedBottom: CGFloat = -1
+    var peekQueue = NotchPeekQueue()
+
+    func updateGeometry() {
+        hoverRect = interactiveRect
+        let rect = islandRect
+        guard rect != cachedIsland || cachedEar != state.ear || cachedBottom != state.bottomRadius else { return }
+        cachedIsland = rect
+        cachedEar = state.ear
+        cachedBottom = state.bottomRadius
+        // SwiftUI paths are y-down; AppKit screen coordinates are y-up.
+        var transform = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: rect.minX, ty: rect.maxY)
+        hitPath = NotchGeometry.shape(in: CGRect(origin: .zero, size: rect.size), ear: state.ear, bottom: state.bottomRadius)
+            .copy(using: &transform)
+    }
+
+    func takesClick(at point: CGPoint) -> Bool {
+        NotchGeometry.contains(cachedIsland, point) && (hitPath?.contains(point) == true || point.y == cachedIsland.maxY)
+    }
 
     init(screen: NotchScreen, panel: NotchPanel, state: NotchViewState, machine: NotchMachine) {
         screenID = screen.id
@@ -69,10 +94,12 @@ final class NotchController: NSObject {
     private var observers: [NSObjectProtocol] = []
     private var workspaceObservers: [NSObjectProtocol] = []
     private var monitors: [Any] = []
+    private var clickMonitor: Any?
     private var cancellables: Set<AnyCancellable> = []
     private var running = false
     private var lastPointerScreen: Int?
-    private var lastPeekEvent: AgentEvent?
+    private var cachedScreens: [NotchScreen] = []
+    private var sleeping = false
     /// Verification hook: forces the notch on with sample data, in memory only.
     private var debugSettings: NotchSettings?
     private var isDebug: Bool { debugSettings != nil }
@@ -98,11 +125,20 @@ final class NotchController: NSObject {
     private func start() {
         guard !running else { return }
         running = true
-        if !isDebug { model.start() }
         let center = NotificationCenter.default
         observers.append(center.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.reconcile() }
         })
+        for name in [NSWorkspace.didWakeNotification, NSWorkspace.screensDidWakeNotification] {
+            workspaceObservers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.sleeping = false; self?.reconcile() }
+            })
+        }
+        for name in [NSWorkspace.willSleepNotification, NSWorkspace.screensDidSleepNotification] {
+            workspaceObservers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.sleeping = true; self?.updateVisibility() }
+            })
+        }
         // Octet coming forward or stepping back changes whether a peek is
         // welcome, and a click in Octet is a click away from the island.
         let workspace = NSWorkspace.shared.notificationCenter
@@ -112,24 +148,50 @@ final class NotchController: NSObject {
         workspaceObservers.append(workspace.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.updateVisibility() }
         })
+        model.$snapshot
+            .map { $0.activity }
+            .removeDuplicates()
+            .sink { [weak self] activity in self?.activityChanged(activity) }
+            .store(in: &cancellables)
+    }
+
+    /// Install only while at least one island is visible. System observers stay
+    /// attached so a Space change or wake can bring the island back.
+    private func updateMonitoring() {
+        let visible = instances.values.contains { $0.panel.isVisible }
+        guard visible else {
+            monitors.forEach(NSEvent.removeMonitor)
+            monitors.removeAll()
+            if let clickMonitor { NSEvent.removeMonitor(clickMonitor); self.clickMonitor = nil }
+            if !model.isSample { model.stop() }
+            return
+        }
+        if !model.isSample { model.start() }
+        updateClickMonitoring()
+        guard monitors.isEmpty, !isDebug else { return }
         // Mouse moves anywhere on the Mac; the handler is a few comparisons.
         let moves = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged], handler: { [weak self] _ in
             MainActor.assumeIsolated { self?.pointerMoved() }
         })
-        let clicks = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown], handler: { [weak self] _ in
-            MainActor.assumeIsolated { self?.clickedElsewhere() }
-        })
         // Events that reach the panel itself (the global monitor doesn't see those).
-        let local = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .keyDown], handler: { [weak self] event in
+        let local = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown], handler: { [weak self] event in
             guard let self else { return event }
             return MainActor.assumeIsolated { self.localEvent(event) }
         })
-        monitors = [moves, clicks, local].compactMap { $0 }
-        model.$snapshot
-            .map { $0.activity }
-            .removeDuplicates()
-            .sink { [weak self] _ in self?.activityChanged() }
-            .store(in: &cancellables)
+        monitors = [moves, local].compactMap { $0 }
+        updateClickMonitoring()
+    }
+
+    private func updateClickMonitoring() {
+        let needed = running && !isDebug && instances.values.contains { $0.panel.isVisible && $0.state.phase != .collapsed }
+        if needed, clickMonitor == nil {
+            clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] _ in
+                MainActor.assumeIsolated { self?.clickedElsewhere() }
+            }
+        } else if !needed, let clickMonitor {
+            NSEvent.removeMonitor(clickMonitor)
+            self.clickMonitor = nil
+        }
     }
 
     private func stop() {
@@ -141,6 +203,7 @@ final class NotchController: NSObject {
         workspaceObservers = []
         monitors.forEach(NSEvent.removeMonitor)
         monitors = []
+        if let clickMonitor { NSEvent.removeMonitor(clickMonitor); self.clickMonitor = nil }
         cancellables.removeAll()
         for instance in instances.values { tearDown(instance) }
         instances = [:]
@@ -160,6 +223,7 @@ final class NotchController: NSObject {
     private func reconcile() {
         guard running else { return }
         let screens = NSScreen.screens.compactMap(Self.screenInfo)
+        cachedScreens = screens
         let targets = NotchScreenChooser.targets(
             displays: debugSettings != nil ? .main : settings.displays, screens: screens,
             primaryID: NSScreen.screens.first.flatMap(Self.screenInfo)?.id,
@@ -170,11 +234,15 @@ final class NotchController: NSObject {
         }
         for screen in screens where targets.contains(screen.id) {
             let instance = instances[screen.id] ?? makeInstance(screen)
-            instance.state.screen = screen
-            instance.state.settings = settings
+            if instance.state.screen != screen { instance.state.screen = screen }
+            if instance.state.settings != settings { instance.state.settings = settings }
             instance.machine.expandOnHover = settings.expand == .hover
-            instance.panel.setFrame(NotchGeometry.panelRect(screen, size: settings.size), display: false)
-            instance.state.glyphs = NotchGlyphs.make(model.snapshot.activity)
+            instance.machine.openingDelay = Double(settings.hoverDelayMS) / 1000
+            let frame = NotchGeometry.panelRect(screen, size: settings.size)
+            if instance.panel.frame != frame { instance.panel.setFrame(frame, display: false) }
+            let glyphs = NotchGlyphs.make(model.snapshot.activity)
+            if instance.state.glyphs != glyphs { instance.state.glyphs = glyphs }
+            instance.updateGeometry()
         }
         updateVisibility()
         pointerMoved()
@@ -206,15 +274,27 @@ final class NotchController: NSObject {
         hosting.setAccessibilityLabel("Octet Notch")
         panel.contentView = hosting
         instance.hosting = hosting
+        if let tab = UserDefaults.standard.string(forKey: "octet.notch.lastTab").flatMap(NotchTab.init(rawValue:)) { state.tab = tab }
+        instance.geometrySubscription = state.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { [weak instance] in
+                guard let instance else { return }
+                instance.updateGeometry()
+                instance.panel.ignoresMouseEvents = !instance.panel.isVisible || !instance.takesClick(at: NSEvent.mouseLocation)
+            }
+        instance.updateGeometry()
         instances[screen.id] = instance
         return instance
     }
 
     private func tearDown(_ instance: NotchInstance) {
         instance.timer?.cancel()
+        instance.timer = nil
+        instance.geometrySubscription = nil
         instance.panel.orderOut(nil)
         instance.panel.contentView = nil
         instance.hosting = nil
+        instance.panel.close()
     }
 
     // MARK: - Visibility
@@ -223,14 +303,25 @@ final class NotchController: NSObject {
     private func updateVisibility() {
         for instance in instances.values {
             let fullScreen = Self.fullScreenFront(on: instance.screenID)
-            let show = NotchVisibility.shouldShow(enabled: settings.enabled, fullScreenFront: fullScreen,
+            let show = NotchVisibility.shouldShow(enabled: settings.enabled && !sleeping, fullScreenFront: fullScreen,
                                                   showInFullScreen: settings.showInFullScreen)
             if show {
                 if !instance.panel.isVisible { instance.panel.orderFrontRegardless() }
             } else if instance.panel.isVisible {
                 collapse(instance)
                 instance.panel.orderOut(nil)
+                instance.panel.ignoresMouseEvents = true
+                instance.pointerInside = false
+                instance.machine = NotchMachine(expandOnHover: settings.expand == .hover)
+                instance.machine.openingDelay = Double(settings.hoverDelayMS) / 1000
             }
+        }
+        updateMonitoring()
+        // A Space change may reveal the island under a stationary pointer.
+        // Prime hit-testing now so its first click doesn't fall through.
+        if !isDebug {
+            let point = NSEvent.mouseLocation
+            for instance in instances.values { evaluate(instance, at: point) }
         }
     }
 
@@ -253,8 +344,7 @@ final class NotchController: NSObject {
         guard running, !isDebug else { return }
         let point = NSEvent.mouseLocation
         if settings.displays == .pointer, !isDebug {
-            let screens = NSScreen.screens.compactMap(Self.screenInfo)
-            let current = screens.first { NotchGeometry.contains($0.frame, point) }?.id
+            let current = cachedScreens.first { NotchGeometry.contains($0.frame, point) }?.id
             if current != lastPointerScreen {
                 lastPointerScreen = current
                 // The island moves to the display the pointer went to, unless
@@ -267,13 +357,14 @@ final class NotchController: NSObject {
 
     private func evaluate(_ instance: NotchInstance, at point: CGPoint) {
         guard instance.panel.isVisible else { return }
-        let inside = NotchGeometry.contains(instance.interactiveRect, point)
+        if !instance.pointerInside && instance.panel.ignoresMouseEvents && point.y < instance.hoverRect.minY { return }
+        let inside = NotchGeometry.contains(instance.hoverRect, point)
         if inside != instance.pointerInside {
             instance.pointerInside = inside
             run(instance.machine.handle(inside ? .pointerEntered : .pointerExited), on: instance)
         }
         // The empty parts of the panel never take a click.
-        let ignores = !NotchGeometry.contains(instance.interactiveRect, point)
+        let ignores = !instance.takesClick(at: point)
         if instance.panel.ignoresMouseEvents != ignores { instance.panel.ignoresMouseEvents = ignores }
     }
 
@@ -292,11 +383,36 @@ final class NotchController: NSObject {
         switch event.type {
         case .mouseMoved:
             pointerMoved()
-        case .keyDown where event.keyCode == 53:
-            // Esc closes the island it's typed into.
-            if let instance = instances.values.first(where: { $0.panel.isKeyWindow && $0.state.phase != .collapsed }) {
+        case .leftMouseDown, .rightMouseDown, .otherMouseDown:
+            clickedElsewhere()
+        case .keyDown:
+            guard let instance = instances.values.first(where: { $0.panel.isKeyWindow && $0.state.phase == .expanded }) else { return event }
+            if event.keyCode == 53 {
                 run(instance.machine.handle(.escape), on: instance)
                 return nil
+            }
+            // Text editing keeps native arrow/Tab/Return behaviour.
+            guard !(instance.panel.firstResponder is NSTextView), event.modifierFlags.intersection([.command, .control, .option]).isEmpty else { return event }
+            if event.keyCode == 48 {
+                let tabs = settings.shownTabs
+                let index = tabs.firstIndex(of: instance.state.tab) ?? 0
+                let step = event.modifierFlags.contains(.shift) ? tabs.count - 1 : 1
+                actions(for: instance).selectTab(tabs[(index + step) % tabs.count])
+                return nil
+            }
+            if instance.state.tab == .agents {
+                let rows = NotchAgentOrdering.visibleOrdered(model.snapshot.agents, limit: settings.size == .compact ? 5 : 7).shown
+                guard !rows.isEmpty else { return event }
+                if event.keyCode == 125 || event.keyCode == 126 {
+                    let current = rows.firstIndex { $0.id == instance.state.selectedAgentID }
+                    let next = current.map { min(rows.count - 1, max(0, $0 + (event.keyCode == 125 ? 1 : -1))) } ?? 0
+                    instance.state.selectedAgentID = rows[next].id
+                    return nil
+                }
+                if event.keyCode == 36, let row = rows.first(where: { $0.id == instance.state.selectedAgentID }) {
+                    actions(for: instance).focus(row)
+                    return nil
+                }
             }
         default:
             break
@@ -320,6 +436,15 @@ final class NotchController: NSObject {
                 let work = DispatchWorkItem { [weak self, weak instance] in
                     guard let self, let instance else { return }
                     MainActor.assumeIsolated {
+                        instance.timer = nil
+                        if timer == .endPeek, instance.machine.pending == .endPeek, !instance.machine.inside {
+                            instance.peekQueue.advance()
+                            if let next = instance.peekQueue.peek {
+                                instance.state.peek = next
+                                self.run(instance.machine.handle(.peek(NotchPeekRules.duration)), on: instance)
+                                return
+                            }
+                        }
                         self.run(instance.machine.handle(.timerFired(timer)), on: instance)
                     }
                 }
@@ -330,22 +455,29 @@ final class NotchController: NSObject {
                 instance.timer = nil
             }
         }
+        instance.updateGeometry()
+        updateClickMonitoring()
         // The panel only takes clicks where the island is.
-        instance.panel.ignoresMouseEvents = !NotchGeometry.contains(instance.interactiveRect, NSEvent.mouseLocation)
+        instance.panel.ignoresMouseEvents = !instance.takesClick(at: NSEvent.mouseLocation)
     }
 
-    private static let spring = Animation.spring(response: 0.42, dampingFraction: 0.8)
+    private static let spring = Animation.spring(response: 0.30, dampingFraction: 0.86)
 
     private func expand(_ instance: NotchInstance) {
-        instance.state.peek = nil
-        if !model.isSample {
-            model.refresh()
-            model.loadFolders()
-            AccountStore.shared.refreshSoon()
+        #if DEBUG
+        let started = CFAbsoluteTimeGetCurrent()
+        os_signpost(.begin, log: NotchMetrics.log, name: "Expand handler")
+        defer {
+            NotchMetrics.expanded(in: (CFAbsoluteTimeGetCurrent() - started) * 1000)
+            os_signpost(.end, log: NotchMetrics.log, name: "Expand handler")
         }
+        #endif
+        instance.state.peek = nil
+        instance.peekQueue.clear()
         let tabs = settings.shownTabs
         if !tabs.contains(instance.state.tab) { instance.state.tab = tabs[0] }
         MotionPreferences.shared.perform(.palette, Self.spring) { instance.state.phase = .expanded }
+        prepareTab(instance.state.tab)
         if settings.haptic {
             NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
         }
@@ -359,15 +491,17 @@ final class NotchController: NSObject {
             instance.state.phase = .collapsed
             instance.state.peek = nil
         }
+        instance.peekQueue.clear()
+        instance.updateGeometry()
         // Reset the machine too, for a collapse that didn't come from it.
         if instance.machine.phase != .collapsed { _ = instance.machine.handle(.escape) }
-        instance.panel.ignoresMouseEvents = !NotchGeometry.contains(instance.interactiveRect, NSEvent.mouseLocation)
+        instance.panel.ignoresMouseEvents = !instance.takesClick(at: NSEvent.mouseLocation)
     }
 
     // MARK: - Data
 
-    private func activityChanged() {
-        let glyphs = NotchGlyphs.make(model.snapshot.activity)
+    private func activityChanged(_ activity: NotchActivity) {
+        let glyphs = NotchGlyphs.make(activity)
         for instance in instances.values where instance.state.glyphs != glyphs {
             MotionPreferences.shared.perform(.palette, Self.spring) { instance.state.glyphs = glyphs }
         }
@@ -376,14 +510,23 @@ final class NotchController: NSObject {
     /// An agent finished or needs you (called by the banner centre before it
     /// decides whether to show its own banner).
     func agentEvents(_ events: [AgentEvent]) {
-        guard running, !model.isSample, let peek = NotchPeekRules.compose(events) else { return }
-        lastPeekEvent = events.last { $0.kind == peek.kind } ?? events.last
+        guard running, !model.isSample else { return }
         for instance in instances.values {
             guard NotchPeekRules.shouldPeek(enabled: settings.peekOnEvents, octetActive: NSApp.isActive,
                                             visible: instance.panel.isVisible, phase: instance.machine.phase) else { continue }
-            instance.state.peek = peek
-            run(instance.machine.handle(.peek(NotchPeekRules.duration)), on: instance)
+            let empty = instance.peekQueue.events.isEmpty
+            instance.peekQueue.append(events)
+            instance.state.peek = instance.peekQueue.peek
+            if empty, instance.state.peek != nil {
+                run(instance.machine.handle(.peek(NotchPeekRules.duration)), on: instance)
+            }
         }
+    }
+
+    private func prepareTab(_ tab: NotchTab) {
+        guard !model.isSample else { return }
+        if tab == .actions { model.loadFolders() }
+        if tab == .usage { AccountStore.shared.refreshSoon() }
     }
 
     // MARK: - Text input
@@ -405,6 +548,35 @@ final class NotchController: NSObject {
 
     private func actions(for instance: NotchInstance) -> NotchActions {
         var actions = NotchActions()
+        actions.keyboardFocus = { [weak instance] in
+            guard let instance, instance.state.phase == .expanded else { return }
+            instance.panel.allowsKey = true
+            instance.panel.makeKey()
+        }
+        actions.pinTab = { [weak self] tab in
+            guard let self, !self.isDebug else { return }
+            SettingsStore.shared.values.notch.tabs = [tab] + self.settings.shownTabs.filter { $0 != tab }
+        }
+        actions.selectTab = { [weak self, weak instance] tab in
+            guard let self, let instance else { return }
+            self.endText(instance)
+            instance.state.tab = tab
+            self.prepareTab(tab)
+            if !self.isDebug { UserDefaults.standard.set(tab.rawValue, forKey: "octet.notch.lastTab") }
+        }
+        actions.drop = { [weak self, weak instance] drop in
+            guard let self, let instance, !self.model.isSample else { return }
+            self.openOctet()
+            guard let window = WindowRegistry.shared.key else { return }
+            switch drop {
+            case .folder(let url): window.openProject(path: url.path)
+            case .prompt(let text):
+                window.newConversation()
+                AgentCenter.shared.active(in: window.focusedWorkspace?.workspaceId)?.prefillComposer(text)
+            }
+            self.dismiss(instance)
+        }
+
         actions.open = { [weak self, weak instance] in
             guard let self, let instance else { return }
             self.run(instance.machine.handle(.clicked), on: instance)
@@ -425,7 +597,7 @@ final class NotchController: NSObject {
         // shown by the debug hooks does none of it.
         actions.peekTapped = { [weak self, weak instance] in
             guard let self, let instance, !self.model.isSample else { return }
-            if let event = self.lastPeekEvent, let window = WindowRegistry.shared.key {
+            if let event = instance.peekQueue.events.first, let window = WindowRegistry.shared.key {
                 window.bringForward()
                 window.focus(event)
             }
@@ -435,6 +607,20 @@ final class NotchController: NSObject {
             guard let self, let instance, !self.model.isSample else { return }
             self.focus(row)
             self.dismiss(instance)
+        }
+        actions.copyMessage = { [weak self] row in
+            guard let self, !self.model.isSample else { return }
+            var text = row.detail
+            if let agent = self.model.hubAgent(row.id), case .chat(let session) = agent.target {
+                text = session.conversation.items.reversed().compactMap { item -> String? in
+                    if case .text(let text) = item.kind, !text.isEmpty { return text }
+                    return nil
+                }.first
+            }
+            if let text {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(text, forType: .string)
+            }
         }
         actions.stop = { [weak self] row in
             guard let self, !self.model.isSample else { return }
@@ -547,6 +733,12 @@ final class NotchController: NSObject {
     // MARK: - Verification
 
     #if DEBUG
+    func debugPerformanceDump() {
+        NotchMetrics.dump(monitors: monitors.count + (clickMonitor == nil ? 0 : 1),
+                          timers: instances.values.filter { $0.timer != nil }.count + model.debugPendingWork,
+                          subscriptions: model.debugSubscriptions, sample: model.isSample)
+    }
+
     /// The debug hooks' way in: the notch on, in memory only, over sample
     /// data that nothing live is read from or sent to.
     func debugShow(phase: NotchMachine.Phase, tab: NotchTab?, size: NotchSettings.Size = .regular) {
@@ -554,6 +746,7 @@ final class NotchController: NSObject {
         forced.enabled = true
         forced.size = size
         forced.haptic = false
+        stop()
         debugSettings = forced
         model.installSample(NotchSample.snapshot)
         running = false
@@ -584,6 +777,7 @@ final class NotchController: NSObject {
                         + "ignoresMouse=\(instance.panel.ignoresMouseEvents) level=\(instance.panel.level.rawValue) "
                         + "glyphs=\(instance.state.glyphs.accessibilityLabel) contentHeight=\(instance.state.contentHeight)"
                 }.joined(separator: "\n")
+                self.debugPerformanceDump()
                 try? text.write(toFile: dir + "/notch-state.txt", atomically: true, encoding: .utf8)
             }
         }

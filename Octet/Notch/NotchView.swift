@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 // The Octet Notch's SwiftUI: a black island hanging from the top of the
 // screen. The panel holding it never resizes; the island's shape animates
@@ -33,8 +34,10 @@ final class NotchViewState: ObservableObject {
     @Published var glyphs = NotchGlyphs()
     @Published var tab: NotchTab = .agents
     @Published var peek: NotchPeek?
+    @Published var selectedAgentID: String?
     /// The open page's natural height, measured.
     @Published var contentHeight: CGFloat = 120
+    @Published var focusHeight: CGFloat = 0
 
     init(screen: NotchScreen) { self.screen = screen }
 
@@ -42,7 +45,7 @@ final class NotchViewState: ObservableObject {
         switch phase {
         case .collapsed: NotchGeometry.collapsedSize(screen, glyphs: glyphs)
         case .peek: NotchGeometry.peekSize(screen, size: settings.size)
-        case .expanded: NotchGeometry.expandedSize(screen, size: settings.size, contentHeight: contentHeight + 14)
+        case .expanded: NotchGeometry.expandedSize(screen, size: settings.size, contentHeight: contentHeight + focusHeight + 14)
         }
     }
 
@@ -67,9 +70,14 @@ final class NotchViewState: ObservableObject {
 /// never reach into windows or sessions themselves.
 struct NotchActions {
     var open: () -> Void = {}
+    var selectTab: (NotchTab) -> Void = { _ in }
+    var pinTab: (NotchTab) -> Void = { _ in }
+    var keyboardFocus: () -> Void = {}
+    var drop: (NotchDrop) -> Void = { _ in }
     var dismiss: () -> Void = {}
     var peekTapped: () -> Void = {}
     var focus: (NotchAgentRow) -> Void = { _ in }
+    var copyMessage: (NotchAgentRow) -> Void = { _ in }
     var stop: (NotchAgentRow) -> Void = { _ in }
     var reply: (NotchAgentRow, String) -> Void = { _, _ in }
     var beginText: () -> Void = {}
@@ -98,19 +106,7 @@ struct NotchShape: Shape {
     }
 
     func path(in rect: CGRect) -> Path {
-        let e = max(0, min(ear, rect.width / 4, rect.height / 2))
-        let b = max(0, min(bottom, rect.height / 2, (rect.width - 2 * e) / 2))
-        var path = Path()
-        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
-        path.addQuadCurve(to: CGPoint(x: rect.minX + e, y: rect.minY + e), control: CGPoint(x: rect.minX + e, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.minX + e, y: rect.maxY - b))
-        path.addQuadCurve(to: CGPoint(x: rect.minX + e + b, y: rect.maxY), control: CGPoint(x: rect.minX + e, y: rect.maxY))
-        path.addLine(to: CGPoint(x: rect.maxX - e - b, y: rect.maxY))
-        path.addQuadCurve(to: CGPoint(x: rect.maxX - e, y: rect.maxY - b), control: CGPoint(x: rect.maxX - e, y: rect.maxY))
-        path.addLine(to: CGPoint(x: rect.maxX - e, y: rect.minY + e))
-        path.addQuadCurve(to: CGPoint(x: rect.maxX, y: rect.minY), control: CGPoint(x: rect.maxX - e, y: rect.minY))
-        path.closeSubpath()
-        return path
+        Path(NotchGeometry.shape(in: rect, ear: ear, bottom: bottom))
     }
 }
 
@@ -118,12 +114,11 @@ struct NotchShape: Shape {
 
 struct NotchRootView: View {
     @ObservedObject var state: NotchViewState
-    @ObservedObject var model: NotchModel
+    let model: NotchModel
     @ObservedObject private var motion = MotionPreferences.shared
     let actions: NotchActions
 
-    private var spring: Animation? { motion.animation(.palette, .spring(response: 0.42, dampingFraction: 0.8)) }
-    private var fade: Animation? { motion.animation(.palette, .easeOut(duration: 0.16)) }
+    private var spring: Animation? { motion.animation(.palette, .spring(response: 0.30, dampingFraction: 0.86)) }
 
     var body: some View {
         let size = state.islandSize
@@ -135,6 +130,25 @@ struct NotchRootView: View {
                 .clipShape(NotchShape(ear: state.ear, bottom: state.bottomRadius))
         }
         .frame(width: size.width, height: size.height, alignment: .top)
+        .contentShape(NotchShape(ear: state.ear, bottom: state.bottomRadius))
+        .onDrop(of: [UTType.fileURL, UTType.utf8PlainText], isTargeted: nil) { providers in
+            guard let provider = providers.first else { return false }
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                    let url = (item as? URL) ?? (item as? Data).flatMap { URL(dataRepresentation: $0, relativeTo: nil) }
+                    guard let url, let value = try? url.resourceValues(forKeys: [.isDirectoryKey]),
+                          let drop = NotchDrop.parse(url: url, isDirectory: value.isDirectory == true) else { return }
+                    DispatchQueue.main.async { actions.drop(drop) }
+                }
+            } else {
+                provider.loadItem(forTypeIdentifier: UTType.utf8PlainText.identifier, options: nil) { item, _ in
+                    let text = (item as? String) ?? (item as? Data).flatMap { String(data: $0, encoding: .utf8) }
+                    guard let text, let drop = NotchDrop.parse(text: text) else { return }
+                    DispatchQueue.main.async { actions.drop(drop) }
+                }
+            }
+            return true
+        }
         .shadow(color: .black.opacity(state.phase == .collapsed ? 0 : 0.5), radius: 14, y: 6)
         .animation(spring, value: size)
         .animation(spring, value: state.ear)
@@ -162,7 +176,7 @@ struct NotchRootView: View {
         case .expanded:
             NotchExpanded(state: state, model: model, actions: actions)
                 .transition(.opacity)
-                .animation(fade, value: state.tab)
+
         }
     }
 }
@@ -240,7 +254,7 @@ struct NotchGlyphView: View {
     private var mark: some View {
         switch glyph {
         case .working:
-            NotchSpinner(animated: motion.animates(.agentStatus))
+            NotchSpinner(animated: false)
         case .needsYou:
             Circle().fill(NotchStyle.amber).frame(width: 8, height: 8).frame(width: 14, height: 14)
         case .ready:
@@ -331,20 +345,39 @@ private struct NotchExpanded: View {
         VStack(spacing: 0) {
             header(band: band)
             Rectangle().fill(NotchStyle.divider).frame(height: 1)
-            ScrollView(.vertical) {
-                page
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .background(GeometryReader { Color.clear.preference(key: NotchHeightKey.self, value: $0.size.height) })
+            if let focus = model.snapshot.focus, let detail = focus.detail, !detail.isEmpty {
+                HStack(spacing: 6) {
+                    NotchLogo(vendor: focus.vendor, size: 11)
+                    Text("Focus · " + detail).font(NotchStyle.caption).foregroundStyle(NotchStyle.secondary).lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 18).frame(height: 24)
+                .accessibilityLabel("Current focus, " + focus.title + ", " + detail)
             }
-            .scrollIndicators(.never)
-            .onPreferenceChange(NotchHeightKey.self) { height in
-                if abs(height - state.contentHeight) > 0.5 { state.contentHeight = height }
+            ScrollViewReader { proxy in
+                ScrollView(.vertical) {
+                    page
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .background(GeometryReader { Color.clear.preference(key: NotchHeightKey.self, value: $0.size.height) })
+                }
+                .scrollIndicators(.never)
+                .onPreferenceChange(NotchHeightKey.self) { height in
+                    if abs(height - state.contentHeight) > 0.5 { state.contentHeight = height }
+                }
+                .onChange(of: state.selectedAgentID) { _, id in
+                    if let id { proxy.scrollTo(id, anchor: .center) }
+                }
             }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Octet Notch")
+        .simultaneousGesture(TapGesture().onEnded { actions.keyboardFocus() })
+        .onChange(of: model.snapshot.focus, initial: true) { _, focus in
+            let height: CGFloat = focus?.detail?.isEmpty == false ? 24 : 0
+            if state.focusHeight != height { state.focusHeight = height }
+        }
     }
 
     private func header(band: CGFloat) -> some View {
@@ -353,8 +386,9 @@ private struct NotchExpanded: View {
             HStack(spacing: 2) {
                 ForEach(tabs) { item in
                     NotchTabButton(tab: item, selected: item == tab, badge: item == .agents ? needsCount : 0) {
-                        state.tab = item
+                        actions.selectTab(item)
                     }
+                    .contextMenu { Button("Pin first") { actions.pinTab(item) } }
                 }
             }
             .padding(.leading, 10)
@@ -375,7 +409,7 @@ private struct NotchExpanded: View {
     @ViewBuilder
     private var page: some View {
         switch tab {
-        case .agents: NotchAgentsPage(snapshot: model.snapshot, limit: state.settings.size == .compact ? 5 : 7, actions: actions)
+        case .agents: NotchAgentsPage(snapshot: model.snapshot, limit: state.settings.size == .compact ? 5 : 7, selectedID: state.selectedAgentID, actions: actions)
         case .now: NotchNowPage(snapshot: model.snapshot, actions: actions)
         case .usage: NotchUsagePage(snapshot: model.snapshot, actions: actions)
         case .actions: NotchActionsPage(snapshot: model.snapshot, actions: actions)
@@ -510,7 +544,7 @@ private struct NotchEmpty: View {
 private struct NotchElapsed: View {
     let since: Date
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
+        TimelineView(.periodic(from: .now, by: Date().timeIntervalSince(since) < 60 ? 1 : 60)) { context in
             Text(NotchText.elapsed(from: since, now: context.date))
                 .font(NotchStyle.caption.monospacedDigit())
                 .foregroundStyle(NotchStyle.tertiary)
@@ -523,15 +557,16 @@ private struct NotchElapsed: View {
 private struct NotchAgentsPage: View {
     let snapshot: NotchSnapshot
     let limit: Int
+    let selectedID: String?
     let actions: NotchActions
 
     var body: some View {
-        let shown = NotchAgentOrdering.visible(snapshot.agents, limit: limit)
+        let shown = NotchAgentOrdering.visibleOrdered(snapshot.agents, limit: limit)
         if shown.shown.isEmpty {
             NotchEmpty(title: "No agents yet", detail: "Start one from Actions, or in a terminal tab.")
         } else {
             VStack(alignment: .leading, spacing: 1) {
-                ForEach(shown.shown) { NotchAgentRowView(row: $0, actions: actions) }
+                ForEach(shown.shown) { NotchAgentRowView(row: $0, selected: $0.id == selectedID, actions: actions).equatable() }
                 if shown.hidden > 0 {
                     Button(action: actions.showAgents) {
                         Text("\(shown.hidden) more in Octet")
@@ -546,8 +581,10 @@ private struct NotchAgentsPage: View {
     }
 }
 
-private struct NotchAgentRowView: View {
+private struct NotchAgentRowView: View, Equatable {
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.row == rhs.row && lhs.selected == rhs.selected }
     let row: NotchAgentRow
+    let selected: Bool
     let actions: NotchActions
     @State private var hovered = false
     @State private var replying = false
@@ -580,8 +617,10 @@ private struct NotchAgentRowView: View {
         }
         .background(RoundedRectangle(cornerRadius: 8)
             .fill(row.status == .needsInput ? NotchStyle.amber.opacity(hovered ? 0.16 : 0.10) : (hovered ? NotchStyle.hover : .clear)))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(selected ? NotchStyle.accent : .clear, lineWidth: 1))
         .onHover { hovered = $0 }
-        .accessibilityElement(children: .combine)
+        .onDisappear { if replying { actions.endText() } }
+        .accessibilityElement(children: .contain)
         .accessibilityLabel("\(row.title), \(statusWord)" + (subtitle.map { ", \($0)" } ?? ""))
         .accessibilityHint("Goes to it in Octet")
         .accessibilityAddTraits(.isButton)
@@ -614,6 +653,9 @@ private struct NotchAgentRowView: View {
     private var trailing: some View {
         if hovered {
             HStack(spacing: 2) {
+                if let detail = row.detail, !detail.isEmpty {
+                    NotchIconButton(icon: "doc.on.doc", help: "Copy last message") { actions.copyMessage(row) }
+                }
                 if row.canReply {
                     NotchTextButton(title: replying ? "Cancel" : "Reply") { toggleReply() }
                 }

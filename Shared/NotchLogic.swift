@@ -57,6 +57,7 @@ struct NotchSettings: Codable, Equatable {
     }
 
     var enabled = false
+    var hoverDelayMS = 120
     var expand: Expand = .hover
     var displays: Displays = .main
     /// Displays without a notch get a floating pill at the top centre.
@@ -75,6 +76,7 @@ struct NotchSettings: Codable, Equatable {
         let c = try decoder.container(keyedBy: Key.self)
         let d = NotchSettings()
         enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? d.enabled
+        hoverDelayMS = min(600, max(0, (try? c.decodeIfPresent(Int.self, forKey: .hoverDelayMS)) ?? d.hoverDelayMS))
         expand = (try? c.decodeIfPresent(Expand.self, forKey: .expand)) ?? d.expand
         displays = (try? c.decodeIfPresent(Displays.self, forKey: .displays)) ?? d.displays
         showWithoutNotch = (try? c.decodeIfPresent(Bool.self, forKey: .showWithoutNotch)) ?? d.showWithoutNotch
@@ -87,20 +89,26 @@ struct NotchSettings: Codable, Equatable {
     }
 
     private enum Key: String, CodingKey {
-        case enabled, expand, displays, showWithoutNotch, peekOnEvents, showInFullScreen, haptic, size, tabs
+        case enabled, hoverDelayMS, expand, displays, showWithoutNotch, peekOnEvents, showInFullScreen, haptic, size, tabs
     }
 
     /// The tabs to show, in the island's own order, never none: a notch with
     /// every page switched off would have nothing to open.
     var shownTabs: [NotchTab] {
-        let wanted = NotchTab.allCases.filter(tabs.contains)
+        var seen = Set<NotchTab>()
+        let wanted = tabs.filter { seen.insert($0).inserted }
         return wanted.isEmpty ? [.agents] : wanted
     }
 
     mutating func set(_ tab: NotchTab, shown: Bool) {
-        var next = Set(tabs)
-        if shown { next.insert(tab) } else { next.remove(tab) }
-        tabs = NotchTab.allCases.filter(next.contains)
+        if !shown { tabs.removeAll { $0 == tab }; return }
+        guard !tabs.contains(tab) else { return }
+        // Insert a newly enabled page in its usual place without reordering
+        // the pages the person has already pinned.
+        let order = NotchTab.allCases
+        let rank = order.firstIndex(of: tab)!
+        let index = tabs.firstIndex { order.firstIndex(of: $0)! > rank } ?? tabs.endIndex
+        tabs.insert(tab, at: index)
     }
 }
 
@@ -122,6 +130,23 @@ struct NotchScreen: Equatable {
 }
 
 enum NotchGeometry {
+    /// Shared drawing and hit-testing path: transparent ears never intercept menus.
+    static func shape(in rect: CGRect, ear: CGFloat, bottom: CGFloat) -> CGPath {
+        let e = max(0, min(ear, rect.width / 4, rect.height / 2))
+        let b = max(0, min(bottom, rect.height / 2, (rect.width - 2 * e) / 2))
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addQuadCurve(to: CGPoint(x: rect.minX + e, y: rect.minY + e), control: CGPoint(x: rect.minX + e, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.minX + e, y: rect.maxY - b))
+        path.addQuadCurve(to: CGPoint(x: rect.minX + e + b, y: rect.maxY), control: CGPoint(x: rect.minX + e, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.maxX - e - b, y: rect.maxY))
+        path.addQuadCurve(to: CGPoint(x: rect.maxX - e, y: rect.maxY - b), control: CGPoint(x: rect.maxX - e, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.maxX - e, y: rect.minY + e))
+        path.addQuadCurve(to: CGPoint(x: rect.maxX, y: rect.minY), control: CGPoint(x: rect.maxX - e, y: rect.minY))
+        path.closeSubpath()
+        return path
+    }
+
     /// A notch whose side areas aren't reported is about this wide.
     static let fallbackNotchWidth: CGFloat = 185
     /// The idle pill on a display without a notch.
@@ -428,7 +453,11 @@ enum NotchAgentOrdering {
     /// The rows that fit, with what was left out: waiting and working rows
     /// always show, settled ones fill what room is left.
     static func visible(_ rows: [NotchAgentRow], limit: Int) -> (shown: [NotchAgentRow], hidden: Int) {
-        let ordered = sorted(rows)
+        visibleOrdered(sorted(rows), limit: limit)
+    }
+
+    /// The model has already sorted these rows. Never sort again during layout.
+    static func visibleOrdered(_ ordered: [NotchAgentRow], limit: Int) -> (shown: [NotchAgentRow], hidden: Int) {
         let urgent = ordered.filter { $0.status != .done }
         let settled = ordered.filter { $0.status == .done }
         let room = max(0, limit - urgent.count)
@@ -437,7 +466,10 @@ enum NotchAgentOrdering {
     }
 
     static func activity(of rows: [NotchAgentRow]) -> (working: Int, needsYou: Int) {
-        (rows.filter { $0.status == .working }.count, rows.filter { $0.status == .needsInput }.count)
+        rows.reduce(into: (working: 0, needsYou: 0)) { counts, row in
+            if row.status == .working { counts.working += 1 }
+            if row.status == .needsInput { counts.needsYou += 1 }
+        }
     }
 }
 
@@ -498,7 +530,8 @@ struct NotchMachine: Equatable {
         case peek(TimeInterval)
     }
 
-    static let hoverDelay: TimeInterval = 0.15
+    static let hoverDelay: TimeInterval = 0.12
+    var openingDelay: TimeInterval = Self.hoverDelay
     static let collapseGrace: TimeInterval = 0.35
     static let peekGrace: TimeInterval = 0.6
 
@@ -516,7 +549,7 @@ struct NotchMachine: Equatable {
             inside = true
             switch phase {
             case .collapsed:
-                return expandOnHover ? start(.expand, Self.hoverDelay) : []
+                return expandOnHover ? start(.expand, openingDelay) : []
             case .peek:
                 // Coming to a peek means coming to read it; hover opens the
                 // full island, a click-to-open setting waits for the click.
@@ -649,5 +682,55 @@ enum NotchText {
         let hours = minutes / 60
         if hours < 24 { return minutes % 60 == 0 ? "\(hours)h" : "\(hours)h \(minutes % 60)m" }
         return "\(hours / 24)d"
+    }
+}
+
+// MARK: - Incremental updates
+
+/// Batches a burst without postponing it forever while tokens stream.
+struct NotchInvalidation {
+    enum Section: Hashable { case agents, work, usage }
+    static let delay: TimeInterval = 0.05
+    private(set) var pending: Set<Section> = []
+    mutating func insert(_ section: Section) -> Bool {
+        let schedule = pending.isEmpty
+        pending.insert(section)
+        return schedule
+    }
+    mutating func drain() -> Set<Section> {
+        defer { pending.removeAll(keepingCapacity: true) }
+        return pending
+    }
+}
+
+/// Bounded FIFO, deduplicated across a burst; the current event stays first.
+struct NotchPeekQueue {
+    private(set) var events: [AgentEvent] = []
+    mutating func append(_ incoming: [AgentEvent]) {
+        for event in incoming where !events.contains(where: { $0.id == event.id }) {
+            if events.count < 32 { events.append(event) }
+        }
+    }
+    var peek: NotchPeek? {
+        guard let first = events.first, var result = NotchPeekRules.compose([first]) else { return nil }
+        result.more = events.count - 1
+        return result
+    }
+    mutating func advance() { if !events.isEmpty { events.removeFirst() } }
+    mutating func clear() { events.removeAll(keepingCapacity: true) }
+}
+
+enum NotchDrop: Equatable {
+    case folder(URL), prompt(String)
+    static func parse(text: String) -> NotchDrop? {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, text.utf8.count <= 64 * 1024 else { return nil }
+        // File URLs must go through the directory validation path, never to a prompt.
+        if let url = URL(string: text), url.isFileURL { return nil }
+        return .prompt(text)
+    }
+    static func parse(url: URL, isDirectory: Bool) -> NotchDrop? {
+        guard url.isFileURL, isDirectory else { return nil }
+        return .folder(url.standardizedFileURL)
     }
 }

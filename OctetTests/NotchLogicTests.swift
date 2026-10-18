@@ -511,3 +511,107 @@ final class NotchLogicTests: XCTestCase {
         XCTAssertEqual(after(90_000), "1d")
     }
 }
+
+extension NotchLogicTests {
+    func testInvalidationsMergeWithoutExtendingTheDeadline() {
+        var pending = NotchInvalidation()
+        XCTAssertTrue(pending.insert(.agents))
+        for _ in 0..<100 { XCTAssertFalse(pending.insert(.agents)) }
+        XCTAssertFalse(pending.insert(.usage))
+        XCTAssertEqual(pending.drain(), [.agents, .usage])
+        XCTAssertTrue(pending.pending.isEmpty)
+        XCTAssertTrue(pending.insert(.work))
+        XCTAssertEqual(pending.drain(), [.work])
+    }
+
+    func testPeekQueuePreservesCurrentEventAndCountsLaterBatches() {
+        var queue = NotchPeekQueue()
+        let first = event("first", .finished, label: "First")
+        queue.append([first])
+        queue.append([first, event("second", .needsInput, label: "Second")])
+        XCTAssertEqual(queue.peek?.line, "First finished")
+        XCTAssertEqual(queue.peek?.more, 1)
+        queue.advance()
+        XCTAssertEqual(queue.peek?.line, "Second needs you")
+        queue.advance()
+        XCTAssertNil(queue.peek)
+        queue.advance()
+        XCTAssertTrue(queue.events.isEmpty)
+    }
+
+    func testPeekQueueBoundsMemoryAndClearsOnDismiss() {
+        var queue = NotchPeekQueue()
+        queue.append((0..<100).map { event("\($0)", .finished) })
+        XCTAssertEqual(queue.events.count, 32)
+        queue.clear()
+        XCTAssertNil(queue.peek)
+    }
+
+    func testDropParsingRequiresLocalDirectoriesAndNonemptyBoundedText() {
+        let folder = URL(fileURLWithPath: "/tmp/a/../folder", isDirectory: true)
+        XCTAssertEqual(NotchDrop.parse(url: folder, isDirectory: true), .folder(folder.standardizedFileURL))
+        XCTAssertNil(NotchDrop.parse(url: folder, isDirectory: false))
+        XCTAssertNil(NotchDrop.parse(url: URL(string: "https://example.com")!, isDirectory: true))
+        XCTAssertNil(NotchDrop.parse(text: " \n "))
+        XCTAssertNil(NotchDrop.parse(text: "file:///tmp/folder"))
+        XCTAssertNil(NotchDrop.parse(text: String(repeating: "a", count: 65537)))
+        XCTAssertEqual(NotchDrop.parse(text: "  Explain this\ncode  "), .prompt("Explain this\ncode"))
+    }
+
+    func testHoverDelayIsConfigurableAndDoesNotChangeGrace() {
+        var machine = NotchMachine()
+        machine.openingDelay = 0.4
+        XCTAssertEqual(machine.handle(.pointerEntered), [.startTimer(.expand, 0.4)])
+        _ = machine.handle(.timerFired(.expand))
+        XCTAssertEqual(machine.handle(.pointerExited), [.startTimer(.collapse, NotchMachine.collapseGrace)])
+    }
+
+    func testHoverSettingClampsOldOrCorruptValues() throws {
+        XCTAssertEqual(NotchSettings().hoverDelayMS, 120)
+        for (input, expected) in [("{}", 120), (#"{"hoverDelayMS":-10}"#, 0), (#"{"hoverDelayMS":9999}"#, 600)] {
+            XCTAssertEqual(try JSONDecoder().decode(NotchSettings.self, from: Data(input.utf8)).hoverDelayMS, expected)
+        }
+    }
+
+    func testPinnedTabOrderIsStableAndDeduplicated() throws {
+        var settings = NotchSettings()
+        settings.tabs = [.usage, .agents, .usage, .actions]
+        XCTAssertEqual(settings.shownTabs, [.usage, .agents, .actions])
+        XCTAssertEqual(try JSONDecoder().decode(NotchSettings.self, from: JSONEncoder().encode(settings)).shownTabs, settings.shownTabs)
+    }
+
+    func testAlreadySortedSelectionMatchesGeneralSelection() {
+        let rows = (0..<100).map { row("\($0)", $0 % 3 == 0 ? .working : .done, since: Double($0)) }
+        let ordered = NotchAgentOrdering.sorted(rows)
+        for limit in [0, 4, 40, 200] {
+            let general = NotchAgentOrdering.visible(rows, limit: limit)
+            let cached = NotchAgentOrdering.visibleOrdered(ordered, limit: limit)
+            XCTAssertEqual(cached.shown, general.shown)
+            XCTAssertEqual(cached.hidden, general.hidden)
+        }
+    }
+}
+
+extension NotchLogicTests {
+    func testHitPathLeavesTransparentEarsAndBottomCornersAlone() {
+        let path = NotchGeometry.shape(in: CGRect(x: 0, y: 0, width: 620, height: 200), ear: 18, bottom: 24)
+        XCTAssertTrue(path.contains(CGPoint(x: 310, y: 100)))
+        XCTAssertTrue(path.contains(CGPoint(x: 30, y: 30)))
+        XCTAssertFalse(path.contains(CGPoint(x: 1, y: 15)))
+        XCTAssertFalse(path.contains(CGPoint(x: 619, y: 15)))
+        XCTAssertFalse(path.contains(CGPoint(x: 20, y: 199)))
+        XCTAssertFalse(path.contains(CGPoint(x: -1, y: 50)))
+    }
+}
+
+
+extension NotchLogicTests {
+    func testTogglingPagesDoesNotReorderPinnedPages() {
+        var settings = NotchSettings()
+        settings.tabs = [.usage, .agents, .now, .actions]
+        settings.set(.actions, shown: false)
+        XCTAssertEqual(settings.shownTabs, [.usage, .agents, .now])
+        settings.set(.actions, shown: true)
+        XCTAssertEqual(settings.shownTabs, [.usage, .agents, .now, .actions])
+    }
+}

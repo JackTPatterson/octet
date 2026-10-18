@@ -51,6 +51,7 @@ enum SettingsSearchIndex {
     ]
 
     private static let notch: [SettingsSearchEntry] = [
+        .init(.notch, "Hover delay", ["milliseconds", "speed", "delay", "120", "hover"]),
         .init(.notch, "Enable Notch", ["notch", "island", "dynamic island", "notchnook", "menu bar", "pill", "top", "glance"]),
         .init(.notch, "Open the notch with", ["hover", "click", "expand", "open", "trigger"]),
         .init(.notch, "Show on", ["display", "monitor", "screen", "main", "pointer", "all", "external"]),
