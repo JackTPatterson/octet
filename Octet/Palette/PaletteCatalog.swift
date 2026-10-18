@@ -202,6 +202,8 @@ enum PaletteCatalog {
                    keywords: ["recap", "away", "catch up", "summary", "while you were away", "what happened", "agents"]) {
                 RecapCenter.shared.showLatest()
             },
+            action("toggleNotch", "Toggle Notch", "gearshape",
+                   keywords: ["notch", "island", "top", "menu bar", "pill", "glance", "agents"]) { NotchController.shared.toggle() },
             action("huggingface", "Add Model from Hugging Face…", "square.and.arrow.down",
                    keywords: ["hugging face", "huggingface", "ollama", "gguf", "model", "download", "local", "opencode"]) { HuggingFaceWindow.open() },
             action("installHook", "Install Subagent Tabs Hook", "sparkles",

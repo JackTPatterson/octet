@@ -39,6 +39,7 @@ enum SettingsDefaults {
         .init("Confirm before quitting", \.confirmQuit),
         .init("Hotkey from any app", \.globalHotkey),
         .init("Drop down from the top", \.hotkeyDropDown),
+        .init("Octet Notch", \.notch),
         .init("Start new tabs and workspaces in", \.newPaneDirectory),
         .init("Shell", \.defaultShell),
         .init("Shell startup mode", \.shellMode),

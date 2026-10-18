@@ -13,6 +13,8 @@ struct OctetSettings: Codable, Equatable {
     /// The hotkey drops a window down from the top of the screen, over
     /// full-screen apps, instead of bringing Octet forward.
     var hotkeyDropDown = false
+    /// The Octet Notch: an island at the top of the screen (see Octet/Notch).
+    var notch = NotchSettings()
     var newPaneDirectory: NewPaneDirectory = .follow
     var defaultShell = ""
     var shellMode: ShellMode = .auto
@@ -324,6 +326,7 @@ struct OctetSettings: Codable, Equatable {
         confirmQuit = value("confirmQuit", defaults.confirmQuit)
         globalHotkey = value("globalHotkey", defaults.globalHotkey)
         hotkeyDropDown = value("hotkeyDropDown", defaults.hotkeyDropDown)
+        notch = value("notch", defaults.notch)
         newPaneDirectory = value("newPaneDirectory", defaults.newPaneDirectory)
         defaultShell = value("defaultShell", defaults.defaultShell)
         shellMode = value("shellMode", defaults.shellMode)
@@ -825,6 +828,7 @@ final class SettingsStore: ObservableObject {
     private func apply(from old: OctetSettings) {
         if values.keepAwake != old.keepAwake { SleepGuard.shared.update() }
         if values.globalHotkey != old.globalHotkey { GlobalHotkey.shared.apply(values.globalHotkey) }
+        if values.notch != old.notch { NotchController.shared.apply() }
         // Each feature's tools go into the agents' own settings only while it's on.
         if values.peersEnabled != old.peersEnabled {
             PeerCenter.shared.apply()

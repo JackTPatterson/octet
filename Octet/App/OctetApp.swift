@@ -83,6 +83,7 @@ struct OctetApp: App {
                     RecapCenter.shared.start()
                     repairInstalledSubagentHooks()
                     DebugSnapshot.start()
+                    NotchController.shared.apply()
                 }
         } defaultValue: {
             OctetWindowSpec()
@@ -337,6 +338,7 @@ struct OctetCommands: Commands {
             Button(OctetShortcut.details.title) { KeyWindow.act { $0.ui.detailsVisible.toggle() } }
                 .keyboardShortcut(OctetShortcut.details.keyboardShortcut)
             Button("Show Recap") { RecapCenter.shared.showLatest() }
+            Button("Toggle Notch") { NotchController.shared.toggle() }
             Button(OctetShortcut.searchWorkspaces.title) {
                 KeyWindow.act { context in
                     context.ui.sidebarVisible = true

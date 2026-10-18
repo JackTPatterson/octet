@@ -408,6 +408,8 @@ struct RootView: View {
             ClipboardWatcher.shared.start()
             OctetContextMenu.installAppWide()
             #if DEBUG
+            // Verification hook: "notch", "notch:collapsed", "notch:peek", "notch:tab=<name>".
+            NotchDebug.runHook()
             // Verification hook: "conversation" opens a native conversation;
             // "conversation:model" also opens that dropdown.
             if let window = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], window.hasPrefix("conversation") {
