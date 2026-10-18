@@ -70,9 +70,9 @@ private struct SkeletonPulse: ViewModifier {
     }
 }
 
-/// A line chart that draws itself while the real one's data loads: a soft
-/// curve eases in across faint gridlines, rests, fades out and draws again.
-/// The curve's shape drifts slowly with time, so no loop jumps.
+/// A line chart revealed by a clip while the real one's data loads: one
+/// fixed curve wipes in left to right with easing, rests, fades and wipes
+/// in again. The line itself never moves.
 struct LoadingLineChart: View {
     var color: Color = Theme.accent
     @ObservedObject private var motion = MotionPreferences.shared
@@ -97,9 +97,7 @@ struct LoadingLineChart: View {
                                 with: .color(Theme.divider.opacity(0.6)))
                 }
 
-                // A slow drift, not a new curve per loop.
-                let drift = animates ? time * 0.18 : 0
-                let points = Self.points(count: 20, drift: drift, in: size)
+                let points = Self.points(count: 20, in: size)
                 let line = Self.smooth(points)
                 var area = line
                 if let last = points.last, let first = points.first {
@@ -130,12 +128,12 @@ struct LoadingLineChart: View {
 
     private static func easeIn(_ x: Double) -> Double { x * x * x }
 
-    /// A plausible usage curve: a few bumps that shift gently over time.
-    private static func points(count: Int, drift: Double, in size: CGSize) -> [CGPoint] {
+    /// A plausible usage curve: a few bumps, always the same.
+    private static func points(count: Int, in size: CGSize) -> [CGPoint] {
         (0..<count).map { index in
             let x = size.width * CGFloat(index) / CGFloat(count - 1)
             let phase = Double(index) * 0.6
-            let value = 0.38 + 0.2 * sin(phase + drift) + 0.12 * sin(phase * 2.1 - drift * 1.3) + 0.07 * cos(phase * 0.6 + drift * 0.7)
+            let value = 0.38 + 0.2 * sin(phase + 0.4) + 0.12 * sin(phase * 2.1 - 0.9) + 0.07 * cos(phase * 0.6 + 0.3)
             let y = size.height * (1 - CGFloat(min(0.9, max(0.08, value))))
             return CGPoint(x: x, y: y)
         }
