@@ -2228,21 +2228,13 @@ private struct Composer: View {
                 }
             }
         }
-        // T3 Code's composer: a floating card, 22pt round, a hairline and a
-        // lit top edge, set in from the conversation's edges.
-        .padding(.horizontal, 14)
+        // Flat and flush with the conversation's sides, as the rest of
+        // Octet's chrome is: a strip with a divider above, not a card.
+        .padding(.horizontal, 16)
         .padding(.top, 12)
-        .padding(.bottom, 10)
-        .background {
-            let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
-            shape.fill(Theme.card)
-                .overlay(shape.strokeBorder(Theme.border, lineWidth: 1))
-                .overlay(alignment: .top) {
-                    Rectangle().fill(Color.white.opacity(0.04)).frame(height: 1).padding(.horizontal, 22)
-                }
-        }
-        .padding(.horizontal, 12)
         .padding(.bottom, 12)
+        .background(Theme.card)
+        .overlay(alignment: .top) { Rectangle().fill(Theme.divider).frame(height: 1) }
         .onAppear {
             #if DEBUG
             if ConversationDebug.openDropdown == "reference" {
