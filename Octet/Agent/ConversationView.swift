@@ -89,6 +89,16 @@ struct ConversationView: View {
             if id == "sample" { session.debugLoadSample(); return }
             if id == "everything" { session.debugLoadEverything(); return }
             if id == "commands" { session.debugLoadSuggestedCommands(); return }
+            if id.hasPrefix("transcript") {
+                session.debugLoadTranscriptFeatures()
+                if id == "transcript-diff", let turn = TurnChanges.derive(session.conversation.items, cwd: session.cwd).first {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                        window.ui.openTurnDiff(directory: session.cwd, promptAt: turn.promptAt,
+                                               nextPromptAt: turn.nextPromptAt, path: turn.files.first?.path)
+                    }
+                }
+                return
+            }
             if id == "queued" { session.debugLoadQueuedMessages(); return }
             if id == "monitor" || id == "monitor-detail" {
                 session.debugLoadMonitor()
@@ -489,7 +499,11 @@ private struct MessageMenu: View {
 
 private struct Transcript: View {
     @ObservedObject var session: AgentSession
+    @EnvironmentObject private var window: WindowContext
     @State private var atBottom: Bool
+    /// The tool call whose whole output is open over the transcript.
+    @State private var outputItem: String?
+    @State private var changesCache = TurnChangesCache()
     /// The item at the top of the view, to come back to it.
     @State private var position: String?
 
@@ -518,16 +532,19 @@ private struct Transcript: View {
                     }
                     if blocking == nil {
                         let depths = Self.depths(items)
+                        let turns = changesCache.turns(items, cwd: session.cwd, running: session.conversation.isRunning,
+                                                      isShown: Self.isShown)
                         ForEach(items.filter(Self.isShown)) { item in
                             let depth = depths[item.id] ?? 0
-                            Group {
-                                if let report = session.usageReports[item.id] {
-                                    UsageCard(report: report)
-                                } else {
-                                    ItemRow(item: item, running: session.conversation.isRunning)
-                                        .equatable()
+                            VStack(alignment: .leading, spacing: 12) {
+                                Group {
+                                    if let report = session.usageReports[item.id] {
+                                        UsageCard(report: report)
+                                    } else {
+                                        ItemRow(item: item, running: session.conversation.isRunning)
+                                            .equatable()
+                                    }
                                 }
-                            }
                                 .contextMenu { MessageMenu(session: session, item: item) }
                                 // A subagent's work is indented under the call that
                                 // started it, a rail per level, so a subagent's own
@@ -543,7 +560,12 @@ private struct Transcript: View {
                                         .padding(.leading, 6)
                                     }
                                 }
-                                .id(item.id)
+                                // The files the turn edited, under its last item.
+                                if let changes = turns[item.id] {
+                                    TurnChangedFilesCard(changes: changes)
+                                }
+                            }
+                            .id(item.id)
                         }
                     }
                     // Visible only when scrolled to the end.
@@ -599,7 +621,38 @@ private struct Transcript: View {
                 }
             }
         }
+        .environment(\.transcriptActions, actions)
+        .overlay {
+            if let outputItem {
+                TranscriptOutputPanel(session: session, itemId: outputItem) { self.outputItem = nil }
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.15), value: outputItem)
+        #if DEBUG
+        .onAppear {
+            guard ConversationDebug.openDropdown == "transcript-output" else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { outputItem = TranscriptDebug.outputItemId }
+        }
+        #endif
     }
+
+    /// What rows can ask of the conversation they're in.
+    private var actions: TranscriptActions {
+        let session = session
+        let window = window
+        return TranscriptActions(
+            cwd: session.cwd,
+            quote: { passage, action in session.quoteInComposer(passage, action: action) },
+            openTurnDiff: { turn, path in
+                window.ui.openTurnDiff(directory: session.cwd, promptAt: turn.promptAt,
+                                       nextPromptAt: turn.nextPromptAt, path: path)
+            },
+            openFile: { path in window.openFile(URL(fileURLWithPath: path)) },
+            openOutput: { id in outputItem = id }
+        )
+    }
+
 
     /// How deep each item sits: 0 for the conversation's own, 1 for a
     /// subagent's, 2 for that subagent's own subagent's, and so on, by
@@ -1058,7 +1111,7 @@ struct ItemRow: View, Equatable {
                     .textSelection(.enabled)
             }
         case .tool(let call):
-            ToolCard(call: call, running: running)
+            ToolCard(call: call, running: running, itemId: item.id)
         case .notice(let text):
             if CompactionNotice.isCompaction(text) {
                 CompactionNotice(text: text, running: running)
@@ -1224,6 +1277,8 @@ private struct ArtifactPanel: View {
 private struct ToolCard: View {
     let call: AgentToolCall
     let running: Bool
+    var itemId: String?
+    @Environment(\.transcriptActions) private var actions
     @State private var startLine: Int?
     @State private var hovered = false
 
@@ -1261,6 +1316,16 @@ private struct ToolCard: View {
                 if let result = call.result, !result.isEmpty, todos == nil, diff == nil || call.isError {
                     CodePanel(text: result, language: call.isError ? "error" : "output",
                               tint: call.isError ? Theme.danger : Theme.textSecondary, maxLines: 14, highlights: false)
+                }
+                if let itemId, todos == nil, diff == nil || call.isError,
+                   let output = call.result ?? call.liveOutput, !output.isEmpty {
+                    // The whole output, searchable, after T3 Code's command output panel.
+                    let count = output.reduce(1) { $1 == "\n" ? $0 + 1 : $0 }
+                    OctetButton(title: count > 14 ? "Show All \(count) Lines" : "Open Output",
+                                icon: "arrow.up.left.and.arrow.down.right", kind: .ghost, compact: true) {
+                        actions.openOutput(itemId)
+                    }
+                    .help("Open the full output with search and copy")
                 }
             }
         }
@@ -1975,7 +2040,7 @@ private struct Composer: View {
                     }
                     .onChange(of: session.editorRequest?.id) { _, _ in
                         guard let request = session.editorRequest else { return }
-                        text = request.text
+                        text = request.applied(to: text)
                         focused = true
                     }
                     .accessibilityLabel("Message \(session.engine.displayName)")
@@ -2314,7 +2379,7 @@ extension EnvironmentValues {
 }
 
 /// Images in the transcript at a readable size; click one to enlarge it.
-private struct ImageGallery: View {
+struct ImageGallery: View {
     let images: [Data]
     @Environment(\.openImage) private var openImage
 
@@ -2701,19 +2766,56 @@ private struct EffortControl: View {
 private struct AssistantMessage: View {
     let text: String
     @State private var hovered = false
+    @State private var selection: AssistantSelection?
+    @Environment(\.transcriptActions) private var actions
 
     var body: some View {
-        MarkdownView(text: text)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .overlay(alignment: .topTrailing) {
-                if hovered {
-                    CopyMessageButton(text: text)
-                        .offset(y: -4)
-                        .transition(.opacity)
+        VStack(alignment: .leading, spacing: 10) {
+            MarkdownView(text: text)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                // Selecting part of the reply offers to quote it, after T3 Code.
+                .overlay {
+                    SelectionWatcher { found in
+                        withAnimation(.easeOut(duration: 0.12)) { selection = found }
+                    }
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
                 }
+                .overlay(alignment: .topLeading) {
+                    if let selection {
+                        GeometryReader { proxy in
+                            let origin = AssistantSelectionToolbar.origin(for: selection.point, in: proxy.size)
+                            AssistantSelectionToolbar(selection: selection, quote: { action in
+                                actions.quote(selection.text, action)
+                                self.selection = nil
+                                NSApp.keyWindow?.makeFirstResponder(nil)
+                            }, dismiss: { self.selection = nil })
+                            .offset(x: origin.x, y: origin.y)
+                        }
+                        .transition(.opacity)
+                    }
+                }
+                .overlay(alignment: .topTrailing) {
+                    if hovered && selection == nil {
+                        CopyMessageButton(text: text)
+                            .offset(y: -4)
+                            .transition(.opacity)
+                    }
+                }
+            TranscriptMediaStrip(text: text, cwd: actions.cwd)
+        }
+        .onHover { inside in withAnimation(.easeOut(duration: 0.12)) { hovered = inside } }
+        .contextMenu { MessageCopyMenu(text: text) }
+        #if DEBUG
+        .onAppear {
+            // Verification hook: the selection bar over a passage of the sample.
+            guard ConversationDebug.openDropdown == "transcript-quote",
+                  let range = text.range(of: TranscriptDebug.quotedPassage) else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                selection = AssistantSelection(text: String(text[range]), point: CGPoint(x: 220, y: 40))
             }
-            .onHover { inside in withAnimation(.easeOut(duration: 0.12)) { hovered = inside } }
-            .contextMenu { MessageCopyMenu(text: text) }
+        }
+        #endif
     }
 }
 

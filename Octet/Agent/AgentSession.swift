@@ -348,6 +348,21 @@ final class AgentSession: ObservableObject, Identifiable {
     struct EditorRequest: Identifiable, Equatable {
         let id: String
         let text: String
+        /// Set when `text` is a passage of a reply to quote into the draft
+        /// rather than a whole new draft.
+        var quoting: TranscriptQuote.Action?
+
+        /// The composer's text once this request is applied to `draft`.
+        func applied(to draft: String) -> String {
+            quoting.map { TranscriptQuote.inserting(text, into: draft, action: $0) } ?? text
+        }
+    }
+
+    /// Quotes a passage of a reply into the composer's draft, after T3
+    /// Code's "Cite": appended as a blockquote, the draft kept.
+    func quoteInComposer(_ passage: String, action: TranscriptQuote.Action = .quote) {
+        guard !passage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        editorRequest = EditorRequest(id: UUID().uuidString, text: passage, quoting: action)
     }
 
     // MARK: - Codex

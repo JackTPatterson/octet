@@ -24,13 +24,18 @@ struct DiffPlane: View {
         Group {
             if let model {
                 DiffPlaneBody(model: model, store: store, ui: ui)
+                    .id(ObjectIdentifier(model))
             } else {
                 PlaneMessage(icon: "doc.diff", title: "No project in front",
                              detail: "Open a tab in a project folder to see what changed.")
             }
         }
-        .onAppear { follow(directory) }
+        .onAppear { follow(ui.diffRequest?.directory ?? directory) }
         .onChange(of: directory) { _, directory in follow(directory) }
+        // A conversation's turn: the plane goes to that conversation's project.
+        .onChange(of: ui.diffRequest) { _, request in
+            if let request { follow(request.directory) }
+        }
         .onChange(of: visible, initial: true) { _, visible in
             if visible { model?.start() } else { model?.stop() }
         }
@@ -64,6 +69,11 @@ private struct DiffPlaneBody: View {
     @AppStorage("octet.diff.hideWhitespace") private var hideWhitespace = false
     /// The agent's turns here, newest first.
     @State private var turns: [(base: ReviewDiff.Base, title: String, date: Date)] = []
+    /// A file a conversation asked to see: the plane opens on it once the
+    /// diff has it, the others folded.
+    @State private var focusPath: String?
+    /// The file to bring into view, once its section is laid out.
+    @State private var focusTarget: String?
 
     private var scopeTitle: String {
         switch model.base {
@@ -96,13 +106,61 @@ private struct DiffPlaneBody: View {
             if model.ignoreWhitespace != hideWhitespace { model.ignoreWhitespace = hideWhitespace }
             loadTurns()
         }
+        .onChange(of: ui.diffRequest, initial: true) { _, request in take(request) }
         .onChange(of: model.diff?.baseCommit) { _, _ in loadTurns() }
         .onChange(of: model.diff?.files.map(\.path) ?? [], initial: true) { _, paths in
             // Many files start folded, so the list reads as a summary first.
             let fresh = paths.filter { !seen.contains($0) }
             if paths.count > 3 { folded.formUnion(fresh) }
             seen.formUnion(fresh)
+            focus(in: paths)
         }
+    }
+
+    /// Opens on the file asked for, the others folded, once the diff has it.
+    private func focus(in paths: [String]) {
+        guard let focusPath, let match = Self.file(matching: focusPath, in: paths) else { return }
+        folded = Set(paths).subtracting([match])
+        focusTarget = match
+        self.focusPath = nil
+    }
+
+    /// A turn a conversation asked for: its comparison, worked out from the
+    /// checkpoint taken as the turn started; without one, what's uncommitted.
+    private func take(_ request: UIState.DiffRequest?) {
+        guard let request else { return }
+        let root = AccountProfiles.projectRoot(of: request.directory) ?? request.directory
+        guard (AccountProfiles.projectRoot(of: model.directory) ?? model.directory) == root else { return }
+        ui.diffRequest = nil
+        focusPath = request.path
+        guard let promptAt = request.promptAt else { return focus(in: model.diff?.files.map(\.path) ?? []) }
+        let directory = model.directory
+        Task {
+            let base = await Task.detached(priority: .userInitiated) { () -> ReviewDiff.Base? in
+                let points = Checkpoints.list(in: directory)
+                guard let found = Checkpoints.checkpoint(forPromptAt: promptAt, nextPromptAt: request.nextPromptAt,
+                                                         in: points) else { return nil }
+                return ReviewDiff.turns(points).first { turn in
+                    if case .turn(let from, _, _) = turn.base { return from == found.commit }
+                    return false
+                }?.base
+            }.value
+            if let base {
+                model.base = base
+            } else {
+                model.base = .uncommitted
+                ToastCenter.shared.info("No checkpoint for this turn",
+                                        detail: "Showing what's uncommitted instead. Octet takes one as an agent starts a turn.")
+            }
+            loadTurns()
+            // Already loaded with the file in it: open on it now.
+            focus(in: model.diff?.files.map(\.path) ?? [])
+        }
+    }
+
+    /// The diff's path (relative to the repository) for an absolute one.
+    static func file(matching path: String, in paths: [String]) -> String? {
+        paths.first { path == $0 || path.hasSuffix("/" + $0) }
     }
 
     // MARK: - Header
@@ -192,24 +250,34 @@ private struct DiffPlaneBody: View {
                                  default: "Nothing is uncommitted here."
                              } }())
             } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
-                        ForEach(diff.files) { file in
-                            Section {
-                                if !folded.contains(file.path) { fileBody(file) }
-                            } header: {
-                                DiffPlaneFileHeader(file: file, folded: folded.contains(file.path),
-                                                    notes: model.comments.filter { $0.path == file.path }.count) {
-                                    MotionPreferences.shared.perform(.sidebar) {
-                                        if folded.contains(file.path) { folded.remove(file.path) } else { folded.insert(file.path) }
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+                            ForEach(diff.files) { file in
+                                Section {
+                                    if !folded.contains(file.path) { fileBody(file) }
+                                } header: {
+                                    DiffPlaneFileHeader(file: file, folded: folded.contains(file.path),
+                                                        notes: model.comments.filter { $0.path == file.path }.count) {
+                                        MotionPreferences.shared.perform(.sidebar) {
+                                            if folded.contains(file.path) { folded.remove(file.path) } else { folded.insert(file.path) }
+                                        }
                                     }
+                                    .id(file.path)
                                 }
                             }
                         }
+                        .padding(.bottom, 16)
                     }
-                    .padding(.bottom, 16)
+                    .octetScrollIndicators()
+                    .onChange(of: focusTarget, initial: true) { _, target in
+                        guard let target else { return }
+                        DispatchQueue.main.async {
+                            proxy.scrollTo(target, anchor: .top)
+                            focusTarget = nil
+                        }
+                    }
                 }
-                .octetScrollIndicators()
             }
         } else {
             VStack(spacing: 8) {

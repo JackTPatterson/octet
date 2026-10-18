@@ -1218,6 +1218,24 @@ final class UIState: ObservableObject {
     }
     @Published var browserRequest: BrowserRequest?
 
+    /// One agent turn for the Diff plane to show, from a conversation's
+    /// changed-files card: the plane works out the turn's comparison from
+    /// the checkpoint taken as it started, and opens on `path` when given.
+    struct DiffRequest: Equatable {
+        let directory: String
+        let promptAt: Date?
+        let nextPromptAt: Date?
+        let path: String?
+        let at = Date()
+    }
+    @Published var diffRequest: DiffRequest?
+
+    /// Shows the Diff plane on the turn begun by the prompt sent at `promptAt`.
+    func openTurnDiff(directory: String, promptAt: Date?, nextPromptAt: Date?, path: String?) {
+        diffRequest = DiffRequest(directory: directory, promptAt: promptAt, nextPromptAt: nextPromptAt, path: path)
+        showPlane(.diff)
+    }
+
     /// Shows the Browser plane on `url`.
     func openInBrowserPlane(_ url: URL) {
         browserRequest = BrowserRequest(url: url)
