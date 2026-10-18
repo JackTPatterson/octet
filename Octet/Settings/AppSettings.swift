@@ -76,6 +76,14 @@ struct OctetSettings: Codable, Equatable {
     var pasteProtection = true
     var clipboardRead: ClipboardAccess = .ask
     var kittyGraphics = true
+    /// ⌘-clicking a localhost or LAN address in a terminal opens it in the
+    /// Browser plane rather than the system browser.
+    var previewTerminalLinks = true
+    /// …and so does a plain click, with `previewTerminalLinks` on.
+    var previewLinksOnPlainClick = false
+    /// A card offering to preview a dev server that starts in the
+    /// workspace in front.
+    var offerServerPreviews = true
 
     // MARK: Agents & recovery (session server + Octet)
     var notifications: NotificationDelivery = .banner
@@ -345,6 +353,9 @@ struct OctetSettings: Codable, Equatable {
         pasteProtection = value("pasteProtection", defaults.pasteProtection)
         clipboardRead = value("clipboardRead", defaults.clipboardRead)
         kittyGraphics = value("kittyGraphics", defaults.kittyGraphics)
+        previewTerminalLinks = value("previewTerminalLinks", defaults.previewTerminalLinks)
+        previewLinksOnPlainClick = value("previewLinksOnPlainClick", defaults.previewLinksOnPlainClick)
+        offerServerPreviews = value("offerServerPreviews", defaults.offerServerPreviews)
         notifications = NotificationDelivery(stored: value("notifications", ""))
             ?? defaults.notifications
         version = value("version", 1)

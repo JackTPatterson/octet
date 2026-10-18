@@ -405,7 +405,7 @@ extension TerminalEngine {
                 }
 
             case GHOSTTY_ACTION_OPEN_URL:
-                return openURL(action.action.open_url)
+                return openURL(action.action.open_url, from: surfaceView(from: target))
 
             case GHOSTTY_ACTION_RING_BELL:
                 // The session server reports bells per pane (pane.bell),
@@ -444,7 +444,8 @@ extension TerminalEngine {
         }
 
         private static func openURL(
-            _ v: ghostty_action_open_url_s
+            _ v: ghostty_action_open_url_s,
+            from surfaceView: SurfaceView? = nil
         ) -> Bool {
             let action = TerminalEngine.Action.OpenURL(c: v)
 
@@ -460,6 +461,21 @@ extension TerminalEngine {
                 // like ~/Documents/file.txt resolve correctly.
                 let expandedPath = NSString(string: action.url).standardizingPath
                 url = URL(filePath: expandedPath)
+            }
+
+            // Octet: a dev server's address opens in the Browser plane.
+            if PreviewLink.isLocal(url) {
+                let modifiers = NSEvent.modifierFlags
+                DispatchQueue.main.async { [weak surfaceView] in
+                    MainActor.assumeIsolated {
+                        if TerminalLinkRouter.wantsPreview(url, modifiers: modifiers) {
+                            TerminalLinkRouter.open(url, from: surfaceView)
+                        } else {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                }
+                return true
             }
 
             switch action.kind {

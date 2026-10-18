@@ -795,6 +795,25 @@ private struct TerminalSettings: View {
                 Toggle("Inline images", isOn: $settings.values.kittyGraphics).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
         }
+        SettingsGroup(title: "Links & servers") {
+            SettingsRow(title: "Open local links in the Browser plane",
+                        detail: "⌘-click a localhost or local network address in a terminal to open it beside the terminal. Other links, and ⇧⌘-clicks, open in your browser.",
+                        setting: \.previewTerminalLinks) {
+                Toggle("Open local links in the Browser plane", isOn: $settings.values.previewTerminalLinks).labelsHidden().toggleStyle(OctetSwitchStyle())
+            }
+            SettingsDivider()
+            SettingsRow(title: "Open them with a plain click",
+                        detail: "No ⌘ needed for local addresses. Clicks a program in the pane takes for itself still go to it.",
+                        setting: \.previewLinksOnPlainClick, disabled: !settings.values.previewTerminalLinks) {
+                Toggle("Open them with a plain click", isOn: $settings.values.previewLinksOnPlainClick).labelsHidden().toggleStyle(OctetSwitchStyle())
+            }
+            SettingsDivider()
+            SettingsRow(title: "Offer to preview new servers",
+                        detail: "When a dev server starts in the workspace in front, a card offers to open it. Once per port each session.",
+                        setting: \.offerServerPreviews) {
+                Toggle("Offer to preview new servers", isOn: $settings.values.offerServerPreviews).labelsHidden().toggleStyle(OctetSwitchStyle())
+            }
+        }
         SettingsGroup(title: "Sidebar terminal") {
             SettingsRow(
                 title: "Let agents read the sidebar terminal",

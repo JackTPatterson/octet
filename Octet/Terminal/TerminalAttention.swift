@@ -53,7 +53,7 @@ struct HoverLinkPreview: View {
             HStack(spacing: 6) {
                 Image(systemName: "link").font(.system(size: 10, weight: .semibold))
                 Text(url).lineLimit(1).truncationMode(.middle)
-                Text("⌘-click to open").foregroundStyle(Theme.textTertiary)
+                Text(Self.hint(for: url)).foregroundStyle(Theme.textTertiary)
             }
             .font(Theme.captionFont)
             .foregroundStyle(Theme.textSecondary)
@@ -67,6 +67,12 @@ struct HoverLinkPreview: View {
             .onAppear { DebugSnapshot.overlay("hover-link", true) }
             .onDisappear { DebugSnapshot.overlay("hover-link", false) }
         }
+    }
+
+    /// A dev server's address opens in the Browser plane, and says so.
+    @MainActor static func hint(for link: String) -> String {
+        guard let url = URL(string: link), TerminalLinkRouter.wantsPreview(url, modifiers: []) else { return "⌘-click to open" }
+        return SettingsStore.shared.values.previewLinksOnPlainClick ? "Click to preview" : "⌘-click to preview"
     }
 }
 

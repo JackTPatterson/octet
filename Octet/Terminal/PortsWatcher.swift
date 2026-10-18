@@ -24,6 +24,7 @@ final class PortsWatcher: ObservableObject {
     func start(store: SessionStore) {
         self.store = store
         guard timer == nil else { return }
+        DevServerAnnouncer.shared.start()
         read()
         // Every 5 s while Octet is in front, every 30 s behind other apps.
         timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in

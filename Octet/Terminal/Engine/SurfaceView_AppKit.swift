@@ -540,7 +540,11 @@ extension TerminalEngine {
             setSurfaceSize(width: UInt32(scaledSize.width), height: UInt32(scaledSize.height))
         }
 
+        /// Where the left button went down, to tell a click from a drag.
+        private var leftPressedAt: NSPoint?
+
         override func mouseDown(with event: NSEvent) {
+            leftPressedAt = convert(event.locationInWindow, from: nil)
             guard let surface = self.surface else { return }
             let mods = TerminalEngine.engineMods(event.modifierFlags)
             ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_LEFT, mods)
@@ -564,6 +568,10 @@ extension TerminalEngine {
 
             // Release pressure
             ghostty_surface_mouse_pressure(surface, 0, 0)
+
+            // Octet: a plain click on a dev server's address can preview it.
+            openLocalLinkOnPlainClick(event, pressedAt: leftPressedAt)
+            leftPressedAt = nil
         }
 
         override func otherMouseDown(with event: NSEvent) {
