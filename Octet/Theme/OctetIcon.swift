@@ -87,7 +87,7 @@ struct OctetIcon: View {
         "doc.text.magnifyingglass": .init("search-status"),
         "sparkle.magnifyingglass": .init("search-status"),
         "terminal": .init("code-1"),
-        "sidebar.left": .init("sidebar-left"),
+        "sidebar.left": .symbol("rectangle.leftthird.inset.filled"),
         "chevron.down": .init("arrow-down-02"),
         "chevron.left": .init("arrow-left-02"),
         "chevron.right": .init("arrow-right-02"),

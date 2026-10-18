@@ -1454,7 +1454,6 @@ private struct TitleBar: View {
                 ui.sidebarVisible.toggle()
             } label: {
                 OctetIcon("sidebar.left", size: 18)
-                    .scaleEffect(x: -1, y: 1)
                     .foregroundStyle(ui.sidebarVisible ? Theme.textPrimary : Theme.textSecondary)
                     .frame(width: 28, height: 24)
                     .background(ui.sidebarVisible ? Theme.cardSelected : Color.clear)
