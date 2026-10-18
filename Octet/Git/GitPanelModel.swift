@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import Foundation
 
 /// The git panel's data, for the agent in front: its tab, the tabs of the
@@ -58,6 +59,14 @@ final class GitPanelModel: ObservableObject {
     @Published private(set) var busy: [String: String] = [:]
     /// The commit message being written for each checkout.
     @Published var drafts: [String: String] = [:]
+    /// The panel's folded sections that are open ("history", "worktrees",
+    /// "handoff"), kept for as long as the window lives.
+    @Published var openSections: Set<String> = []
+
+    func sectionBinding(_ key: String) -> Binding<Bool> {
+        Binding(get: { self.openSections.contains(key) },
+                set: { if $0 { self.openSections.insert(key) } else { self.openSections.remove(key) } })
+    }
 
     private weak var window: WindowContext?
     private var timer: Timer?
@@ -136,7 +145,25 @@ final class GitPanelModel: ObservableObject {
         }
     }
 
+    #if DEBUG
+    /// Sample data is showing (`OCTET_OPEN_WINDOW=planes:git:sample`), so
+    /// nothing reads a repository over it.
+    private var sampleShowing = false
+
+    func showSample(groups: [Group], worktrees: [AgentGit.Worktree], openSections: Set<String>) {
+        sampleShowing = true
+        self.groups = groups
+        self.worktrees = worktrees
+        self.openSections = openSections
+        hasRepository = true
+        loading = false
+    }
+    #endif
+
     func refresh() {
+        #if DEBUG
+        if sampleShowing { return }
+        #endif
         guard let window else { return }
         let scoped = scope()
         // Hidden, only whether there's a repository at all, from files.

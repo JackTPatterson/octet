@@ -628,6 +628,14 @@ struct RootView: View {
                     case "max": ui.sidePanelVisible = true; ui.sidePanelMaximized = true
                     case "pr": ui.showPlane(.pullRequest, number: parts.count > 2 ? Int(parts[2]) : nil)
                     case "prs": ui.showPlane(.pullRequests)
+                    case "git":
+                        // "planes:git" opens the Git plane; ":sample" fills it
+                        // with made-up checkouts, ":sample:open" with every
+                        // folded section unfolded. Nothing reads a repository.
+                        ui.showPlane(.git)
+                        #if DEBUG
+                        if parts.count > 2, parts[2] == "sample" { window.git.loadSample(opened: parts.count > 3) }
+                        #endif
                     case "diff": ui.showPlane(.diff)
                     case "files": ui.showPlane(.files)
                     case "browser": ui.showPlane(.browser)
