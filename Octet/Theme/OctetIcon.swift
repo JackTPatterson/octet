@@ -156,7 +156,7 @@ struct OctetIcon: View {
         "graduationcap": .init("teacher"),
         // Planes and pull requests. SF Symbols stand in where the bundled
         // iconsax set has no mark (scripts/import-icons.py needs its source).
-        "sidebar.right": .init("sidebar-left", mirrored: true),
+        "sidebar.right": .symbol("rectangle.rightthird.inset.filled"),
         "panel.bottom": .symbol("rectangle.bottomthird.inset.filled"),
         "arrow.down.right.and.arrow.up.left": .symbol("arrow.down.right.and.arrow.up.left"),
         "pull.request": .glyph(.pullRequest),
