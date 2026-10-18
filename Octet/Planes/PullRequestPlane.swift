@@ -668,7 +668,6 @@ private struct PullRequestHeader: View {
 
 /// Grey bars in the header's shape while the first read is out.
 private struct PullRequestSkeleton: View {
-    @State private var pulse = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -682,7 +681,7 @@ private struct PullRequestSkeleton: View {
             bar(width: nil, height: 18).padding(.top, 6)
             bar(width: 200, height: 18)
             HStack(spacing: 6) {
-                Circle().fill(Theme.card).frame(width: 16, height: 16)
+                SkeletonCircle(size: 16)
                 bar(width: 160, height: 11)
             }
             bar(width: 220, height: 11)
@@ -693,19 +692,11 @@ private struct PullRequestSkeleton: View {
         }
         .padding(.horizontal, PullRequestStyle.horizontalPadding)
         .padding(.top, 8)
-        .opacity(pulse ? 0.55 : 1)
-        .onAppear {
-            guard MotionPreferences.shared.animates(.sidebar) else { return }
-            withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) { pulse = true }
-        }
         .accessibilityLabel("Loading the pull request")
     }
 
     private func bar(width: CGFloat?, height: CGFloat) -> some View {
-        RoundedRectangle(cornerRadius: 4)
-            .fill(Theme.card)
-            .frame(width: width, height: height)
-            .frame(maxWidth: width == nil ? .infinity : nil, alignment: .leading)
+        SkeletonBlock(width: width, height: height)
     }
 }
 

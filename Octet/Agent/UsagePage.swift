@@ -172,7 +172,7 @@ struct UsagePage: View {
                         VStack(alignment: .leading, spacing: 18) {
                             ForEach(0..<3, id: \.self) { index in
                                 HStack(alignment: .top, spacing: 10) {
-                                    Circle().fill(Theme.cardSelected).frame(width: 14, height: 14)
+                                    SkeletonCircle(size: 14)
                                     VStack(alignment: .leading, spacing: 7) {
                                         SkeletonBlock(width: [150, 120, 135][index], height: 11)
                                         SkeletonBlock(width: [180, 150, 165][index], height: 9)
@@ -229,7 +229,6 @@ struct UsagePage: View {
                     }
                 }
             }
-            .skeletonPulse()
             .padding(.horizontal, 28)
             .padding(.vertical, 26)
         }

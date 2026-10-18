@@ -384,10 +384,8 @@ struct MarketplaceEmptyState: View {
 struct MarketplaceSkeleton: View {
     let title: String
     let detail: String
-    @State private var dim = false
-    @ObservedObject private var motion = MotionPreferences.shared
-
     var body: some View {
+        // Each block breathes in a wave down the list (SkeletonBlock).
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 Text(title)
@@ -409,14 +407,9 @@ struct MarketplaceSkeleton: View {
                     SkeletonRow(seed: index).cardSlot(.at(index, of: 6))
                 }
             }
-            .opacity(dim ? 0.45 : 1)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(title)
-        .onAppear {
-            guard motion.animates(.agentStatus) else { return }
-            withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) { dim = true }
-        }
     }
 
     private struct SkeletonRow: View {
@@ -424,7 +417,7 @@ struct MarketplaceSkeleton: View {
 
         var body: some View {
             HStack(alignment: .top, spacing: 12) {
-                RoundedRectangle(cornerRadius: Theme.controlRadius).fill(Theme.cardSelected).frame(width: 32, height: 32)
+                SkeletonBlock(width: 32, height: 32, radius: Theme.controlRadius)
                 VStack(alignment: .leading, spacing: 8) {
                     bar(width: [140, 180, 110, 160, 130, 150][seed % 6], height: 11)
                     bar(width: [360, 300, 420, 260, 340, 390][seed % 6], height: 8)
@@ -441,7 +434,7 @@ struct MarketplaceSkeleton: View {
         }
 
         private func bar(width: CGFloat, height: CGFloat) -> some View {
-            RoundedRectangle(cornerRadius: height / 2).fill(Theme.cardSelected).frame(width: width, height: height)
+            SkeletonBlock(width: width, height: height, radius: height / 2)
         }
     }
 }

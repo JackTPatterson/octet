@@ -1,16 +1,53 @@
 import SwiftUI
 
-/// A placeholder block for content that's still loading.
+/// A placeholder block for content that's still loading. Blocks breathe
+/// in a wave down the page: each one's pulse lags by how far down it sits,
+/// so a skeleton shimmers top to bottom rather than blinking as one.
 struct SkeletonBlock: View {
     var width: CGFloat?
     var height: CGFloat
     var radius: CGFloat = 4
+    @ObservedObject private var motion = MotionPreferences.shared
+    @State private var offset: CGFloat = 0
+
+    /// Seconds per breath, and how far apart (in points) blocks a full
+    /// breath out of step sit.
+    private static let period = 1.6
+    private static let wavelength: CGFloat = 520
 
     var body: some View {
-        RoundedRectangle(cornerRadius: radius, style: .continuous)
-            .fill(Theme.cardSelected)
-            .frame(width: width, height: height)
-            .frame(maxWidth: width == nil ? .infinity : nil, alignment: .leading)
+        let animates = motion.animates(.agentStatus)
+        TimelineView(.animation(paused: !animates)) { context in
+            let shape = RoundedRectangle(cornerRadius: radius, style: .continuous).fill(Theme.cardSelected)
+            if animates {
+                let time = context.date.timeIntervalSinceReferenceDate / Self.period
+                let phase = (time - Double(offset / Self.wavelength)) * 2 * .pi
+                // Eased breath between 45% and 100%.
+                shape.opacity(0.45 + 0.55 * (0.5 + 0.5 * cos(phase)))
+            } else {
+                shape
+            }
+        }
+        .frame(width: width, height: height)
+        .frame(maxWidth: width == nil ? .infinity : nil, alignment: .leading)
+        .background {
+            GeometryReader { geometry in
+                let y = geometry.frame(in: .global).minY + geometry.frame(in: .global).minX * 0.25
+                Color.clear
+                    .onAppear { offset = y }
+                    .onChange(of: y) { _, new in offset = new }
+            }
+        }
+    }
+}
+
+/// Circles and other shapes that stand in for content, breathing in step
+/// with the blocks around them.
+struct SkeletonCircle: View {
+    var size: CGFloat
+
+    var body: some View {
+        SkeletonBlock(width: size, height: size, radius: size / 2)
     }
 }
 
