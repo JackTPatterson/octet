@@ -26,9 +26,9 @@ struct PullRequestCodeTab: View {
                     list(files)
                 }
             } else {
-                HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 8) {
                     LoadingLine(width: 18)
-                    Text("Reading the diff…").font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
+                    DiffPlaneSkeleton()
                 }
                 .padding(.vertical, 12)
             }

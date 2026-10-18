@@ -24,7 +24,15 @@ struct GitPanel: View {
 
     @ViewBuilder
     private var content: some View {
-        if model.groups.count == 1, let group = model.groups.first {
+        if PlaneLoadingPreview.shows("git") {
+            // Verification: the loading state, held.
+            VStack(alignment: .leading, spacing: 18) {
+                LoadingLine(width: 18)
+                GitPanelSkeleton()
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+        } else if model.groups.count == 1, let group = model.groups.first {
             pinned(group)
         } else {
             ScrollView {
@@ -86,7 +94,9 @@ struct GitPanel: View {
     private var empty: some View {
         if model.loading {
             LoadingLine(width: 18)
-        } else {
+            if !model.loaded { GitPanelSkeleton() }
+        }
+        if !model.loading || model.loaded {
             Text("Not in a repository. When the agent in this tab, or a subagent it started, works in a git repository, its changes, commits and worktrees show here.")
                 .font(Theme.captionFont)
                 .foregroundStyle(Theme.textTertiary)

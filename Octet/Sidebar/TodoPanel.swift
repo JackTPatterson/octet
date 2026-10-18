@@ -23,7 +23,10 @@ final class TodoModel: ObservableObject {
     private var projectRead: (path: String, modified: Date)?
     private weak var window: WindowContext?
     private var timer: Timer?
-    private var loading = false
+    @Published private(set) var loading = false
+    @Published private(set) var loaded = false
+    @Published private(set) var projectLoading = false
+    private var projectLoaded = false
     /// A Codex rollout is re-read only when it has changed.
     private var rollouts: [String: (modified: Date, plan: [AgentTodo]?)] = [:]
     static let interval: TimeInterval = 2.5
@@ -120,6 +123,7 @@ final class TodoModel: ObservableObject {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.loading = false
+                self.loaded = true
                 self.rollouts = seenRollouts
                 if sections != self.sections { self.sections = sections }
             }
@@ -139,8 +143,11 @@ extension TodoModel {
             projectRoot = root
             project = nil
             projectRead = nil
+            projectLoaded = false
+            projectLoading = false
         }
         guard let root else { return }
+        if !projectLoaded { projectLoading = true }
         let last = projectRead
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let path = ProjectTodos.path(inRoot: root)
@@ -150,6 +157,8 @@ extension TodoModel {
                 : (try? String(contentsOfFile: path, encoding: .utf8)).map { ProjectTodos.parse($0, path: path) }
             DispatchQueue.main.async {
                 guard let self, self.projectRoot == root else { return }
+                self.projectLoading = false
+                self.projectLoaded = true
                 self.projectRead = modified.map { (path: path, modified: $0) }
                 if list != self.project { self.project = list }
             }
@@ -232,7 +241,12 @@ struct TodoPanel: View {
                              count: todos.isEmpty ? projectOpen : nil,
                              label: todos.isEmpty ? nil : "\(todos.completedCount)/\(todos.count)",
                              labelColor: !todos.isEmpty && todos.completedCount == todos.count ? Color(hex: AgentStateColor.done) : nil) {
-            if model.sections.isEmpty && model.projectRoot == nil {
+            if PlaneLoadingPreview.shows("overview") || (model.sections.isEmpty && model.project == nil
+                && ((model.loading && !model.loaded) || model.projectLoading)) {
+                VStack(spacing: 2) {
+                    ForEach(0..<3, id: \.self) { _ in PlaneSkeletonRow(width: 170, height: 28) }
+                }
+            } else if model.sections.isEmpty && model.projectRoot == nil {
                 empty
             } else {
                 VStack(alignment: .leading, spacing: 16) {

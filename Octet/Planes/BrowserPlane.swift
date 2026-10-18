@@ -37,7 +37,9 @@ struct BrowserPlane: View {
                 BrowserWebView(page: current)
                     .id(isPrivate)
                     .opacity(current.showingStart || current.failure != nil ? 0 : 1)
-                if let failure = current.failure {
+                if PlaneLoadingPreview.shows("browser") || (current.loading && !current.hasContent && current.failure == nil) {
+                    BrowserPlaneSkeleton().allowsHitTesting(false)
+                } else if let failure = current.failure {
                     BrowserUnreachable(failure: failure, waiting: current.waiting,
                                        retry: { current.reload() },
                                        openOutside: { NSWorkspace.shared.open(failure.url) })
@@ -49,7 +51,7 @@ struct BrowserPlane: View {
                 }
             }
             .overlay(alignment: .top) {
-                if current.loading { LoadingLine(width: 60).padding(.top, 2) }
+                if current.loading || PlaneLoadingPreview.shows("browser") { LoadingLine(width: 60).padding(.top, 2) }
             }
             .overlay(alignment: .topTrailing) {
                 BrowserZoomIndicator(zoom: current.zoom).id(isPrivate).padding(10)
@@ -237,6 +239,7 @@ final class BrowserPage: NSObject, ObservableObject, WKNavigationDelegate {
     let isPrivate: Bool
     @Published private(set) var url: URL?
     @Published private(set) var loading = false
+    @Published private(set) var hasContent = false
     @Published private(set) var canGoBack = false
     @Published private(set) var canGoForward = false
     @Published private(set) var failure: Failure?
@@ -435,6 +438,7 @@ final class BrowserPage: NSObject, ObservableObject, WKNavigationDelegate {
     nonisolated func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         MainActor.assumeIsolated {
             failure = nil
+            hasContent = true
             stopWaiting()
             update()
         }

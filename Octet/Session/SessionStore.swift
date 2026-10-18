@@ -112,7 +112,7 @@ final class SessionStore: ObservableObject {
     /// were already open, which aren't new connections.
     private(set) var sshScans = 0
     private var loadingPaneRuntimes = false
-    private var loadingPaneProcesses = false
+    @Published private(set) var loadingPaneProcesses = false
     /// True while the focused pane sits at its shell's own prompt.
     var focusedPaneAtPrompt: Bool { ShellPrompt.isAtPrompt(focusedProcess) }
     /// The pane `focusedProcess` describes.

@@ -50,7 +50,9 @@ struct PullRequestListPlane: View {
 
     @ViewBuilder
     private var content: some View {
-        if let failure = model.failure {
+        if PlaneLoadingPreview.shows("pullRequests") {
+            PullRequestListSkeleton()
+        } else if let failure = model.failure {
             message(failure.title, failure.remedy)
         } else if let items = model.items {
             if items.isEmpty {
@@ -68,18 +70,7 @@ struct PullRequestListPlane: View {
                 .octetScrollIndicators()
             }
         } else {
-            VStack(alignment: .leading, spacing: 12) {
-                ForEach(0..<4, id: \.self) { _ in
-                    VStack(alignment: .leading, spacing: 6) {
-                        RoundedRectangle(cornerRadius: 4).fill(Theme.card).frame(height: 12)
-                        RoundedRectangle(cornerRadius: 4).fill(Theme.card).frame(width: 160, height: 10)
-                    }
-                }
-                Spacer()
-            }
-            .padding(.horizontal, PullRequestStyle.horizontalPadding)
-            .padding(.top, 8)
-            .accessibilityLabel("Loading pull requests")
+            PullRequestListSkeleton()
         }
     }
 

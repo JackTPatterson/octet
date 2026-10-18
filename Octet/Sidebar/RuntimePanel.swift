@@ -80,7 +80,13 @@ struct RuntimePanel: View {
         ForEach(RuntimeKind.allCases) { kind in
             let rows = current.filter { $0.kind == kind }
             SidePanelSectionView(kind.section, count: rows.count) {
-                if rows.isEmpty {
+                if PlaneLoadingPreview.shows("overview") || (rows.isEmpty && store.loadingPaneProcesses
+                    && (targetPanes.contains { store.paneProcesses[$0.paneId] == nil }
+                        || activeSession.map { store.nativeRuntimeProcesses[$0.id] == nil } == true)) {
+                    VStack(spacing: 2) {
+                        ForEach(0..<2, id: \.self) { _ in PlaneSkeletonRow(width: 150, height: 36, detail: true) }
+                    }
+                } else if rows.isEmpty {
                     Text(kind.emptyText)
                         .font(Theme.captionFont)
                         .foregroundStyle(Theme.textTertiary)

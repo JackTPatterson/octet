@@ -16,6 +16,7 @@ struct DiffPlane: View {
         #if DEBUG
         // Verification hook: a project to show without a pane in it.
         if let forced = ProcessInfo.processInfo.environment["OCTET_PLANE_DIRECTORY"] { return forced }
+        if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"]?.hasSuffix(":loading") == true { return NSHomeDirectory() }
         #endif
         return window.focusedDirectory
     }
@@ -209,7 +210,7 @@ private struct DiffPlaneBody: View {
                 DiffStatLabel(added: diff.added, removed: diff.removed)
             }
             Spacer(minLength: 4)
-            if model.loading { LoadingLine(width: 12) }
+            if model.loading || PlaneLoadingPreview.shows("diff") { LoadingLine(width: 12) }
             OctetIconButton(icon: "pilcrow", help: model.ignoreWhitespace ? "Show whitespace changes" : "Hide whitespace changes",
                             active: model.ignoreWhitespace) {
                 model.ignoreWhitespace.toggle()
@@ -238,7 +239,9 @@ private struct DiffPlaneBody: View {
 
     @ViewBuilder
     private var content: some View {
-        if model.notARepository {
+        if PlaneLoadingPreview.shows("diff") {
+            DiffPlaneSkeleton().frame(maxHeight: .infinity, alignment: .top)
+        } else if model.notARepository {
             PlaneMessage(icon: "doc.diff", title: "Not a Git repository",
                          detail: "Diffs need a Git repository. This folder isn't in one.")
         } else if let diff = model.diff {
@@ -280,11 +283,9 @@ private struct DiffPlaneBody: View {
                 }
             }
         } else {
-            VStack(spacing: 8) {
-                LoadingLine()
-                Text("Loading changes…").font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            DiffPlaneSkeleton()
+                .frame(maxHeight: .infinity, alignment: .top)
+                .overlay(alignment: .bottom) { LoadingLine().padding(8) }
         }
     }
 
