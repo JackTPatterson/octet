@@ -97,7 +97,7 @@ struct LoadingLineChart: View {
                                 with: .color(Theme.divider.opacity(0.6)))
                 }
 
-                let points = Self.points(count: 20, in: size)
+                let points = Self.points(count: 64, in: size)
                 let line = Self.smooth(points)
                 var area = line
                 if let last = points.last, let first = points.first {
@@ -128,14 +128,12 @@ struct LoadingLineChart: View {
 
     private static func easeIn(_ x: Double) -> Double { x * x * x }
 
-    /// A plausible usage curve: a few bumps, always the same.
+    /// A sine wave, two full periods across the chart.
     private static func points(count: Int, in size: CGSize) -> [CGPoint] {
         (0..<count).map { index in
-            let x = size.width * CGFloat(index) / CGFloat(count - 1)
-            let phase = Double(index) * 0.6
-            let value = 0.38 + 0.2 * sin(phase + 0.4) + 0.12 * sin(phase * 2.1 - 0.9) + 0.07 * cos(phase * 0.6 + 0.3)
-            let y = size.height * (1 - CGFloat(min(0.9, max(0.08, value))))
-            return CGPoint(x: x, y: y)
+            let fraction = Double(index) / Double(count - 1)
+            let value = 0.5 + 0.3 * sin(fraction * 2 * .pi * 2)
+            return CGPoint(x: size.width * CGFloat(fraction), y: size.height * (1 - CGFloat(value)))
         }
     }
 
