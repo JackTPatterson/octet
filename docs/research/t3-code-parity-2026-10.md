@@ -31,7 +31,7 @@ T3 Code is a chat app for agents; Octet is a terminal that hosts them. Where the
 | Linked pull requests | Adapted | Pull Requests plane (the repo's open PRs) |
 | Files: tree, search, breadcrumbs, file preview | Done | Files open in Octet's editor beside the terminal |
 | Terminal surface (with splits) | Done | Terminal plane, several allowed; the drawer is the main one |
-| Browser: address bar, profiles, local servers, recording | Done, without recording | Browser plane with local servers from Octet's port watcher; profiles as Default / Private (non-persistent). Recording skipped: needs a capture pipeline Octet doesn't have |
+| Browser: address bar, profiles, local servers, favicons, recent URLs, unreachable + auto-retry, zoom, ⋯ menu, terminal links into the preview, "server is up" card, recording | Done, without recording | Browser plane; local terminal links open there; profiles as Default / Private. Recording skipped: needs a capture pipeline Octet doesn't have. Agent browser cursor skipped: Octet's agents don't drive the plane |
 | Device: picker, boot, live stream, touch/keys, rail, tools drawer, setup wizard | Done | Native (simctl + AXe, adb) rather than T3 Code's Node hub. iOS verified on a throwaway simulator; Android verified against a fake SDK; the real SDK is installed but an emulator run is still untested |
 | Device 3D bezel, iPhone Duo, Android fold | Skipped | T3 Code's own report rates it high effort, low value |
 | Floating device mini-player | Done | A floating NSPanel with its own stream view |
@@ -60,7 +60,12 @@ T3 Code is a chat app for agents; Octet is a terminal that hosts them. Where the
 | Inbox shelves (Working / Snoozed / Settled), snooze, auto-settle | Adapted | Snoozed and Idle shelves in the sidebar, plus Waits |
 | Top bar breadcrumb | Adapted | Octet's title bar shows the workspace and tab |
 | Chat: user bubbles, unboxed assistant, work-log rows, floating composer, round send/stop | Done | |
-| Changed-files card in chat, revert to turn | Already in Octet | Rewind and the Git plane's checkpoints |
+| Changed-files tree per turn, revert to turn | Done | A tree under each turn opening the Diff plane at that turn; rewind via checkpoints |
+| Composer: prompt history, slash-command search, stash, plan follow-up, length guard | Done | ↑/↓ per project, T3's ranking, ⌘S stash with images, "Implement this plan", warning past ~30k tokens |
+| Quote / cite part of a reply | Done | Selection toolbar: Quote, Copy, Ask about this |
+| Inline media, command output panel | Done | Image/video previews in replies; searchable full output panel |
+| Project content search | Done | ⌥⌘F (⌘⇧F is Search Workspaces): rg, then git grep, then a scan |
+| Custom snooze, prompt links | Done | "Pick a Time…" dialog; octet://new?prompt=… opens a prefilled conversation after asking |
 | Diff colours | Kept Octet's | The theme's own green and red, as asked |
 | Usage page, Pull Requests page | Done | Full in-window pages with breadcrumbs |
 | Connections (remote environments) | Adapted | Peers, Octet's Mac-to-Mac pairing, redone after it |
