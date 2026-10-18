@@ -32,6 +32,62 @@ struct PlaneSkeletonRow: View {
     }
 }
 
+/// The Overview's runtime rows while they load, drawn as they will be: a
+/// glyph, a title with its status at the right, and a line under it. In a
+/// tree the later rows hang one level in.
+struct OverviewRowsSkeleton: View {
+    var rows = 2
+    var tree = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            ForEach(0..<rows, id: \.self) { row in
+                HStack(alignment: .top, spacing: 8) {
+                    SkeletonCircle(size: 14).frame(width: 18, height: 20)
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 6) {
+                            SkeletonBlock(width: CGFloat(120 + row % 2 * 36), height: 12)
+                            Spacer(minLength: 0)
+                            SkeletonBlock(width: 34, height: 10)
+                        }
+                        SkeletonBlock(width: CGFloat(170 + row % 2 * 24), height: 10)
+                    }
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
+                .padding(.leading, tree && row > 0 ? 18 : 0)
+            }
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+/// The Overview's todos while they load: a plan's header and progress bar
+/// over its steps, then the project list's header.
+struct OverviewTodoSkeleton: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                SkeletonCircle(size: 14)
+                SkeletonBlock(width: 120, height: 12)
+                Spacer(minLength: 0)
+                SkeletonBlock(width: 38, height: 10)
+            }
+            SkeletonBlock(height: 3, radius: 1.5)
+            ForEach(0..<3, id: \.self) { row in
+                HStack(spacing: 8) {
+                    SkeletonCircle(size: 13)
+                    SkeletonBlock(width: CGFloat(150 + row % 2 * 40), height: 12)
+                    Spacer(minLength: 0)
+                }
+                .frame(height: 24)
+            }
+            SkeletonBlock(width: 90, height: 10).padding(.top, 4)
+        }
+        .accessibilityHidden(true)
+    }
+}
+
 struct FilesPlaneSkeleton: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {

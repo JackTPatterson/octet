@@ -625,7 +625,10 @@ struct RootView: View {
                         // ":sample" fills it with made-up work, to see it populated.
                         if parts.count > 2, parts[2] == "sample" {
                             RuntimePanel.debugSample = true
-                            window.todos.loadSample()
+                            let variant = parts.count > 3 ? parts[3] : nil
+                            RuntimePanel.debugVariant = variant
+                            window.todos.loadSample(variant: variant)
+                            if variant != "empty" { window.projectAgent.loadSample() }
                         }
                         #endif
                     case "git":

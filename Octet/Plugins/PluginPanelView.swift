@@ -8,11 +8,17 @@ struct PluginPanelSections: View {
     var body: some View {
         ForEach(model.entries) { entry in
             let panel = entry.panel.panel
-            SidePanelSectionView(.plugin(entry.id), title: panel.title,
-                                 count: entry.content.badge == nil ? entry.content.rows.count : nil,
-                                 label: entry.content.badge,
-                                 labelColor: PluginPanelTone.color(entry.content.tone)) {
-                PluginPanelBody(model: model, id: entry.id)
+            if entry.content.rows.isEmpty, entry.content.actions.isEmpty, entry.content.badge == nil {
+                // Nothing to list or do: one quiet line, like an empty runtime section.
+                SidePanelSectionView(.plugin(entry.id), title: panel.title, quiet: "None",
+                                     quietHelp: entry.content.message ?? "Nothing to show here now") { EmptyView() }
+            } else {
+                SidePanelSectionView(.plugin(entry.id), title: panel.title,
+                                     count: entry.content.badge == nil ? entry.content.rows.count : nil,
+                                     label: entry.content.badge,
+                                     labelColor: PluginPanelTone.color(entry.content.tone)) {
+                    PluginPanelBody(model: model, id: entry.id)
+                }
             }
         }
     }
@@ -99,11 +105,23 @@ private struct PluginPanelRow: View {
     let perform: (PluginPanel.Action) -> Void
     @State private var hovered = false
 
+    /// A dot for an ordinary row; for one that needs attention or went well,
+    /// an icon, so the tone isn't colour alone.
+    @ViewBuilder
+    private var toneMark: some View {
+        switch row.tone {
+        case .warning?, .danger?:
+            OctetIcon("exclamationmark.triangle.fill", size: 12).foregroundStyle(PluginPanelTone.color(row.tone) ?? Theme.textTertiary)
+        case .success?:
+            OctetIcon("checkmark.circle", size: 12).foregroundStyle(PluginPanelTone.color(row.tone) ?? Theme.textTertiary)
+        default:
+            Circle().fill(PluginPanelTone.color(row.tone) ?? Theme.textTertiary).frame(width: 7, height: 7)
+        }
+    }
+
     var body: some View {
         HStack(spacing: 8) {
-            Circle()
-                .fill(PluginPanelTone.color(row.tone) ?? Theme.textTertiary)
-                .frame(width: 7, height: 7)
+            toneMark.frame(width: 16)
             VStack(alignment: .leading, spacing: 1) {
                 Text(row.title).font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary).lineLimit(1)
                 if let detail = row.detail, !detail.isEmpty {
@@ -111,18 +129,23 @@ private struct PluginPanelRow: View {
                 }
             }
             Spacer(minLength: 6)
-            if let link = row.link {
-                RowActionButton(title: "Open", symbol: "arrow.up.right.square") { NSWorkspace.shared.open(link) }
+            // The row's actions come with the pointer, so a quiet list stays quiet.
+            HStack(spacing: 0) {
+                if let link = row.link {
+                    RowActionButton(title: "Open", symbol: "arrow.up.right.square") { NSWorkspace.shared.open(link) }
+                }
+                ForEach(row.actions) { action in
+                    RowActionButton(title: action.title, symbol: action.symbol) { perform(action) }
+                        .disabled(disabled)
+                }
             }
-            ForEach(row.actions) { action in
-                RowActionButton(title: action.title, symbol: action.symbol) { perform(action) }
-                    .disabled(disabled)
-            }
+            .opacity(hovered ? 1 : 0)
+            .allowsHitTesting(hovered)
         }
         .padding(.horizontal, 6)
-        .frame(minHeight: 34)
+        .frame(minHeight: 32)
         .background(hovered ? Theme.hover : Color.clear)
-        .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.controlRadius))
         .onHover { hovered = $0 }
         .help(row.detail ?? row.title)
     }
@@ -144,7 +167,7 @@ private struct RowActionButton: View {
             .padding(.horizontal, 5)
             .frame(minWidth: 22, minHeight: 22)
             .background(hovered ? Theme.cardSelected : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
+            .clipShape(RoundedRectangle(cornerRadius: Theme.controlRadius))
         }
         .buttonStyle(.plain)
         .onHover { hovered = $0 }
