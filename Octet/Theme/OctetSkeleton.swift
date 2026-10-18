@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// A placeholder block for content that's still loading. Blocks breathe
-/// in a wave down the page: each one's pulse lags by how far down it sits,
-/// so a skeleton shimmers top to bottom rather than blinking as one.
+/// in a wave from the top left to the bottom right: each one's pulse lags
+/// by how far along that diagonal it sits, rather than all blinking as one.
 struct SkeletonBlock: View {
     var width: CGFloat?
     var height: CGFloat
@@ -13,7 +13,7 @@ struct SkeletonBlock: View {
     /// Seconds per breath, and how far apart (in points) blocks a full
     /// breath out of step sit.
     private static let period = 1.6
-    private static let wavelength: CGFloat = 520
+    private static let wavelength: CGFloat = 900
 
     var body: some View {
         let animates = motion.animates(.agentStatus)
@@ -32,7 +32,9 @@ struct SkeletonBlock: View {
         .frame(maxWidth: width == nil ? .infinity : nil, alignment: .leading)
         .background {
             GeometryReader { geometry in
-                let y = geometry.frame(in: .global).minY + geometry.frame(in: .global).minX * 0.25
+                // Distance along the diagonal: the wave runs from the top
+                // left to the bottom right.
+                let y = geometry.frame(in: .global).minY + geometry.frame(in: .global).minX
                 Color.clear
                     .onAppear { offset = y }
                     .onChange(of: y) { _, new in offset = new }
