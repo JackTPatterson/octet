@@ -37,6 +37,10 @@ import Foundation
 //                                      a wait: Octet checks the condition (a PR,
 //                                      a release, a package, a page, a date, …)
 //                                      and brings the work back with the next step
+//   octet-cli wait checkin --prompt <text> (--in <delay> | --at <date>) [--every <repeat>]
+//                          [--until <date>] [--count <n>] [--mode wake|remind|both] [--title <words>]
+//                                      a check-in on work that takes days or weeks: Octet
+//                                      wakes this session (or reminds the person) then
 //   octet-cli wait list                 the waits set, with where each stands
 //   octet-cli wait cancel <id>          remove one
 //   octet-cli wait-mcp                  the same, as MCP tools for any agent (stdio)
@@ -330,8 +334,8 @@ case "wait-mcp":
 case "wait":
     // For an agent that can run a command but takes no MCP tools.
     let rest = Array(arguments.dropFirst())
-    let usage = "usage: octet-cli wait add --until <condition> --then <next step> [--title <words>] | wait list | wait cancel <id>"
-    guard let verb = rest.first, ["add", "list", "cancel"].contains(verb) else { fail(usage + "\n\n" + WaitMCP.untilHelp) }
+    let usage = "usage: octet-cli wait add --until <condition> --then <next step> [--title <words>] | wait checkin --prompt <text> (--in <delay> | --at <date>) [--every <repeat>] [--until <date>] [--count <n>] [--mode wake|remind|both] | wait list | wait cancel <id>"
+    guard let verb = rest.first, ["add", "checkin", "list", "cancel"].contains(verb) else { fail(usage + "\n\n" + WaitMCP.untilHelp) }
     guard let origin = WaitControl.Origin.current(environment, cwd: FileManager.default.currentDirectoryPath) else {
         fail(WaitControl.notInOctet)
     }
@@ -346,6 +350,13 @@ case "wait":
             params["then"] = then
             if let title = option("--title", in: rest) { params["title"] = title }
             print(WaitMCP.formatAdded(try WaitControl.call(socketPath: socket, method: .add, params: params)))
+        case "checkin":
+            for (flag, key) in [("--prompt", "prompt"), ("--in", "in"), ("--at", "at"), ("--every", "every"), ("--until", "until"),
+                                ("--count", "count"), ("--mode", "mode"), ("--title", "title")] {
+                if let value = option(flag, in: rest) { params[key] = value }
+            }
+            _ = try CheckInRequest.parse(params)
+            print(WaitMCP.formatCheckIn(try WaitControl.call(socketPath: socket, method: .checkin, params: params)))
         case "list":
             print(WaitMCP.formatList(try WaitControl.call(socketPath: socket, method: .list, params: params)))
         default:
@@ -369,5 +380,5 @@ case "mcp-permission":
     }
 
 default:
-    fail("usage: octet-cli <open [folder]|run <agent> [--in <folder>] [--prompt <text>]|send <text>|panes|read [--pane <id>] [--lines <n>]|peer …|peer-mcp|delegate-mcp|terminal read|terminal suggest|terminal-mcp|wait add|wait list|wait cancel|wait-mcp|hook <agent>|agent-watch|install-subagent-hook [agent]|uninstall-subagent-hook [agent]|mcp-permission --socket <path>>")
+    fail("usage: octet-cli <open [folder]|run <agent> [--in <folder>] [--prompt <text>]|send <text>|panes|read [--pane <id>] [--lines <n>]|peer …|peer-mcp|delegate-mcp|terminal read|terminal suggest|terminal-mcp|wait add|wait checkin|wait list|wait cancel|wait-mcp|hook <agent>|agent-watch|install-subagent-hook [agent]|uninstall-subagent-hook [agent]|mcp-permission --socket <path>>")
 }

@@ -30,6 +30,7 @@ struct RootView: View {
     @ObservedObject private var agents = AgentCenter.shared
     @ObservedObject private var offers = AgentOfferCenter.shared
     @ObservedObject private var waitCenter = WaitCenter.shared
+    @ObservedObject private var checkInCenter = CheckInCenter.shared
     /// This window: what it shows, and how it moves.
     @EnvironmentObject private var window: WindowContext
 
@@ -371,6 +372,13 @@ struct RootView: View {
             WaitEditorSheet(draft: draft) { waitCenter.draft = nil }
                 .environmentObject(window)
         }
+        // A check-in being written, in the window that asked for it.
+        .sheet(item: Binding(
+            get: { checkInCenter.draft.flatMap { $0.windowId == nil || $0.windowId == window.id ? $0 : nil } },
+            set: { if $0 == nil { checkInCenter.draft = nil } })) { draft in
+            CheckInEditorSheet(draft: draft) { checkInCenter.draft = nil }
+                .environmentObject(window)
+        }
         // Above the palette, so a confirm raised while it's open isn't buried.
         .modifier(RootDialogHosts(ui: ui, store: store, confirmations: confirmations))
         .modifier(RootAnimations(ui: ui, boardShowing: boardHere != nil))
@@ -573,6 +581,11 @@ struct RootView: View {
                     ProjectSearchCenter.shared.open(in: window, query: open.hasPrefix("project-search:") ? String(open.dropFirst(15)) : nil,
                                                     root: ProcessInfo.processInfo.environment["OCTET_SEARCH_ROOT"])
                 }
+            }
+            // "checkin-sample" fills the sidebar with made-up check-ins (nothing is
+            // saved or scheduled); "checkin-composer" opens the sheet for a new one.
+            if let open = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], open.hasPrefix("checkin") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { CheckInDebug.open(open, window: window) }
             }
             if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "snooze-picker" {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) {

@@ -29,6 +29,7 @@ struct ConversationView: View {
                     QueuedMessagesPanel(session: session, items: session.queuedMessages)
                 }
                 WaitSuggestionBanner(session: session)
+                CheckInSuggestionBanner(session: session)
                 let suggestedCommands = AgentComposerSyntax.suggestedShellCommands(in: session.conversation.items)
                 if !session.conversation.isRunning, !suggestedCommands.isEmpty {
                     SuggestedCommandsPanel(session: session, commands: suggestedCommands)

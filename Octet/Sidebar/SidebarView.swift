@@ -10,6 +10,7 @@ struct SidebarView: View {
     var width: CGFloat = Theme.sidebarWidth
     @ObservedObject private var motion = MotionPreferences.shared
     @ObservedObject private var waits = WaitCenter.shared
+    @ObservedObject private var checkIns = CheckInCenter.shared
     @ObservedObject private var idle = IdleCenter.shared
     @State private var collapsedGroups: Set<String> = []
     /// Groups showing all their workspaces, past the first few.
@@ -65,6 +66,10 @@ struct SidebarView: View {
             // While searching, idle workspaces are among the results.
             if !searching {
                 TipCard(store: store)
+            }
+            if !searching, !waits.waits.filter(\.isCheckIn).isEmpty || !checkIns.stalls.isEmpty {
+                CheckInsDock()
+                    .transition(motion.animates(.sidebar) ? .move(edge: .bottom).combined(with: .opacity) : .identity)
             }
             if !searching, !waits.waiting.isEmpty {
                 WaitsDock()
@@ -866,6 +871,10 @@ enum WorkspaceMenu {
         }
         items.append(.submenu("Snooze", icon: "clock", snoozeItems(store: store, workspaceId: id)))
         items.append(.action("Wait for Something…", icon: "hourglass") { WaitCenter.shared.compose(workspaceId: id) })
+        items.append(.action("Check Back…", icon: "clock.arrow.circlepath",
+                             help: "For work that takes days or weeks: Octet brings it back on a schedule, even if the session has ended") {
+            CheckInCenter.shared.compose(workspaceId: id, session: AgentCenter.shared.active(in: id))
+        })
         items.append(.action("Sleep", icon: "powersleep",
                              help: "Closes its terminals and keeps a note to bring it back as it was, agents resumed") {
             IdleCenter.shared.sleep([workspace])

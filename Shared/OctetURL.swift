@@ -11,6 +11,8 @@ import Foundation
 ///     octet://send?text=npm%20test                     typed into the pane in front
 ///     octet://plugin?id=containers                     a registry plugin, installed
 ///     octet://plugin-settings?id=issues                that plugin's settings
+///     octet://checkin?id=<check-in id>                 a check-in's reminder, opened
+///                                                      (runs it if it's due)
 enum OctetURL: Equatable {
     case open(path: String)
     case run(agent: String, path: String?, prompt: String?)
@@ -19,6 +21,8 @@ enum OctetURL: Equatable {
     case send(text: String)
     case installPlugin(id: String)
     case pluginSettings(id: String)
+    /// A check-in's reminder, clicked: open Octet on it and run it if it's due.
+    case checkin(id: String)
 
     static let scheme = "octet"
 
@@ -55,6 +59,10 @@ enum OctetURL: Equatable {
             guard let id = query["id"],
                   id.range(of: "^[a-z0-9][a-z0-9._-]*$", options: .regularExpression) != nil else { return nil }
             self = .pluginSettings(id: id)
+        case "checkin":
+            guard let id = query["id"], !id.isEmpty, id.count <= 64,
+                  id.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }) else { return nil }
+            self = .checkin(id: id)
         default:
             return nil
         }
@@ -87,6 +95,9 @@ enum OctetURL: Equatable {
             components.queryItems = [URLQueryItem(name: "id", value: id)]
         case .pluginSettings(let id):
             components.host = "plugin-settings"
+            components.queryItems = [URLQueryItem(name: "id", value: id)]
+        case .checkin(let id):
+            components.host = "checkin"
             components.queryItems = [URLQueryItem(name: "id", value: id)]
         }
         return components.url!

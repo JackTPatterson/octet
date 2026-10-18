@@ -25,6 +25,9 @@ struct Wait: Codable, Equatable, Identifiable {
     /// fresh conversation when the old one can't be resumed.
     var brief: String?
     var autoContinue = false
+    /// Set when this comes back on a schedule with a prompt for the agent:
+    /// a long-haul check-in (see CheckIns.swift). Nil for an ordinary wait.
+    var checkIn: CheckInInfo?
 
     var state: State = .waiting
     /// What the condition was when the wait was set (the latest release, a
@@ -93,7 +96,7 @@ struct Wait: Codable, Equatable, Identifiable {
     /// Time to ask the person: whether it's happened yet for one only they
     /// can judge, or whether a long wait is still wanted.
     func needsAnswer(now: Date = Date()) -> Bool {
-        guard state == .waiting else { return false }
+        guard state == .waiting, checkIn == nil else { return false }
         if isManual { return now >= nextCheckAt }
         return now.timeIntervalSince(confirmedAt) >= Self.reconfirmAfter
     }
@@ -104,7 +107,8 @@ struct Wait: Codable, Equatable, Identifiable {
 
     /// Due for Octet to check now.
     func isDue(now: Date = Date()) -> Bool {
-        state == .waiting && !isManual && now >= nextCheckAt
+        // A check-in comes round on its own schedule, not by being checked.
+        state == .waiting && checkIn == nil && !isManual && now >= nextCheckAt
     }
 
     /// Takes in what a check found.
@@ -142,6 +146,7 @@ struct Wait: Codable, Equatable, Identifiable {
 
     /// "Open · checks running · checked 5m ago".
     func statusLine(now: Date = Date()) -> String {
+        if let checkIn { return checkIn.statusLine(nextDue: nextCheckAt, now: now) }
         if state == .ready { return lastResult ?? "Ready" }
         if isManual { return "Asks you " + (nextCheckAt > now ? "in " + WaitSchedule.span(nextCheckAt.timeIntervalSince(now)) : "now") }
         if case .date(let date) = condition { return date > now ? "in " + WaitSchedule.span(date.timeIntervalSince(now)) : "due" }

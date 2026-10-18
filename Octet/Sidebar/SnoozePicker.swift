@@ -76,6 +76,13 @@ struct SnoozePickerHost: View {
 struct SnoozePickerDialog: View {
     let label: String
     let finish: (Date?) -> Void
+    /// The same dialog for other things that happen at a picked time (a
+    /// check-in): its own words, button and extra presets.
+    var heading: String?
+    var blurb: String?
+    var confirmTitle = "Snooze"
+    var resultPrefix = "Back "
+    var extraPresets: (Date, Calendar) -> [CustomSnooze.Preset] = { _, _ in [] }
     @State private var day: Date
     @State private var month: Date
     @State private var hour12: Int
@@ -85,9 +92,16 @@ struct SnoozePickerDialog: View {
     @State private var now = Date()
     private let calendar = Calendar.current
 
-    init(label: String, finish: @escaping (Date?) -> Void) {
+    init(label: String, heading: String? = nil, blurb: String? = nil, confirmTitle: String = "Snooze",
+         resultPrefix: String = "Back ", extraPresets: @escaping (Date, Calendar) -> [CustomSnooze.Preset] = { _, _ in [] },
+         finish: @escaping (Date?) -> Void) {
         self.label = label
         self.finish = finish
+        self.heading = heading
+        self.blurb = blurb
+        self.confirmTitle = confirmTitle
+        self.resultPrefix = resultPrefix
+        self.extraPresets = extraPresets
         let pick = CustomSnooze.initialPick()
         let clock = CustomSnooze.hour12(pick.hour)
         _day = State(initialValue: pick.day)
@@ -106,11 +120,11 @@ struct SnoozePickerDialog: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Snooze “\(label)”")
+                Text(heading ?? "Snooze “\(label)”")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(1)
-                Text("It leaves the sidebar and comes back at the time you pick.")
+                Text(blurb ?? "It leaves the sidebar and comes back at the time you pick.")
                     .font(Theme.uiFont)
                     .foregroundStyle(Theme.textSecondary)
             }
@@ -123,7 +137,7 @@ struct SnoozePickerDialog: View {
                 if let problem {
                     Text(problem).foregroundStyle(Theme.danger)
                 } else if let picked {
-                    Text("Back " + IdleShelves.wakeDescription(picked, now: now))
+                    Text(resultPrefix + IdleShelves.wakeDescription(picked, now: now))
                 }
             }
             .font(Theme.captionFont)
@@ -132,7 +146,7 @@ struct SnoozePickerDialog: View {
                 Spacer()
                 OctetButton(title: "Cancel") { finish(nil) }
                     .keyboardShortcut(.cancelAction)
-                OctetButton(title: "Snooze", kind: .primary) {
+                OctetButton(title: confirmTitle, kind: .primary) {
                     if problem == nil, let picked { finish(picked) }
                 }
                 .keyboardShortcut(.defaultAction)
@@ -149,7 +163,7 @@ struct SnoozePickerDialog: View {
 
     private var presets: some View {
         VStack(spacing: 0) {
-            ForEach(CustomSnooze.presets(now: now, calendar: calendar)) { preset in
+            ForEach((CustomSnooze.presets(now: now, calendar: calendar) + extraPresets(now, calendar)).sorted { $0.date < $1.date }) { preset in
                 Button { finish(preset.date) } label: {
                     HStack {
                         Text(preset.title)
