@@ -55,12 +55,12 @@ enum DiffStyle {
         CGFloat(String(max(1, maxNumber)).count) * 8 + 20
     }
 
-    /// Whether line `index` opens and closes its run of same-kind changes,
-    /// so the run's block rounds only its outer corners.
+    /// Whether line `index` opens and closes a run of changed lines, so the
+    /// run's block rounds only its outer corners: a removed line sitting
+    /// right above an added one meets it flush, with no notch between.
     nonisolated static func edges(_ kinds: [DiffLineKind], at index: Int) -> (first: Bool, last: Bool) {
-        let kind = kinds[index]
-        guard kind != .context else { return (false, false) }
-        return (index == 0 || kinds[index - 1] != kind, index + 1 == kinds.count || kinds[index + 1] != kind)
+        guard kinds[index] != .context else { return (false, false) }
+        return (index == 0 || kinds[index - 1] == .context, index + 1 == kinds.count || kinds[index + 1] == .context)
     }
 }
 
