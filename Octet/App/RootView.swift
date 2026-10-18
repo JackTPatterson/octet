@@ -756,6 +756,18 @@ struct RootView: View {
                     ) { _ in }
                 }
             }
+            // "toast-all" shows one toast of each kind, held (no auto-dismiss in time to look).
+            if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "toast-all" {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    let center = ToastCenter.shared
+                    _ = center.progress("Updating Claude Code…", detail: "claude update")
+                    center.succeed(nil, "Pushed 3 commits to origin/feat/t3-parity", detail: nil)
+                    center.info("Closed the tab “Fix the upload retry”", after: 600,
+                                action: .init(title: "Reopen") {})
+                    center.fail(nil, "Couldn't open the page",
+                                detail: "localhost:3000 refused to connect. Is the dev server running?")
+                }
+            }
             if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "toast" {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                     ToastCenter.shared.info(
