@@ -140,28 +140,30 @@ final class DelegationCenter: ObservableObject {
         let callerAgent = snapshot.agents.first { $0.paneId == pane }?.agent
         let caller = AgentBrand.forAgent(callerAgent)?.displayName ?? "An agent"
         startAfterApproval(agent: agent, executable: executable, mode: mode, task: task, caller: caller,
+                           callerAgent: callerAgent,
                            folder: folder, workspace: callerPane.workspaceId, store: store, reply: reply)
     }
 
     private func startAfterApproval(agent: DiscoveredAgent, executable: String, mode: DelegationMode, task: String,
-                                    caller: String, folder: String, workspace: String, store: SessionStore,
+                                    caller: String, callerAgent: String?, folder: String, workspace: String, store: SessionStore,
                                     reply: @escaping ([String: Any]) -> Void) {
         let go = { self.start(agent: agent, executable: executable, mode: mode, task: task, caller: caller,
                               folder: folder, workspace: workspace, store: store, reply: reply) }
         let needsAsking = approval == .ask || (approval == .reviews && mode == .task)
         guard needsAsking else { return go() }
-        let what = mode == .review ? "review its changes" : "work on a task in a separate worktree"
         var answered = false
-        ConfirmCenter.shared.ask(ConfirmCenter.Request(
-            title: "\(caller) wants \(agent.displayName) to \(what)",
-            message: "In \((folder as NSString).abbreviatingWithTildeInPath). It runs in a new tab, and the answer goes back to \(caller).",
-            detail: task, confirmTitle: mode == .review ? "Review" : "Start",
-            onConfirm: { _ in
+        DelegationApprovalCenter.shared.ask(.init(
+            caller: caller, callerAgent: callerAgent, agent: agent.id, agentName: agent.displayName,
+            mode: mode, task: task, folder: folder,
+            onAllow: { remember in
                 guard !answered else { return }
                 answered = true
+                // "Don't ask again": reviews go ahead from now on, and tasks
+                // too when this was one.
+                if remember { SettingsStore.shared.values.delegationApproval = (mode == .task ? Approval.all : Approval.reviews).rawValue }
                 go()
             },
-            onCancel: {
+            onDeny: {
                 guard !answered else { return }
                 answered = true
                 reply(["error": "The person didn't allow it."])

@@ -771,6 +771,22 @@ struct RootView: View {
                     ) { _ in }
                 }
             }
+            // "delegation-approval" shows the approval dialog with a made-up request.
+            if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "delegation-approval" {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    DelegationApprovalCenter.shared.ask(.init(
+                        caller: "Claude Code", callerAgent: "claude", agent: "codex", agentName: "Codex", mode: .review,
+                        task: "Review the uncommitted changes in this repo for correctness. Focus on the retry logic in Uploader.swift: does the backoff cap at 30 seconds, is the jitter bounded, and can a cancelled upload keep retrying? Report concrete problems with file and line, and say PASS or FAIL at the end.",
+                        folder: NSHomeDirectory() + "/Developer/apps/herd", onAllow: { _ in }, onDeny: {}))
+                }
+            }
+            // "paste-preview" shows the long-paste dialog with made-up text.
+            if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "paste-preview" {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    let sample = (1...48).map { "line \($0): let delay = min(base * pow(2, Double(attempt)), 30) + jitter()" }.joined(separator: "\n")
+                    PastePreviewCenter.shared.request = .init(paneId: "w1:p1", target: "Claude Code", text: sample, window: NSApp.keyWindow)
+                }
+            }
             // "toast-all" shows one toast of each kind, held (no auto-dismiss in time to look).
             if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "toast-all" {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
@@ -1643,6 +1659,7 @@ private struct RootDialogHosts: ViewModifier {
         content
             .overlay { AgentUpdateDialog(center: AgentUpdateCenter.shared) }
             .overlay { ConfirmDialog(center: confirmations) }
+            .overlay { DelegationApprovalDialog(center: DelegationApprovalCenter.shared) }
             // Set Up Devices, over the whole window rather than the panel.
             .overlay { if let model = ui.deviceSetup { DeviceSetupSheet(model: model) } }
             .overlay { PastePreviewDialog(center: PastePreviewCenter.shared, store: store) }

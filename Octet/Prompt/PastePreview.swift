@@ -60,41 +60,76 @@ final class PastePreviewCenter: ObservableObject {
 struct PastePreviewDialog: View {
     @ObservedObject var center: PastePreviewCenter
     let store: SessionStore
+    @ObservedObject private var motion = MotionPreferences.shared
     @StateObject private var host = HostWindow()
+    @State private var dontPreview = false
 
     var body: some View {
         ZStack {
             if let request = center.request, host.owns(request.window) {
                 Color.black.opacity(0.35).ignoresSafeArea().onTapGesture { center.cancel() }
                 card(request)
+                    .transition(motion.animates(.palette) ? .opacity.combined(with: .scale(scale: 0.97)) : .identity)
             }
         }
+        .animation(motion.animation(.palette, .smooth(duration: 0.16)), value: center.request?.id)
         .background(HostWindowReader(host: host))
     }
 
     private func card(_ request: PastePreviewCenter.Request) -> some View {
         let lines = request.text.split(separator: "\n", omittingEmptySubsequences: false).count
-        return VStack(alignment: .leading, spacing: 10) {
-            Text("Paste \(lines) lines into \(request.target)?")
-                .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textPrimary)
-            Text("Edit it here first if you like. \(request.text.count.formatted()) characters.")
-                .font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 12) {
+                OctetIcon("doc.on.clipboard", size: 18)
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(width: 36, height: 36)
+                    .background(RoundedRectangle(cornerRadius: Theme.controlRadius).fill(Theme.cardSelected))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Paste into \(request.target)?")
+                        .font(Theme.interfaceFont(14, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text("Agents fold a long paste into a one-line note you can't read or change, so check it first.")
+                        .font(Theme.interfaceFont(12))
+                        .foregroundStyle(Theme.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
             OctetTextEditor(placeholder: "Pasted text",
                             text: Binding(get: { center.request?.text ?? "" }, set: { center.request?.text = $0 }),
-                            minHeight: 360, maxHeight: 360, font: Theme.monoFont)
-            HStack {
+                            minHeight: 340, maxHeight: 340, font: Theme.monoFont)
+            HStack(spacing: 6) {
+                stat("\(lines.formatted()) \(lines == 1 ? "line" : "lines")")
+                stat("\(request.text.count.formatted()) characters")
                 Spacer()
-                OctetButton(title: "Cancel", kind: .ghost, compact: true) { center.cancel() }
+            }
+            Toggle("Don't preview long pastes", isOn: $dontPreview)
+                .toggleStyle(OctetCheckboxStyle())
+            HStack(spacing: 8) {
+                Spacer()
+                OctetButton(title: "Cancel", kind: .secondary, compact: true) { center.cancel() }
                     .keyboardShortcut(.cancelAction)
-                OctetButton(title: "Paste", kind: .primary, compact: true) { center.send(store: store) }
-                    .keyboardShortcut(.return, modifiers: .command)
-                    .help("Paste (⌘↩)")
+                OctetButton(title: "Paste", kind: .primary, compact: true) {
+                    if dontPreview { SettingsStore.shared.values.previewLongPastes = false }
+                    center.send(store: store)
+                }
+                .keyboardShortcut(.return, modifiers: .command)
+                .help("Paste (⌘↩)")
             }
         }
-        .padding(16)
+        .padding(18)
         .frame(width: 680)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Theme.card))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.border, lineWidth: 1))
-        .shadow(color: .black.opacity(0.35), radius: 24, y: 8)
+        .octetGlass(cornerRadius: 18, fill: Theme.card)
+        .onChange(of: request.id) { _, _ in dontPreview = false }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Paste \(lines) lines into \(request.target)?")
+    }
+
+    private func stat(_ text: String) -> some View {
+        Text(text)
+            .font(Theme.interfaceFont(11.5))
+            .foregroundStyle(Theme.textSecondary)
+            .padding(.horizontal, 8)
+            .frame(height: 22)
+            .background(Capsule().fill(Theme.hover))
     }
 }
