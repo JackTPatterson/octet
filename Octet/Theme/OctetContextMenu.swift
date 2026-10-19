@@ -15,6 +15,7 @@ struct OctetMenuItem: Identifiable {
     let id = UUID()
     var title = ""
     var icon: String?
+    var agent: String?
     /// A system menu item's own image, drawn where an icon goes.
     var image: NSImage?
     var shortcut: String?
@@ -433,7 +434,7 @@ private struct OctetMenuList: View {
         case .swatches(let swatches):
             SwatchRow(title: item.title, swatches: swatches)
         case .action, .submenu:
-            MenuRow(item: item, highlighted: model.highlighted[level] == item.id,
+            OctetMenuRow(item: item, highlighted: model.highlighted[level] == item.id,
                     open: model.path.count > level && model.path[level] == item.id,
                     hover: { model.hover(item, level: level) },
                     activate: { model.activate(item, level: level) })
@@ -451,7 +452,7 @@ private struct OctetMenuList: View {
     }
 }
 
-private struct MenuRow: View {
+struct OctetMenuRow: View {
     let item: OctetMenuItem
     let highlighted: Bool
     let open: Bool
@@ -464,7 +465,9 @@ private struct MenuRow: View {
             : item.destructive ? Theme.danger : Theme.textPrimary
         HStack(spacing: 8) {
             Group {
-                if let image = item.image {
+                if let agent = item.agent, let brand = AgentBrand.forAgent(agent) {
+                    AgentLogo(brand: brand, size: 14)
+                } else if let image = item.image {
                     Image(nsImage: image)
                         .renderingMode(image.isTemplate ? .template : .original)
                         .resizable().scaledToFit()

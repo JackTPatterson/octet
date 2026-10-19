@@ -4,7 +4,7 @@ import SwiftUI
 /// a chevron, and folds away to just the header; which are folded is kept
 /// across launches. Plugins' panels are sections too, by plugin id.
 enum SidePanelSection: Hashable {
-    case files, todos, agents, tasks, monitors, shells, setup
+    case files, todos, agents, tasks, monitors, shells, setup, activity, workspaceTools
     case plugin(String)
 
     var title: String {
@@ -16,6 +16,8 @@ enum SidePanelSection: Hashable {
         case .monitors: "Monitors"
         case .shells: "Shells"
         case .setup: "Agent Setup"
+        case .activity: "Background activity"
+        case .workspaceTools: "Workspace tools"
         case .plugin(let id): id
         }
     }
@@ -30,6 +32,8 @@ enum SidePanelSection: Hashable {
         case .monitors: "monitors"
         case .shells: "shells"
         case .setup: "setup"
+        case .activity: "activity"
+        case .workspaceTools: "workspace-tools"
         case .plugin(let id): "plugin:\(id)"
         }
     }
@@ -37,7 +41,7 @@ enum SidePanelSection: Hashable {
 
 extension SidePanelSection {
     /// Agent Setup starts as one summary line; the rest open until folded.
-    var opensByDefault: Bool { self != .setup }
+    var opensByDefault: Bool { self != .setup && self != .activity && self != .workspaceTools }
 }
 
 /// A section's header, with the content below it while it's open. Every
@@ -199,7 +203,7 @@ struct SidePanel: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            PlaneStrip(ui: ui)
+            PlaneStrip(ui: ui, directory: planeDirectory)
             Rectangle().fill(Theme.divider).frame(height: 1)
             PlaneDeck(ui: ui) { plane in planeView(plane) }
                 .id(ui.panelWorkspaceID)
@@ -217,6 +221,10 @@ struct SidePanel: View {
     private func planeView(_ plane: Plane) -> some View {
         switch plane.kind {
         case .overview: overview
+        case .todos:
+            ScrollView { TodoPanel(model: window.todos, ui: ui).padding(.vertical, 4) }
+                .scrollIndicators(.hidden)
+                .onAppear { ui.setPanelSection(.todos, open: true) }
         case .ci: OperationsPlane(kind: plane.kind, directory: planeDirectory)
         case .containers:
             DockerPlane(ui: ui, directory: planeDirectory, visible: ui.sidePanelVisible && ui.visiblePlaneIds.contains(plane.id))
@@ -236,28 +244,35 @@ struct SidePanel: View {
         case .files: FilesPlane(ui: ui, directory: planeDirectory)
         case .browser: BrowserPlane(ui: ui, directory: planeDirectory)
         case .terminal: TerminalPlane(ui: ui, planeId: plane.id, directory: planeDirectory)
-        case .pullRequest:
+        case .pullRequest, .pullRequests:
             if let directory = planeDirectory {
-                PullRequestPlane(directory: directory, number: plane.number,
-                                 askAgent: { askAgent($0, in: directory) },
-                                 onSummary: { number, tone, title in
-                                     let badge = PlaneBadge(title: "#\(number)", tint: tone.color,
-                                                            help: "#\(number) \(title)", icon: tone.icon)
-                                     if ui.planeBadges[plane.id] != badge { ui.planeBadges[plane.id] = badge }
-                                 })
-            } else {
-                PlaneMessage(icon: "pull.request", title: "No project in front",
-                             detail: "Open a tab in a repository to see its pull request.")
-            }
-        case .pullRequests:
-            if let directory = planeDirectory {
-                PullRequestListPlane(directory: directory, openFullPage: {
-                    if window.ui.pullRequests == nil { window.togglePullRequests(scope: .project) }
-                }) { number in
-                    MotionPreferences.shared.perform(.sidebar) { ui.showPlane(.pullRequest, number: number) }
+                VStack(spacing: 0) {
+                    if plane.number != nil || plane.kind == .pullRequest {
+                        HStack {
+                            OctetButton(title: "All pull requests", icon: "chevron.left", compact: true) { ui.showPlane(.pullRequests) }
+                            Spacer()
+                        }.padding(8)
+                        PullRequestPlane(directory: directory, number: plane.number == 0 ? nil : plane.number,
+                            askAgent: { askAgent($0, in: directory) },
+                            onSummary: { number, tone, title in
+                                let badge = PlaneBadge(title: "#\(number)", tint: tone.color,
+                                    help: "#\(number) \(title)", icon: tone.icon)
+                                if ui.planeBadges[plane.id] != badge { ui.planeBadges[plane.id] = badge }
+                            })
+                    } else {
+                        HStack {
+                            OctetButton(title: "Current branch", icon: "branch", compact: true) { ui.showPlane(.pullRequest) }
+                            Spacer()
+                        }.padding(8)
+                        PullRequestListPlane(directory: directory, openFullPage: {
+                            if window.ui.pullRequests == nil { window.togglePullRequests(scope: .project) }
+                        }) { number in
+                            MotionPreferences.shared.perform(.sidebar) { ui.showPlane(.pullRequest, number: number) }
+                        }
+                    }
                 }
             } else {
-                PlaneMessage(icon: "list", title: "No project in front",
+                PlaneMessage(icon: "pull.request", title: "No project in front",
                              detail: "Open a tab in a repository to see its pull requests.")
             }
         case .device:
@@ -311,15 +326,21 @@ struct SidePanel: View {
                 // stack can lose track of and draw as nothing.
                 VStack(alignment: .leading, spacing: 0) {
                     RuntimePanel(store: store, ui: ui)
-                    TodoPanel(model: window.todos, ui: ui)
-                    ProjectAgentSection(model: window.projectAgent)
-                    PluginPanelSections(model: window.pluginPanels)
+                    SidePanelSectionView(.workspaceTools, label: "Setup & plugins") {
+                        ProjectAgentSection(model: window.projectAgent)
+                        PluginPanelSections(model: window.pluginPanels)
+                    }
                 }
                 .padding(.vertical, 4)
             }
             .scrollIndicators(.hidden)
             .onChange(of: ui.sidePanelJump) { _, jump in
                 guard let section = jump?.section else { return }
+                switch section {
+                case .tasks, .monitors, .shells: ui.setPanelSection(.activity, open: true)
+                case .setup, .plugin: ui.setPanelSection(.workspaceTools, open: true)
+                default: break
+                }
                 ui.setPanelSection(section, open: true)
                 DispatchQueue.main.async {
                     motion.perform(.sidebar, .smooth(duration: 0.25)) { proxy.scrollTo(section, anchor: .top) }
@@ -329,25 +350,25 @@ struct SidePanel: View {
     }
 }
 
-/// The tab bar's controls for the panel and the terminal drawer, shown
-/// while the panel is closed; while it's open its own strip has them, as in
-/// T3 Code.
+/// Shared right-edge controls. Both tab strips use exactly the same spacing
+/// and dimensions so toggling the panel doesn't move the hit targets.
 struct SidePanelButton: View {
     @ObservedObject var ui: UIState
 
     var body: some View {
-        if !ui.sidePanelVisible {
-            HStack(spacing: 2) {
-                OctetIconButton(icon: "panel.bottom",
-                                help: OctetShortcut.terminalDrawer.help("Toggle terminal drawer"),
-                                active: ui.terminalDrawerVisible) {
-                    MotionPreferences.shared.perform(.sidebar) { ui.terminalDrawerVisible.toggle() }
-                }
-                OctetIconButton(icon: "sidebar.right", help: OctetShortcut.togglePanel.help("Show the panel")) {
-                    ui.sidePanelVisible = true
-                }
-                .accessibilityLabel("Show panel")
+        HStack(spacing: 2) {
+            OctetIconButton(icon: "panel.bottom",
+                            help: OctetShortcut.terminalDrawer.help("Toggle terminal drawer"),
+                            active: ui.terminalDrawerVisible) {
+                MotionPreferences.shared.perform(.sidebar) { ui.terminalDrawerVisible.toggle() }
             }
+            OctetIconButton(icon: "sidebar.right",
+                            help: OctetShortcut.togglePanel.help(ui.sidePanelVisible ? "Hide the panel" : "Show the panel"),
+                            active: ui.sidePanelVisible) {
+                ui.sidePanelVisible.toggle()
+            }
+            .accessibilityLabel(ui.sidePanelVisible ? "Hide panel" : "Show panel")
         }
+        .fixedSize()
     }
 }

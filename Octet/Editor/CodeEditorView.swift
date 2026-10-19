@@ -6,11 +6,14 @@ import SwiftUI
 struct CodeEditorView: View {
     @ObservedObject var workspace: EditorWorkspace
     let rootDirectory: String
+    /// Brings the Files plane forward on a folder.
+    var revealFolder: (String) -> Void = { _ in }
     @Namespace private var tabSelection
 
     var body: some View {
         VStack(spacing: 0) {
-            editorTabs
+            // The outer tab already names a lone file; the strip is for switching between several.
+            if workspace.documents.count > 1 { editorTabs }
             HStack(spacing: 0) {
                 if workspace.fileTreeVisible {
                     EditorFileTree(rootDirectory: rootDirectory, workspace: workspace)
@@ -18,7 +21,8 @@ struct CodeEditorView: View {
                     Rectangle().fill(Theme.divider).frame(width: 1)
                 }
                 if let document = workspace.activeDocument {
-                    EditorDocumentView(document: document, workspace: workspace)
+                    EditorDocumentView(document: document, workspace: workspace,
+                                       rootDirectory: rootDirectory, revealFolder: revealFolder)
                         .id(document.id)
                 } else {
                     editorEmptyState
@@ -100,8 +104,15 @@ struct CodeEditorView: View {
 private struct EditorDocumentView: View {
     @ObservedObject var document: EditorDocument
     let workspace: EditorWorkspace
+    let rootDirectory: String
+    let revealFolder: (String) -> Void
     /// How a Markdown file shows, kept for the next one opened.
     @AppStorage("octet.editor.markdownMode") private var markdownMode = MarkdownMode.preview.rawValue
+    /// Likewise for SVG and CSV/TSV files: the rendered view or the source.
+    @AppStorage("octet.editor.svgMode") private var svgMode = SourceMode.preview.rawValue
+    @AppStorage("octet.editor.tableMode") private var tableMode = SourceMode.preview.rawValue
+    /// What the viewer says about its file, e.g. “1200 × 800 · 340 KB”.
+    @State private var detail = ""
 
     enum MarkdownMode: String, CaseIterable, Identifiable {
         case edit, split, preview
@@ -115,14 +126,78 @@ private struct EditorDocumentView: View {
         }
     }
 
-    private var isMarkdown: Bool {
-        ["md", "markdown", "mdown", "mkd", "mdx"].contains(document.url.pathExtension.lowercased())
+    enum SourceMode: String {
+        case preview, source
     }
+
+    private var isMarkdown: Bool { document.mode == .markdown }
 
     private var mode: MarkdownMode { isMarkdown ? MarkdownMode(rawValue: markdownMode) ?? .preview : .edit }
 
+    /// The binding of the Preview / Source switch for SVG and tables.
+    private var sourceMode: Binding<String>? {
+        switch document.mode {
+        case .svg: $svgMode
+        case .table: $tableMode
+        default: nil
+        }
+    }
+
+    private var showsPreview: Bool {
+        switch document.mode {
+        case .svg: svgMode == SourceMode.preview.rawValue
+        case .table: tableMode == SourceMode.preview.rawValue
+        default: false
+        }
+    }
+
+    /// With no tab strip (a lone file), its controls sit on the breadcrumb row.
+    private var lone: Bool { workspace.documents.count <= 1 }
+
     var body: some View {
         VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                if lone {
+                    OctetIconButton(icon: "folder", help: workspace.fileTreeVisible ? "Hide Files" : "Show Files",
+                                    active: workspace.fileTreeVisible, compact: true) { workspace.fileTreeVisible.toggle() }
+                        .padding(.leading, 6)
+                }
+                FileBreadcrumbs(url: document.url, root: rootDirectory, reveal: revealFolder)
+                if lone {
+                    HStack(spacing: 2) {
+                        OctetIconButton(icon: "plus", help: "Open File (⌘O)", compact: true) { workspace.filePickerVisible = true }
+                        OctetIconButton(icon: workspace.presentation == .split ? "arrow.up.left.and.arrow.down.right" : "rectangle.split.2x1",
+                                        help: workspace.presentation == .split ? "Open Editor Full Screen" : "Show Editor Beside Terminal",
+                                        compact: true) { workspace.togglePresentation() }
+                        OctetIconButton(icon: "xmark", help: "Close Editor (⌘W)", compact: true) { workspace.closeEditor() }
+                    }
+                    .padding(.trailing, 6)
+                }
+            }
+            content
+            footer
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch document.mode {
+        case .image:
+            ImagePreview(url: document.url, detail: $detail).id(document.revision)
+        case .audio:
+            AudioPreview(url: document.url).id(document.revision)
+        case .video:
+            MediaPreview(url: document.url, video: true).id(document.revision)
+        case .pdf:
+            PDFPreview(url: document.url, detail: $detail).id(document.revision)
+        case .binary:
+            NoPreviewCard(url: document.url)
+        case .svg where showsPreview:
+            ImagePreview(url: document.url, svgText: document.text, detail: $detail)
+        case .table where showsPreview:
+            DelimitedTablePreview(text: document.text, delimiter: FilePreviewMode.delimiter(forPath: document.url.path),
+                                  detail: $detail)
+        default:
             HStack(spacing: 0) {
                 if mode != .preview {
                     CodeEditorTextView(document: document, workspace: workspace)
@@ -135,31 +210,42 @@ private struct EditorDocumentView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
-            HStack(spacing: 8) {
-                Text(document.url.path)
-                    .lineLimit(1).truncationMode(.head)
-                Spacer()
-                if isMarkdown {
-                    OctetSegmented(selection: $markdownMode,
-                                   items: MarkdownMode.allCases.map { ($0.rawValue, $0.title) })
-                    .help("Edit the Markdown, see it rendered, or both side by side")
-                }
-                if let error = document.lastError {
-                    OctetIcon("xmark.circle.fill", size: 12).foregroundStyle(Theme.danger)
-                    Text(error).lineLimit(1)
-                }
+        }
+    }
+
+    private var footer: some View {
+        HStack(spacing: 8) {
+            if !document.mode.readsText || showsPreview {
+                Text(detail.isEmpty ? previewFileSize(document.url) : detail)
+            }
+            Spacer()
+            if isMarkdown {
+                OctetSegmented(selection: $markdownMode,
+                               items: MarkdownMode.allCases.map { ($0.rawValue, $0.title) })
+                .help("Edit the Markdown, see it rendered, or both side by side")
+            }
+            if let sourceMode {
+                OctetSegmented(selection: sourceMode, items: [(SourceMode.preview.rawValue, "Preview"),
+                                                              (SourceMode.source.rawValue, "Source")])
+                .help(document.mode == .svg ? "See the image, or edit its source" : "See the table, or edit its source")
+            }
+            if let error = document.lastError {
+                OctetIcon("xmark.circle.fill", size: 12).foregroundStyle(Theme.danger)
+                Text(error).lineLimit(1)
+            }
+            if document.mode.readsText && !showsPreview {
                 Text("\(document.lineCount) lines")
                 Text("UTF-8")
             }
-            .font(Theme.captionFont)
-            .foregroundStyle(Theme.textTertiary)
-            .padding(.horizontal, 10)
-            .frame(height: 24)
-            .fixedSize(horizontal: false, vertical: true)
-            .layoutPriority(1)
-            .background(Theme.chrome)
-            .overlay(alignment: .top) { Rectangle().fill(Theme.divider).frame(height: 1) }
         }
+        .font(Theme.captionFont)
+        .foregroundStyle(Theme.textTertiary)
+        .padding(.horizontal, 10)
+        .frame(height: 24)
+        .fixedSize(horizontal: false, vertical: true)
+        .layoutPriority(1)
+        .background(Theme.chrome)
+        .overlay(alignment: .top) { Rectangle().fill(Theme.divider).frame(height: 1) }
     }
 }
 

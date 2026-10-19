@@ -815,6 +815,20 @@ private struct TerminalSettings: View {
                 Toggle("Offer to preview new servers", isOn: $settings.values.offerServerPreviews).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
         }
+        SettingsGroup(title: "Issue trackers") {
+            SettingsRow(title: "Let agents read issues",
+                        detail: "Adds read-only issue tools to installed agents using your saved GitHub, Linear and Jira connections. Agents can list issues and read descriptions and comments.",
+                        setting: \.agentsReadIssues) {
+                Toggle("Let agents read issues", isOn: $settings.values.agentsReadIssues)
+                    .labelsHidden().toggleStyle(OctetSwitchStyle())
+            }
+            if settings.values.agentsReadIssues {
+                SettingsDivider()
+                SettingsRow(title: "Tools in your agents", detail: "Refresh the issue tools after installing another agent.") {
+                    OctetButton(title: "Add Again", compact: true) { AgentMCPInstaller.shared.sync(server: IssueMCP.serverName, force: true) }
+                }
+            }
+        }
         SettingsGroup(title: "Sidebar terminal") {
             SettingsRow(
                 title: "Let agents read the sidebar terminal",

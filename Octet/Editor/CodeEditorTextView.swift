@@ -229,8 +229,10 @@ final class LineNumberRulerView: NSRulerView {
     @objc private func redraw() { needsDisplay = true }
 
     override func drawHashMarksAndLabels(in rect: NSRect) {
+        // Only the gutter: on current macOS `rect` is the whole scroll view's, and
+        // filling all of it paints over the text.
         backgroundColor.setFill()
-        rect.fill()
+        NSRect(x: 0, y: rect.minY, width: ruleThickness, height: rect.height).fill()
         guard let textView, let layout = textView.layoutManager, let container = textView.textContainer else { return }
         let visible = scrollView?.contentView.bounds ?? .zero
         let glyphRange = layout.glyphRange(forBoundingRect: visible, in: container)

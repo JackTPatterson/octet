@@ -548,6 +548,9 @@ private struct PullRequestHeader: View {
             title
             meta
             branches
+            if let stack = model.stack {
+                PullRequestStackBar(model: model, stack: stack)
+            }
             if detail.isOpen, detail.isBehind {
                 behind
             }

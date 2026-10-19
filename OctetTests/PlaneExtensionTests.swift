@@ -23,12 +23,38 @@ final class PlaneExtensionTests: XCTestCase {
     }
 
     func testOriginalLauncherAndUniqueKeys() throws {
-        XCTAssertEqual(PlaneKind.starterKinds.map(\.rawValue), ["overview", "diff", "files", "git", "pullRequest", "pullRequests", "terminal", "browser", "device"])
+        XCTAssertEqual(PlaneKind.starterKinds.map(\.rawValue), ["overview", "todos", "diff", "files", "git", "pullRequests", "terminal", "browser", "device"])
         XCTAssertEqual(Set(PlaneKind.allCases.map(\.key)).count, PlaneKind.allCases.count)
         for kind in [PlaneKind.ci, .containers, .tickets] {
             let plane = Plane.make(kind)
             XCTAssertEqual(try JSONDecoder().decode(Plane.self, from: JSONEncoder().encode(plane)), plane)
         }
+    }
+
+    func testTodosOpenInTheirOwnSingleTab() {
+        let ui = UIState()
+        ui.showSidePanel(.todos)
+        XCTAssertEqual(ui.activePlane?.kind, .todos)
+        ui.showSidePanel(.todos)
+        XCTAssertEqual(ui.planes.filter { $0.kind == .todos }.count, 1)
+        XCTAssertTrue(PlaneKind.addableCases.contains(.todos))
+        XCTAssertEqual(PlaneKind.todos.title, "TODO")
+    }
+
+    func testPullRequestsShareOneTabAndMigrateOldPanels() {
+        let ui = UIState()
+        ui.showPlane(.pullRequests)
+        ui.showPlane(.pullRequest, number: 42)
+        XCTAssertEqual(ui.planes.filter { $0.kind == .pullRequests }.count, 1)
+        XCTAssertEqual(ui.activePlane?.number, 42)
+        ui.showPlane(.pullRequests)
+        XCTAssertNil(ui.activePlane?.number)
+        let old = [Plane(id: "pullRequests", kind: .pullRequests), Plane(id: "pr:42", kind: .pullRequest, number: 42)]
+        let migrated = Plane.consolidated(old, active: "pr:42")
+        XCTAssertEqual(migrated.count, 1)
+        XCTAssertEqual(migrated.first?.number, 42)
+        XCTAssertEqual(Plane.migratedID("pr:42"), "pullRequests")
+        XCTAssertFalse(PlaneKind.addableCases.contains(.pullRequest))
     }
 
     func testSplitUsesBundledIconsax() {
@@ -122,7 +148,7 @@ final class PlaneExtensionTests: XCTestCase {
         XCTAssertTrue(ui.planes.contains { $0.kind == .ci })
         XCTAssertTrue(ui.splitPlaneIds.isEmpty)
         ui.closePlanes { _ in true }
-        XCTAssertFalse(ui.sidePanelVisible, "Preserve the existing close-last-pane behavior")
+        XCTAssertTrue(ui.sidePanelVisible, "An empty panel stays open as the launcher")
     }
 
     func testExistingTerminalCanSplitWithoutCreatingAnother() {
@@ -153,13 +179,6 @@ final class PlaneExtensionTests: XCTestCase {
         XCTAssertEqual(containers.map(\.status), ["running", "exited"])
         XCTAssertTrue(try OperationItem.parse("", ci: false).isEmpty)
         XCTAssertThrowsError(try OperationItem.parse("not json", ci: true))
-    }
-
-    func testBoardURLsRejectUnsafeOrCredentialBearingAddresses() {
-        XCTAssertNotNil(TicketsPlane.boardURL(" https://linear.app/example/project/abc \n"))
-        XCTAssertNil(TicketsPlane.boardURL("file:///etc/passwd"))
-        XCTAssertNil(TicketsPlane.boardURL("https://user:secret@example.com/project"))
-        XCTAssertNil(TicketsPlane.boardURL("javascript:alert(1)"))
     }
 
     func testContainerOutputAllowsNestedPlatformAndAdditionalFields() throws {

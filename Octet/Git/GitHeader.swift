@@ -16,13 +16,7 @@ struct GitHeader: View {
                     WorkerMarks(workers: group.workers) { model.show($0) }
                         .help(Self.workersLabel(group))
                 }
-                OctetIcon("arrow.triangle.branch", size: 11).foregroundStyle(Theme.textTertiary)
-                Text(checkout.branch.name ?? "detached HEAD")
-                    .font(Theme.monoFont)
-                    .foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .help(abbreviateHome(checkout.top))
+                BranchPickerChip(top: checkout.top, branch: checkout.branch.name, changed: { model.refresh() })
                     .layoutPriority(1)
                 BaseStanding(checkout: checkout)
                 Spacer(minLength: 4)

@@ -15,6 +15,7 @@ struct RuntimePanel: View {
     @ObservedObject private var codexAgents = CodexAgentsStore.shared
     @ObservedObject private var motion = MotionPreferences.shared
     @State private var flashingEntryIDs: Set<String> = []
+    @State private var collapsedBranches: Set<String> = []
     /// Counts auto-close timers, so only the latest one closes the panel.
     @State private var autoCloseGeneration = 0
     /// How long a panel that opened itself stays open when not hovered.
@@ -47,6 +48,7 @@ struct RuntimePanel: View {
         .onChange(of: workspaceId) { _, _ in
             ui.seenRuntimeEntryIDs.formUnion(entries.map(\.id))
             flashingEntryIDs = []
+            collapsedBranches = []
             ui.runtimeExpandedEntryIDs = []
             reload()
         }
@@ -55,6 +57,7 @@ struct RuntimePanel: View {
             // in the previous scope stay open while the new list loads.
             withoutLayoutAnimation { ui.runtimeExpandedEntryIDs = [] }
             flashingEntryIDs = []
+            collapsedBranches = []
             ui.seenRuntimeEntryIDs.formUnion(entries.map(\.id))
             reload()
         }
@@ -84,7 +87,7 @@ struct RuntimePanel: View {
             RuntimeEntry(id: id, kind: kind, title: title, detail: detail, location: location, command: command,
                          prompt: prompt, output: output, process: process, depth: depth, accentSeed: seed,
                          agentID: agent, modelName: model, paneId: pane,
-                         liveSince: since.map { Date().addingTimeInterval(-$0) }, pid: pid)
+                         liveSince: since.map { Date().addingTimeInterval(-$0) }, pid: pid, parentID: id == "s1a" || id == "s1b" ? "s1" : nil)
         }
         let agents = [
             entry("s1", .agent, "Explore the retry logic", "Working", command: nil,
@@ -136,20 +139,76 @@ struct RuntimePanel: View {
 
     /// One stack, so the modifiers on it run once, not per section.
     private var runtimeContent: some View {
-        VStack(alignment: .leading, spacing: 0) { runtimeList(entries) }
+        VStack(alignment: .leading, spacing: 8) {
+            runtimeList(entries, kinds: [.agent])
+            let background = entries.filter { $0.kind != .agent }
+            if !background.isEmpty {
+                SidePanelSectionView(.activity, trailing: {
+                    HStack(spacing: 4) {
+                        activityChip(.task, title: "Tasks", icon: "checklist", entries: background)
+                        activityChip(.monitor, title: "Monitors", icon: "eye", entries: background)
+                        activityChip(.shell, title: "Shells", icon: "terminal", entries: background)
+                    }
+                }) {
+                    runtimeList(background, kinds: [.task, .monitor, .shell])
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func activityChip(_ kind: RuntimeKind, title: String, icon: String, entries: [RuntimeEntry]) -> some View {
+        let count = entries.filter { $0.kind == kind }.count
+        if count > 0 {
+            Button {
+                motion.perform(.sidebar) {
+                    ui.setPanelSection(.activity, open: true)
+                    ui.setPanelSection(kind.section, open: true)
+                }
+            } label: {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 4) {
+                        Text(title)
+                        Text("\(count)").monospacedDigit().foregroundStyle(Theme.textPrimary)
+                    }.fixedSize()
+                    HStack(spacing: 4) {
+                        OctetIcon(icon, size: 10)
+                        Text("\(count)").monospacedDigit().foregroundStyle(Theme.textPrimary)
+                    }.fixedSize()
+                }
+                .font(Theme.interfaceFont(10))
+                .foregroundStyle(Theme.textSecondary)
+                .padding(.horizontal, 6).frame(height: 19)
+                .background(Theme.hover, in: Capsule())
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .help("Show \(count) \(title.lowercased())")
+            .accessibilityLabel("\(title), \(count)")
+        }
     }
 
     /// Every kind is a section so each stays discoverable: one with work
     /// shows its rows; one with none is a single quiet line ("None").
-    private func runtimeList(_ current: [RuntimeEntry]) -> some View {
-        ForEach(RuntimeKind.allCases) { kind in
+    private func runtimeList(_ current: [RuntimeEntry], kinds: [RuntimeKind]) -> some View {
+        ForEach(kinds) { kind in
             let rows = current.filter { $0.kind == kind }
-            let loading = PlaneLoadingPreview.shows("overview") || (rows.isEmpty && store.loadingPaneProcesses
-                && (targetPanes.contains { store.paneProcesses[$0.paneId] == nil }
-                    || activeSession.map { store.nativeRuntimeProcesses[$0.id] == nil } == true))
-            if OverviewSections.isQuiet(count: rows.count, loading: loading) {
-                SidePanelSectionView(kind.section, quiet: "None", quietHelp: kind.emptyText) { EmptyView() }
-            } else {
+            let loading = PlaneLoadingPreview.shows("overview") || AgentPresentationLogic.showsInitialRuntimeLoading(
+                rowCount: rows.count, scanning: store.loadingPaneProcesses,
+                hasUnscannedPane: targetPanes.contains { !store.scannedRuntimePaneIDs.contains($0.paneId) },
+                hasUnscannedNativeRoot: activeSession.map {
+                    $0.conversation.isRunning && $0.runtimePID != nil && store.nativeRuntimeProcesses[$0.id] == nil
+                } ?? false)
+            if kind == .agent {
+                if loading { OverviewRowsSkeleton(rows: 2, tree: true).padding(8) }
+                else if rows.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("No subagents yet").font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary)
+                        Text("Agents started by this tab will appear here with their progress and results.")
+                            .font(Theme.uiFont).foregroundStyle(Theme.textSecondary)
+                    }.frame(maxWidth: .infinity, alignment: .leading).padding(16)
+                } else { section(kind, rows: rows).padding(.vertical, 10).padding(.horizontal, 4) }
+            } else if !OverviewSections.isQuiet(count: rows.count, loading: loading) {
                 SidePanelSectionView(kind.section, count: loading ? nil : rows.count) {
                     if loading {
                         OverviewRowsSkeleton(rows: 2, tree: kind == .agent)
@@ -219,10 +278,28 @@ struct RuntimePanel: View {
     }
 
     private func section(_ kind: RuntimeKind, rows: [RuntimeEntry]) -> some View {
-        // Subagents hang off their parents with connector lines.
-        let guides = TreeGuides.compute(depths: kind == .agent ? rows.map(\.depth) : rows.map { _ in 0 })
+        // Keep ancestry correct even when process discovery returns children first.
+        let ordered: [RuntimeEntry] = kind == .agent
+            ? RuntimeTree.order(rows, id: { $0.id }, parent: { $0.parentID }).map { entry, depth in
+                var row = entry; row.depth = depth; return row
+            } : rows
+        let visible = AgentPresentationLogic.visibleIDs(ordered.map { (id: $0.id, depth: $0.depth) }, collapsed: collapsedBranches)
+        let shown = ordered.filter { visible.contains($0.id) }
+        let guides = TreeGuides.compute(depths: kind == .agent ? shown.map(\.depth) : shown.map { _ in 0 })
         return VStack(alignment: .leading, spacing: 1) {
-            ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+            if kind == .agent {
+                HStack(spacing: 10) {
+                    ForEach([RuntimeState.running, .waiting, .failed, .done], id: \.title) { state in
+                        let count = rows.filter { $0.state == state }.count
+                        if count > 0 {
+                            Text("\(count) \(state == .waiting ? "need you" : state.title.lowercased())")
+                                .foregroundStyle(state == .running ? Theme.textSecondary : state.color)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }.font(Theme.captionFont).padding(.horizontal, 8).padding(.bottom, 8)
+            }
+            ForEach(Array(shown.enumerated()), id: \.element.id) { index, row in
                 RuntimeRow(entry: row,
                            guide: guides[index],
                            flashes: flashingEntryIDs.contains(row.id),
@@ -230,10 +307,20 @@ struct RuntimePanel: View {
                            toggle: { toggle(row) },
                            focus: row.kind == .agent ? row.paneId.map { paneId in { window.focusAgent(paneId: paneId) } } : nil,
                            stop: row.pid != nil && row.state != .done && row.kind != .shell ? { stop(row) } : nil,
-                           menu: { menu(for: row) })
+                           menu: { menu(for: row) },
+                           childCount: rows.filter { $0.parentID == row.id }.count,
+                           branchCollapsed: collapsedBranches.contains(row.id),
+                           toggleBranch: {
+                               motion.perform(.sidebar, .spring(response: 0.32, dampingFraction: 0.86)) {
+                                   if !collapsedBranches.insert(row.id).inserted { collapsedBranches.remove(row.id) }
+                               }
+                           })
                     .id(row.id)
+                    .transition(motion.animates(.sidebar)
+                        ? .opacity.combined(with: .offset(y: 6)) : .identity)
             }
         }
+        .animation(motion.animation(.sidebar, .spring(response: 0.32, dampingFraction: 0.86)), value: shown.map(\.id))
     }
 
     private func revealNewEntries(_ ids: [String]) {
@@ -314,7 +401,8 @@ struct RuntimePanel: View {
                                            process: status == .done ? "Finished" : "Working in its tab",
                                            depth: viewer.depth, accentSeed: Self.seed(viewer.agent.paneId),
                                            agentID: viewer.agent.agent ?? "claude", modelName: nil,
-                                           paneId: viewer.agent.paneId, autoReveal: true))
+                                           paneId: viewer.agent.paneId, autoReveal: true,
+                                           parentID: viewer.agent.parentPaneId.map { "subagent-tab-" + $0 }))
             }
         }
 
@@ -385,7 +473,8 @@ struct RuntimePanel: View {
                                 process: Self.commandName(agent.agent), depth: depth,
                                 accentSeed: Self.seed(agent.agent), agentID: agent.agent, modelName: nil,
                                 paneId: agent.paneId,
-                                sessionId: sessionId, autoReveal: true, pid: agent.pid)
+                                sessionId: sessionId, autoReveal: true, pid: agent.pid,
+                                parentID: ids.contains(agent.parentPid) ? "process-agent-\(agent.parentPid)" : nil)
         }
     }
 
@@ -472,7 +561,8 @@ struct RuntimePanel: View {
                             agentID: runtime.kind == .agent ? "claude" : nil,
                             modelName: runtime.kind == .agent ? session.map(modelName(for:)) : nil,
                             paneId: paneId, sessionId: session?.id, autoReveal: true,
-                            liveSince: carried || runtime.kind == .monitor ? nil : runtime.startedAt)
+                            liveSince: carried || runtime.kind == .monitor ? nil : runtime.startedAt,
+                            parentID: runtime.parentId.map { (carried ? "carried-" : "log-") + $0 })
     }
 
     private func activeMonitors(in session: AgentSession) -> [RuntimeEntry] {
@@ -539,7 +629,6 @@ struct RuntimePanel: View {
     }
 
     private func activeSubagents(in session: AgentSession) -> [RuntimeEntry] {
-        guard session.conversation.isRunning else { return [] }
         let now = Date()
         let calls: [(item: AgentItem, call: AgentToolCall)] = session.conversation.items.compactMap { item in
             guard case .tool(let call) = item.kind,
@@ -554,7 +643,9 @@ struct RuntimePanel: View {
         // Replayed launches without a result were cut off with an earlier
         // process, not running now.
         let started = session.processStartedAt ?? .distantFuture
-        var visible = Set(calls.filter { $0.call.result == nil && $0.item.createdAt >= started }.map { $0.item.id })
+        var visible = Set(calls.filter {
+            $0.item.createdAt >= started && ($0.call.result != nil || session.conversation.isRunning)
+        }.map { $0.item.id })
         // Keep the ownership chain visible even if an agent's launch call has
         // already returned while one of its descendants is still working.
         var frontier = Array(visible)
@@ -595,13 +686,14 @@ struct RuntimePanel: View {
             let elapsed = max(0, Int(now.timeIntervalSince(item.createdAt)))
             return RuntimeEntry(id: "agent-\(item.id)", kind: .agent,
                                 title: title.isEmpty ? "Subagent" : title,
-                                detail: call.result == nil ? "\(elapsed)s" : "Parent",
+                                detail: call.isError ? "Failed" : call.result == nil ? "\(elapsed)s" : "Finished",
                                 location: session.title, command: prompt,
                                 prompt: prompt, output: output, process: process,
                                 depth: depth, accentSeed: Self.seed(item.id),
-                                agentID: session.engine.agent, modelName: modelName(for: session),
+                                agentID: session.engine.agent, modelName: (input["model"] as? String) ?? modelName(for: session),
                                 paneId: nil, sessionId: session.id, autoReveal: true,
-                                liveSince: call.result == nil ? item.createdAt : nil)
+                                liveSince: call.result == nil ? item.createdAt : nil,
+                                parentID: item.parent.map { "agent-" + $0 })
         }
     }
 
@@ -676,7 +768,7 @@ struct RuntimeEntry: Identifiable {
     let prompt: String?
     let output: String?
     let process: String?
-    let depth: Int
+    var depth: Int
     let accentSeed: Int
     let agentID: String?
     let modelName: String?
@@ -690,6 +782,7 @@ struct RuntimeEntry: Identifiable {
     var liveSince: Date? = nil
     /// The process behind it, when one can be named to stop.
     var pid: Int? = nil
+    var parentID: String? = nil
 
     var state: RuntimeState { RuntimeState.classify(detail: detail) }
 

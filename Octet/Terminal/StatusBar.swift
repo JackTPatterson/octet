@@ -163,18 +163,8 @@ struct StatusBar: View {
             }
         case "builtin.branch":
             if let repo = model.repo, let branch = repo.branch {
-                Button { ui.showPlane(.git) } label: {
-                    StatusChip(tone: repo.detached ? .warning : .normal,
-                               help: (repo.detached ? "Detached at \(branch)" : "Branch \(branch)") + "\nClick to show Git") {
-                        OctetIcon("branch", size: 13)
-                        Text(repo.detached ? "HEAD \(branch)" : branch)
-                            .font(Theme.monoFont)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                }
-                .buttonStyle(.plain)
-                .modifier(LinkHover())
+                BranchPickerChip(top: repo.root, branch: branch, detached: repo.detached, style: .statusBar,
+                           changed: { model.refreshGitNow() })
                 .contextMenu {
                     Button("Show Git") { ui.showPlane(.git) }
                     Button("Copy Branch Name") { copy(branch) }
@@ -547,7 +537,7 @@ struct StatusGlyph: View {
 
 /// An item that opens something: the pointing hand on hover, so it reads as
 /// a link and not as a label (the fill comes from the item itself).
-private struct LinkHover: ViewModifier {
+struct LinkHover: ViewModifier {
     var enabled = true
     @State private var pushed = false
 

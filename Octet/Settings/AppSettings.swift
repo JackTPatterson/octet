@@ -114,6 +114,7 @@ struct OctetSettings: Codable, Equatable {
     /// Agents can read the sidebar terminal (read only): a socket the app
     /// listens on and an MCP server in each agent's settings, both only
     /// while this is on. Off by default: a terminal can hold secrets.
+    var agentsReadIssues = false
     var agentsReadSidebarTerminal = false
     var agentsSuggestSidebarCommands = false
     /// Waits: agents can set one (an MCP tool and `octet-cli wait`) when work
@@ -392,6 +393,7 @@ struct OctetSettings: Codable, Equatable {
         readClaudeAccountUsage = value("readClaudeAccountUsage", defaults.readClaudeAccountUsage)
         peersEnabled = value("peersEnabled", defaults.peersEnabled)
         delegationEnabled = value("delegationEnabled", defaults.delegationEnabled)
+        agentsReadIssues = value("agentsReadIssues", defaults.agentsReadIssues)
         agentsReadSidebarTerminal = value("agentsReadSidebarTerminal", defaults.agentsReadSidebarTerminal)
         agentsSuggestSidebarCommands = value("agentsSuggestSidebarCommands", defaults.agentsSuggestSidebarCommands)
         agentsSetWaits = value("agentsSetWaits", defaults.agentsSetWaits)
@@ -844,6 +846,9 @@ final class SettingsStore: ObservableObject {
         }
         if values.checkInsPaused != old.checkInsPaused || values.checkInsNotifyWhenClosed != old.checkInsNotifyWhenClosed {
             CheckInCenter.shared.syncNotifications()
+        }
+        if values.agentsReadIssues != old.agentsReadIssues {
+            AgentMCPInstaller.shared.sync(server: IssueMCP.serverName)
         }
         if values.agentsReadSidebarTerminal != old.agentsReadSidebarTerminal
             || values.agentsSuggestSidebarCommands != old.agentsSuggestSidebarCommands {

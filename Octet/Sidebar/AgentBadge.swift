@@ -70,3 +70,26 @@ struct AgentLogo: View {
         .foregroundStyle(brand.hueHex.map { Color(hex: $0) } ?? Theme.textPrimary)
     }
 }
+
+/// Several agents' logos, slightly overlapping, each ringed in the card's
+/// ground so the edges stay readable, e.g. Claude and Codex together.
+struct AgentLogoStack: View {
+    let brands: [AgentBrand]
+    var size: CGFloat = 13
+    private var shown: [AgentBrand] { Array(brands.prefix(3)) }
+
+    var body: some View {
+        HStack(spacing: -size * 0.3) {
+            ForEach(Array(shown.enumerated()), id: \.offset) { index, brand in
+                AgentLogo(brand: brand, size: size * 0.72)
+                    .frame(width: size + 3, height: size + 3)
+                    .background(Circle().fill(Theme.cardSelected))
+                    .overlay(Circle().strokeBorder(Theme.border, lineWidth: 1))
+                    .zIndex(Double(shown.count - index))
+            }
+        }
+        .help(brands.map(\.displayName).joined(separator: ", "))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(brands.map(\.displayName).joined(separator: " and "))
+    }
+}

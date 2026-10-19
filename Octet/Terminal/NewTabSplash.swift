@@ -23,6 +23,8 @@ final class NewTabSplashModel: ObservableObject {
     }
 
     private func evaluate() {
+        recheck?.cancel()
+        recheck = nil
         guard let latest else { return }
         var shown: String?
         if latest.eligible, let tab = latest.tab, let grid = latest.grid {

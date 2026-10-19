@@ -49,6 +49,11 @@ final class WindowContext: ObservableObject, Identifiable {
     #endif
 
     func findOutput(_ action: NSTextFinder.Action = .showFindInterface) {
+        // A conversation in front searches its own transcript, not terminal output.
+        if let session = AgentCenter.shared.active(in: focusedWorkspace?.workspaceId) {
+            session.find.perform(action)
+            return
+        }
         if let outputSearch, outputSearch.window?.parent != nil {
             if action != .showFindInterface || outputSearch.paneId == focusedPaneId {
                 outputSearch.find(action)

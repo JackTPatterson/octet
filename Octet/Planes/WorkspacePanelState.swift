@@ -49,14 +49,24 @@ extension UIState {
             state.opened = Set(panelDefaults.stringArray(forKey: "octet.sidePanel.opened") ?? [])
         }
         panelDefaults.set(true, forKey: migrationKey)
+        // Move the formerly embedded todo list into a discoverable tab once.
+        // A user who subsequently closes it keeps that choice.
+        let todoMigrationKey = "octet.workspacePanel.todosTab.\(workspace)"
+        if !panelDefaults.bool(forKey: todoMigrationKey) {
+            if !state.planes.contains(where: { $0.kind == .todos }) {
+                let index = state.planes.firstIndex(where: { $0.kind == .overview }).map { $0 + 1 } ?? state.planes.count
+                state.planes.insert(.make(.todos), at: index)
+            }
+            panelDefaults.set(true, forKey: todoMigrationKey)
+        }
         var transaction = Transaction(animation: nil)
         transaction.disablesAnimations = true
         withTransaction(transaction) {
             restoringWorkspacePanel = true
             panelWorkspaceID = workspace
-            planes = state.planes
-            activePlaneId = state.activePlaneID
-            splitPlaneIds = state.splitIDs
+            planes = Plane.consolidated(state.planes, active: state.activePlaneID)
+            activePlaneId = state.activePlaneID.map(Plane.migratedID)
+            splitPlaneIds = state.splitIDs.map(Plane.migratedID).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
             splitSideBySide = state.sideBySide
             planeSplitWeights = state.weights
             sidePanelVisible = state.visible
@@ -95,7 +105,7 @@ extension UIState {
     @MainActor func workspaceBrowserPage() -> BrowserPage {
         let key = panelWorkspaceID ?? ""
         if let page = panelBrowserPages[key] { return page }
-        let page = BrowserPage(private: false)
+        let page = BrowserPage(private: false, draftKey: key.isEmpty ? nil : key)
         panelBrowserPages[key] = page
         return page
     }

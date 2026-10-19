@@ -305,6 +305,112 @@ OCTET_SNAPSHOT_DIR=/tmp/octet-snap \
 
 This writes `window.png` and `terminal.txt` into the selected directory.
 
+The sidebar’s **Onboarding checklist** row sits below Search. It opens shortcuts for project setup, agents, appearance, issue connections and notifications. Check off steps yourself; progress is saved across restarts.
+
+## Workspace setup and project configuration
+
+New worktrees have a tracked setup state: Preparing, Awaiting approval, Running, Ready or Failed. The project-actions toolbar shows the state and offers **Open log** and **Retry setup**. Issue workspaces and Best-of-N agents wait for successful setup by default. A failed setup keeps the pending agent launch waiting; retrying successfully releases it once. Worktrees created by an agent also receive configuration, but an agent already running outside Octet's launch flow cannot be paused retroactively.
+
+Check in `octet.json` at the repository root:
+
+```json
+{
+  "version": 1,
+  "setup": "npm ci",
+  "archive": "npm run stop",
+  "archiveTimeoutSeconds": 120,
+  "waitForSetup": true,
+  "copyPaths": [".vscode/settings.json"],
+  "sharedDirectories": [".cache"],
+  "actions": [
+    {"id": "dev", "name": "Dev server", "command": "npm run dev", "icon": "play"},
+    {"id": "test", "name": "Tests", "command": "npm test", "icon": "flask"}
+  ],
+  "defaultTabs": [
+    {"title": "Dev server", "command": "npm run dev"}
+  ]
+}
+```
+
+All copy/shared paths must already exist in the primary checkout and be wholly gitignored. Copies preserve existing worktree files; shared directories are symlinks, so changes are shared with the primary checkout. Omit `sharedDirectories` when dependencies must be independent in each worktree. Paths are literal, repository-relative paths: traversal, `.git`, globs and symlinks escaping the checkout are rejected. The existing automatic copy of ignored project `.env` files remains enabled.
+
+Use `.octet/local.json` in the **primary checkout** for machine-specific overrides, and add it to `.gitignore`. Only fields present in this file override the checked-out branch's `octet.json`; lists replace shared lists, while actions merge by `id`. Actions edited through Octet remain local preferences and override an action with the same id. Removing a local action restores its repository definition. Configuration reloads when the project actions menu opens.
+
+An explicit `setup` overrides `.octet/setup` and `conductor.json`; an empty string disables the setup command. Setup uses a noninteractive login shell in the new checkout, with `OCTET_ROOT_PATH`, `OCTET_WORKTREE_PATH` and its assigned `OCTET_PORT`. Output is logged under Octet's Application Support directory. Project setup/default-tab commands use the existing repository trust prompt. Set `waitForSetup` to `false` only when an agent may start while setup is running; file preparation still completes first, and setup failures still appear. Default tabs open after successful setup, once per worktree. Turning off worktree setup in Settings skips this preparation.
+
+After an app restart, an in-progress setup is marked interrupted rather than ready. Inspect its log before retrying; a pending agent launch is not automatically recreated after restart.
+
+### Cleanup and archive
+
+**Clean Up Worktrees…** in the command palette protects open terminals/agents (including unknown process liveness), retained native conversations, unsaved editor buffers, saved browser feedback and running setup. Close those workspaces, save files, and send or clear feedback before removal. Octet rechecks application state and Git state around the archive command; only merged, clean worktrees qualify. Branches are retained.
+
+An optional `archive` command in `octet.json` runs inside the worktree before removal, with `OCTET_ROOT_PATH` and `OCTET_WORKTREE_PATH`. The confirmation shows the command. `archiveTimeoutSeconds` defaults to 120 (1–3600). Failure or timeout retains the worktree and offers Retry; the error includes the log path under Application Support `archive-logs`. Retry runs the hook again, so write teardown commands to tolerate partially completed work. A timeout terminates the hook's process group. Raw `git worktree remove` outside Octet does not run Octet hooks.
+
+### Scheduled project jobs
+
+Use the **calendar button beside project actions** to create, edit, pause, run or delete project jobs and inspect recent run history. Choose Claude Code or Codex, a prompt, a five-field cron expression and an IANA timezone such as `America/New_York`. Hourly, daily, weekday and weekly presets are provided. Cron supports numeric lists, ranges and steps; Sunday is 0 or 7. When both day-of-month and weekday are restricted, either may match. DST follows the selected timezone: missing wall-clock minutes are skipped and repeated minutes can occur twice.
+
+Jobs share Check-ins' existing timer and global pause. They execute while Octet is open; missed occurrences collapse into one on return. Each run can create a fresh worktree or open a new agent tab in the project's already-open workspace. Fresh worktrees use project setup and its startup policy. An optional precheck runs in the primary checkout with a timeout; only exit 0 continues, and failures record a skipped run with a log. Saving the schedule authorizes its precheck and prompt. No schedules are enabled merely by opening a repository.
+
+An occurrence is saved before dispatch, and the same job cannot overlap an active run. Run history tracks preparation, setup, agent launch and observed completion. A launch interrupted by restarting Octet pauses its schedule for inspection. Unobservable agents are not reported as successful. **End tracking** pauses the schedule without stopping the agent; inspect its workspace before enabling another run. Separate jobs may run concurrently. Job records and history live in Application Support `project-jobs.json`; this is app-managed scheduling, not a launch daemon.
+
+## Browser annotations
+
+Open an HTTP or HTTPS page in the Browser pane and click the **element picker** beside the More menu. Click an element to capture its selector, sanitized HTML, computed styles and a cropped screenshot. Escape exits the picker. Form controls and editable regions cannot be selected directly; scripts and form values are omitted from captured HTML. Screenshots show the visible selection, so review them before sending.
+
+The annotation tray lets you add a note per element, remove captures, copy the context, or choose an agent in the current workspace and **Send to agent**. Native conversations receive image attachments. Terminal agents receive the context and explicit image paths under Octet's Application Support directory. Annotations remain available if terminal delivery fails. Up to eight annotations may be collected at once, including across pages. In the normal browser profile, annotation notes and element context are saved per workspace and restored after closing the pane or restarting Octet. Screenshots are transient and are not restored; terminal-agent screenshot files remain available for that agent to read. Private-page annotations stay in memory. Sending or clearing annotations updates the saved drafts.
+
+The Browser **More → Viewport size** menu offers Fit pane, Phone (390 × 844), Tablet (768 × 1024) and Laptop (1440 × 900). These change the actual CSS viewport, with scrolling when larger than the pane; they do not spoof a mobile user agent or touch hardware.
+
+The picker currently targets the top-level document; iframe contents and shadow-root internals are not traversed. Source-file mapping is not inferred from framework internals.
+
+## Issues and agent access
+
+The Issues pane connects to multiple Linear workspaces and Jira sites using macOS Keychain. Jira supports Cloud, scoped tokens through Atlassian's gateway, and HTTPS Server/Data Center sites using a PAT or username/password. Choose Assigned to me or Reported by me, post comments, change status, or assign an issue to yourself. Start workspace creates an issue-named worktree and starts an installed Claude Code or Codex agent with the issue description; an existing matching worktree is reopened. The issue ID, URL, tracker and connection ID are saved in that checkout’s Git metadata (no credentials or tracked files). The project toolbar link opens the saved ticket. A branch already linked to a different issue/connection is not silently reassigned.
+
+List and board views share the same project/team, scope, and person filters. Jira favourite filters intersect the selected project and filters. Expand an issue to see its description, priority, sub-issues and comments. The board groups fetched issues by status; change status through a card's actions.
+
+Agents can read issues through the bundled `octet-cli` (JSON on stdout; failures on stderr with a nonzero exit):
+
+```sh
+octet-cli issues connections --tracker linear
+octet-cli issues containers --tracker linear --connection CONNECTION_ID
+octet-cli issues list --tracker linear --connection CONNECTION_ID --container TEAM_ID --who assigned
+octet-cli issues read --tracker jira --connection CONNECTION_ID --key PROJ-123
+octet-cli issues list --tracker github --in /path/to/repo --scope all
+```
+
+Omit `--connection` to use the first saved connection. Lists currently fetch at most 100 issues; comments fetch a bounded page. There is no issue-specific MCP server yet. The CLI shares the app's API clients and Keychain storage and never prints connection secrets.
+
+Agent reads also support:
+
+```sh
+octet-cli issues read --current --include-comments
+octet-cli issues list --tracker linear --connection CONNECTION --container TEAM --limit 100
+# Continue with the returned nextCursor, preserving the same selectors:
+octet-cli issues list --tracker linear --connection CONNECTION --container TEAM --cursor CURSOR
+```
+
+`list` now returns an object with `issues`, `truncated` and optional `nextCursor`, rather than a bare array. Without a limit it follows pages, stopping between requests after a 20-second budget or 10,000 issues and returning a continuation. `--limit` accepts 1–1000. Cursors are bound to tracker, connection, project/team, filters and directory. Linear uses cursors, Jira Cloud uses page tokens, and Jira Server uses offsets; GitHub uses bounded `gh` reads with offsets. Lists can change while paging, so consumers should deduplicate by issue ID. The UI reports incomplete reads rather than silently presenting a partial list as complete. Comment reads follow pages (up to 10,000, then an explicit error). `--current` resolves from any subdirectory of a linked checkout and uses its saved connection.
+
+Agents can also use `octet-cli issues-mcp` as a stdio MCP server. The four read-only tools are `issues_connections`, `issues_containers`, `issues_list` and `issues_read`. Enable **Let agents read issues** in Settings to install the server into supported agents, or configure an MCP client with command `/Applications/Octet.app/Contents/MacOS/octet-cli` and arguments `["issues-mcp"]`. List calls default to 100 issues and preserve continuation cursors. Pass `in` for repository context; `issues_read` accepts `current: true` and `include-comments: true`.
+
+Drag cards between status columns in the issue board. Starting a drag reveals available destination statuses, including empty columns. Drops recheck the issue's allowed transitions; failed writes roll back. When Jira has multiple actions leading to a status, choose the named action in issue details. Workflows requiring additional Jira fields still need the tracker website.
+
+### Orca comparison, 2026-10-19
+
+Source review of the local `stablyai/orca` clone at `b358328b`, not a live product test. The six requested integration areas are present in Octet. Remaining depth differences:
+
+| Area | Orca evidence in the clone | Octet follow-up |
+| --- | --- | --- |
+| Agent reads | `src/main/linear/mcp-issue-list.ts` walks pages, applies a time budget, and returns continuation metadata | Pagination and read-only MCP implemented (`octet-cli issues-mcp`) |
+| Worktree context | `src/main/linear/issue-context.ts` resolves `--current` from linked worktrees and includes optional context | Issue/connection metadata and `--current` implemented |
+| Relations | `src/main/linear/issue-relation-mutation.ts` creates and deletes relations | Add relations and activity to detail, followed by issue creation and broader assignment |
+| Board workflows | Renderer `task-page-jira-board-move.ts` and `task-page-jira-board-transitions.ts` implement board movement | Drag-and-drop implemented with fresh allowed-transition checks and rollback on write failure; ambiguous transitions use the detail menu |
+| Custom views | `src/main/linear/linear-custom-view-graphql.ts` defines custom-view queries | Add Linear custom views and richer label/priority/state filtering |
+
+Broader Orca README features worth evaluating separately are its mobile companion, SSH worktrees, and browser Design Mode. Those are advertised capabilities, not verified parity gaps from this integration-focused review. Octet already has parallel worktrees, terminal splits, agent orchestration and review surfaces, so feature names alone do not establish a gap.
+
 ## Project status
 
 The core application, terminal rendering, native sidebar and tabs, agent state, subagent hooks, recovery, marketplace, slash menu, Visual Twin, command palette, and distribution pipeline are implemented. The repository remains pre-1.0; see [TODO.md](TODO.md) for the current terminal audit and [docs/PLAN.md](docs/PLAN.md) for design history and verification notes.

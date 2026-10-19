@@ -55,6 +55,7 @@ final class WaitCenter: ObservableObject {
         }
         applyServer()
         CheckInCenter.shared.start(store: store)
+        ProjectJobCenter.shared.start(store: store)
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in
             MainActor.assumeIsolated { WaitCenter.shared.tick() }
@@ -149,6 +150,7 @@ final class WaitCenter: ObservableObject {
         guard !isSample else { return }
         let now = Date()
         CheckInCenter.shared.tick(now: now)
+        ProjectJobCenter.shared.tick(now: now)
         for wait in waits where wait.isDue(now: now) && !checking.contains(wait.id) {
             check(wait)
         }

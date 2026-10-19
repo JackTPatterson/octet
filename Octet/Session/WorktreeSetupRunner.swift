@@ -1,82 +1,185 @@
 import Foundation
+import Combine
 
-/// Readies a worktree Octet just created, as `WorktreeSetup` describes: env
-/// files copied from the main checkout, a port block, and the project's
-/// setup script typed into the new pane. A project's script runs only once
-/// you've said so for that repository.
+/// One setup lifecycle per checkout. Agent continuations are released once,
+/// after preparation and (by default) a successful setup process exit.
 @MainActor
-final class WorktreeSetupRunner {
+final class WorktreeSetupRunner: ObservableObject {
     static let shared = WorktreeSetupRunner()
-
     private static let portsKey = "octet.worktreeSetup.ports"
     private static let trustedKey = "octet.worktreeSetup.trustedRepos"
+    private static let statesKey = "octet.worktreeSetup.states"
+    private let defaults: UserDefaults
+    private let enabled: @MainActor () -> Bool
+    private let logsDirectory: URL?
+    @Published private(set) var states: [String: WorkspaceSetupState] = [:]
+    private var continuations: [String: () -> Void] = [:]
+    private var retries: [String: () -> Void] = [:]
+    private var processes: [String: Process] = [:]
 
-    func run(after result: [String: Any], store: SessionStore) {
-        guard SettingsStore.shared.values.worktreeSetup, let created = WorktreeSetup.parse(result) else { return }
-        AgentWorktreeWatcher.shared.markHandled(created.checkoutPath)
-        DispatchQueue.global(qos: .userInitiated).async {
-            let copied = WorktreeSetup.copyEnvFiles(from: created.repoRoot, to: created.checkoutPath)
-            let script = WorktreeSetup.script(
-                in: created.checkoutPath,
-                isExecutable: { FileManager.default.isExecutableFile(atPath: $0) },
-                read: { FileManager.default.contents(atPath: $0) }
-            )
-            DispatchQueue.main.async {
-                let name = URL(fileURLWithPath: created.checkoutPath).lastPathComponent
-                if !copied.isEmpty {
-                    ToastCenter.shared.succeed(nil, "Copied \(Self.list(copied)) into \(name)")
-                }
-                guard let script, let paneId = created.paneId else { return }
-                self.runWhenTrusted(script, created: created, paneId: paneId, store: store)
+    init(defaults: UserDefaults = .standard, logsDirectory: URL? = nil,
+         enabled: @escaping @MainActor () -> Bool = { SettingsStore.shared.values.worktreeSetup }) {
+        self.defaults = defaults; self.logsDirectory = logsDirectory; self.enabled = enabled
+        if let data = defaults.data(forKey: Self.statesKey),
+           let saved = try? JSONDecoder().decode([String: WorkspaceSetupState].self, from: data) {
+            states = saved.filter { FileManager.default.fileExists(atPath: $0.key) }
+            for key in Array(states.keys) where states[key]?.active == true {
+                states[key]?.phase = .failed
+                states[key]?.detail = "Octet closed before setup completion was observed. Inspect the log before retrying."
             }
         }
     }
 
-    /// Runs a worktree's setup script in a new tab of its own: for a
-    /// worktree an agent made, whose pane the agent is using.
+    func state(for directory: String?) -> WorkspaceSetupState? {
+        guard let directory else { return nil }
+        return states.values.filter { directory == $0.checkout || directory.hasPrefix($0.checkout + "/") }
+            .max { $0.checkout.count < $1.checkout.count }
+    }
+
+    func retry(_ checkout: String, store: SessionStore) {
+        guard states[checkout]?.active != true else { return }
+        if let retry = retries[checkout] { retry(); return }
+        guard let linked = WorktreeSetup.linkedWorktree(containing: checkout,
+            exists: { FileManager.default.fileExists(atPath: $0) },
+            read: { try? String(contentsOfFile: $0, encoding: .utf8) }) else { return }
+        prepare(.init(repoRoot: linked.repoRoot, checkoutPath: linked.checkout, paneId: nil), store: store)
+    }
+
+    func run(after result: [String: Any], store: SessionStore, whenReady: (() -> Void)? = nil) {
+        guard let created = WorktreeSetup.parse(result) else { whenReady?(); return }
+        if let whenReady { continuations[created.checkoutPath] = whenReady }
+        if states[created.checkoutPath]?.active != true {
+            let previous = defaults.stringArray(forKey: "octet.worktreeSetup.defaultTabs") ?? []
+            defaults.set(previous.filter { $0 != created.checkoutPath }, forKey: "octet.worktreeSetup.defaultTabs")
+        }
+        let workspace = EngineCreated(result: result).workspaceId
+            ?? store.snapshot.workspaces.first(where: { store.snapshot.directory(ofWorkspace: $0.workspaceId) == created.checkoutPath })?.workspaceId
+        prepare(created, workspaceId: workspace, store: store)
+    }
+
     func runInNewTab(_ script: WorktreeSetup.Script, repoRoot: String, checkout: String, store: SessionStore) {
-        var params: [String: Any] = ["cwd": checkout, "focus": true, "label": "Setup"]
-        if let workspace = store.focusedWorkspace { params["workspace_id"] = workspace.workspaceId }
-        let client = store.client
-        DispatchQueue.global(qos: .userInitiated).async {
-            let paneId = (try? client.call("tab.create", params))
-                .flatMap { ($0["root_pane"] as? [String: Any])?["pane_id"] as? String }
-            DispatchQueue.main.async {
-                guard let paneId else {
-                    ToastCenter.shared.fail(nil, "Couldn't open a tab for the setup")
-                    return
+        prepare(.init(repoRoot: repoRoot, checkoutPath: checkout, paneId: nil), store: store, override: script)
+    }
+
+    private func update(_ state: WorkspaceSetupState) {
+        states[state.checkout] = state
+        if let data = try? JSONEncoder().encode(states) { defaults.set(data, forKey: Self.statesKey) }
+    }
+
+    private func release(_ checkout: String) { continuations.removeValue(forKey: checkout)?() }
+
+    private func prepare(_ created: WorktreeSetup.Created, workspaceId: String? = nil, store: SessionStore,
+                         override: WorktreeSetup.Script? = nil) {
+        let checkout = created.checkoutPath
+        guard states[checkout]?.active != true else { return }
+        retries[checkout] = { [weak self, weak store] in
+            guard let self, let store else { return }
+            self.prepare(created, workspaceId: workspaceId, store: store, override: override)
+        }
+        AgentWorktreeWatcher.shared.markHandled(checkout)
+        guard enabled() else {
+            update(.init(checkout: checkout, phase: .skipped, detail: "Worktree setup is disabled in Settings."))
+            release(checkout); return
+        }
+        update(.init(checkout: checkout, phase: .preparing))
+        Task {
+            do {
+                let prepared = try await Task.detached(priority: .userInitiated) {
+                    let config = try ProjectConfiguration.load(checkout: checkout, root: created.repoRoot)
+                    _ = try ProjectWorkspaceFiles.materialize(config, root: created.repoRoot, checkout: checkout)
+                    try WorktreeSetup.copyEnvFilesChecked(from: created.repoRoot, to: checkout)
+                    let script: WorktreeSetup.Script?
+                    if let setup = config.setup {
+                        script = setup.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : .command(setup)
+                    } else {
+                        script = override ?? WorktreeSetup.script(in: checkout,
+                            isExecutable: { FileManager.default.isExecutableFile(atPath: $0) },
+                            read: { FileManager.default.contents(atPath: $0) })
+                    }
+                    return (config, script)
+                }.value
+                let (config, script) = prepared
+                let tabs = config.defaultTabs ?? []
+                let ready = { [weak self, weak store] in
+                    guard let self else { return }
+                    let opened = Set(self.defaults.stringArray(forKey: "octet.worktreeSetup.defaultTabs") ?? [])
+                    if let store, let workspaceId, !opened.contains(checkout), !tabs.isEmpty {
+                        self.defaults.set(Array(opened.union([checkout])), forKey: "octet.worktreeSetup.defaultTabs")
+                        for tab in tabs {
+                            let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+                            let params: [String: Any] = ["workspace_id": workspaceId, "focus": false,
+                                "tab_label": tab.title, "root": ["type": "pane", "cwd": checkout,
+                                "command": [shell, "-l", "-c", tab.command]]]
+                            store.call("layout.apply", params, failure: "Couldn't open \(tab.title)", then: { _ in })
+                        }
+                    }
+                    self.release(checkout)
                 }
-                self.runWhenTrusted(script, created: .init(repoRoot: repoRoot, checkoutPath: checkout, paneId: paneId),
-                                    paneId: paneId, store: store)
-            }
+                guard script != nil || !tabs.isEmpty else {
+                    update(.init(checkout: checkout, phase: .ready)); ready(); return
+                }
+                let start = { [weak self] in
+                    guard let self else { return }
+                    if let script { self.execute(script, created: created, wait: config.waitForSetup ?? true, ready: ready) }
+                    else { self.update(.init(checkout: checkout, phase: .ready)); ready() }
+                }
+                if trusted.contains(created.repoRoot) { start(); return }
+                update(.init(checkout: checkout, phase: .awaitingApproval))
+                var commands = tabs.map { "\($0.title): \($0.command)" }
+                if let script { commands.insert(String(describing: script), at: 0) }
+                ConfirmCenter.shared.ask(.init(title: "Run this project's setup?",
+                    message: "Setup and default tabs from \(URL(fileURLWithPath: checkout).lastPathComponent).",
+                    detail: commands.joined(separator: "\n"), confirmTitle: "Run", cancelTitle: "Keep waiting",
+                    suppressTitle: "Always allow this repository",
+                    onConfirm: { [weak self] always in
+                        if always { self?.trust(created.repoRoot) }; start()
+                    }, onCancel: { [weak self] in
+                        self?.update(.init(checkout: checkout, phase: .failed, detail: "Setup was not approved. Retry when ready."))
+                    }))
+            } catch { failed(checkout, error.localizedDescription) }
         }
     }
 
-    private func runWhenTrusted(_ script: WorktreeSetup.Script, created: WorktreeSetup.Created,
-                                paneId: String, store: SessionStore) {
-        let start = { [weak self] in
-            guard let self else { return }
-            let line = WorktreeSetup.commandLine(script, created: created,
-                                                 port: self.assignPort(to: created.checkoutPath), quote: shellQuote)
-            store.runInPane(paneId, line: line)
-        }
-        if trusted.contains(created.repoRoot) { return start() }
-        let repo = URL(fileURLWithPath: created.repoRoot).lastPathComponent
-        let what: String
-        switch script {
-        case .file(let path): what = path
-        case .command(let command): what = command
-        }
-        ConfirmCenter.shared.ask(
-            title: "Run \(repo)'s worktree setup?",
-            message: "The new worktree asks to run this in its terminal. Run it only if you trust this repository.",
-            detail: what,
-            confirmTitle: "Run",
-            suppressTitle: "Always run setup for \(repo)"
-        ) { [weak self] always in
-            if always { self?.trust(created.repoRoot) }
-            start()
-        }
+    private func execute(_ script: WorktreeSetup.Script, created: WorktreeSetup.Created,
+                         wait: Bool, ready: @escaping () -> Void) {
+        let checkout = created.checkoutPath
+        do {
+            let logs = logsDirectory ?? EngineSession.supportDirectory.appendingPathComponent("setup-logs")
+            try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+            let log = logs.appendingPathComponent(UUID().uuidString + ".log")
+            FileManager.default.createFile(atPath: log.path, contents: nil, attributes: [.posixPermissions: 0o600])
+            let output = try FileHandle(forWritingTo: log)
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh")
+            process.arguments = ["-l", "-c", WorktreeSetup.commandLine(script, created: created,
+                port: assignPort(to: checkout), quote: shellQuote)]
+            process.currentDirectoryURL = URL(fileURLWithPath: checkout)
+            process.standardOutput = output; process.standardError = output; process.standardInput = FileHandle.nullDevice
+            process.terminationHandler = { [weak self] process in
+                try? output.close()
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.processes[checkout] = nil
+                    if process.terminationStatus == 0 {
+                        self.update(.init(checkout: checkout, phase: .ready, logPath: log.path))
+                        ToastCenter.shared.succeed(nil, "Workspace ready", detail: URL(fileURLWithPath: checkout).lastPathComponent)
+                        ready()
+                    } else {
+                        self.failed(checkout, "Setup exited with status \(process.terminationStatus).", logPath: log.path)
+                    }
+                }
+            }
+            update(.init(checkout: checkout, phase: .running, logPath: log.path))
+            do { try process.run() } catch { try? output.close(); throw error }
+            processes[checkout] = process
+            if !wait { release(checkout) }
+        } catch { failed(checkout, error.localizedDescription) }
+    }
+
+    private func failed(_ checkout: String, _ detail: String, logPath: String? = nil) {
+        update(.init(checkout: checkout, phase: .failed, detail: detail, logPath: logPath))
+        ToastCenter.shared.fail(nil, "Workspace setup failed", detail: detail,
+            action: .init(title: "Retry") { [weak self] in self?.retries[checkout]?() })
     }
 
     // MARK: - Env files
@@ -89,7 +192,6 @@ final class WorktreeSetupRunner {
 
     /// The worktree's port block, kept while the worktree exists.
     private func assignPort(to checkout: String) -> Int? {
-        let defaults = UserDefaults.standard
         var assigned = (defaults.dictionary(forKey: Self.portsKey) as? [String: Int] ?? [:])
             .filter { FileManager.default.fileExists(atPath: $0.key) }
         let port = WorktreeSetup.port(for: checkout, assigned: assigned)
@@ -99,10 +201,10 @@ final class WorktreeSetupRunner {
     }
 
     private var trusted: Set<String> {
-        Set(UserDefaults.standard.stringArray(forKey: Self.trustedKey) ?? [])
+        Set(defaults.stringArray(forKey: Self.trustedKey) ?? [])
     }
 
     private func trust(_ repoRoot: String) {
-        UserDefaults.standard.set(Array(trusted.union([repoRoot])).sorted(), forKey: Self.trustedKey)
+        defaults.set(Array(trusted.union([repoRoot])).sorted(), forKey: Self.trustedKey)
     }
 }

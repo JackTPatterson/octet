@@ -1,101 +1,132 @@
 import SwiftUI
 
+/// Workflow runs for the project in front, from `gh run list`.
 struct OperationsPlane: View {
     let kind: PlaneKind
     let directory: String?
     @State private var items: [OperationItem] = []
-    @State private var loading = true
+    @State private var loaded = false
+    @State private var loading = false
     @State private var failure: String?
     @State private var query = ""
+    @State private var scope = "all"
     @State private var selected: String?
     @State private var refresh = 0
-    private var isCI: Bool { kind == .ci }
     private var filtered: [OperationItem] {
-        items.filter { query.isEmpty || "\($0.title) \($0.subtitle) \($0.status)".localizedCaseInsensitiveContains(query) }
+        items.filter { item in
+            (query.isEmpty || "\(item.title) \(item.workflow) \(item.branch) \(item.status)".localizedCaseInsensitiveContains(query)) &&
+            (scope == "all" || (scope == "failed" ? item.tone == .bad : item.tone == .pending))
+        }
     }
+    private var failing: Int { items.filter { $0.tone == .bad }.count }
+    private var running: Int { items.filter { $0.tone == .pending }.count }
+    private var project: String { directory.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "" }
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 6) {
-                Text(kind.title).font(Theme.uiFontMedium)
-                Text("\(items.count)").font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
-                Spacer()
-                if loading { ProgressView().controlSize(.small) }
-                OctetIconButton(icon: "arrow.clockwise", help: "Refresh \(kind.title)") { refresh += 1 }.disabled(loading)
-            }.padding(.horizontal, 12).frame(height: 36)
-            HStack {
-                OctetIcon(isCI ? "branch" : "containers", size: 12)
-                Text(isCI ? (directory.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "No project") : "Current Docker context · all containers")
-                    .lineLimit(1).truncationMode(.middle)
-                Spacer(minLength: 0)
-            }.font(Theme.captionFont).foregroundStyle(Theme.textSecondary).padding(.horizontal, 12).padding(.bottom, 10)
-            OctetTextField(placeholder: isCI ? "Filter workflow runs…" : "Filter containers…", text: $query).padding(.horizontal, 12).padding(.bottom, 10)
-            Divider()
+            ServiceHeader(title: "CI", count: loaded ? summary : project, loading: loading) {
+                OctetIconButton(icon: "arrow.clockwise", help: "Refresh workflow runs") { refresh += 1 }.disabled(loading)
+            }
+            if directory != nil, loaded || failure == nil {
+                ServiceFilterBar(placeholder: "Filter runs, workflows or branches…", query: $query, scope: $scope,
+                                 scopes: [("all", "All"), ("failed", "Failed"), ("running", "Running")])
+            }
             content
         }
         .foregroundStyle(Theme.textPrimary).background(Theme.sidebar)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .task(id: "\(kind.rawValue):\(directory ?? ""):\(refresh)") { await load() }
+        .task(id: directory) {
+            // Runs finish while the pane is open; keep the list honest.
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(30)) } catch { return }
+                guard !loading, directory != nil else { continue }
+                refresh += 1
+            }
+        }
+    }
+
+    private var summary: String {
+        var parts = ["\(items.count) runs"]
+        if failing > 0 { parts.append("\(failing) failed") }
+        if running > 0 { parts.append("\(running) running") }
+        return parts.joined(separator: " · ")
     }
 
     @ViewBuilder private var content: some View {
-        if isCI && directory == nil {
+        if directory == nil {
             PlaneServiceMessage(icon: kind.icon, title: "No project in front", detail: "Open a repository to see its workflow runs.")
-        } else if let failure {
-            PlaneServiceMessage(icon: kind.icon, title: "Couldn't load \(isCI ? "CI runs" : "containers")", detail: failure)
-        } else if loading && items.isEmpty {
-            PlaneServiceMessage(icon: kind.icon, title: "Loading \(isCI ? "workflow runs" : "containers")…", detail: "")
+        } else if !loaded && failure == nil {
+            ServiceListSkeleton()
+        } else if let failure, items.isEmpty {
+            PlaneServiceMessage(icon: kind.icon, title: "Couldn't load CI runs", detail: failure)
         } else if items.isEmpty {
-            PlaneServiceMessage(icon: kind.icon, title: isCI ? "No workflow runs" : "No containers", detail: isCI ? "GitHub Actions runs will appear here once a workflow runs in this repository." : "Running and stopped containers in your active Docker context will appear here.")
+            PlaneServiceMessage(icon: kind.icon, title: "No workflow runs", detail: "GitHub Actions runs will appear here once a workflow runs in this repository.")
         } else if filtered.isEmpty {
-            PlaneServiceMessage(icon: kind.icon, title: "No matches", detail: "Try a different name or status.")
+            PlaneServiceMessage(icon: kind.icon, title: "No matches", detail: "Try a different name, branch or status.")
         } else {
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
+                LazyVStack(alignment: .leading, spacing: 1) {
+                    if let failure { ServiceBanner(text: "Showing the last results. " + failure) }
                     ForEach(filtered) { item in
-                        OctetCollapsible(title: item.title, open: Binding(
-                            get: { selected == item.id },
-                            set: { selected = $0 ? item.id : nil }
-                        ), trailing: {
-                            Text(item.status.replacingOccurrences(of: "_", with: " ").capitalized)
-                                .font(Theme.captionFont).foregroundStyle(item.tint)
-                        }) {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text(item.subtitle).font(Theme.captionFont).foregroundStyle(Theme.textSecondary)
-                                Text(item.detail).font(Theme.captionFont.monospaced()).foregroundStyle(Theme.textSecondary)
-                                    .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-                                if let url = item.url {
-                                    OctetButton(title: "View run on GitHub", icon: "arrow.up.right", kind: .ghost, compact: true) { NSWorkspace.shared.open(url) }
-                                }
-                            }.padding(.bottom, 10)
-                        }.padding(.horizontal, 12)
-                        Divider()
+                        ServiceRow(icon: item.icon, tone: item.tone, title: item.title,
+                                   subtitle: "\(item.workflow) · \(item.branch) · \(ServiceTime.ago(item.createdAt))",
+                                   open: Binding(get: { selected == item.id }, set: { selected = $0 ? item.id : nil }),
+                                   trailing: { ServiceStatusLabel(text: item.statusText, tone: item.tone) }) {
+                            detail(item)
+                        }
                     }
                 }
+                .padding(.horizontal, 8).padding(.bottom, 12)
             }.octetScrollIndicators()
         }
     }
 
+    private func detail(_ item: OperationItem) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ServiceFacts(rows: [
+                ("Run", "#\(item.id)" + (item.attempt > 1 ? " · attempt \(item.attempt)" : "")),
+                ("Workflow", item.workflow),
+                ("Branch", item.branch),
+                ("Event", item.event),
+                ("Started", ServiceTime.full(item.createdAt)),
+            ] + (ServiceTime.duration(from: item.createdAt, to: item.updatedAt).map { [("Duration", $0)] } ?? []))
+            HStack(spacing: 6) {
+                if let url = item.url {
+                    OctetButton(title: "View on GitHub", icon: "arrow.up.right", kind: .secondary, compact: true) { NSWorkspace.shared.open(url) }
+                    OctetButton(title: "Copy link", icon: "link.badge.plus", kind: .ghost, compact: true) {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(url.absoluteString, forType: .string)
+                    }
+                }
+            }
+        }
+    }
+
+    /// A refresh keeps the list it had; only a failure with nothing to show
+    /// replaces the pane.
     @MainActor private func load() async {
+        guard let cwd = directory else { loaded = false; items = []; return }
         loading = true
-        failure = nil
-        items = []
-        selected = nil
-        guard !isCI || directory != nil else { loading = false; return }
-        let ci = isCI, cwd = directory
+        let sample = ServiceSample.shows("ci")
         let result = await Task.detached(priority: .userInitiated) {
-            LoginShell.run(ci
-                ? ["gh", "run", "list", "--limit", "30", "--json", "databaseId,displayTitle,workflowName,headBranch,status,conclusion,url,event,createdAt"]
-                : ["docker", "ps", "--all", "--format", "{{json .}}"], in: ci ? cwd : nil)
+            if sample { return LoginShell.Result(status: 0, output: ServiceSample.runs) }
+            return LoginShell.run(["gh", "run", "list", "--limit", "30", "--json", "databaseId,displayTitle,workflowName,headBranch,status,conclusion,url,event,createdAt,updatedAt,attempt"], in: cwd)
         }.value
         guard !Task.isCancelled else { return }
         loading = false
         guard result.status == 0 else {
-            failure = (ci ? "Check that GitHub CLI is installed and signed in with gh auth login.\n\n" : "Check that Docker is installed and its daemon is running.\n\n") + result.output
+            failure = "Check that GitHub CLI is installed and signed in with gh auth login.\n\n" + result.output
             return
         }
-        do { items = try OperationItem.parse(result.output, ci: ci) }
-        catch { failure = "Couldn't read the response. Refresh to try again.\n\(error.localizedDescription)" }
+        do {
+            let next = try OperationItem.parse(result.output, ci: true)
+            if next.map(\.id) != items.map(\.id) || next.map(\.status) != items.map(\.status) { items = next }
+            failure = nil
+            loaded = true
+            if sample { selected = "9020" }
+            if let selected, !items.contains(where: { $0.id == selected }) { self.selected = nil }
+        } catch { failure = "Couldn't read the response. Refresh to try again.\n\(error.localizedDescription)" }
     }
 }
 
@@ -109,6 +140,27 @@ struct PlaneServiceMessage: View {
 struct OperationItem: Identifiable {
     let id, title, subtitle, status, detail: String
     var url: URL?
+    /// CI facts for the row and its details; empty for container rows.
+    var workflow = "", branch = "", event = "", createdAt = "", updatedAt = ""
+    var attempt = 1
+
+    var tone: ServiceTone {
+        switch status.lowercased() {
+        case "success", "running": .good
+        case "failure", "timed_out", "dead", "startup_failure": .bad
+        case "in_progress", "queued", "waiting", "restarting", "pending", "requested": .pending
+        default: .idle
+        }
+    }
+    var icon: String {
+        switch tone {
+        case .good: "circle.check"
+        case .bad: "circle.x"
+        case .pending: "circle.dot"
+        default: status.lowercased() == "cancelled" ? "circle.x" : "circle.dot"
+        }
+    }
+    var statusText: String { status.replacingOccurrences(of: "_", with: " ").capitalized }
     var tint: Color {
         switch status.lowercased() {
         case "success", "running": return .green
@@ -123,7 +175,9 @@ struct OperationItem: Identifiable {
             return try JSONDecoder().decode([Run].self, from: Data(output.utf8)).map {
                 Self(id: String($0.databaseId), title: $0.displayTitle, subtitle: "\($0.workflowName) · \($0.headBranch)",
                      status: $0.conclusion.flatMap { $0.isEmpty ? nil : $0 } ?? $0.status,
-                     detail: "Run #\($0.databaseId)\n\($0.event) · \($0.createdAt)", url: URL(string: $0.url))
+                     detail: "Run #\($0.databaseId)\n\($0.event) · \($0.createdAt)", url: URL(string: $0.url),
+                     workflow: $0.workflowName, branch: $0.headBranch, event: $0.event,
+                     createdAt: $0.createdAt, updatedAt: $0.updatedAt ?? $0.createdAt, attempt: $0.attempt ?? 1)
             }
         }
         return try output.split(separator: "\n").map { line in
@@ -149,5 +203,7 @@ struct OperationItem: Identifiable {
         let databaseId: Int
         let displayTitle, workflowName, headBranch, status, url, event, createdAt: String
         let conclusion: String?
+        let updatedAt: String?
+        let attempt: Int?
     }
 }

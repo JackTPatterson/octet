@@ -32,10 +32,12 @@ private struct RuntimeStateBadge: View {
         HStack(spacing: 4) {
             if let icon = state.icon {
                 OctetIcon(icon, size: 12).foregroundStyle(state.color)
-            } else {
+            } else if entry.kind != .agent {
                 ProgressView().controlSize(.mini).scaleEffect(0.7).frame(width: 12, height: 12)
             }
-            if let since = entry.liveSince, state == .running || state == .waiting {
+            if entry.kind == .agent {
+                AgentActivityText(text: state == .waiting ? "Needs you" : state.title)
+            } else if let since = entry.liveSince, state == .running || state == .waiting {
                 ElapsedLabel(since: since)
             } else if let label = RuntimeState.label(forDetail: entry.detail) {
                 Text(label)
@@ -44,6 +46,10 @@ private struct RuntimeStateBadge: View {
         .font(Theme.captionFont.monospacedDigit())
         .foregroundStyle(state == .running || state == .done ? Theme.textTertiary : state.color)
         .lineLimit(1)
+        .padding(.horizontal, entry.kind == .agent ? 5 : 0)
+        .padding(.vertical, entry.kind == .agent ? 2 : 0)
+        .background(entry.kind == .agent ? state.color.opacity(0.1) : .clear,
+                    in: RoundedRectangle(cornerRadius: 4))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(state.title)
     }
@@ -61,6 +67,9 @@ struct RuntimeRow: View {
     let focus: (() -> Void)?
     let stop: (() -> Void)?
     let menu: () -> [OctetMenuItem]
+    var childCount: Int = 0
+    var branchCollapsed = false
+    var toggleBranch: (() -> Void)? = nil
     @ObservedObject private var motion = MotionPreferences.shared
     @State private var hovered = false
 
@@ -73,6 +82,7 @@ struct RuntimeRow: View {
             }
             VStack(alignment: .leading, spacing: 0) {
                 summary
+                if entry.kind == .agent { agentMetadata }
                 if expanded {
                     RuntimeDetails(entry: entry)
                         .transition(motion.animates(.sidebar)
@@ -103,7 +113,7 @@ struct RuntimeRow: View {
                                 .font(Theme.uiFontMedium)
                                 .foregroundStyle(Theme.textPrimary)
                                 .lineLimit(1)
-                            if let modelName = entry.modelName, !modelName.isEmpty {
+                            if entry.kind != .agent, let modelName = entry.modelName, !modelName.isEmpty {
                                 Text(modelName)
                                     .font(Theme.captionFont)
                                     .foregroundStyle(entry.tint)
@@ -142,6 +152,28 @@ struct RuntimeRow: View {
         }
     }
 
+    private var agentMetadata: some View {
+        HStack(spacing: 6) {
+            if let model = entry.modelName, !model.isEmpty { Text(model).lineLimit(1) }
+            if let since = entry.liveSince {
+                if entry.modelName != nil { Text("·") }
+                ElapsedLabel(since: since)
+            }
+            Spacer(minLength: 4)
+            if childCount > 0, let toggleBranch {
+                Button(action: toggleBranch) {
+                    HStack(spacing: 4) {
+                        Text("\(childCount) subagents")
+                        OctetIcon(branchCollapsed ? "chevron.right" : "chevron.down", size: 9)
+                    }
+                }.buttonStyle(.plain)
+                .accessibilityLabel("\(branchCollapsed ? "Show" : "Hide") \(childCount) subagents of \(entry.title)")
+            }
+        }
+        .font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
+        .padding(.leading, 32).padding(.trailing, 8).padding(.bottom, 6)
+    }
+
     /// Show the tab, stop, and ⋯ for the rest.
     private var actions: some View {
         HStack(spacing: 0) {
@@ -163,8 +195,11 @@ struct RuntimeRow: View {
     private var detail: some View {
         switch entry.kind {
         case .agent:
+            if let prompt = entry.prompt, !prompt.isEmpty, prompt != entry.title {
+                Text(prompt).font(Theme.captionFont).foregroundStyle(Theme.textSecondary).lineLimit(2)
+            }
             if let line = entry.process ?? Optional(entry.location), !line.isEmpty {
-                Text(line)
+                AgentActivityText(text: line)
                     .font(Theme.captionFont)
                     .foregroundStyle(Theme.textTertiary)
                     .lineLimit(1)
@@ -195,6 +230,8 @@ struct RuntimeRow: View {
 private struct TreeConnector: View {
     let guide: TreeGuide
     let depth: Int
+    @State private var appeared = false
+    @ObservedObject private var motion = MotionPreferences.shared
     /// One level's width, the same as the glyph column, so an elbow ends at
     /// the glyph and a line runs through the parent's glyph centre.
     static let column: CGFloat = 18
@@ -222,10 +259,12 @@ private struct TreeConnector: View {
                 path.move(to: CGPoint(x: x, y: elbowY))
                 path.addLine(to: CGPoint(x: end - 1, y: elbowY))
             }
-            context.stroke(path, with: .color(Theme.textMuted.opacity(0.55)), lineWidth: 1)
+            context.stroke(path, with: .color(Color.white.opacity(0.55)), lineWidth: 1)
         }
         .frame(width: Self.column * CGFloat(depth))
         .frame(maxHeight: .infinity)
+        .mask(Rectangle().scaleEffect(y: appeared || !motion.animates(.sidebar) ? 1 : 0, anchor: .top))
+        .onAppear { withAnimation(motion.animation(.sidebar, .easeOut(duration: 0.28))) { appeared = true } }
         .accessibilityHidden(true)
     }
 }

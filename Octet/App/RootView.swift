@@ -232,7 +232,7 @@ struct RootView: View {
                     // slides in over the room, instead of reflowing on every
                     // frame of the slide.
                     Color.clear
-                        .frame(width: ui.sidePanelVisible && !ui.sidePanelMaximized ? ui.sidePanelWidth : 0)
+                        .frame(width: ui.sidePanelVisible && !ui.sidePanelMaximized ? ui.presentedSidePanelWidth : 0)
                         .transaction { $0.animation = nil }
                 }
                 // The right panel: a strip of planes over the one in front.
@@ -241,7 +241,7 @@ struct RootView: View {
                 // reflows every agent's screen.
                 .overlay(alignment: .trailing) {
                     GeometryReader { proxy in
-                        let width = ui.sidePanelMaximized ? proxy.size.width : ui.sidePanelWidth
+                        let width = ui.sidePanelMaximized ? proxy.size.width : min(proxy.size.width, ui.presentedSidePanelWidth)
                         ZStack(alignment: .leading) {
                             Rectangle().fill(Theme.divider).frame(width: 1)
                                 .frame(maxHeight: .infinity, alignment: .leading)
@@ -254,6 +254,9 @@ struct RootView: View {
                         .frame(width: ui.sidePanelVisible ? width : 0, alignment: .leading)
                         .clipped()
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+                        .onChange(of: proxy.size.width, initial: true) { _, width in
+                            ui.availablePanelWidth = width
+                        }
                     }
                     .allowsHitTesting(ui.sidePanelVisible)
                     .accessibilityHidden(!ui.sidePanelVisible)
@@ -642,8 +645,16 @@ struct RootView: View {
                     switch parts.dropFirst().first {
                     case "empty": ui.closePlanes { _ in true }; ui.sidePanelVisible = true
                     case "max": ui.sidePanelVisible = true; ui.sidePanelMaximized = true
-                    case "pr", "pullRequest": ui.showPlane(.pullRequest, number: parts.count > 2 ? Int(parts[2]) : nil)
+                    case "pr", "pullRequest":
+                        #if DEBUG
+                        // "planes:pr:sample" shows made-up stacked pull requests; nothing reads GitHub.
+                        if parts.count > 2, parts[2] == "sample" { PullRequestPlaneModel.debugSample = true }
+                        #endif
+                        ui.showPlane(.pullRequest, number: parts.count > 2 ? Int(parts[2]) : nil)
                     case "prs", "pullRequests": ui.showPlane(.pullRequests)
+                    case "todos":
+                        ui.showPlane(.todos)
+                        if parts.count > 2, parts[2] == "sample" { window.todos.loadSample() }
                     case "overview":
                         ui.showPlane(.overview)
                         #if DEBUG
@@ -837,6 +848,12 @@ struct RootView: View {
             #endif
         }
 
+    /// A breadcrumb's folder: the Files plane comes forward with it open.
+    private func revealInFiles(_ folder: String) {
+        window.editor.folderReveal = EditorWorkspace.FolderReveal(path: folder)
+        ui.showPlane(.files)
+    }
+
     private func closePalette() {
         ui.paletteVisible = false
     }
@@ -850,7 +867,8 @@ struct RootView: View {
             HStack(spacing: 0) {
                 terminal.frame(maxWidth: .infinity, maxHeight: .infinity)
                 Rectangle().fill(Theme.divider).frame(width: 1)
-                CodeEditorView(workspace: window.editor, rootDirectory: window.editorRootDirectory)
+                CodeEditorView(workspace: window.editor, rootDirectory: window.editorRootDirectory,
+                               revealFolder: revealInFiles)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         } else {
@@ -882,7 +900,8 @@ struct RootView: View {
                             .onAppear { DebugSnapshot.overlay("review", true) }
                             .onDisappear { DebugSnapshot.overlay("review", false) }
                     } else if window.editor.isPresented, window.editor.presentation == .full {
-                        CodeEditorView(workspace: window.editor, rootDirectory: window.editorRootDirectory)
+                        CodeEditorView(workspace: window.editor, rootDirectory: window.editorRootDirectory,
+                               revealFolder: revealInFiles)
                     } else if let conversation = agents.active(in: window.focusedWorkspace?.workspaceId) {
                         ConversationView(session: conversation, client: store.client)
                             .id(conversation.id)
@@ -1291,7 +1310,7 @@ final class UIState: ObservableObject {
         }
     }
     /// The plane in front, by id.
-    @Published var activePlaneId: String? = UserDefaults.standard.string(forKey: "octet.activePlane") {
+    @Published var activePlaneId: String? = UserDefaults.standard.string(forKey: "octet.activePlane").map(Plane.migratedID) {
         didSet {
             saveWorkspacePanel()
             if !restoringWorkspacePanel, let activePlaneId, splitPlaneIds.count > 1, !splitPlaneIds.contains(activePlaneId) {
@@ -1319,7 +1338,7 @@ final class UIState: ObservableObject {
         // ever the last session's end: start from the usual two again.
         guard let data = UserDefaults.standard.data(forKey: "octet.planes"),
               let planes = try? JSONDecoder().decode([Plane].self, from: data), !planes.isEmpty else { return Plane.defaults }
-        return planes
+        return Plane.consolidated(planes, active: UserDefaults.standard.string(forKey: "octet.activePlane"))
     }
 
     /// The plane in front: the chosen one, else the first.
@@ -1331,7 +1350,10 @@ final class UIState: ObservableObject {
     /// Adds a plane, or brings forward the one there, and shows it.
     func addPlane(_ kind: PlaneKind, number: Int? = nil) {
         let plane = Plane.make(kind, number: number)
-        if !planes.contains(where: { $0.id == plane.id }) { planes.append(plane) }
+        if plane.kind == .pullRequests, let index = planes.firstIndex(where: { $0.id == plane.id }) {
+            planes[index] = plane
+            planeBadges[plane.id] = nil
+        } else if !planes.contains(where: { $0.id == plane.id }) { planes.append(plane) }
         activePlaneId = plane.id
         sidePanelVisible = true
     }
@@ -1408,9 +1430,8 @@ final class UIState: ObservableObject {
         splitPlaneIds = splitPlaneIds.filter { id in planes.contains { $0.id == id } }
         if splitPlaneIds.count < 2 { splitPlaneIds = [] }
         planeBadges = planeBadges.filter { id, _ in planes.contains { $0.id == id } }
-        if planes.isEmpty {
-            sidePanelVisible = false
-        } else if closingActive, let activeIndex {
+        // An empty panel stays open: the launcher is its getting-started view.
+        if !planes.isEmpty, closingActive, let activeIndex {
             activePlaneId = splitPlaneIds.first ?? planes[min(activeIndex, planes.count - 1)].id
         }
     }
@@ -1432,7 +1453,7 @@ final class UIState: ObservableObject {
 
     /// Shows the panel with `section` open and in view, on its plane.
     func showSidePanel(_ section: SidePanelSection) {
-        showPlane(section == .files ? .git : .overview)
+        showPlane(section == .todos ? .todos : section == .files ? .git : .overview)
         sidePanelJump = SidePanelJump(section: section)
     }
 
@@ -1463,6 +1484,10 @@ final class UIState: ObservableObject {
     var seenRuntimeEntryIDs: Set<String> = []
     /// Whether the agent in front has any runtimes, set by the Runtime panel
     /// (which works them out); the tab bar hides its button when it has none.
+    @Published var availablePanelWidth: CGFloat = 1200
+    var presentedSidePanelWidth: CGFloat {
+        AgentPresentationLogic.panelWidth(normal: sidePanelWidth, available: availablePanelWidth)
+    }
     @Published var runtimeHasEntries = false
     /// Runtimes opened in place in the list, to show their details.
     @Published var runtimeExpandedEntryIDs: Set<String> = []

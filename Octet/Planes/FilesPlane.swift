@@ -11,6 +11,8 @@ struct FilesPlane: View {
     @StateObject private var model = FilesPlaneModel()
     @State private var query = ""
     @State private var open: Set<String> = []
+    /// The folder a breadcrumb asked for, to scroll to once the tree has it.
+    @State private var scrollTarget: String?
     @FocusState private var searchFocused: Bool
 
     private var root: String? {
@@ -27,6 +29,11 @@ struct FilesPlane: View {
         .onChange(of: root) { _, root in
             open = []
             if let root { model.load(root) }
+        }
+        .onReceive(window.editor.$folderReveal) { request in
+            guard let request else { return }
+            window.editor.folderReveal = nil
+            reveal(request.path)
         }
         .onChange(of: ui.showing(.files)) { _, shown in
             // Back in front: pick up files made since.
@@ -115,6 +122,7 @@ struct FilesPlane: View {
                 .octetScrollIndicators()
             }
         } else {
+            ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 1) {
                     ForEach(FileTreeNode.rows(model.tree, open: open), id: \.node.path) { row in
@@ -130,12 +138,38 @@ struct FilesPlane: View {
                             }
                         }
                         .contextMenu { if let root { fileMenu(root + "/" + node.path, relative: node.path) } }
+                        .id(node.path)
                     }
                 }
                 .padding(6)
             }
             .octetScrollIndicators()
+            .onChange(of: scrollTarget) { _, target in
+                guard let target else { return }
+                scrollTarget = nil
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    MotionPreferences.shared.perform(.sidebar) { proxy.scrollTo(target, anchor: .top) }
+                }
+            }
+            }
         }
+    }
+
+    /// Opens every folder down to `folder` and scrolls to it.
+    private func reveal(_ folder: String) {
+        guard let root else { return }
+        let base = URL(fileURLWithPath: root).standardizedFileURL.resolvingSymlinksInPath().path
+        let target = URL(fileURLWithPath: folder).standardizedFileURL.resolvingSymlinksInPath().path
+        guard target.hasPrefix(base + "/") else { return }
+        query = ""
+        var path = ""
+        var opened = open
+        for part in target.dropFirst(base.count + 1).split(separator: "/") {
+            path += (path.isEmpty ? "" : "/") + part
+            opened.insert(path)
+        }
+        MotionPreferences.shared.perform(.sidebar) { open = opened }
+        scrollTarget = path
     }
 
     private var matches: [EditorFileItem] {

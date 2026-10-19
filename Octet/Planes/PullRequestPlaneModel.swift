@@ -38,6 +38,13 @@ final class PullRequestPlaneModel: ObservableObject {
     @Published private(set) var repository: PullRequestRepository?
     /// The repository's labels, read when the label picker first opens.
     @Published private(set) var repositoryLabels: [PullRequestLabel]?
+    /// Who a review can be asked of, read when the reviewer picker first opens.
+    @Published private(set) var reviewCandidates: [PullRequestReviewTarget]?
+    /// The chain of open pull requests this one is part of; nil when alone.
+    @Published private(set) var stack: PullRequestStack?
+    /// What the last label, reviewer or reaction change got wrong, shown
+    /// inline over the Summary tab until the next change or it's dismissed.
+    @Published private(set) var actionError: String?
     /// The branch checked out in `directory`.
     @Published private(set) var currentBranch: String?
     /// `gh pr diff`, parsed; read the first time the Code tab is wanted.
@@ -73,6 +80,8 @@ final class PullRequestPlaneModel: ObservableObject {
     /// The diff's freshness: when the PR changes, it's read again.
     private var diffStamp: String?
     private var diffWanted = false
+    /// What the stack was read for; it's read again when this changes.
+    private var stackKey: String?
 
     static let pollInterval: TimeInterval = 60
 
@@ -116,12 +125,18 @@ final class PullRequestPlaneModel: ObservableObject {
         diffFiles = nil
         diffStamp = nil
         chosenMethod = nil
+        stack = nil
+        stackKey = nil
+        actionError = nil
         resetReviewLayer()
         phase = .loading
         refresh()
     }
 
     func refresh(quietly: Bool = false) {
+        #if DEBUG
+        if Self.debugSample { applySample(); return }
+        #endif
         generation += 1
         let generation = self.generation, directory = self.directory
         let number = requestedNumber.map(String.init)
@@ -152,6 +167,7 @@ final class PullRequestPlaneModel: ObservableObject {
                     }
                     if let parsed {
                         self.apply(parsed)
+                        self.loadStack(force: !quietly)
                     } else {
                         let failure = view.status == 0
                             ? PullRequestLoadFailure.other("gh's answer couldn't be read.")
@@ -329,9 +345,18 @@ final class PullRequestPlaneModel: ObservableObject {
     /// `input` is the command's stdin (a REST body). `refresh: false` skips
     /// reading the PR again, for actions it doesn't show (viewed marks).
     private func perform(_ key: String, _ arguments: [String], input: Data? = nil, success: String?, failure: String,
-                         refresh: Bool = true, then: ((Bool) -> Void)? = nil) {
+                         refresh: Bool = true, inline: Bool = false, then: ((Bool) -> Void)? = nil) {
         guard !busy.contains(key) else { return }
+        if inline { actionError = nil }
         #if DEBUG
+        if Self.debugSample {
+            // The sample has no GitHub behind it: every change works, or
+            // every one fails with OCTET_PR_SAMPLE_FAIL=1.
+            let fails = ProcessInfo.processInfo.environment["OCTET_PR_SAMPLE_FAIL"] == "1"
+            if fails { report(failure, "GitHub said no (sample).", inline: inline) } else if let success { ToastCenter.shared.succeed(nil, success) }
+            then?(!fails)
+            return
+        }
         // Verification: write the command instead of running it, so every
         // action's real code path can be checked without touching GitHub.
         if let log = Self.dryRunLog {
@@ -360,7 +385,7 @@ final class PullRequestPlaneModel: ObservableObject {
                     if result.status == 0 {
                         if let success { ToastCenter.shared.succeed(nil, success) }
                     } else {
-                        ToastCenter.shared.fail(nil, failure, detail: Self.lastLines(result.output))
+                        self.report(failure, Self.lastLines(result.output), inline: inline)
                     }
                     then?(result.status == 0)
                     if refresh { self.refresh(quietly: true) }
@@ -370,6 +395,21 @@ final class PullRequestPlaneModel: ObservableObject {
     }
 
     #if DEBUG
+    /// "planes:pr:sample": a made-up stacked pull request with reactions,
+    /// reviewers and labels, so the plane can be seen without a repository.
+    static var debugSample = false
+
+    private func applySample() {
+        let sample = PullRequestSample.make(number: requestedNumber)
+        repository = sample.repository
+        repositoryLabels = sample.labels
+        reviewCandidates = sample.candidates
+        stack = sample.stack
+        if detail != sample.detail { detail = sample.detail }
+        phase = .loaded
+        refreshing = false
+    }
+
     /// OCTET_GH_DRY_RUN: a file that gh commands are written to instead of run.
     static let dryRunLog = ProcessInfo.processInfo.environment["OCTET_GH_DRY_RUN"]
     private static var debugActionsRan = false
@@ -463,6 +503,18 @@ final class PullRequestPlaneModel: ObservableObject {
     }
     #endif
 
+    /// Says an action failed: inline over the Summary tab for the quick
+    /// edits made in place, a toast for the rest.
+    private func report(_ failure: String, _ detail: String, inline: Bool) {
+        if inline {
+            actionError = detail.isEmpty ? failure : failure + ": " + detail
+        } else {
+            ToastCenter.shared.fail(nil, failure, detail: detail)
+        }
+    }
+
+    func dismissActionError() { actionError = nil }
+
     /// gh's last few lines: where it says what went wrong.
     private static func lastLines(_ output: String) -> String {
         output.split(separator: "\n").suffix(3).joined(separator: "\n")
@@ -532,19 +584,72 @@ final class PullRequestPlaneModel: ObservableObject {
         perform("body", arguments, success: "Description saved", failure: "Couldn't save the description")
     }
 
+    /// Asks for a review from a name typed in, when the picker's list doesn't have it.
     func addReviewer(_ login: String) {
         let login = login.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "@"))
-        guard !login.isEmpty, let arguments = pr("edit", ["--add-reviewer", login]) else { return }
-        perform("reviewer", arguments, success: "Asked \(login) to review", failure: "Couldn't add \(login) as a reviewer")
+        let target = PullRequestReviewTarget(name: login, isTeam: false)
+        guard !login.isEmpty, !hasRequested(target) else { return }
+        toggleReviewer(target)
+    }
+
+    func hasRequested(_ target: PullRequestReviewTarget) -> Bool {
+        detail?.reviewTargets.contains { $0.id == target.id } ?? false
+    }
+
+    /// Asks for a review, or takes the request back. Shown at once; put
+    /// back, with the reason, if GitHub refuses.
+    func toggleReviewer(_ target: PullRequestReviewTarget) {
+        guard let detail, let repository = repository?.nameWithOwner else { return }
+        let adding = !hasRequested(target)
+        let before = detail.reviewTargets
+        let arguments = PullRequestReviewTarget.requestArguments(repository: repository, number: detail.number, adding: adding)
+        setReviewTargets(PullRequestReviewTarget.toggled(before, target))
+        perform("reviewer:" + target.id, arguments, input: PullRequestReviewTarget.requestBody(target),
+                success: nil, failure: adding ? "Couldn't ask \(target.name) to review" : "Couldn't remove \(target.name)",
+                inline: true) { ok in
+            if !ok { self.setReviewTargets(before) }
+        }
+    }
+
+    private func setReviewTargets(_ targets: [PullRequestReviewTarget]) {
+        detail?.reviewTargets = targets
+        detail?.reviewRequests = targets.map(\.name)
+    }
+
+    /// The people and teams a review can be asked of: collaborators, and
+    /// the owner's teams when the owner is an organisation (that read
+    /// fails for a person's repository, which just has no teams).
+    func loadReviewCandidates() {
+        guard reviewCandidates == nil, let repository = repository?.nameWithOwner else { return }
+        let directory = self.directory
+        let owner = repository.split(separator: "/").first.map(String.init) ?? ""
+        DispatchQueue.global(qos: .userInitiated).async {
+            let users = LoginShell.run(["gh", "api", "repos/\(repository)/collaborators?per_page=100"], in: directory)
+            let teams = LoginShell.run(["gh", "api", "orgs/\(owner)/teams?per_page=100"], in: directory)
+            let found = (users.status == 0 ? PullRequestReviewTarget.parseUsers(users.output) : [])
+                + (teams.status == 0 ? PullRequestReviewTarget.parseTeams(teams.output) : [])
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    self.reviewCandidates = found
+                    if users.status != 0 {
+                        self.actionError = "Couldn't read who can review: " + Self.lastLines(users.output)
+                    }
+                }
+            }
+        }
     }
 
     func toggleLabel(_ label: PullRequestLabel) {
         guard let detail else { return }
         let has = detail.labels.contains { $0.name == label.name }
         guard let arguments = pr("edit", [has ? "--remove-label" : "--add-label", label.name]) else { return }
-        // Shown at once; the refresh after confirms it.
+        let before = detail.labels
+        // Shown at once; the refresh after confirms it, and a refusal puts it back.
         if has { self.detail?.labels.removeAll { $0.name == label.name } } else { self.detail?.labels.append(label) }
-        perform("label:" + label.name, arguments, success: nil, failure: has ? "Couldn't remove \(label.name)" : "Couldn't add \(label.name)")
+        perform("label:" + label.name, arguments, success: nil, failure: has ? "Couldn't remove \(label.name)" : "Couldn't add \(label.name)",
+                inline: true) { ok in
+            if !ok { self.detail?.labels = before }
+        }
     }
 
     func loadLabels() {
@@ -554,10 +659,73 @@ final class PullRequestPlaneModel: ObservableObject {
             let result = LoginShell.run(["gh", "label", "list"] + repoFlag + ["--json", "name,color", "--limit", "200"], in: directory)
             let labels = PullRequestLabel.parseList(result.output)
             DispatchQueue.main.async {
-                MainActor.assumeIsolated { self.repositoryLabels = labels }
+                MainActor.assumeIsolated {
+                    self.repositoryLabels = labels
+                    if result.status != 0 { self.actionError = "Couldn't read the labels: " + Self.lastLines(result.output) }
+                }
             }
         }
     }
+
+    // MARK: - Reactions
+
+    /// Adds your reaction to a comment or review, or takes it back. Shown
+    /// at once; put back, with the reason, if GitHub refuses.
+    func toggleReaction(_ reaction: PullRequestReaction, on subjectId: String) {
+        guard let current = reactions(of: subjectId) else { return }
+        let adding = !(current.first { $0.reaction == reaction }?.mine ?? false)
+        setReactions(PullRequestReactionCount.toggled(current, reaction), of: subjectId)
+        perform("reaction:" + subjectId + reaction.rawValue,
+                PullRequestReactionCount.arguments(subjectId: subjectId, reaction: reaction, adding: adding),
+                success: nil, failure: adding ? "Couldn't react \(reaction.emoji)" : "Couldn't take back \(reaction.emoji)",
+                refresh: false, inline: true) { ok in
+            if !ok { self.setReactions(current, of: subjectId) }
+        }
+    }
+
+    private func reactions(of subjectId: String) -> [PullRequestReactionCount]? {
+        if let comment = detail?.comments.first(where: { $0.nodeId == subjectId }) { return comment.reactions }
+        return detail?.reviews.first { $0.nodeId == subjectId }?.reactions
+    }
+
+    private func setReactions(_ reactions: [PullRequestReactionCount], of subjectId: String) {
+        if let index = detail?.comments.firstIndex(where: { $0.nodeId == subjectId }) {
+            detail?.comments[index].reactions = reactions
+        } else if let index = detail?.reviews.firstIndex(where: { $0.nodeId == subjectId }) {
+            detail?.reviews[index].reactions = reactions
+        }
+    }
+
+    // MARK: - Stack
+
+    /// Reads the open pull requests to see whether this one is stacked on
+    /// another. Read when the PR or its branches change, and on a manual refresh.
+    func loadStack(force: Bool = false) {
+        guard let detail else { return }
+        let key = "\(detail.number)·\(detail.headRefName)·\(detail.baseRefName)"
+        guard force || key != stackKey else { return }
+        stackKey = key
+        let directory = self.directory, repoFlag = self.repoFlag
+        let current = PullRequestStackLayer(number: detail.number, title: detail.title, headRefName: detail.headRefName,
+                                            baseRefName: detail.baseRefName, isDraft: detail.isDraft, state: detail.state)
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = LoginShell.run(["gh", "pr", "list", "--state", "open", "--limit", "100"] + repoFlag
+                                        + ["--json", PullRequestStackLayer.fields], in: directory)
+            let layers = result.status == 0 ? PullRequestStackLayer.parseList(result.output) : nil
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard self.stackKey == key else { return }
+                    // A failed read keeps the stack shown; the header is a convenience.
+                    guard let layers else { return }
+                    let stack = PullRequestStack.build(current: current, among: layers)
+                    if stack != self.stack { self.stack = stack }
+                }
+            }
+        }
+    }
+
+    /// Opens another pull request of the stack in this plane.
+    func show(_ layer: PullRequestStackLayer) { retarget(layer.number) }
 
     /// Posts the comment draft; with `closing`, closes the PR with it.
     func postComment(closing: Bool) {

@@ -175,7 +175,16 @@ final class PortsWatcher: ObservableObject {
         let exited = DispatchSemaphore(value: 0)
         process.terminationHandler = { _ in exited.signal() }
         guard (try? process.run()) != nil else { return "" }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let data: Data
+        do {
+            data = try pipe.fileHandleForReading.readToEnd() ?? Data()
+        } catch {
+            // The legacy reader raises an Objective-C exception on an I/O
+            // failure, taking down the app during background discovery.
+            if process.isRunning { process.terminate() }
+            exited.wait()
+            return ""
+        }
         exited.wait()
         return String(decoding: data, as: UTF8.self)
     }

@@ -29,6 +29,10 @@ final class EditorDocument: ObservableObject, Identifiable {
     @Published private(set) var lastError: String?
     private var savedText: String
     private(set) var diskModificationDate: Date?
+    /// How the file opens. Media and binary files hold no text.
+    private(set) var mode: FilePreviewMode
+    /// Bumped when a viewer's file changes on disk, so the viewer reloads.
+    @Published private(set) var revision = 0
 
     var name: String { url.lastPathComponent }
     var directory: String { url.deletingLastPathComponent().path }
@@ -40,11 +44,17 @@ final class EditorDocument: ObservableObject, Identifiable {
         guard FileManager.default.fileExists(atPath: canonical.path, isDirectory: &isDirectory), !isDirectory.boolValue else {
             throw EditorError.directory
         }
-        let data = try Data(contentsOf: canonical, options: [.mappedIfSafe])
-        guard data.count <= Self.maximumBytes else { throw EditorError.tooLarge(data.count) }
-        guard let string = String(data: data, encoding: .utf8), !string.contains("\0") else { throw EditorError.notText }
         id = canonical.path
         self.url = canonical
+        var mode = FilePreviewMode.mode(forPath: canonical.path)
+        var string = ""
+        if mode.readsText {
+            let data = try Data(contentsOf: canonical, options: [.mappedIfSafe])
+            guard data.count <= Self.maximumBytes else { throw EditorError.tooLarge(data.count) }
+            // Text by name but not by content: show the "No preview" card.
+            if let decoded = String(data: data, encoding: .utf8), !decoded.contains("\0") { string = decoded } else { mode = .binary }
+        }
+        self.mode = mode
         text = string
         savedText = string
         diskModificationDate = Self.modificationDate(canonical)
@@ -76,6 +86,13 @@ final class EditorDocument: ObservableObject, Identifiable {
     /// Pull an agent or branch-switch edit into a clean buffer. A dirty buffer
     /// wins until the user explicitly reloads it, so their typing is not lost.
     func refreshFromDisk() {
+        guard mode.readsText else {
+            if let modified = Self.modificationDate(url), modified != diskModificationDate {
+                diskModificationDate = modified
+                revision += 1
+            }
+            return
+        }
         guard !isDirty, let modified = Self.modificationDate(url), modified != diskModificationDate,
               let data = try? Data(contentsOf: url), data.count <= Self.maximumBytes,
               let string = String(data: data, encoding: .utf8) else { return }
@@ -85,7 +102,7 @@ final class EditorDocument: ObservableObject, Identifiable {
     }
 
     func reloadDiscardingChanges() {
-        guard let data = try? Data(contentsOf: url), data.count <= Self.maximumBytes,
+        guard mode.readsText, let data = try? Data(contentsOf: url), data.count <= Self.maximumBytes,
               let string = String(data: data, encoding: .utf8) else { return }
         text = string
         savedText = string
@@ -129,6 +146,13 @@ final class EditorWorkspace: ObservableObject {
     @Published var filePickerVisible = false
     @Published var presentation: Presentation = .split
     var requestedPresentation: Presentation = .split
+    /// A folder the Files plane is asked to show, from a breadcrumb. The
+    /// plane takes the request (clearing it) once it's on screen.
+    struct FolderReveal: Equatable {
+        let path: String
+        let at = Date()
+    }
+    @Published var folderReveal: FolderReveal?
     weak var textView: NSTextView?
 
     var activeDocument: EditorDocument? { documents.first { $0.id == activeID } }

@@ -113,6 +113,8 @@ final class SessionStore: ObservableObject {
     private(set) var sshScans = 0
     private var loadingPaneRuntimes = false
     @Published private(set) var loadingPaneProcesses = false
+    /// An empty or unavailable process response is still a completed first scan.
+    @Published private(set) var scannedRuntimePaneIDs: Set<String> = []
     /// True while the focused pane sits at its shell's own prompt.
     var focusedPaneAtPrompt: Bool { ShellPrompt.isAtPrompt(focusedProcess) }
     /// The pane `focusedProcess` describes.
@@ -311,6 +313,8 @@ final class SessionStore: ObservableObject {
         }
         loadingPaneProcesses = true
         let client = self.client
+        let previousProcesses = paneProcesses
+        let previousRuntimes = terminalRuntimes
         let runtimeLogs = self.runtimeLogs
         // The session each Claude Code pane is on, for reading its log.
         let claudeSessions: [String: (sessionId: String, cwds: [String])] = snapshot.agents.reduce(into: [:]) { found, agent in
@@ -321,9 +325,16 @@ final class SessionStore: ObservableObject {
         }
         DispatchQueue.global(qos: .utility).async { [weak self] in
             var found: [String: ShellPrompt.ProcessInfo] = [:]
+            var failedPanes = Set<String>()
             for pane in panes {
-                if let info = (try? client.call("pane.process_info", ["pane_id": pane.paneId])).flatMap(ShellPrompt.parse) {
-                    found[pane.paneId] = info
+                do {
+                    if let info = ShellPrompt.parse(try client.call("pane.process_info", ["pane_id": pane.paneId])) {
+                        found[pane.paneId] = info
+                    }
+                } catch {
+                    // A failed refresh must not erase the last successful scan.
+                    failedPanes.insert(pane.paneId)
+                    found[pane.paneId] = previousProcesses[pane.paneId]
                 }
             }
             let processTree = Self.processTree()
@@ -374,6 +385,7 @@ final class SessionStore: ObservableObject {
                                             processStart: AgentRuntimeHandoff.processStart(pid: claude.pid))
                 if !live.isEmpty { logRuntimes[paneId] = live }
             }
+            for paneID in failedPanes { logRuntimes[paneID] = previousRuntimes[paneID] }
             runtimeLogs.forget(except: Set(claudeSessions.values.map(\.sessionId)))
             var nativeFound: [String: [RuntimeChildProcess]] = [:]
             for (sessionId, pid) in nativeRoots {
@@ -408,11 +420,12 @@ final class SessionStore: ObservableObject {
             }
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.loadingPaneProcesses = false
+                self.scannedRuntimePaneIDs = Set(panes.map(\.paneId))
                 self.paneProcesses = found
                 self.nativeRuntimeProcesses = nativeFound
                 self.spawnedRuntimeAgents = spawned.values.sorted { $0.pid < $1.pid }
                 if logRuntimes != self.terminalRuntimes { self.terminalRuntimes = logRuntimes }
+                self.loadingPaneProcesses = false
             }
         }
     }
