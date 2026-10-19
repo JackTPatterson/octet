@@ -25,8 +25,11 @@ enum ArchiveHook {
             try check(posix_spawnattr_setpgroup(&attributes, 0))
             var env = ProcessInfo.processInfo.environment
             env["OCTET_ROOT_PATH"] = root; env["OCTET_WORKTREE_PATH"] = checkout
-            var argv = ["/bin/zsh", "-l", "-c", command].map { strdup($0) } + [nil]
-            var envp = env.map { strdup($0.key + "=" + $0.value) } + [nil]
+            let arguments: [String] = ["/bin/zsh", "-l", "-c", command]
+            var argv = arguments.map { argument in argument.withCString { strdup($0) } } + [nil]
+            var envp = env.map { entry in
+                (entry.key + "=" + entry.value).withCString { strdup($0) }
+            } + [nil]
             defer { argv.forEach { free($0) }; envp.forEach { free($0) } }
             var pid: pid_t = 0
             try check(posix_spawn(&pid, "/bin/zsh", &actions, &attributes, &argv, &envp))
