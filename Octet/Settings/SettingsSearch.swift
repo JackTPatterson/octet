@@ -32,7 +32,7 @@ enum SettingsSearchIndex {
         return entries.filter { $0.matches(words) }
     }
 
-    static let entries: [SettingsSearchEntry] = general + appearance + terminal + statusBar + agents + plugins + motion + keyboard + advanced
+    static let entries: [SettingsSearchEntry] = general + appearance + terminal + statusBar + notch + agents + plugins + motion + keyboard + advanced
 
     private static let plugins: [SettingsSearchEntry] = [
         .init(.plugins, "Installed plugins", anchor: "Installed", ["plugin", "extension", "enable", "disable", "github", "clone", "repositories"]),
@@ -48,6 +48,19 @@ enum SettingsSearchIndex {
         .init(.general, "Move to Idle after", ["idle", "dock", "inactive", "unused", "workspace", "timeout"]),
         .init(.general, "Sleep idle workspaces after", ["idle", "sleep", "hibernate", "close", "unused", "wake", "workspace"]),
         .init(.general, "Pinned workspaces", ["pin", "unpin", "workspace"]),
+    ]
+
+    private static let notch: [SettingsSearchEntry] = [
+        .init(.notch, "Hover delay", ["milliseconds", "speed", "delay", "120", "hover"]),
+        .init(.notch, "Enable Notch", ["notch", "island", "dynamic island", "notchnook", "menu bar", "pill", "top", "glance"]),
+        .init(.notch, "Open the notch with", ["hover", "click", "expand", "open", "trigger"]),
+        .init(.notch, "Show on", ["display", "monitor", "screen", "main", "pointer", "all", "external"]),
+        .init(.notch, "Show on displays without a notch", ["external", "monitor", "pill", "no notch", "floating"]),
+        .init(.notch, "Peek when an agent finishes or needs you", ["peek", "banner", "notification", "finished", "needs you", "alert"]),
+        .init(.notch, "Show in full screen", ["full screen", "fullscreen", "hide", "space"]),
+        .init(.notch, "Haptic feedback on open", ["haptic", "trackpad", "tap", "feedback", "vibrate"]),
+        .init(.notch, "Notch size", ["compact", "regular", "small", "large", "width"]),
+        .init(.notch, "Notch pages", ["tabs", "agents", "now", "usage", "actions", "pages", "sections"]),
     ]
 
     private static let statusBar: [SettingsSearchEntry] = [
@@ -107,6 +120,14 @@ enum SettingsSearchIndex {
         .init(.agents, "Let agents set waits", anchor: "Waits",
               ["wait", "waiting", "blocked", "pull request", "merged", "release", "later", "remind", "follow up", "octet-waits", "mcp"]),
         .init(.agents, "Offer a wait from a reply", anchor: "Waits", ["wait", "suggest", "once", "after", "banner"]),
+        .init(.agents, "Pause all check-ins", anchor: "Check-ins",
+              ["check-in", "checkin", "check in", "pause", "remind", "long", "days", "weeks", "wake", "schedule"]),
+        .init(.agents, "New check-ins", anchor: "Check-ins", ["check-in", "mode", "wake", "remind", "default", "both"]),
+        .init(.agents, "Say when a session looks stalled", anchor: "Check-ins",
+              ["stall", "stalled", "stuck", "hung", "idle", "working", "hours", "threshold", "check-in"]),
+        .init(.agents, "Quiet hours", anchor: "Check-ins", ["quiet", "night", "sleep", "do not disturb", "wake", "check-in", "hours"]),
+        .init(.agents, "Remind me when Octet is closed", anchor: "Check-ins",
+              ["notification", "notify", "closed", "quit", "macos", "remind", "check-in", "local"]),
         .init(.agents, "Recap when you come back", ["recap", "away", "catch up", "summary", "while you were away", "back", "digest"]),
         .init(.agents, "Recap: away for at least", anchor: "Away for at least", ["recap", "away", "minutes", "threshold"]),
         .init(.agents, "Agent notifications", anchor: "When an agent finishes or needs you",

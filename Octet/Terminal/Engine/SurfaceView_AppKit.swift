@@ -226,7 +226,8 @@ extension TerminalEngine {
             // an animation (i.e. a fullscreen animation), the frame will not yet be updated.
             // The size represents our final size we're going for.
             let scaledSize = self.convertToBacking(size)
-            setSurfaceSize(width: UInt32(scaledSize.width), height: UInt32(scaledSize.height))
+            guard let pixels = TerminalPixelSize(scaledSize) else { return }
+            setSurfaceSize(width: pixels.width, height: pixels.height)
             // Store this size so we can reuse it when backing properties change
             contentSize = size
         }
@@ -235,16 +236,19 @@ extension TerminalEngine {
             guard let surface = self.surface else { return }
             guard width > 0, height > 0 else { return }
 
-            // Update our core surface
+            // Moving chrome and repeated AppKit layout passes can deliver the
+            // same framebuffer size repeatedly. Avoid redundant PTY resizes.
+            let current = ghostty_surface_size(surface)
+            guard current.width_px != width || current.height_px != height else { return }
             ghostty_surface_set_size(surface, width, height)
 
             // Update our cached size metrics
             let size = ghostty_surface_size(surface)
-            DispatchQueue.main.async {
+            DispatchQueue.main.async { [weak self] in
                 // DispatchQueue required since this may be called by SwiftUI off
                 // the main thread and Published changes need to be on the main
                 // thread. This caused a crash on macOS <= 14.
-                self.surfaceSize = size
+                self?.surfaceSize = size
             }
         }
 
@@ -537,7 +541,8 @@ extension TerminalEngine {
 
             // When our scale factor changes, so does our fb size so we send that too
             let scaledSize = self.convertToBacking(contentSize)
-            setSurfaceSize(width: UInt32(scaledSize.width), height: UInt32(scaledSize.height))
+            guard let pixels = TerminalPixelSize(scaledSize) else { return }
+            setSurfaceSize(width: pixels.width, height: pixels.height)
         }
 
         /// Where the left button went down, to tell a click from a drag.

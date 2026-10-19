@@ -10,11 +10,17 @@ struct BrowserPlane: View {
     @ObservedObject var ui: UIState
     /// The project folder in front, whose recent pages are listed.
     var directory: String?
-    @StateObject private var page = BrowserPage(private: false)
+    @StateObject private var page: BrowserPage
     /// T3 Code's browser profiles, as Safari's: a private page keeps no
     /// cookies, storage or history once the plane closes.
     @StateObject private var privatePage = BrowserPage(private: true)
     @State private var isPrivate = false
+
+    init(ui: UIState, directory: String?) {
+        self.ui = ui
+        self.directory = directory
+        _page = StateObject(wrappedValue: ui.workspaceBrowserPage())
+    }
 
     private var current: BrowserPage { isPrivate ? privatePage : page }
     @ObservedObject private var ports = PortsWatcher.shared
@@ -34,7 +40,7 @@ struct BrowserPlane: View {
             toolbar
             Rectangle().fill(Theme.divider).frame(height: 1)
             ZStack {
-                BrowserWebView(page: current)
+                BrowserViewportView(page: current)
                     .id(isPrivate)
                     .opacity(current.showingStart || current.failure != nil ? 0 : 1)
                 if PlaneLoadingPreview.shows("browser") || (current.loading && !current.hasContent && current.failure == nil) {
@@ -57,12 +63,18 @@ struct BrowserPlane: View {
                 BrowserZoomIndicator(zoom: current.zoom).id(isPrivate).padding(10)
             }
         }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            BrowserAnnotationTray(annotations: current.annotations, directory: directory).id(isPrivate)
+        }
         // A plane opened for a request finds it on appearing; one already
         // open hears it change.
         .onAppear {
+            address = current.pageURL?.absoluteString ?? ""
+            page.annotations.setProjectDirectory(directory)
             takeRequest()
             runDebugHook()
         }
+        .onChange(of: directory) { _, directory in page.annotations.setProjectDirectory(directory) }
         .onChange(of: ui.browserRequest) { _, _ in takeRequest() }
         .onChange(of: current.url) { _, url in
             if !addressFocused { address = current.pageURL?.absoluteString ?? "" }
@@ -119,6 +131,8 @@ struct BrowserPlane: View {
                 if let url = current.pageURL { NSWorkspace.shared.open(url) }
             }
             .disabled(current.pageURL == nil)
+            BrowserPickerButton(annotations: current.annotations,
+                                available: current.url?.scheme?.hasPrefix("http") == true && !current.loading && current.failure == nil)
             OctetIconButton(icon: "ellipsis", help: "More") { showMoreMenu() }
         }
         .padding(.horizontal, 8)
@@ -152,6 +166,11 @@ struct BrowserPlane: View {
                     enabled: abs(page.zoom - 1) > 0.001) { page.setZoom(1) },
             .divider,
         ]
+        items.append(.header("Viewport size (CSS pixels)"))
+        for preset in BrowserViewport.allCases {
+            items.append(.action(preset.title, icon: preset == page.viewport ? "checkmark" : "rectangle", help: "Responsive layout size; does not emulate a mobile device") { page.viewport = preset })
+        }
+        items.append(.divider)
         if BrowserPage.inspectorAvailable {
             items.append(.action("Web Inspector", icon: "wrench.and.screwdriver", shortcut: "⌥⌘I",
                                  enabled: url != nil && page.failure == nil) { page.showInspector() })
@@ -235,6 +254,8 @@ final class BrowserPage: NSObject, ObservableObject, WKNavigationDelegate {
         let at: Date
     }
 
+    let annotations: BrowserAnnotations
+    @Published var viewport: BrowserViewport = .desktop
     let view: WKWebView
     let isPrivate: Bool
     @Published private(set) var url: URL?
@@ -270,8 +291,11 @@ final class BrowserPage: NSObject, ObservableObject, WKNavigationDelegate {
         view.loadHTMLString("", baseURL: URL(string: "about:blank"))
     }
 
-    init(private isPrivate: Bool) {
+    init(private isPrivate: Bool, draftKey: String? = nil) {
         self.isPrivate = isPrivate
+        annotations = BrowserAnnotations(draftFile: !isPrivate ? draftKey.map {
+            BrowserDrafts.file(key: $0, directory: EngineSession.supportDirectory.appendingPathComponent("browser-drafts"))
+        } : nil)
         let configuration = WKWebViewConfiguration()
         if isPrivate { configuration.websiteDataStore = .nonPersistent() }
         configuration.preferences.isElementFullscreenEnabled = true
@@ -281,6 +305,7 @@ final class BrowserPage: NSObject, ObservableObject, WKNavigationDelegate {
         if Self.inspectorAvailable { view.isInspectable = true }
         super.init()
         view.navigationDelegate = self
+        annotations.attach(view)
         // Pages often name themselves after loading: Recent takes the title then.
         titleWatch = view.observe(\.title, options: [.new]) { [weak self] webView, _ in
             DispatchQueue.main.async {
@@ -432,11 +457,12 @@ final class BrowserPage: NSObject, ObservableObject, WKNavigationDelegate {
     }
 
     nonisolated func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-        MainActor.assumeIsolated { update() }
+        MainActor.assumeIsolated { annotations.navigationChanged(); update() }
     }
 
     nonisolated func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         MainActor.assumeIsolated {
+            annotations.navigationChanged()
             failure = nil
             hasContent = true
             stopWaiting()
@@ -485,4 +511,18 @@ private struct BrowserWebView: NSViewRepresentable {
     let page: BrowserPage
     func makeNSView(context: Context) -> WKWebView { page.view }
     func updateNSView(_ nsView: WKWebView, context: Context) {}
+}
+
+/// Explicit viewport dimensions affect CSS media queries; no user-agent or touch spoofing.
+struct BrowserViewportView: View {
+    @ObservedObject var page: BrowserPage
+    var body: some View {
+        GeometryReader { geometry in
+            ScrollView([.horizontal, .vertical]) {
+                BrowserWebView(page: page)
+                    .frame(width: page.viewport.size?.width ?? geometry.size.width,
+                           height: page.viewport.size?.height ?? geometry.size.height)
+            }
+        }
+    }
 }

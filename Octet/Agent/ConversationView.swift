@@ -17,7 +17,16 @@ struct ConversationView: View {
         VStack(spacing: 0) {
             ConversationHeader(session: session, client: client)
             Rectangle().fill(Theme.divider).frame(height: 1)
-            Transcript(session: session)
+            Transcript(session: session, find: session.find)
+                .overlay(alignment: .topTrailing) {
+                    if session.find.isOpen {
+                        TranscriptFindBar(find: session.find, items: session.conversation.items.filter(Transcript.isShown))
+                            .padding(.top, 8)
+                            .padding(.trailing, 20)
+                            .transition(.opacity)
+                    }
+                }
+                .animation(.easeOut(duration: 0.12), value: session.find.isOpen)
             if session.conversation.isRunning && session.pendingPermission == nil && session.pendingQuestion == nil {
                 StatusLine(session: session)
             }
@@ -29,6 +38,7 @@ struct ConversationView: View {
                     QueuedMessagesPanel(session: session, items: session.queuedMessages)
                 }
                 WaitSuggestionBanner(session: session)
+                CheckInSuggestionBanner(session: session)
                 let suggestedCommands = AgentComposerSyntax.suggestedShellCommands(in: session.conversation.items)
                 if !session.conversation.isRunning, !suggestedCommands.isEmpty {
                     SuggestedCommandsPanel(session: session, commands: suggestedCommands)
@@ -87,10 +97,22 @@ struct ConversationView: View {
             if id == "question" { session.debugShowQuestion(); return }
             if id == "error" { session.debugShowError(); return }
             if id == "sample" { session.debugLoadSample(); return }
+            if id == "context" {
+                session.conversation.contextUsed = 175_600
+                session.conversation.contextWindow = 200_000
+                session.conversation.lastTokens = TokenUsage(input: 46_100, cacheRead: 108_600, cacheWrite: 20_900)
+            }
             if id == "everything" { session.debugLoadEverything(); return }
             if id == "commands" { session.debugLoadSuggestedCommands(); return }
             if id.hasPrefix("transcript") {
                 session.debugLoadTranscriptFeatures()
+                // Verification hook: the find bar over the sample, on a word it repeats.
+                if id == "transcript-find" {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                        session.find.open()
+                        session.find.query = ProcessInfo.processInfo.environment["OCTET_DEBUG_FIND"] ?? "the"
+                    }
+                }
                 if id == "transcript-diff", let turn = TurnChanges.derive(session.conversation.items, cwd: session.cwd).first {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
                         window.ui.openTurnDiff(directory: session.cwd, promptAt: turn.promptAt,
@@ -116,7 +138,7 @@ struct ConversationView: View {
             if id == "ultracode" { session.effort = "ultracode" }
             if id == "maxeffort" { session.effort = "max" }
             if id == "planmode" { session.permissionMode = .plan }
-            let open = ["ultracode": "effort", "maxeffort": "effort", "planmode": "mode"][id] ?? id
+            let open = ["ultracode": "model", "maxeffort": "model", "planmode": "mode"][id] ?? id
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { dropdowns.openId = open }
         }
         #endif
@@ -148,9 +170,6 @@ private struct ConversationHeader: View {
             Spacer(minLength: 8)
             if !conversation.isRunning, verification != .noEdits {
                 VerificationBadge(verification: verification, compact: true)
-            }
-            if let used = conversation.contextUsed {
-                ContextMeter(used: used, window: conversation.contextWindow)
             }
             // A subscription spends allowance, which the title bar chip shows
             // for the whole account; an API key spends money, which only this
@@ -407,38 +426,6 @@ private struct ProjectLocation: View {
     }
 }
 
-private struct ContextMeter: View {
-    let used: Int
-    let window: Int?
-
-    var body: some View {
-        let fraction = window.map { min(1, Double(used) / Double(max($0, 1))) }
-        HStack(spacing: 6) {
-            if let fraction {
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Theme.border).frame(width: 48, height: 4)
-                    Capsule().fill(fraction > 0.85 ? Theme.danger : Theme.accent)
-                        .frame(width: max(2, 48 * fraction), height: 4)
-                }
-            }
-            Text(window.map { "\(Self.short(used)) / \(Self.short($0))" } ?? Self.short(used))
-                .font(Theme.captionFont.monospacedDigit())
-                .foregroundStyle(Theme.textTertiary)
-        }
-        .help("Context in use")
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Context \(Self.short(used))\(window.map { " of \(Self.short($0))" } ?? "")")
-    }
-
-    static func short(_ tokens: Int) -> String {
-        if tokens >= 1_000_000 {
-            let millions = Double(tokens) / 1_000_000
-            return millions == millions.rounded() ? "\(Int(millions))M" : String(format: "%.1fM", millions)
-        }
-        return tokens >= 1000 ? "\(tokens / 1000)k" : "\(tokens)"
-    }
-}
-
 // MARK: - Message actions
 
 /// What a message's right-click menu offers: copying it, and for your own
@@ -499,6 +486,7 @@ private struct MessageMenu: View {
 
 private struct Transcript: View {
     @ObservedObject var session: AgentSession
+    @ObservedObject var find: TranscriptFindState
     @EnvironmentObject private var window: WindowContext
     @State private var atBottom: Bool
     /// The tool call whose whole output is open over the transcript.
@@ -510,8 +498,9 @@ private struct Transcript: View {
     /// Starts where it should on its very first layout: where you were
     /// reading, else the latest (`defaultScrollAnchor`). Scrolling there
     /// after it appears showed the wrong place for a moment first.
-    init(session: AgentSession) {
+    init(session: AgentSession, find: TranscriptFindState) {
         _session = ObservedObject(wrappedValue: session)
+        _find = ObservedObject(wrappedValue: find)
         let saved = session.transcriptReadingAt.flatMap { id in
             session.conversation.items.contains { $0.id == id } ? id : nil
         }
@@ -565,6 +554,7 @@ private struct Transcript: View {
                                     TurnChangedFilesCard(changes: changes)
                                 }
                             }
+                            .environment(\.transcriptFindMarks, find.marks(for: item.id))
                             .id(item.id)
                         }
                     }
@@ -600,6 +590,14 @@ private struct Transcript: View {
             // yanked away; a button jumps to the latest instead.
             .onChange(of: items) { _, _ in
                 if atBottom { proxy.scrollTo("bottom", anchor: .bottom) }
+            }
+            // Find in conversation: go to the current match, once what it
+            // opens has taken its height.
+            .onChange(of: find.scrollRequest) { _, _ in
+                guard let match = find.current else { return }
+                DispatchQueue.main.async {
+                    withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(match.itemId, anchor: .center) }
+                }
             }
             #if DEBUG
             .onAppear {
@@ -1083,7 +1081,7 @@ struct ItemRow: View, Equatable {
                 }
                 if !item.images.isEmpty { ImageGallery(images: item.images) }
                 if !text.isEmpty {
-                    Text(text)
+                    FoundText(text)
                         .font(.system(size: 13))
                         .foregroundStyle(Theme.textPrimary)
                         .textSelection(.enabled)
@@ -1105,7 +1103,7 @@ struct ItemRow: View, Equatable {
             AssistantMessage(text: text)
         case .thinking(let text):
             Disclosure(title: "Thinking", tint: Theme.textTertiary) {
-                Text(text)
+                FoundText(text)
                     .font(Theme.uiFont)
                     .foregroundStyle(Theme.textTertiary)
                     .textSelection(.enabled)
@@ -1118,7 +1116,7 @@ struct ItemRow: View, Equatable {
             } else if ErrorNotice.isError(text) {
                 ErrorNotice(text: text)
             } else {
-                Text(text)
+                FoundText(text)
                     .font(Theme.captionFont)
                     .foregroundStyle(Theme.textTertiary)
                     .frame(maxWidth: .infinity)
@@ -1305,17 +1303,20 @@ private struct ToolCard: View {
                     DiffView(lines: diff, path: call.filePath, startLine: startLine)
                         .task(id: call.inputData) { startLine = await call.fileStartLine() }
                 } else if !call.input.isEmpty {
-                    CodePanel(text: call.input, language: "input", tint: Theme.textSecondary, maxLines: 10, highlights: false)
+                    CodePanel(text: call.input, language: "input", tint: Theme.textSecondary, maxLines: 10, highlights: false,
+                              findField: TranscriptFind.toolInput)
                 }
                 if !call.resultImages.isEmpty {
                     ImageGallery(images: call.resultImages)
                 }
                 if call.result == nil, let live = call.liveOutput, !live.isEmpty {
-                    CodePanel(text: live, language: "output", tint: Theme.textSecondary, maxLines: 14, highlights: false)
+                    CodePanel(text: live, language: "output", tint: Theme.textSecondary, maxLines: 14, highlights: false,
+                              findField: TranscriptFind.toolOutput)
                 }
                 if let result = call.result, !result.isEmpty, todos == nil, diff == nil || call.isError {
                     CodePanel(text: result, language: call.isError ? "error" : "output",
-                              tint: call.isError ? Theme.danger : Theme.textSecondary, maxLines: 14, highlights: false)
+                              tint: call.isError ? Theme.danger : Theme.textSecondary, maxLines: 14, highlights: false,
+                              findField: TranscriptFind.toolOutput)
                 }
                 if let itemId, todos == nil, diff == nil || call.isError,
                    let output = call.result ?? call.liveOutput, !output.isEmpty {
@@ -1367,6 +1368,7 @@ private struct Disclosure<Trailing: View, Content: View>: View {
     @ViewBuilder var trailing: () -> Trailing
     @ViewBuilder var content: () -> Content
     @State private var open: Bool
+    @Environment(\.transcriptFindMarks) private var marks
 
     init(title: String, subtitle: String = "", tint: Color, icon: String? = nil, logo: LanguageLogo? = nil,
          highlightsShell: Bool = false,
@@ -1400,7 +1402,7 @@ private struct Disclosure<Trailing: View, Content: View>: View {
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                         } else {
-                            Text(subtitle)
+                            FoundText(subtitle, field: TranscriptFind.toolSummary)
                                 .font(Theme.monoFont)
                                 .foregroundStyle(Theme.textTertiary)
                                 .lineLimit(1)
@@ -1417,6 +1419,14 @@ private struct Disclosure<Trailing: View, Content: View>: View {
             .accessibilityValue(open ? "Expanded" : "Collapsed")
             if open { content() }
         }
+        // The current match is in what this hides: show it.
+        .onChange(of: revealed) { _, now in if now { open = true } }
+        .onAppear { if revealed { open = true } }
+    }
+
+    private var revealed: Bool {
+        guard let field = marks?.current?.field else { return false }
+        return field != TranscriptFind.toolSummary
     }
 }
 
@@ -1937,7 +1947,7 @@ private struct Composer: View {
         case "model":
             if !arguments.isEmpty, let match = modelMatching(arguments) { session.model = match } else { dropdowns.openId = "model" }
         case "usage": session.showUsage()
-        case "effort": dropdowns.openId = "effort"
+        case "effort": dropdowns.openId = "model"
         case "permissions": dropdowns.openId = "mode"
         case "new", "clear": window.newConversation(engine: session.engine)
         case "remote-control" where session.engine == .claude: session.setRemoteControl(!session.remoteControlEngaged)
@@ -2162,10 +2172,12 @@ private struct Composer: View {
                     },
                     selected: session.model,
                     select: { session.model = $0 },
-                    searchPlaceholder: "Search models…"
+                    searchPlaceholder: "Search models…",
+                    modelEffort: AgentSession.supportsEffort(model: session.model) ? $session.effort : nil,
+                    modelEffortLevels: AgentSession.model(session.model)?.efforts ?? AgentSession.efforts,
+                    modelDefaultEffort: AgentSession.defaultEffort(model: session.model),
+                    modelAgent: session.engine.agent
                 ), label: "Model", state: dropdowns)
-                // Effort, in Claude Code's own colors and scale.
-                EffortControl(session: session, dropdowns: dropdowns)
                 OctetDropdownAnchor(spec: OctetDropdownSpec(
                     id: "mode",
                     options: AgentSession.PermissionMode.allCases.map {
@@ -2219,6 +2231,9 @@ private struct Composer: View {
                 ComposerStashControls(project: session.cwd, text: $text, attachments: $attachments, dropdowns: dropdowns)
                 MCPProblemChip(session: session)
                 Spacer()
+                ContextWindowControl(session: session, dropdowns: dropdowns) {
+                    window.newConversation(engine: session.engine)
+                }
                 let empty = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty
                 if running {
                     RoundComposerButton(kind: .stop) { confirmInterrupt() }
@@ -2427,8 +2442,7 @@ private struct StatusLine: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            LoadingLine(width: 14)
-            Text(session.activity)
+            AgentActivityText(text: session.activity)
                 .font(Theme.uiFont)
                 .foregroundStyle(Theme.textSecondary)
                 .lineLimit(1)
@@ -2587,28 +2601,13 @@ private struct CodexControls: View {
             },
             selected: model?.id ?? "",
             select: { session.model = $0 },
-            searchPlaceholder: "Search models…"
+            searchPlaceholder: "Search models…",
+            modelEffort: model?.efforts.isEmpty == false ? $session.effort : nil,
+            modelEffortLevels: model?.efforts ?? [],
+            modelDefaultEffort: model?.defaultEffort,
+            modelAgent: session.engine.agent
         ), label: "Model", state: dropdowns)
         .disabled(catalog.models.isEmpty)
-
-        // Codex names its efforts as Claude Code does, up to "ultra" where
-        // Claude has "ultracode", so the same slider drives both.
-        if let model, !model.efforts.isEmpty {
-            let spec = OctetDropdownSpec(
-                id: "effort", options: [], selected: session.effort ?? "", select: { _ in },
-                panel: { close in
-                    AnyView(EffortSliderPanel(initial: session.effort, implicit: model.defaultEffort,
-                                              levels: model.efforts, detail: model.effortDetail,
-                                              apply: { session.effort = $0 }, close: close))
-                }
-            )
-            OctetDropdownAnchor(spec: spec, state: dropdowns) { open in
-                EffortChip(level: session.effort, implicit: model.defaultEffort, open: open)
-            }
-            .help("How hard Codex thinks. Applies at once.")
-            .accessibilityLabel("Effort")
-            .accessibilityValue(session.effort ?? "default")
-        }
 
         if !catalog.profiles.isEmpty {
             let options = [OctetDropdownOption(id: SandboxStyle.unset, title: "From your config",

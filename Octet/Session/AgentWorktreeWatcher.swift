@@ -1,10 +1,8 @@
 import Foundation
 
-/// Worktrees an agent makes itself (`claude --worktree`, Codex, a script)
-/// get the same start as one made from Octet: when a pane first shows up in
-/// a linked worktree made in the last half hour, the main checkout's env
-/// files are copied in (never overwriting), and a project setup script is
-/// offered in a tab of its own, since the agent has the pane.
+/// Fresh worktrees created by an external agent receive the same portable
+/// configuration and tracked setup as worktrees created in the UI. An agent
+/// already running in that worktree cannot be held back retroactively.
 @MainActor
 final class AgentWorktreeWatcher {
     static let shared = AgentWorktreeWatcher()
@@ -41,25 +39,14 @@ final class AgentWorktreeWatcher {
                 found[worktree.checkout] = worktree.repoRoot
             }
             for (checkout, root) in found {
-                let copied = WorktreeSetup.copyEnvFiles(from: root, to: checkout)
-                let script = WorktreeSetup.script(in: checkout,
-                                                  isExecutable: { files.isExecutableFile(atPath: $0) },
-                                                  read: { files.contents(atPath: $0) })
                 DispatchQueue.main.async {
                     guard !self.handled.contains(checkout) else { return }
                     self.markHandled(checkout)
-                    let name = URL(fileURLWithPath: checkout).lastPathComponent
-                    let action = script.map { script in
-                        ToastCenter.Action(title: "Run Setup") {
-                            WorktreeSetupRunner.shared.runInNewTab(script, repoRoot: root, checkout: checkout, store: store)
-                        }
-                    }
-                    if !copied.isEmpty || action != nil {
-                        ToastCenter.shared.info(
-                            copied.isEmpty ? "New worktree \(name)" : "Copied \(WorktreeSetupRunner.list(copied)) into \(name)",
-                            detail: action == nil ? "An agent made this worktree." : "An agent made this worktree. It has a setup script.",
-                            after: action == nil ? 5 : 15, action: action)
-                    }
+                    // Use the same configuration and completion tracking as UI-created
+                    // worktrees. An already-running external agent cannot be held back.
+                    WorktreeSetupRunner.shared.run(after: ["workspace": ["worktree": [
+                        "repo_root": root, "checkout_path": checkout
+                    ]]], store: store)
                 }
             }
         }

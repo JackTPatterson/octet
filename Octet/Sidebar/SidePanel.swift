@@ -4,7 +4,7 @@ import SwiftUI
 /// a chevron, and folds away to just the header; which are folded is kept
 /// across launches. Plugins' panels are sections too, by plugin id.
 enum SidePanelSection: Hashable {
-    case files, todos, agents, tasks, monitors, shells, setup
+    case files, todos, agents, tasks, monitors, shells, setup, activity, workspaceTools
     case plugin(String)
 
     var title: String {
@@ -16,6 +16,8 @@ enum SidePanelSection: Hashable {
         case .monitors: "Monitors"
         case .shells: "Shells"
         case .setup: "Agent Setup"
+        case .activity: "Background activity"
+        case .workspaceTools: "Workspace tools"
         case .plugin(let id): id
         }
     }
@@ -30,65 +32,94 @@ enum SidePanelSection: Hashable {
         case .monitors: "monitors"
         case .shells: "shells"
         case .setup: "setup"
+        case .activity: "activity"
+        case .workspaceTools: "workspace-tools"
         case .plugin(let id): "plugin:\(id)"
         }
     }
 }
 
-/// Which sections are folded, shared by every window.
-@MainActor
-final class SidePanelFolds: ObservableObject {
-    static let shared = SidePanelFolds()
-    private static let key = "octet.sidePanel.folded"
-
-    @Published private(set) var folded: Set<String> = Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
-
-    func isOpen(_ section: SidePanelSection) -> Bool { !folded.contains(section.key) }
-
-    func toggle(_ section: SidePanelSection) {
-        set(section, open: !isOpen(section))
-    }
-
-    func set(_ section: SidePanelSection, open: Bool) {
-        if open { folded.remove(section.key) } else { folded.insert(section.key) }
-        UserDefaults.standard.set(Array(folded).sorted(), forKey: Self.key)
-    }
+extension SidePanelSection {
+    /// Agent Setup starts as one summary line; the rest open until folded.
+    var opensByDefault: Bool { self != .setup && self != .activity && self != .workspaceTools }
 }
 
-/// A section's header, with the content below it while it's open.
+/// A section's header, with the content below it while it's open. Every
+/// section of the Overview wears this one chrome: a quiet title, a count, a
+/// chevron that turns, an optional action at the right, and a hairline under
+/// it all. A section with nothing to say gives `quiet` and is just its title
+/// and that word on one line.
 struct SidePanelSectionView<Content: View, Trailing: View>: View {
     let section: SidePanelSection
     /// In place of the section's own title, for a plugin's panel.
     var title: String?
     let count: Int?
     /// Shown in place of the count, for a section that has more to say
-    /// than a number (a branch, a plugin's badge).
+    /// than a number (a summary, a plugin's badge).
     var label: String?
     var labelColor: Color?
+    /// The word to show in place of the content when there is none.
+    var quiet: String?
+    var quietHelp: String?
     @ViewBuilder var trailing: () -> Trailing
     @ViewBuilder var content: () -> Content
-    @ObservedObject private var folds = SidePanelFolds.shared
+    @EnvironmentObject private var panelState: UIState
     @ObservedObject private var motion = MotionPreferences.shared
     @State private var hovered = false
 
     init(_ section: SidePanelSection, title: String? = nil, count: Int? = nil, label: String? = nil, labelColor: Color? = nil,
+         quiet: String? = nil, quietHelp: String? = nil,
          @ViewBuilder trailing: @escaping () -> Trailing, @ViewBuilder content: @escaping () -> Content) {
         self.section = section
         self.title = title
         self.count = count
         self.label = label
         self.labelColor = labelColor
+        self.quiet = quiet
+        self.quietHelp = quietHelp
         self.trailing = trailing
         self.content = content
     }
 
     var body: some View {
-        let open = folds.isOpen(section)
+        let open = panelState.panelSectionIsOpen(section)
         VStack(alignment: .leading, spacing: 0) {
-            Button {
-                motion.perform(.sidebar) { folds.toggle(section) }
-            } label: {
+            if let quiet {
                 HStack(spacing: 8) {
+                    Text(title ?? section.title)
+                        .font(Theme.uiFont)
+                        .foregroundStyle(Theme.textTertiary)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    Text(quiet)
+                        .font(Theme.captionFont)
+                        .foregroundStyle(Theme.textMuted)
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 12)
+                .frame(height: 28)
+                .help(quietHelp ?? "")
+                .accessibilityElement(children: .combine)
+            } else {
+                header(open: open)
+                if open {
+                    content()
+                        .padding(.horizontal, 12)
+                        .padding(.top, 2)
+                        .padding(.bottom, 10)
+                }
+            }
+            Rectangle().fill(Theme.divider).frame(height: 1).padding(.horizontal, 12)
+        }
+        .id(section)
+    }
+
+    private func header(open: Bool) -> some View {
+        HStack(spacing: 0) {
+            Button {
+                motion.perform(.sidebar) { panelState.setPanelSection(section, open: !open) }
+            } label: {
+                HStack(spacing: 7) {
                     Text(title ?? section.title)
                         .font(Theme.uiFontMedium)
                         .foregroundStyle(Theme.textPrimary)
@@ -102,42 +133,37 @@ struct SidePanelSectionView<Content: View, Trailing: View>: View {
                     } else if let count {
                         Text("\(count)")
                             .font(Theme.captionFont.monospacedDigit())
-                            .foregroundStyle(Theme.textTertiary)
+                            .foregroundStyle(Theme.textSecondary)
                             .padding(.horizontal, 6)
-                            .frame(minWidth: 20, minHeight: 18)
-                            .background(Capsule().fill(Theme.card))
+                            .frame(minWidth: 18, minHeight: 16)
+                            .background(Capsule().fill(Theme.hover))
                     }
-                    OctetIcon("chevron.right", size: 12)
+                    OctetIcon("chevron.right", size: 11)
                         .foregroundStyle(Theme.textTertiary)
                         .rotationEffect(.degrees(open ? 90 : 0))
                     Spacer(minLength: 0)
-                    trailing()
                 }
-                .padding(.horizontal, 12)
-                .frame(height: 30)
-                .background(hovered ? Theme.hover : Color.clear)
-                .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
+                .frame(maxHeight: .infinity)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .onHover { hovered = $0 }
             .accessibilityLabel("\(title ?? section.title)\(count.map { ", \($0)" } ?? "")")
             .accessibilityValue(open ? "expanded" : "collapsed")
-            if open {
-                content()
-                    .padding(.horizontal, 12)
-                    .padding(.top, 4)
-                    .padding(.bottom, 10)
-            }
+            trailing()
         }
-        .id(section)
+        .padding(.horizontal, 12)
+        .frame(height: 30)
+        .background(hovered ? Theme.hover.opacity(0.6) : Color.clear)
+        .onHover { hovered = $0 }
     }
 }
 
 extension SidePanelSectionView where Trailing == EmptyView {
     init(_ section: SidePanelSection, title: String? = nil, count: Int? = nil, label: String? = nil, labelColor: Color? = nil,
+         quiet: String? = nil, quietHelp: String? = nil,
          @ViewBuilder content: @escaping () -> Content) {
-        self.init(section, title: title, count: count, label: label, labelColor: labelColor, trailing: { EmptyView() }, content: content)
+        self.init(section, title: title, count: count, label: label, labelColor: labelColor, quiet: quiet,
+                  quietHelp: quietHelp, trailing: { EmptyView() }, content: content)
     }
 }
 
@@ -170,7 +196,6 @@ struct SidePanel: View {
     @EnvironmentObject private var window: WindowContext
     @ObservedObject var store: SessionStore
     @ObservedObject var ui: UIState
-    @ObservedObject private var folds = SidePanelFolds.shared
     @ObservedObject private var motion = MotionPreferences.shared
 
     /// Wide enough for a pull request or a device, as T3 Code's panel opens.
@@ -178,23 +203,14 @@ struct SidePanel: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            PlaneStrip(ui: ui)
+            PlaneStrip(ui: ui, directory: planeDirectory)
             Rectangle().fill(Theme.divider).frame(height: 1)
-            ZStack {
-                if ui.planes.isEmpty {
-                    PlaneLauncher(ui: ui)
-                }
-                ForEach(ui.planes) { plane in
-                    let shown = plane.id == ui.activePlane?.id
-                    planeView(plane)
-                        .opacity(shown ? 1 : 0)
-                        .allowsHitTesting(shown)
-                        .accessibilityHidden(!shown)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            PlaneDeck(ui: ui) { plane in planeView(plane) }
+                .id(ui.panelWorkspaceID)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(Theme.sidebar)
+        .environmentObject(ui)
         .onHover { hovering in
             // Pointed at: it's the person's panel now, and stays open.
             if hovering { ui.sidePanelAutoOpened = false }
@@ -205,6 +221,22 @@ struct SidePanel: View {
     private func planeView(_ plane: Plane) -> some View {
         switch plane.kind {
         case .overview: overview
+        case .todos:
+            ScrollView { TodoPanel(model: window.todos, ui: ui).padding(.vertical, 4) }
+                .scrollIndicators(.hidden)
+                .onAppear { ui.setPanelSection(.todos, open: true) }
+        case .ci: OperationsPlane(kind: plane.kind, directory: planeDirectory)
+        case .containers:
+            DockerPlane(ui: ui, directory: planeDirectory, visible: ui.sidePanelVisible && ui.visiblePlaneIds.contains(plane.id))
+        case .containerLogs:
+            if let id = plane.containerID {
+                ContainerLogsPlane(context: plane.dockerContext ?? "", containerID: id,
+                                   name: plane.containerName ?? String(id.prefix(12)),
+                                   visible: ui.sidePanelVisible && ui.visiblePlaneIds.contains(plane.id))
+            } else {
+                PlaneMessage(icon: "tool.read", title: "No container selected", detail: "Open logs from the Containers pane.")
+            }
+        case .tickets: TicketsPlane(directory: planeDirectory)
         case .git:
             // The panel scrolls itself, so its header and commit box stay put.
             GitPanel(model: window.git, ui: ui)
@@ -212,33 +244,40 @@ struct SidePanel: View {
         case .files: FilesPlane(ui: ui, directory: planeDirectory)
         case .browser: BrowserPlane(ui: ui, directory: planeDirectory)
         case .terminal: TerminalPlane(ui: ui, planeId: plane.id, directory: planeDirectory)
-        case .pullRequest:
+        case .pullRequest, .pullRequests:
             if let directory = planeDirectory {
-                PullRequestPlane(directory: directory, number: plane.number,
-                                 askAgent: { askAgent($0, in: directory) },
-                                 onSummary: { number, tone, title in
-                                     let badge = PlaneBadge(title: "#\(number)", tint: tone.color,
-                                                            help: "#\(number) \(title)", icon: tone.icon)
-                                     if ui.planeBadges[plane.id] != badge { ui.planeBadges[plane.id] = badge }
-                                 })
-            } else {
-                PlaneMessage(icon: "pull.request", title: "No project in front",
-                             detail: "Open a tab in a repository to see its pull request.")
-            }
-        case .pullRequests:
-            if let directory = planeDirectory {
-                PullRequestListPlane(directory: directory, openFullPage: {
-                    if window.ui.pullRequests == nil { window.togglePullRequests(scope: .project) }
-                }) { number in
-                    MotionPreferences.shared.perform(.sidebar) { ui.showPlane(.pullRequest, number: number) }
+                VStack(spacing: 0) {
+                    if plane.number != nil || plane.kind == .pullRequest {
+                        HStack {
+                            OctetButton(title: "All pull requests", icon: "chevron.left", compact: true) { ui.showPlane(.pullRequests) }
+                            Spacer()
+                        }.padding(8)
+                        PullRequestPlane(directory: directory, number: plane.number == 0 ? nil : plane.number,
+                            askAgent: { askAgent($0, in: directory) },
+                            onSummary: { number, tone, title in
+                                let badge = PlaneBadge(title: "#\(number)", tint: tone.color,
+                                    help: "#\(number) \(title)", icon: tone.icon)
+                                if ui.planeBadges[plane.id] != badge { ui.planeBadges[plane.id] = badge }
+                            })
+                    } else {
+                        HStack {
+                            OctetButton(title: "Current branch", icon: "branch", compact: true) { ui.showPlane(.pullRequest) }
+                            Spacer()
+                        }.padding(8)
+                        PullRequestListPlane(directory: directory, openFullPage: {
+                            if window.ui.pullRequests == nil { window.togglePullRequests(scope: .project) }
+                        }) { number in
+                            MotionPreferences.shared.perform(.sidebar) { ui.showPlane(.pullRequest, number: number) }
+                        }
+                    }
                 }
             } else {
-                PlaneMessage(icon: "list", title: "No project in front",
+                PlaneMessage(icon: "pull.request", title: "No project in front",
                              detail: "Open a tab in a repository to see its pull requests.")
             }
         case .device:
             DevicePlane(planeId: plane.id, deviceId: plane.deviceId,
-                        visible: ui.sidePanelVisible && ui.activePlane?.id == plane.id,
+                        visible: ui.sidePanelVisible && ui.visiblePlaneIds.contains(plane.id),
                         onOpen: { device in
                             ui.setPlaneDevice(plane.id, deviceId: device.id)
                             let badge = PlaneBadge(title: device.name,
@@ -285,18 +324,24 @@ struct SidePanel: View {
             ScrollView {
                 // Not lazy: rows open and close in place, which a lazy
                 // stack can lose track of and draw as nothing.
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 0) {
                     RuntimePanel(store: store, ui: ui)
-                    TodoPanel(model: window.todos, ui: ui)
-                    ProjectAgentSection(model: window.projectAgent)
-                    PluginPanelSections(model: window.pluginPanels)
+                    SidePanelSectionView(.workspaceTools, label: "Setup & plugins") {
+                        ProjectAgentSection(model: window.projectAgent)
+                        PluginPanelSections(model: window.pluginPanels)
+                    }
                 }
-                .padding(.vertical, 8)
+                .padding(.vertical, 4)
             }
             .scrollIndicators(.hidden)
             .onChange(of: ui.sidePanelJump) { _, jump in
                 guard let section = jump?.section else { return }
-                folds.set(section, open: true)
+                switch section {
+                case .tasks, .monitors, .shells: ui.setPanelSection(.activity, open: true)
+                case .setup, .plugin: ui.setPanelSection(.workspaceTools, open: true)
+                default: break
+                }
+                ui.setPanelSection(section, open: true)
                 DispatchQueue.main.async {
                     motion.perform(.sidebar, .smooth(duration: 0.25)) { proxy.scrollTo(section, anchor: .top) }
                 }
@@ -305,25 +350,25 @@ struct SidePanel: View {
     }
 }
 
-/// The tab bar's controls for the panel and the terminal drawer, shown
-/// while the panel is closed; while it's open its own strip has them, as in
-/// T3 Code.
+/// Shared right-edge controls. Both tab strips use exactly the same spacing
+/// and dimensions so toggling the panel doesn't move the hit targets.
 struct SidePanelButton: View {
     @ObservedObject var ui: UIState
 
     var body: some View {
-        if !ui.sidePanelVisible {
-            HStack(spacing: 2) {
-                OctetIconButton(icon: "panel.bottom",
-                                help: OctetShortcut.terminalDrawer.help("Toggle terminal drawer"),
-                                active: ui.terminalDrawerVisible) {
-                    MotionPreferences.shared.perform(.sidebar) { ui.terminalDrawerVisible.toggle() }
-                }
-                OctetIconButton(icon: "sidebar.right", help: OctetShortcut.togglePanel.help("Show the panel")) {
-                    ui.sidePanelVisible = true
-                }
-                .accessibilityLabel("Show panel")
+        HStack(spacing: 2) {
+            OctetIconButton(icon: "panel.bottom",
+                            help: OctetShortcut.terminalDrawer.help("Toggle terminal drawer"),
+                            active: ui.terminalDrawerVisible) {
+                MotionPreferences.shared.perform(.sidebar) { ui.terminalDrawerVisible.toggle() }
             }
+            OctetIconButton(icon: "sidebar.right",
+                            help: OctetShortcut.togglePanel.help(ui.sidePanelVisible ? "Hide the panel" : "Show the panel"),
+                            active: ui.sidePanelVisible) {
+                ui.sidePanelVisible.toggle()
+            }
+            .accessibilityLabel(ui.sidePanelVisible ? "Hide panel" : "Show panel")
         }
+        .fixedSize()
     }
 }

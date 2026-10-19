@@ -83,13 +83,10 @@ final class BestOfNCenter: ObservableObject {
                                           base: base, started: Date())
             self.attempts.append(attempt)
             self.save()
-            DispatchQueue.global(qos: .userInitiated).async {
-                _ = WorktreeSetup.copyEnvFiles(from: root, to: created.checkoutPath)
-                DispatchQueue.main.async {
-                    guard let pane = created.paneId else { return }
-                    store.runInPane(pane, line: BestOfN.command(for: runner, task: task, quote: shellQuote))
-                }
-            }
+            WorktreeSetupRunner.shared.run(after: result, store: store, whenReady: {
+                guard let pane = created.paneId else { return }
+                store.runInPane(pane, line: BestOfN.command(for: runner, task: task, quote: shellQuote))
+            })
         }, then: { _ in })
     }
 

@@ -16,6 +16,7 @@ final class AgentBannerCenter: ObservableObject {
     @Published private(set) var banners: [Banner] = []
 
     func show(_ events: [AgentEvent]) {
+        NotchController.shared.agentEvents(events)
         pushToPhone(events)
         guard SettingsStore.shared.values.notifications == .banner else { return }
         for event in events where !banners.contains(where: { $0.id == event.id }) {

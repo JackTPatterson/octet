@@ -24,7 +24,7 @@ enum ProjectGrouping {
         var members: [String: [EngineWorkspace]] = [:]
         for workspace in snapshot.workspaces.sorted(by: { $0.number < $1.number }) {
             let root = workspace.worktree?.repoRoot
-                ?? snapshot.directory(ofWorkspace: workspace.workspaceId).flatMap(resolveRoot)
+                ?? snapshot.projectDirectory(ofWorkspace: workspace.workspaceId).flatMap(resolveRoot)
                 ?? ProjectGroup.otherId
             if members[root] == nil { order.append(root) }
             members[root, default: []].append(workspace)

@@ -313,6 +313,7 @@ func makeTerminalView(command: String, environment: [String: String], workingDir
 /// process) is created once when the view is first made and lives as long as
 /// the SwiftUI view identity; give it a new `.id(...)` to restart.
 struct OctetTerminalView: NSViewRepresentable {
+    var retainedSurface: TerminalEngine.SurfaceView?
     let command: String
     let environment: [String: String]
     let workingDirectory: String?
@@ -326,6 +327,7 @@ struct OctetTerminalView: NSViewRepresentable {
     var onSurface: (TerminalEngine.SurfaceView) -> Void = { _ in }
 
     init(
+        retainedSurface: TerminalEngine.SurfaceView? = nil,
         command: String,
         environment: [String: String],
         workingDirectory: String?,
@@ -335,6 +337,7 @@ struct OctetTerminalView: NSViewRepresentable {
         onExit: @escaping () -> Void = {},
         onSurface: @escaping (TerminalEngine.SurfaceView) -> Void = { _ in }
     ) {
+        self.retainedSurface = retainedSurface
         self.command = command
         self.environment = environment
         self.workingDirectory = workingDirectory
@@ -347,7 +350,7 @@ struct OctetTerminalView: NSViewRepresentable {
 
     @MainActor
     func makeNSView(context: Context) -> NSView {
-        let view = OctetTerminalRuntime.shared.makeSurfaceView(
+        let view = retainedSurface ?? OctetTerminalRuntime.shared.makeSurfaceView(
             command: command,
             environment: environment,
             workingDirectory: workingDirectory
@@ -470,7 +473,7 @@ final class TopRowClippingView: NSView {
         RunLoop.main.add(timer, forMode: .common)
         anchorTimer = timer
         tickObservation = NotificationCenter.default.publisher(for: .octetTerminalTicked)
-            .throttle(for: .milliseconds(16), scheduler: RunLoop.main, latest: true)
+            .throttle(for: .milliseconds(33), scheduler: RunLoop.main, latest: true)
             .sink { [weak self] _ in
                 guard let self, self.anchorTimer != nil else { return }
                 self.updateBottomAnchor()
@@ -505,13 +508,17 @@ final class TopRowClippingView: NSView {
 
     @MainActor
     private func updateBottomAnchor() {
-        guard Date() >= anchorPollingSuppressedUntil else { return }
+        guard !inLiveResize, Date() >= anchorPollingSuppressedUntil else { return }
+        let rows = SettingsStore.shared.values.textPosition == .bottom ? measureBlankRowsBelowCursor() : 0
+        if rows != blankRowsBelow {
+            blankRowsBelow = rows
+            needsLayout = true
+            layoutSubtreeIfNeeded()
+        }
+        // Publish the cursor in the newly positioned stage, not the previous
+        // frame's coordinates (which made prompt overlays jump during output).
         let grid = measureGrid()
         if anchor.grid != grid { anchor.grid = grid }
-        let rows = SettingsStore.shared.values.textPosition == .bottom ? measureBlankRowsBelowCursor() : 0
-        guard rows != blankRowsBelow else { return }
-        blankRowsBelow = rows
-        needsLayout = true
     }
 
     /// Called by the hosted terminal for every wheel/trackpad event. The
@@ -615,8 +622,13 @@ final class TopRowClippingView: NSView {
         // masking set there silently never applies.
         layer?.masksToBounds = true
         stage.layer?.masksToBounds = true
-        stage.frame = NSRect(x: 0, y: drop, width: bounds.width, height: bounds.height)
-        surfaceView.frame = NSRect(x: 0, y: -offset, width: bounds.width, height: bounds.height + offset)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        let stageFrame = NSRect(x: 0, y: drop, width: bounds.width, height: bounds.height)
+        let surfaceFrame = NSRect(x: 0, y: -offset, width: bounds.width, height: bounds.height + offset)
+        if stage.frame != stageFrame { stage.frame = stageFrame }
+        if surfaceView.frame != surfaceFrame { surfaceView.frame = surfaceFrame }
+        CATransaction.commit()
         refreshBackground()
         // The engine's chrome row rides down with the content; hand its
         // position to SwiftUI, which can paint over the terminal.
@@ -636,6 +648,19 @@ final class TopRowClippingView: NSView {
                 self?.needsLayout = true
             }
         }
+    }
+
+    override func viewWillStartLiveResize() {
+        super.viewWillStartLiveResize()
+        anchor.grid = nil
+    }
+
+    override func viewDidEndLiveResize() {
+        super.viewDidEndLiveResize()
+        anchorPollingSuppressedUntil = .distantPast
+        needsLayout = true
+        layoutSubtreeIfNeeded()
+        updateBottomAnchor()
     }
 
     override func viewDidChangeBackingProperties() {

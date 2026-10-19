@@ -17,6 +17,10 @@ final class WaitCenter: ObservableObject {
     /// The wait being written in the sheet.
     @Published var draft: WaitDraft?
 
+    /// Debug sample: made-up waits kept in memory only. Nothing is saved,
+    /// checked or scheduled, and no real session is touched.
+    private(set) var isSample = false
+
     private weak var store: SessionStore?
     private var server: PermissionSocketServer?
     private var timer: Timer?
@@ -27,13 +31,13 @@ final class WaitCenter: ObservableObject {
 
     /// Met, with a step to take, newest first.
     var ready: [Wait] {
-        waits.filter { $0.state == .ready && !$0.isSnooze }.sorted { ($0.readyAt ?? .distantPast) > ($1.readyAt ?? .distantPast) }
+        waits.filter { $0.state == .ready && !$0.isSnooze && !$0.isCheckIn }.sorted { ($0.readyAt ?? .distantPast) > ($1.readyAt ?? .distantPast) }
     }
 
     /// Still waiting, oldest first; workspaces snoozed until something are
     /// shown with the Idle dock instead.
     var waiting: [Wait] {
-        waits.filter { $0.state == .waiting && !$0.isSnooze }.sorted { $0.createdAt < $1.createdAt }
+        waits.filter { $0.state == .waiting && !$0.isSnooze && !$0.isCheckIn }.sorted { $0.createdAt < $1.createdAt }
     }
 
     /// The snooze, if any, holding a workspace in Idle.
@@ -50,6 +54,8 @@ final class WaitCenter: ObservableObject {
             waits = Self.load(from: url)
         }
         applyServer()
+        CheckInCenter.shared.start(store: store)
+        ProjectJobCenter.shared.start(store: store)
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in
             MainActor.assumeIsolated { WaitCenter.shared.tick() }
@@ -67,6 +73,7 @@ final class WaitCenter: ObservableObject {
     }
 
     private func save() {
+        guard !isSample else { return updateBadge() }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -74,13 +81,31 @@ final class WaitCenter: ObservableObject {
         try? FileManager.default.createDirectory(at: EngineSession.supportDirectory, withIntermediateDirectories: true)
         try? data.write(to: url, options: .atomic)
         updateBadge()
+        CheckInCenter.shared.syncNotifications()
     }
 
-    /// The Dock shows how many are ready, so they're seen with Octet behind other apps.
+    /// The Dock shows how many are ready (and check-ins due), so they're
+    /// seen with Octet behind other apps.
     private func updateBadge() {
-        let count = ready.count
-        NSApp?.dockTile.badgeLabel = count > 0 ? String(count) : nil
+        NSApp?.dockTile.badgeLabel = badgeText
     }
+
+    var badgeText: String? {
+        let count = ready.count + CheckInCenter.shared.dueCount
+        return count > 0 ? String(count) : nil
+    }
+
+    /// Swaps in made-up waits that live only in memory (the debug sample).
+    func installSample(_ sample: [Wait]) {
+        isSample = true
+        timer?.invalidate()
+        timer = nil
+        waits = sample
+        updateBadge()
+    }
+
+    /// Changes one wait in place, whatever it is (the check-in layer's way in).
+    func mutateWait(_ id: String, _ change: (inout Wait) -> Void) { mutate(id, change) }
 
     // MARK: - Keeping the list
 
@@ -122,7 +147,10 @@ final class WaitCenter: ObservableObject {
 
     /// Checks every wait that's due.
     func tick() {
+        guard !isSample else { return }
         let now = Date()
+        CheckInCenter.shared.tick(now: now)
+        ProjectJobCenter.shared.tick(now: now)
         for wait in waits where wait.isDue(now: now) && !checking.contains(wait.id) {
             check(wait)
         }
@@ -407,6 +435,27 @@ final class WaitCenter: ObservableObject {
             var result = WaitControl.describe(wait)
             result["checked_by_octet"] = !wait.isManual
             reply(["result": result])
+        case .checkin:
+            let request: CheckInRequest
+            do {
+                request = try CheckInRequest.parse(params, defaultMode: CheckInCenter.shared.defaultMode)
+            } catch {
+                return reply(["error": String(describing: error)])
+            }
+            let origin = agentOrigin(params)
+            let session = origin.conversationId.flatMap { id in AgentCenter.shared.sessions.first { $0.id == id } }
+            let agentName = origin.agent.flatMap { AgentBrand.forAgent($0)?.displayName } ?? origin.agent ?? "An agent"
+            let name = request.title.isEmpty ? CheckInDraft.defaultTitle(prompt: request.prompt) : request.title
+            let wait = Wait.makeCheckIn(title: name, prompt: request.prompt, mode: request.mode,
+                                        first: request.recurrence?.start ?? request.first, recurrence: request.recurrence,
+                                        origin: origin, createdBy: agentName,
+                                        brief: Self.brief(for: session, branch: origin.branch, waitingFor: name)
+                                            ?? Self.brief(origin: origin, waitingFor: name))
+            CheckInCenter.shared.add(wait)
+            ToastCenter.shared.info("\(agentName) set a check-in",
+                                    detail: "\(wait.title): \(request.recurrence?.summary ?? "once"), first \(CheckInInfo.dayTime(wait.nextCheckAt)).",
+                                    after: 8)
+            reply(["result": WaitControl.describe(wait)])
         case .list:
             reply(["result": ["waits": waits.filter { !$0.isSnooze }.map { WaitControl.describe($0) }]])
         case .cancel:

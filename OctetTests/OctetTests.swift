@@ -103,6 +103,16 @@ final class ProjectGroupingTests: XCTestCase {
         )
     }
 
+    func testProjectIdentityDoesNotFollowPaneFocus() {
+        let second = EnginePane(paneId: "w1:p2", tabId: "w1:t1", workspaceId: "w1", focused: true,
+                                cwd: "/r/other", foregroundCwd: nil, agentStatus: .idle, terminalTitle: nil)
+        let snapshot = EngineSnapshot(workspaces: [workspace("w1", 1, "api")], tabs: [],
+                                      panes: [pane("w1", cwd: "/r/api"), second], agents: [],
+                                      focusedWorkspaceId: "w1", focusedTabId: "w1:t1", focusedPaneId: "w1:p2")
+        XCTAssertEqual(snapshot.directory(ofWorkspace: "w1"), "/r/other")
+        XCTAssertEqual(ProjectGrouping.groups(snapshot: snapshot, resolveRoot: { $0 }).first?.id, "/r/api")
+    }
+
     func testGroupsByProjectRootInWorkspaceOrder() {
         let snapshot = EngineSnapshot(
             workspaces: [workspace("w1", 1, "api"), workspace("w2", 2, "notes"), workspace("w3", 3, "api tests")],
@@ -2689,7 +2699,7 @@ final class NewTabFreshnessTests: XCTestCase {
 
     func testOneReadingOfOutputEndsItForGood() {
         var freshness = NewTabFreshness()
-        XCTAssertTrue(freshness.observe(tab: "t1", cursorRow: 0, rowsInUse: 1, at: at(0)))
+        XCTAssertFalse(freshness.observe(tab: "t1", cursorRow: 0, rowsInUse: 1, at: at(0)))
         // `ls` prints, the grid settles, and nothing more is reported.
         XCTAssertFalse(freshness.observe(tab: "t1", cursorRow: 7, rowsInUse: 8, at: at(settled + 2)))
         XCTAssertTrue(freshness.used.contains("t1"))
@@ -2699,9 +2709,10 @@ final class NewTabFreshnessTests: XCTestCase {
 
     func testANewTabShowsTheSplash() {
         var freshness = NewTabFreshness()
-        // Before the shell has drawn anything, and once its prompt is up.
-        XCTAssertTrue(freshness.observe(tab: "t1", cursorRow: 0, rowsInUse: 0, at: at(0)))
-        XCTAssertTrue(freshness.observe(tab: "t1", cursorRow: 0, rowsInUse: 1, at: at(0.1)))
+        // Neither an empty framebuffer nor an unsettled prompt shows the splash.
+        XCTAssertFalse(freshness.observe(tab: "t1", cursorRow: 0, rowsInUse: 0, at: at(0)))
+        XCTAssertFalse(freshness.observe(tab: "t1", cursorRow: 0, rowsInUse: 1, at: at(0.1)))
+        XCTAssertTrue(freshness.observe(tab: "t1", cursorRow: 0, rowsInUse: 1, at: at(settled)))
     }
 
     func testACommandWithNoOutputStillCounts() {
@@ -2716,7 +2727,7 @@ final class NewTabFreshnessTests: XCTestCase {
 
     func testATwoLinePromptIsStillFresh() {
         var freshness = NewTabFreshness()
-        XCTAssertTrue(freshness.observe(tab: "t1", cursorRow: 2, rowsInUse: 3, at: at(0)))
+        XCTAssertFalse(freshness.observe(tab: "t1", cursorRow: 2, rowsInUse: 3, at: at(0)))
         XCTAssertTrue(freshness.observe(tab: "t1", cursorRow: 2, rowsInUse: 3, at: at(settled)))
     }
 
@@ -2726,7 +2737,7 @@ final class NewTabFreshnessTests: XCTestCase {
         XCTAssertFalse(freshness.observe(tab: "t2", cursorRow: 20, rowsInUse: 21, at: at(0)))
         XCTAssertFalse(freshness.used.contains("t2"))
         // Then t2's own prompt draws.
-        XCTAssertTrue(freshness.observe(tab: "t2", cursorRow: 0, rowsInUse: 1, at: at(0.1)))
+        XCTAssertFalse(freshness.observe(tab: "t2", cursorRow: 0, rowsInUse: 1, at: at(0.1)))
         XCTAssertTrue(freshness.observe(tab: "t2", cursorRow: 0, rowsInUse: 1, at: at(settled)))
     }
 
@@ -2779,7 +2790,7 @@ final class NewTabFreshnessTests: XCTestCase {
         _ = freshness.observe(tab: "t1", cursorRow: 0, rowsInUse: 1, at: at(0))
         _ = freshness.observe(tab: "t1", cursorRow: 9, rowsInUse: 10, at: at(settled))
         XCTAssertTrue(freshness.used.contains("t1"))
-        XCTAssertTrue(freshness.observe(tab: "t2", cursorRow: 0, rowsInUse: 1, at: at(settled + 1)))
+        XCTAssertFalse(freshness.observe(tab: "t2", cursorRow: 0, rowsInUse: 1, at: at(settled + 1)))
         freshness.forget("t1")
         XCTAssertFalse(freshness.used.contains("t1"))
     }

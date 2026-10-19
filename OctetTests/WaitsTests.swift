@@ -222,7 +222,7 @@ final class WaitControlTests: XCTestCase {
 
     func testToolsAreOfferedInsideOctet() throws {
         let tools = try result(WaitMCP.respond(to: rpc("tools/list"), origin: origin, call: { _, _ in [:] }))["tools"] as? [[String: Any]]
-        XCTAssertEqual(tools?.compactMap { $0["name"] as? String }, ["wait_for", "list_waits", "cancel_wait"])
+        XCTAssertEqual(tools?.compactMap { $0["name"] as? String }, ["wait_for", "list_waits", "cancel_wait", "check_back"])
         let none = try result(WaitMCP.respond(to: rpc("tools/list"), origin: nil, call: { _, _ in [:] }))["tools"] as? [[String: Any]]
         XCTAssertEqual(none?.count, 0)
     }

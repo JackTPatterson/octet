@@ -13,47 +13,42 @@ extension AgentLocation {
     }
 }
 
-/// Where one or more of a workspace's agents went: the place's mark, its
-/// name, and how many agents are there when more than one.
+/// Where one or more of a workspace's agents went: the place's mark and a
+/// short name, with how many agents are there when more than one. Flat, no
+/// box: it's a line of detail under the row's title.
 struct AgentLocationChip: View {
     let location: AgentLocation
     var count = 1
 
     var body: some View {
         HStack(spacing: 4) {
-            OctetIcon(location.icon, size: 10)
-            Text(location.name)
+            OctetIcon(location.icon, size: 11)
+            Text(location.shortName)
                 .lineLimit(1)
-                .truncationMode(.middle)
+                .truncationMode(.tail)
             if count > 1 {
-                Text("\(count)")
+                Text("×\(count)")
                     .foregroundStyle(location.tint.opacity(0.7))
             }
         }
         .font(Theme.captionFont)
         .foregroundStyle(location.tint)
-        .padding(.horizontal, 5)
-        .frame(height: 16)
-        .background(RoundedRectangle(cornerRadius: 4).fill(location.tint.opacity(0.12)))
-        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(location.tint.opacity(0.35)))
+        .fixedSize()
         .help(location.help(abbreviate: abbreviateHome) + (count > 1 ? "\n\(count) agents here" : ""))
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(count > 1 ? "\(count) agents" : "Agent") in \(location.phrase)")
     }
 }
 
-/// The places a workspace's agents are spread over, a chip each, with the
-/// rest counted once the row is full.
+/// The places a workspace's agents are spread over, in a line, with the
+/// rest counted once the row is full; the count opens the whole list.
 struct AgentLocationRow: View {
     let locations: [(location: AgentLocation, count: Int)]
     var limit = 2
     @ObservedObject private var motion = MotionPreferences.shared
 
     var body: some View {
-        HStack(spacing: 4) {
-            OctetIcon("tool.agent", size: 10)
-                .foregroundStyle(Theme.textTertiary)
-                .frame(width: 12)
+        HStack(spacing: 10) {
             ForEach(locations.prefix(limit), id: \.location.root) { entry in
                 AgentLocationChip(location: entry.location, count: entry.count)
                     .layoutPriority(entry.location.kind == .worktree ? 1 : 0)
@@ -61,14 +56,38 @@ struct AgentLocationRow: View {
                         ? .scale(scale: 0.6).combined(with: .opacity) : .identity)
             }
             if locations.count > limit {
-                Text("+\(locations.count - limit)")
-                    .font(Theme.captionFont)
-                    .foregroundStyle(Theme.textTertiary)
-                    .help(locations.dropFirst(limit).map(\.location.phrase).joined(separator: "\n"))
+                Button(action: showAll) {
+                    Text("+\(locations.count - limit)")
+                        .font(Theme.captionFont)
+                        .foregroundStyle(Theme.textTertiary)
+                        .padding(.horizontal, 4)
+                        .background(RoundedRectangle(cornerRadius: 4).fill(Theme.hover.opacity(0.7)))
+                }
+                .buttonStyle(.plain)
+                .help("Every place an agent is working")
+                .accessibilityLabel("\(locations.count - limit) more places")
             }
             Spacer(minLength: 0)
         }
         .animation(motion.animation(.connections, .spring(response: 0.4, dampingFraction: 0.7)),
                    value: locations.map(\.location.root))
+    }
+
+    /// Every place, each with its branch and how many agents are there.
+    private func showAll() {
+        var items: [OctetMenuItem] = [.header("Agents are working in")]
+        for entry in locations {
+            let place = entry.location
+            let branch = place.branch.map { " · \($0)" } ?? ""
+            let agents = entry.count > 1 ? " · \(entry.count) agents" : ""
+            items.append(.action(place.shortName + branch + agents, icon: place.icon,
+                                 help: abbreviateHome(place.path)) {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(place.path, forType: .string)
+            })
+        }
+        items.append(.divider)
+        items.append(.header("Choosing one copies its path"))
+        OctetContextMenu.present(items)
     }
 }

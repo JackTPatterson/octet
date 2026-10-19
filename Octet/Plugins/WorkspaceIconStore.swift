@@ -34,7 +34,7 @@ final class WorkspaceIconStore: ObservableObject {
     /// Asks each contribution in turn until one finds an image.
     private func attempt(_ entries: ArraySlice<(OctetPluginManifest.WorkspaceIconContribution, OctetPlugin)>, in directory: String) {
         guard let (icon, plugin) = entries.first else {
-            // None found: look again soon, and show nothing meanwhile.
+            // A timeout or unavailable plugin must not discard the last good icon.
             finish(directory, image: nil, every: 60)
             return
         }
@@ -53,7 +53,9 @@ final class WorkspaceIconStore: ObservableObject {
     private func finish(_ directory: String, image: NSImage?, every seconds: TimeInterval) {
         reading.remove(directory)
         nextRead[directory] = Date().addingTimeInterval(seconds)
-        if images[directory] !== image { images[directory] = image }
+        if let image, images[directory]?.tiffRepresentation != image.tiffRepresentation {
+            images[directory] = image
+        }
     }
 
     /// The image a command printed the path of: inside the folder, and one

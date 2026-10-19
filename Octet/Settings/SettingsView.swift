@@ -32,7 +32,7 @@ struct SettingsView: View {
     private enum Focus: Hashable { case search, sidebar }
 
     enum Section: String, CaseIterable, Identifiable {
-        case general, appearance, terminal, statusBar, agents, plugins, motion, keyboard, advanced
+        case general, appearance, terminal, statusBar, notch, agents, plugins, motion, keyboard, advanced
 
         var id: String { rawValue }
         var title: String {
@@ -41,6 +41,7 @@ struct SettingsView: View {
             case .appearance: return "Appearance"
             case .terminal: return "Terminal"
             case .statusBar: return "Status Bar"
+            case .notch: return "Notch"
             case .agents: return "Agents & Recovery"
             case .plugins: return "Plugins"
             case .motion: return "Motion"
@@ -54,6 +55,7 @@ struct SettingsView: View {
             case .appearance: return "paintpalette"
             case .terminal: return "terminal"
             case .statusBar: return "list.bullet.rectangle"
+            case .notch: return "rectangle.topthird.inset.filled"
             case .agents: return "sparkle.magnifyingglass"
             case .plugins: return "puzzlepiece.extension"
             case .motion: return "sparkles"
@@ -93,6 +95,7 @@ struct SettingsView: View {
                             case .appearance: AppearanceSettings(settings: settings)
                             case .terminal: TerminalSettings(settings: settings)
                             case .statusBar: StatusBarSettings(settings: settings)
+                            case .notch: NotchSettingsPage(settings: settings)
                             case .agents: AgentSettings(settings: settings, integrations: integrations)
                             case .plugins: PluginSettings()
                             case .motion: MotionSettings(motion: motion)
@@ -812,6 +815,20 @@ private struct TerminalSettings: View {
                 Toggle("Offer to preview new servers", isOn: $settings.values.offerServerPreviews).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
         }
+        SettingsGroup(title: "Issue trackers") {
+            SettingsRow(title: "Let agents read issues",
+                        detail: "Adds read-only issue tools to installed agents using your saved GitHub, Linear and Jira connections. Agents can list issues and read descriptions and comments.",
+                        setting: \.agentsReadIssues) {
+                Toggle("Let agents read issues", isOn: $settings.values.agentsReadIssues)
+                    .labelsHidden().toggleStyle(OctetSwitchStyle())
+            }
+            if settings.values.agentsReadIssues {
+                SettingsDivider()
+                SettingsRow(title: "Tools in your agents", detail: "Refresh the issue tools after installing another agent.") {
+                    OctetButton(title: "Add Again", compact: true) { AgentMCPInstaller.shared.sync(server: IssueMCP.serverName, force: true) }
+                }
+            }
+        }
         SettingsGroup(title: "Sidebar terminal") {
             SettingsRow(
                 title: "Let agents read the sidebar terminal",
@@ -967,6 +984,7 @@ private struct AgentSettings: View {
                 Toggle("Offer a wait from a reply", isOn: $settings.values.suggestWaits).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
         }
+        CheckInSettingsGroup(settings: settings)
         SettingsGroup(title: "Recovery") {
             SettingsRow(
                 title: "Resume agents after a restart",

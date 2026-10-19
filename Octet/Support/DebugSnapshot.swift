@@ -65,6 +65,9 @@ enum DebugSnapshot {
     }
 
     private static func dump(to dir: String) {
+        #if DEBUG
+        NotchController.shared.debugPerformanceDump()
+        #endif
         guard !writeInFlight else { return }
         guard let window = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil && findSurface(in: $0.contentView!) != nil }),
               let content = window.contentView,

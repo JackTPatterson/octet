@@ -202,6 +202,8 @@ enum PaletteCatalog {
                    keywords: ["recap", "away", "catch up", "summary", "while you were away", "what happened", "agents"]) {
                 RecapCenter.shared.showLatest()
             },
+            action("toggleNotch", "Toggle Notch", "gearshape",
+                   keywords: ["notch", "island", "top", "menu bar", "pill", "glance", "agents"]) { NotchController.shared.toggle() },
             action("huggingface", "Add Model from Hugging Face…", "square.and.arrow.down",
                    keywords: ["hugging face", "huggingface", "ollama", "gguf", "model", "download", "local", "opencode"]) { HuggingFaceWindow.open() },
             action("installHook", "Install Subagent Tabs Hook", "sparkles",
@@ -328,6 +330,20 @@ enum PaletteCatalog {
                                 keywords: ["wait", "blocked", "later", "remind", "follow up", "pull request", "merged", "release", "deploy"]) {
                 WaitCenter.shared.compose(workspaceId: workspace.workspaceId,
                                           session: AgentCenter.shared.active(in: workspace.workspaceId))
+            })
+        }
+        if let workspace = window.focusedWorkspace {
+            items.append(action("checkBack", "Check Back Later…", "clock.arrow.circlepath",
+                                keywords: ["check-in", "checkin", "remind", "days", "weeks", "long", "experiment", "paper trading", "backtest", "wake", "resume", "later"]) {
+                CheckInCenter.shared.compose(workspaceId: workspace.workspaceId,
+                                             session: AgentCenter.shared.active(in: workspace.workspaceId))
+            })
+        }
+        for wait in CheckInCenter.shared.checkIns {
+            guard let info = wait.checkIn, !info.isFinished else { continue }
+            items.append(action("checkin.run.\(wait.id)", "Run Check-in: \(wait.title)", "play.circle",
+                                keywords: ["check-in", "checkin", "check back", "wake", "resume"] + [wait.next]) {
+                CheckInCenter.shared.runNow(wait.id)
             })
         }
         for wait in WaitCenter.shared.ready {

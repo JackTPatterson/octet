@@ -115,3 +115,23 @@ enum AgentLocations {
         return standard.count > 1 && standard.hasSuffix("/") ? String(standard.dropLast()) : standard
     }
 }
+
+extension AgentLocation {
+    /// What a chip shows: a short, readable name. Agent worktrees live at
+    /// `.claude/worktrees/agent-<long id>`, which truncated to nothing
+    /// useful; they read "agent ab11". Deeper folders keep their last two
+    /// components.
+    var shortName: String { Self.shortName(name) }
+
+    static func shortName(_ name: String) -> String {
+        var text = name.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if let range = text.range(of: "worktrees/", options: .backwards) { text = String(text[range.upperBound...]) }
+        if text.hasPrefix("agent-"), text.count > 10 {
+            let id = text.dropFirst("agent-".count)
+            if id.allSatisfy({ $0.isHexDigit }) { return "agent " + id.prefix(4) }
+        }
+        let parts = text.split(separator: "/")
+        if parts.count > 2 { return "…/" + parts.suffix(2).joined(separator: "/") }
+        return text.isEmpty ? name : text
+    }
+}

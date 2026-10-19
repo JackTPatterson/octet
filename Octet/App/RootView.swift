@@ -30,6 +30,7 @@ struct RootView: View {
     @ObservedObject private var agents = AgentCenter.shared
     @ObservedObject private var offers = AgentOfferCenter.shared
     @ObservedObject private var waitCenter = WaitCenter.shared
+    @ObservedObject private var checkInCenter = CheckInCenter.shared
     /// This window: what it shows, and how it moves.
     @EnvironmentObject private var window: WindowContext
 
@@ -88,7 +89,17 @@ struct RootView: View {
         // the shell is recognized so an untouched initial tab gets its splash.
         .onChange(of: window.focusedPaneAtPrompt) { _, _ in observeSplash(terminalAnchor.grid) }
         .onChange(of: twin.isVisible) { _, visible in DebugSnapshot.overlay("twin", visible) }
-        .onChange(of: window.editor.isPresented) { _, visible in DebugSnapshot.overlay("editor", visible) }
+        .onChange(of: window.editor.isPresented) { _, visible in
+            if visible { window.containerLogs.activeID = nil }
+            DebugSnapshot.overlay("editor", visible)
+        }
+        .onChange(of: agents.active(in: window.focusedWorkspace?.workspaceId)?.id) { _, id in
+            if id != nil { window.containerLogs.activeID = nil }
+        }
+        .onChange(of: window.focusedWorkspace?.workspaceId, initial: true) { _, id in
+            ui.activateWorkspacePanel(id)
+            window.migrateContainerLogPlanes()
+        }
         .onChange(of: window.editor.filePickerVisible) { _, visible in DebugSnapshot.overlay("editor-picker", visible) }
         .onChange(of: settings.values.agentQuickAnswers) { _, _ in twin.snapshotChanged() }
         .onChange(of: store.snapshot) { _, snapshot in
@@ -118,7 +129,7 @@ struct RootView: View {
     /// The agent to offer Octet's view for: one running in its own interface
     /// in the tab showing, while the terminal is what's showing.
     private var agentOffer: EngineAgent? {
-        guard settings.values.agentBanner, !twin.isVisible, boardHere == nil,
+        guard settings.values.agentBanner, !twin.isVisible, boardHere == nil, window.activeContainerLog == nil,
               agents.active(in: window.focusedWorkspace?.workspaceId) == nil,
               let tab = window.displayedFocusedTabId else { return nil }
         return AgentOffer.candidate(in: store.snapshot.agents(inTab: tab), dismissed: offers.dismissed)
@@ -221,7 +232,7 @@ struct RootView: View {
                     // slides in over the room, instead of reflowing on every
                     // frame of the slide.
                     Color.clear
-                        .frame(width: ui.sidePanelVisible && !ui.sidePanelMaximized ? ui.sidePanelWidth : 0)
+                        .frame(width: ui.sidePanelVisible && !ui.sidePanelMaximized ? ui.presentedSidePanelWidth : 0)
                         .transaction { $0.animation = nil }
                 }
                 // The right panel: a strip of planes over the one in front.
@@ -230,7 +241,7 @@ struct RootView: View {
                 // reflows every agent's screen.
                 .overlay(alignment: .trailing) {
                     GeometryReader { proxy in
-                        let width = ui.sidePanelMaximized ? proxy.size.width : ui.sidePanelWidth
+                        let width = ui.sidePanelMaximized ? proxy.size.width : min(proxy.size.width, ui.presentedSidePanelWidth)
                         ZStack(alignment: .leading) {
                             Rectangle().fill(Theme.divider).frame(width: 1)
                                 .frame(maxHeight: .infinity, alignment: .leading)
@@ -243,6 +254,9 @@ struct RootView: View {
                         .frame(width: ui.sidePanelVisible ? width : 0, alignment: .leading)
                         .clipped()
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+                        .onChange(of: proxy.size.width, initial: true) { _, width in
+                            ui.availablePanelWidth = width
+                        }
                     }
                     .allowsHitTesting(ui.sidePanelVisible)
                     .accessibilityHidden(!ui.sidePanelVisible)
@@ -371,6 +385,13 @@ struct RootView: View {
             WaitEditorSheet(draft: draft) { waitCenter.draft = nil }
                 .environmentObject(window)
         }
+        // A check-in being written, in the window that asked for it.
+        .sheet(item: Binding(
+            get: { checkInCenter.draft.flatMap { $0.windowId == nil || $0.windowId == window.id ? $0 : nil } },
+            set: { if $0 == nil { checkInCenter.draft = nil } })) { draft in
+            CheckInEditorSheet(draft: draft) { checkInCenter.draft = nil }
+                .environmentObject(window)
+        }
         // Above the palette, so a confirm raised while it's open isn't buried.
         .modifier(RootDialogHosts(ui: ui, store: store, confirmations: confirmations))
         .modifier(RootAnimations(ui: ui, boardShowing: boardHere != nil))
@@ -400,6 +421,8 @@ struct RootView: View {
             ClipboardWatcher.shared.start()
             OctetContextMenu.installAppWide()
             #if DEBUG
+            // Verification hook: "notch", "notch:collapsed", "notch:peek", "notch:tab=<name>".
+            NotchDebug.runHook()
             // Verification hook: "conversation" opens a native conversation;
             // "conversation:model" also opens that dropdown.
             if let window = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], window.hasPrefix("conversation") {
@@ -574,6 +597,11 @@ struct RootView: View {
                                                     root: ProcessInfo.processInfo.environment["OCTET_SEARCH_ROOT"])
                 }
             }
+            // "checkin-sample" fills the sidebar with made-up check-ins (nothing is
+            // saved or scheduled); "checkin-composer" opens the sheet for a new one.
+            if let open = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], open.hasPrefix("checkin") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { CheckInDebug.open(open, window: window) }
+            }
             if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "snooze-picker" {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
                     if let workspace = window.focusedWorkspace { SnoozePickerCenter.shared.ask(store: store, workspaceId: workspace.workspaceId) }
@@ -617,9 +645,28 @@ struct RootView: View {
                     switch parts.dropFirst().first {
                     case "empty": ui.closePlanes { _ in true }; ui.sidePanelVisible = true
                     case "max": ui.sidePanelVisible = true; ui.sidePanelMaximized = true
-                    case "pr", "pullRequest": ui.showPlane(.pullRequest, number: parts.count > 2 ? Int(parts[2]) : nil)
+                    case "pr", "pullRequest":
+                        #if DEBUG
+                        // "planes:pr:sample" shows made-up stacked pull requests; nothing reads GitHub.
+                        if parts.count > 2, parts[2] == "sample" { PullRequestPlaneModel.debugSample = true }
+                        #endif
+                        ui.showPlane(.pullRequest, number: parts.count > 2 ? Int(parts[2]) : nil)
                     case "prs", "pullRequests": ui.showPlane(.pullRequests)
-                    case "overview": ui.showPlane(.overview)
+                    case "todos":
+                        ui.showPlane(.todos)
+                        if parts.count > 2, parts[2] == "sample" { window.todos.loadSample() }
+                    case "overview":
+                        ui.showPlane(.overview)
+                        #if DEBUG
+                        // ":sample" fills it with made-up work, to see it populated.
+                        if parts.count > 2, parts[2] == "sample" {
+                            RuntimePanel.debugSample = true
+                            let variant = parts.count > 3 ? parts[3] : nil
+                            RuntimePanel.debugVariant = variant
+                            window.todos.loadSample(variant: variant)
+                            if variant != "empty" { window.projectAgent.loadSample() }
+                        }
+                        #endif
                     case "git":
                         // "planes:git" opens the Git plane; ":sample" fills it
                         // with made-up checkouts, ":sample:open" with every
@@ -632,6 +679,9 @@ struct RootView: View {
                     case "files": ui.showPlane(.files)
                     case "browser": ui.showPlane(.browser)
                     case "terminal": ui.showPlane(.terminal)
+                    case "ci": ui.showPlane(.ci)
+                    case "containers": ui.showPlane(.containers)
+                    case "tickets": ui.showPlane(.tickets)
                     case "details": ui.detailsVisible = true
                     case "device":
                         // "planes:device:<id>" opens straight onto that device.
@@ -745,6 +795,34 @@ struct RootView: View {
                     ) { _ in }
                 }
             }
+            // "delegation-approval" shows the approval dialog with a made-up request.
+            if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "delegation-approval" {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    DelegationApprovalCenter.shared.ask(.init(
+                        caller: "Claude Code", callerAgent: "claude", agent: "codex", agentName: "Codex", mode: .review,
+                        task: "Review the uncommitted changes in this repo for correctness. Focus on the retry logic in Uploader.swift: does the backoff cap at 30 seconds, is the jitter bounded, and can a cancelled upload keep retrying? Report concrete problems with file and line, and say PASS or FAIL at the end.",
+                        folder: NSHomeDirectory() + "/Developer/apps/herd", onAllow: { _ in }, onDeny: {}))
+                }
+            }
+            // "paste-preview" shows the long-paste dialog with made-up text.
+            if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "paste-preview" {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    let sample = (1...48).map { "line \($0): let delay = min(base * pow(2, Double(attempt)), 30) + jitter()" }.joined(separator: "\n")
+                    PastePreviewCenter.shared.request = .init(paneId: "w1:p1", target: "Claude Code", text: sample, window: NSApp.keyWindow)
+                }
+            }
+            // "toast-all" shows one toast of each kind, held (no auto-dismiss in time to look).
+            if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "toast-all" {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    let center = ToastCenter.shared
+                    _ = center.progress("Updating Claude Code…", detail: "claude update")
+                    center.succeed(nil, "Pushed 3 commits to origin/feat/t3-parity", detail: nil)
+                    center.info("Closed the tab “Fix the upload retry”", after: 600,
+                                action: .init(title: "Reopen") {})
+                    center.fail(nil, "Couldn't open the page",
+                                detail: "localhost:3000 refused to connect. Is the dev server running?")
+                }
+            }
             if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "toast" {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                     ToastCenter.shared.info(
@@ -770,6 +848,12 @@ struct RootView: View {
             #endif
         }
 
+    /// A breadcrumb's folder: the Files plane comes forward with it open.
+    private func revealInFiles(_ folder: String) {
+        window.editor.folderReveal = EditorWorkspace.FolderReveal(path: folder)
+        ui.showPlane(.files)
+    }
+
     private func closePalette() {
         ui.paletteVisible = false
     }
@@ -783,13 +867,14 @@ struct RootView: View {
             HStack(spacing: 0) {
                 terminal.frame(maxWidth: .infinity, maxHeight: .infinity)
                 Rectangle().fill(Theme.divider).frame(width: 1)
-                CodeEditorView(workspace: window.editor, rootDirectory: window.editorRootDirectory)
+                CodeEditorView(workspace: window.editor, rootDirectory: window.editorRootDirectory,
+                               revealFolder: revealInFiles)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         } else {
             terminal.overlay { terminalOverlay }
                 .overlay {
-                    if terminalDisconnected {
+                    if terminalDisconnected && window.activeContainerLog == nil {
                         TerminalDisconnectedCard {
                             terminalDisconnected = false
                             terminalGeneration += 1
@@ -805,7 +890,9 @@ struct RootView: View {
     /// area, so a board slides out from behind the sidebar, not over it.
     private var terminalOverlay: some View {
         ZStack {
-                    if let agent = window.agentUIHandoff {
+                    if window.activeContainerLog != nil {
+                        Theme.terminalBackground
+                    } else if let agent = window.agentUIHandoff {
                         AgentUIHandoffView(agent: agent)
                     } else if let review = ui.review {
                         DiffReviewView(model: review, store: store) { window.toggleReview() }
@@ -813,7 +900,8 @@ struct RootView: View {
                             .onAppear { DebugSnapshot.overlay("review", true) }
                             .onDisappear { DebugSnapshot.overlay("review", false) }
                     } else if window.editor.isPresented, window.editor.presentation == .full {
-                        CodeEditorView(workspace: window.editor, rootDirectory: window.editorRootDirectory)
+                        CodeEditorView(workspace: window.editor, rootDirectory: window.editorRootDirectory,
+                               revealFolder: revealInFiles)
                     } else if let conversation = agents.active(in: window.focusedWorkspace?.workspaceId) {
                         ConversationView(session: conversation, client: store.client)
                             .id(conversation.id)
@@ -839,6 +927,11 @@ struct RootView: View {
                                                 cellSize: terminalAnchor.cellSize, contentLeft: terminalAnchor.contentLeft)
                             LiveScrollPills(watcher: liveScroll, layout: layout)
                         }
+                    }
+                    ForEach(window.containerLogs.tabs) { tab in
+                        let shown = window.activeContainerLog?.id == tab.id
+                        ContainerLogsPlane(context: tab.context, containerID: tab.containerID, name: tab.name, visible: shown)
+                            .opacity(shown ? 1 : 0).allowsHitTesting(shown).accessibilityHidden(!shown)
                     }
                     if let dragged = tabDrag.tabId, let showing = splitTargetTab(for: dragged) {
                         splitDropLayer(moving: dragged, into: showing)
@@ -896,7 +989,7 @@ struct RootView: View {
     private var panelCoversTerminal: Bool {
         (ui.sidePanelVisible && ui.sidePanelMaximized) || ui.settingsVisible || ui.marketplaceVisible
             || ui.usageBreakdownVisible || ui.pullRequests != nil || ui.review != nil
-            || window.agentUIHandoff != nil || boardHere != nil
+            || window.agentUIHandoff != nil || boardHere != nil || window.activeContainerLog != nil
             || agents.active(in: window.focusedWorkspace?.workspaceId) != nil
             || (window.editor.isPresented && window.editor.presentation == .full)
     }
@@ -966,7 +1059,7 @@ struct RootView: View {
     /// terminal is what's showing. The tab in front dropped on its own edge
     /// splits the screen there with a fresh shell; another tab moves in.
     private func splitTargetTab(for dragged: String) -> String? {
-        guard boardHere == nil, agents.active(in: window.focusedWorkspace?.workspaceId) == nil,
+        guard window.activeContainerLog == nil, boardHere == nil, agents.active(in: window.focusedWorkspace?.workspaceId) == nil,
               let showing = window.displayedFocusedTabId else { return nil }
         return showing
     }
@@ -1147,6 +1240,20 @@ private struct WindowTransparency: NSViewRepresentable {
 }
 
 final class UIState: ObservableObject {
+    @Published var panelWorkspaceID: String?
+    var panelTerminalExited: Set<String> = []
+    var panelTerminalSurfaces: [String: TerminalEngine.SurfaceView] = [:]
+    var panelBrowserPages: [String: BrowserPage] = [:]
+    var workspaceClosedPlanes: [String: [Plane]] = [:]
+    var restoringWorkspacePanel = false
+    var panelDefaults = UserDefaults.standard
+    @Published var additionalPlaneShortcuts = UserDefaults.standard.string(forKey: "octet.additionalPlaneShortcuts") ?? "" {
+        didSet { saveWorkspacePanel() }
+    }
+    @Published var planeSplitWeights: [String: CGFloat] = [:] { didSet { saveWorkspacePanel() } }
+    @Published var panelFolded: Set<String> = [] { didSet { saveWorkspacePanel() } }
+    @Published var panelOpened: Set<String> = [] { didSet { saveWorkspacePanel() } }
+
     /// Hint labels over the terminal, while they're up.
     @Published var hints: HintsSession?
     /// Palette items to open straight into, the first that exists.
@@ -1167,8 +1274,8 @@ final class UIState: ObservableObject {
     /// The right panel, with every section (`SidePanel`).
     @Published var sidePanelVisible = UserDefaults.standard.bool(forKey: "octet.sidePanelVisible") {
         didSet {
-            UserDefaults.standard.set(sidePanelVisible, forKey: "octet.sidePanelVisible")
-            if !sidePanelVisible {
+            saveWorkspacePanel()
+            if !sidePanelVisible && !restoringWorkspacePanel {
                 // T3 Code: hiding the panel over a streaming device floats
                 // it over the terminal. Said before the plane hears it's
                 // hidden, so the stream is handed over, not restarted.
@@ -1199,18 +1306,31 @@ final class UIState: ObservableObject {
     /// The panel's planes, left to right, kept across launches.
     @Published var planes: [Plane] = UIState.savedPlanes() {
         didSet {
-            if let data = try? JSONEncoder().encode(planes) { UserDefaults.standard.set(data, forKey: "octet.planes") }
+            saveWorkspacePanel()
         }
     }
     /// The plane in front, by id.
-    @Published var activePlaneId: String? = UserDefaults.standard.string(forKey: "octet.activePlane") {
-        didSet { UserDefaults.standard.set(activePlaneId, forKey: "octet.activePlane") }
+    @Published var activePlaneId: String? = UserDefaults.standard.string(forKey: "octet.activePlane").map(Plane.migratedID) {
+        didSet {
+            saveWorkspacePanel()
+            if !restoringWorkspacePanel, let activePlaneId, splitPlaneIds.count > 1, !splitPlaneIds.contains(activePlaneId) {
+                let index = oldValue.flatMap { splitPlaneIds.firstIndex(of: $0) } ?? (splitPlaneIds.count - 1)
+                splitPlaneIds[index] = activePlaneId
+            }
+        }
     }
+    @Published var splitPlaneIds = UserDefaults.standard.stringArray(forKey: "octet.splitPlanes") ?? [] {
+        didSet { saveWorkspacePanel() }
+    }
+    @Published var splitSideBySide = UserDefaults.standard.bool(forKey: "octet.splitSideBySide") {
+        didSet { saveWorkspacePanel() }
+    }
+
     /// What planes say about themselves on their tabs, e.g. "#12" in green.
     @Published var planeBadges: [String: PlaneBadge] = [:]
     /// The panel over the whole window's content, the terminal left as it is
-    /// underneath. Not kept across launches: Octet opens on the terminal.
-    @Published var sidePanelMaximized = false
+    /// underneath. Restored with this workspace’s other panel settings.
+    @Published var sidePanelMaximized = false { didSet { saveWorkspacePanel() } }
 
     private static func savedPlanes() -> [Plane] {
         // Before planes the panel had fixed pages; start from the usual two.
@@ -1218,19 +1338,22 @@ final class UIState: ObservableObject {
         // ever the last session's end: start from the usual two again.
         guard let data = UserDefaults.standard.data(forKey: "octet.planes"),
               let planes = try? JSONDecoder().decode([Plane].self, from: data), !planes.isEmpty else { return Plane.defaults }
-        return planes
+        return Plane.consolidated(planes, active: UserDefaults.standard.string(forKey: "octet.activePlane"))
     }
 
     /// The plane in front: the chosen one, else the first.
     var activePlane: Plane? { planes.first { $0.id == activePlaneId } ?? planes.first }
 
     /// Whether a plane of this kind is in front of a visible panel.
-    func showing(_ kind: PlaneKind) -> Bool { sidePanelVisible && activePlane?.kind == kind }
+    func showing(_ kind: PlaneKind) -> Bool { sidePanelVisible && planes.contains { $0.kind == kind && visiblePlaneIds.contains($0.id) } }
 
     /// Adds a plane, or brings forward the one there, and shows it.
     func addPlane(_ kind: PlaneKind, number: Int? = nil) {
         let plane = Plane.make(kind, number: number)
-        if !planes.contains(where: { $0.id == plane.id }) { planes.append(plane) }
+        if plane.kind == .pullRequests, let index = planes.firstIndex(where: { $0.id == plane.id }) {
+            planes[index] = plane
+            planeBadges[plane.id] = nil
+        } else if !planes.contains(where: { $0.id == plane.id }) { planes.append(plane) }
         activePlaneId = plane.id
         sidePanelVisible = true
     }
@@ -1281,7 +1404,7 @@ final class UIState: ObservableObject {
     }
 
     /// Planes closed this session, newest last, for Reopen Closed Plane.
-    private(set) var closedPlanes: [Plane] = []
+    var closedPlanes: [Plane] = []
 
     /// Brings back the plane closed last, where it was.
     func reopenClosedPlane() {
@@ -1296,12 +1419,20 @@ final class UIState: ObservableObject {
         let closingActive = activePlane.map(shouldClose) ?? false
         closedPlanes.append(contentsOf: planes.filter(shouldClose))
         closedPlanes = Array(closedPlanes.suffix(20))
+        for plane in planes.filter(shouldClose) {
+            panelTerminalSurfaces.removeValue(forKey: plane.id)
+            panelTerminalExited.remove(plane.id)
+            if plane.kind == .browser, let workspace = panelWorkspaceID {
+                panelBrowserPages.removeValue(forKey: workspace)
+            }
+        }
         planes.removeAll(where: shouldClose)
+        splitPlaneIds = splitPlaneIds.filter { id in planes.contains { $0.id == id } }
+        if splitPlaneIds.count < 2 { splitPlaneIds = [] }
         planeBadges = planeBadges.filter { id, _ in planes.contains { $0.id == id } }
-        if planes.isEmpty {
-            sidePanelVisible = false
-        } else if closingActive, let activeIndex {
-            activePlaneId = planes[min(activeIndex, planes.count - 1)].id
+        // An empty panel stays open: the launcher is its getting-started view.
+        if !planes.isEmpty, closingActive, let activeIndex {
+            activePlaneId = splitPlaneIds.first ?? planes[min(activeIndex, planes.count - 1)].id
         }
     }
 
@@ -1322,7 +1453,7 @@ final class UIState: ObservableObject {
 
     /// Shows the panel with `section` open and in view, on its plane.
     func showSidePanel(_ section: SidePanelSection) {
-        showPlane(section == .files ? .git : .overview)
+        showPlane(section == .todos ? .todos : section == .files ? .git : .overview)
         sidePanelJump = SidePanelJump(section: section)
     }
 
@@ -1353,6 +1484,10 @@ final class UIState: ObservableObject {
     var seenRuntimeEntryIDs: Set<String> = []
     /// Whether the agent in front has any runtimes, set by the Runtime panel
     /// (which works them out); the tab bar hides its button when it has none.
+    @Published var availablePanelWidth: CGFloat = 1200
+    var presentedSidePanelWidth: CGFloat {
+        AgentPresentationLogic.panelWidth(normal: sidePanelWidth, available: availablePanelWidth)
+    }
     @Published var runtimeHasEntries = false
     /// Runtimes opened in place in the list, to show their details.
     @Published var runtimeExpandedEntryIDs: Set<String> = []
@@ -1372,7 +1507,7 @@ final class UIState: ObservableObject {
         let saved = UserDefaults.standard.double(forKey: "octet.sidePanelWidth")
         return saved > 0 ? max(UIState.sidePanelMinWidth, CGFloat(saved)) : SidePanel.width
     }() {
-        didSet { UserDefaults.standard.set(Double(sidePanelWidth), forKey: "octet.sidePanelWidth") }
+        didSet { saveWorkspacePanel() }
     }
     static let sidePanelMinWidth: CGFloat = 260
 }
@@ -1480,14 +1615,21 @@ private struct TitleBar: View {
             .accessibilityLabel(ui.sidebarVisible ? "Hide sidebar" : "Show sidebar")
             // Pane layouts from plugins (Pane Layouts ships with Octet).
             LayoutPickerButton()
-            // What the agents have left, and whether anything has an update.
-            AccountChips(runningAgents: runningAgents) { ui.usageBreakdownVisible = true }
-                .padding(.leading, 4)
-            UpdatesButton()
+            // Whether Octet or an agent tool has an update waiting.
+            UpdatesButton().padding(.leading, 4)
             Spacer()
             // A connected engine is the normal state and says nothing worth a
             // badge; only the wait for one does.
-            if !store.isConnected { connectingIndicator.padding(.trailing, 10) }
+            if !store.isConnected { connectingIndicator }
+            // The Usage page, then what the agents have left: its chips open
+            // their card on hover.
+            OctetIconButton(icon: "chart.bar.xaxis", help: "Usage", active: ui.usageBreakdownVisible) {
+                MotionPreferences.shared.perform(.palette, .easeOut(duration: 0.15)) {
+                    ui.usageBreakdownVisible.toggle()
+                }
+            }
+            AccountChips(runningAgents: runningAgents) { ui.usageBreakdownVisible = true }
+                .padding(.trailing, 10)
         }
         // Centered on the window, not between the uneven side groups.
         .overlay {
@@ -1598,6 +1740,7 @@ private struct RootDialogHosts: ViewModifier {
         content
             .overlay { AgentUpdateDialog(center: AgentUpdateCenter.shared) }
             .overlay { ConfirmDialog(center: confirmations) }
+            .overlay { DelegationApprovalDialog(center: DelegationApprovalCenter.shared) }
             // Set Up Devices, over the whole window rather than the panel.
             .overlay { if let model = ui.deviceSetup { DeviceSetupSheet(model: model) } }
             .overlay { PastePreviewDialog(center: PastePreviewCenter.shared, store: store) }

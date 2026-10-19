@@ -4,26 +4,33 @@ import SwiftUI
 /// An agent's Markdown reply, drawn natively block by block.
 struct MarkdownView: View {
     let text: String
+    @Environment(\.transcriptFindMarks) private var marks
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(MarkdownBlock.parse(text).enumerated()), id: \.offset) { _, block in
-                blockView(block)
+            ForEach(Array(MarkdownBlock.parse(text).enumerated()), id: \.offset) { index, block in
+                blockView(block, at: index)
             }
         }
     }
 
+    /// The words of a block, with the find bar's matches marked.
+    private func inline(_ text: String, at block: Int) -> AttributedString {
+        let rendered = Self.inline(text)
+        return marks?.mark(rendered, field: TranscriptFind.key(block: block)) ?? rendered
+    }
+
     @ViewBuilder
-    private func blockView(_ block: MarkdownBlock) -> some View {
+    private func blockView(_ block: MarkdownBlock, at index: Int) -> some View {
         switch block {
         case .paragraph(let text):
-            Text(Self.inline(text))
+            Text(inline(text, at: index))
                 .font(.system(size: 13))
                 .foregroundStyle(Theme.textPrimary)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
         case .heading(let level, let text):
-            Text(Self.inline(text))
+            Text(inline(text, at: index))
                 .font(.system(size: level <= 1 ? 17 : level == 2 ? 15 : 13.5, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
                 .textSelection(.enabled)
@@ -35,7 +42,7 @@ struct MarkdownView: View {
                     .font(.system(size: 13).monospacedDigit())
                     .foregroundStyle(Theme.textTertiary)
                     .frame(minWidth: 14, alignment: .trailing)
-                Text(Self.inline(text))
+                Text(inline(text, at: index))
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.textPrimary)
                     .textSelection(.enabled)
@@ -43,16 +50,16 @@ struct MarkdownView: View {
             }
             .padding(.leading, CGFloat(depth) * 16)
         case .quote(let text):
-            Text(Self.inline(text))
+            Text(inline(text, at: index))
                 .font(.system(size: 13))
                 .foregroundStyle(Theme.textSecondary)
                 .textSelection(.enabled)
                 .padding(.leading, 10)
                 .overlay(alignment: .leading) { Rectangle().fill(Theme.border).frame(width: 2) }
         case .code(let language, let text):
-            CodePanel(text: text, language: language)
+            CodePanel(text: text, language: language, findField: TranscriptFind.key(block: index))
         case .table(let header, let rows):
-            MarkdownTable(header: header, rows: rows)
+            MarkdownTable(header: header, rows: rows, block: index)
         case .rule:
             Rectangle().fill(Theme.divider).frame(height: 1).padding(.vertical, 4)
         }
@@ -60,8 +67,7 @@ struct MarkdownView: View {
 
     /// Bold, italics, code spans and links, keeping line breaks.
     static func inline(_ text: String) -> AttributedString {
-        (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
-            ?? AttributedString(text)
+        TranscriptFind.inline(text)
     }
 }
 
@@ -77,6 +83,9 @@ struct CodePanel: View {
     var maxLines = 18
     /// Syntax colors for code; plain tint for output and JSON.
     var highlights = true
+    /// Which of the find bar's fields this panel's text is, when it is searched.
+    var findField: Int?
+    @Environment(\.transcriptFindMarks) private var marks
     @State private var copied = false
 
     static func highlighted(_ text: String) -> AttributedString {
@@ -87,6 +96,11 @@ struct CodePanel: View {
             result += CodeColors.attributed(line, state: &state)
         }
         return result
+    }
+
+    private func marked(_ text: AttributedString) -> AttributedString {
+        guard let findField, let marks else { return text }
+        return marks.mark(text, field: findField)
     }
 
     var body: some View {
@@ -123,7 +137,7 @@ struct CodePanel: View {
             GeometryReader { geometry in
                 ScrollView([.horizontal, .vertical], showsIndicators: false) {
                     Group {
-                        if highlights { Text(Self.highlighted(shown)) } else { Text(shown).foregroundStyle(tint) }
+                        if highlights { Text(marked(Self.highlighted(shown))) } else { Text(marked(AttributedString(shown))).foregroundStyle(tint) }
                     }
                         .font(Theme.monoFont)
                         .textSelection(.enabled)
@@ -248,21 +262,24 @@ struct DiffView: View {
 struct MarkdownTable: View {
     let header: [String]
     let rows: [[String]]
+    /// The Markdown block this is, for the find bar's fields.
+    var block = 0
+    @Environment(\.transcriptFindMarks) private var marks
 
     var body: some View {
         let columns = header.count
         Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
             GridRow {
                 ForEach(0..<columns, id: \.self) { column in
-                    cell(header[column], bold: true)
+                    cell(header[column], bold: true, at: column)
                 }
             }
             .background(Theme.card)
-            ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+            ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
                 Divider().overlay(Theme.divider)
                 GridRow {
                     ForEach(0..<columns, id: \.self) { column in
-                        cell(column < row.count ? row[column] : "", bold: false)
+                        cell(column < row.count ? row[column] : "", bold: false, at: columns * (rowIndex + 1) + column)
                     }
                 }
             }
@@ -272,8 +289,9 @@ struct MarkdownTable: View {
         .fixedSize(horizontal: false, vertical: true)
     }
 
-    private func cell(_ text: String, bold: Bool) -> some View {
-        Text(MarkdownView.inline(text))
+    private func cell(_ text: String, bold: Bool, at cell: Int) -> some View {
+        let rendered = MarkdownView.inline(text)
+        return Text(marks?.mark(rendered, field: TranscriptFind.key(block: block, cell: cell)) ?? rendered)
             .font(.system(size: 12.5, weight: bold ? .semibold : .regular))
             .foregroundStyle(bold ? Theme.textPrimary : Theme.textSecondary)
             .textSelection(.enabled)

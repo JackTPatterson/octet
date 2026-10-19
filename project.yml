@@ -16,7 +16,7 @@ settings:
     # The generated Info.plist takes its version from these; without them
     # the app ships with no version at all.
     MARKETING_VERSION: "0.1.0"
-    CURRENT_PROJECT_VERSION: "21"
+    CURRENT_PROJECT_VERSION: "23"
     # The release stage shown beside the sidebar button; empty for a
     # stable release, which shows none.
     OCTET_PRERELEASE: "beta"
@@ -123,10 +123,13 @@ targets:
     platform: macOS
     sources:
       - path: OctetCLI
+      - path: Octet/Planes/IssueConnections.swift
+      - path: Octet/Agent/LoginShell.swift
       - path: Shared
     settings:
       base:
         PRODUCT_NAME: octet-cli
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) OCTET_CLI"
   OctetTests:
     type: bundle.unit-test
     platform: macOS

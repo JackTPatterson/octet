@@ -100,7 +100,23 @@ final class ProjectAgentModel: ObservableObject {
             ?? snapshot.directory(ofWorkspace: workspace)
     }
 
+    #if DEBUG
+    /// Verification and demos: made-up rules. Nothing is read or written.
+    private var sampling = false
+
+    func loadSample() {
+        sampling = true
+        localRules = ["Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(npm test:*)", "Bash(npm run build:*)",
+                      "Bash(swift test:*)", "Bash(xcodegen generate)", "Bash(ls:*)", "WebFetch(domain:docs.swift.org)",
+                      "mcp__linear__create_issue", "mcp__linear__list_issues"]
+        sharedRules = ["Bash(make lint:*)", "Read(~/Developer/**)"]
+    }
+    #endif
+
     func refresh(force: Bool = false) {
+        #if DEBUG
+        if sampling { return }
+        #endif
         guard let window, !reading else { return }
         // Only while the panel is showing the overview, unless something changed.
         guard force || window.ui.showing(.overview) else { return }
@@ -231,18 +247,23 @@ final class ProjectAgentModel: ObservableObject {
 // MARK: - The section
 
 /// Agent Setup in the right panel's Overview: shown only when it has
-/// something to say. Whether the agents read the same instructions, with
-/// the one-click fix, and what's always allowed in this project.
+/// something to say. It starts as one line ("12 allowed commands · 2 MCP");
+/// open, it says whether the agents read the same instructions, with the
+/// one-click fix, and lists what's always allowed in this project.
 struct ProjectAgentSection: View {
     @ObservedObject var model: ProjectAgentModel
     @ObservedObject private var discovery = AgentDiscoveryStore.shared
     @State private var showingShared = false
+    @State private var showingAllCommands = false
+    @State private var showingAllMCP = false
 
     var body: some View {
         if model.hasContent {
-            SidePanelSectionView(.setup, count: model.localRules.isEmpty ? nil : model.localRules.count,
-                                 label: model.needsSharing ? "Share instructions" : nil, labelColor: Color.orange) {
-                VStack(alignment: .leading, spacing: 10) {
+            SidePanelSectionView(.setup,
+                                 label: model.needsSharing ? "Share instructions"
+                                     : AgentSetupSummary.summary(rules: model.localRules + model.sharedRules),
+                                 labelColor: model.needsSharing ? Color.orange : nil) {
+                VStack(alignment: .leading, spacing: 12) {
                     if model.needsSharing { instructions }
                     if !model.localRules.isEmpty || !model.sharedRules.isEmpty { rules }
                 }
@@ -253,7 +274,7 @@ struct ProjectAgentSection: View {
     private var instructions: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
-                Circle().fill(Color.orange).frame(width: 6, height: 6)
+                OctetIcon("exclamationmark.triangle.fill", size: 12).foregroundStyle(Color.orange)
                 Text("Instructions").font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary)
             }
             Text(model.instructions.summary)
@@ -269,30 +290,69 @@ struct ProjectAgentSection: View {
     }
 
     private var rules: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Text("ALWAYS ALLOWED HERE").font(Theme.headerFont).kerning(0.4).foregroundStyle(Theme.textTertiary)
-                Spacer()
-                if !model.localRules.isEmpty {
-                    Button("Show File") { model.revealRules() }
-                        .buttonStyle(.plain).font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
-                        .help("Open .claude/settings.local.json in Finder")
-                }
-            }
-            ForEach(model.localRules, id: \.self) { rule in
-                RuleRow(rule: rule, removable: true) { model.removeRule(rule) }
+        let commands = model.localRules.filter { !AgentSetupSummary.isMCP($0) }
+        let mcp = model.localRules.filter(AgentSetupSummary.isMCP)
+        return VStack(alignment: .leading, spacing: 10) {
+            if !model.localRules.isEmpty {
+                group("Commands", rules: commands, showingAll: $showingAllCommands, trailing: true)
+                group("MCP tools", rules: mcp, showingAll: $showingAllMCP, trailing: commands.isEmpty)
             }
             if !model.sharedRules.isEmpty {
-                if model.localRules.isEmpty || showingShared {
-                    ForEach(model.sharedRules, id: \.self) { rule in RuleRow(rule: rule, removable: false) {} }
-                }
-                if !model.localRules.isEmpty {
-                    Button(showingShared ? "Hide the project's rules" : "and \(model.sharedRules.count) from the project's settings") {
-                        showingShared.toggle()
+                VStack(alignment: .leading, spacing: 1) {
+                    if !model.localRules.isEmpty {
+                        Button {
+                            MotionPreferences.shared.perform(.sidebar) { showingShared.toggle() }
+                        } label: {
+                            HStack(spacing: 4) {
+                                OctetIcon("chevron.right", size: 10).rotationEffect(.degrees(showingShared ? 90 : 0))
+                                Text("\(model.sharedRules.count) from the project's settings").font(Theme.captionFont)
+                            }
+                            .foregroundStyle(Theme.textTertiary)
+                            .padding(.horizontal, 6)
+                            .frame(height: 22)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityValue(showingShared ? "Expanded" : "Collapsed")
+                    } else {
+                        subheading("Allowed by the project")
                     }
-                    .buttonStyle(.plain).font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
-                    .padding(.top, 2)
+                    if model.localRules.isEmpty || showingShared {
+                        ForEach(model.sharedRules, id: \.self) { rule in RuleRow(rule: rule, removable: false) {} }
+                    }
                 }
+            }
+        }
+    }
+
+    private func subheading(_ title: String) -> some View {
+        Text(title.uppercased())
+            .font(Theme.headerFont).kerning(0.4)
+            .foregroundStyle(Theme.textTertiary)
+            .padding(.horizontal, 6)
+            .padding(.bottom, 2)
+    }
+
+    /// One kind of always-allowed rule, the first few and the rest behind
+    /// "See all". The first group carries the "Show File" link.
+    @ViewBuilder
+    private func group(_ title: String, rules: [String], showingAll: Binding<Bool>, trailing: Bool) -> some View {
+        if !rules.isEmpty {
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 6) {
+                    subheading("\(title) · \(rules.count)")
+                    Spacer(minLength: 0)
+                    if trailing {
+                        Button("Show File") { model.revealRules() }
+                            .buttonStyle(.plain).font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
+                            .help("Open .claude/settings.local.json in Finder")
+                    }
+                }
+                ForEach(showingAll.wrappedValue ? rules : Array(rules.prefix(6)), id: \.self) { rule in
+                    RuleRow(rule: rule, removable: true) { model.removeRule(rule) }
+                }
+                SidePanelMore(total: rules.count, showingAll: showingAll, shown: 6)
+                    .padding(.horizontal, 6)
             }
         }
     }
@@ -306,7 +366,7 @@ private struct RuleRow: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Text(rule)
+            Text(AgentSetupSummary.display(rule: rule))
                 .font(Theme.monoFont)
                 .foregroundStyle(removable ? Theme.textPrimary : Theme.textTertiary)
                 .lineLimit(1)
@@ -324,8 +384,8 @@ private struct RuleRow: View {
             }
         }
         .padding(.horizontal, 6)
-        .frame(height: 22)
-        .background(RoundedRectangle(cornerRadius: Theme.rowRadius).fill(hovered ? Theme.hover : Color.clear))
+        .frame(height: 24)
+        .background(RoundedRectangle(cornerRadius: Theme.controlRadius).fill(hovered ? Theme.hover : Color.clear))
         .onHover { hovered = $0 }
         .help(rule)
     }

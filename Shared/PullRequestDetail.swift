@@ -264,6 +264,9 @@ struct PullRequestDetail: Equatable {
         let verdict: Verdict
         let body: String
         let submittedAt: Date?
+        /// For reacting to it; nil from sources that don't give one.
+        var nodeId: String? = nil
+        var reactions: [PullRequestReactionCount] = []
     }
 
     struct Comment: Equatable {
@@ -271,6 +274,8 @@ struct PullRequestDetail: Equatable {
         let body: String
         let createdAt: Date?
         let url: URL?
+        var nodeId: String? = nil
+        var reactions: [PullRequestReactionCount] = []
     }
 
     struct Commit: Equatable {
@@ -312,6 +317,8 @@ struct PullRequestDetail: Equatable {
     var labels: [PullRequestLabel]
     /// Logins of people asked to review, and team names.
     var reviewRequests: [String]
+    /// The same, with which are teams, for taking a request back.
+    var reviewTargets: [PullRequestReviewTarget] = []
     var latestReviews: [Review]
     var checks: [PullRequestCheck]
     var comments: [Comment]
@@ -344,7 +351,8 @@ struct PullRequestDetail: Equatable {
         func reviews(_ value: Any?) -> [Review] {
             (value as? [[String: Any]] ?? []).map { item in
                 Review(author: login(item["author"]), verdict: Verdict(item["state"] as? String ?? ""),
-                       body: item["body"] as? String ?? "", submittedAt: date(item["submittedAt"]))
+                       body: item["body"] as? String ?? "", submittedAt: date(item["submittedAt"]),
+                       nodeId: item["id"] as? String, reactions: PullRequestReactionCount.parse(item["reactionGroups"]))
             }
         }
         let requests = (json["reviewRequests"] as? [[String: Any]] ?? []).compactMap { item -> String? in
@@ -353,7 +361,8 @@ struct PullRequestDetail: Equatable {
         }
         let comments = (json["comments"] as? [[String: Any]] ?? []).map { item in
             Comment(author: login(item["author"]), body: item["body"] as? String ?? "",
-                    createdAt: date(item["createdAt"]), url: (item["url"] as? String).flatMap(URL.init(string:)))
+                    createdAt: date(item["createdAt"]), url: (item["url"] as? String).flatMap(URL.init(string:)),
+                    nodeId: item["id"] as? String, reactions: PullRequestReactionCount.parse(item["reactionGroups"]))
         }
         let commits = (json["commits"] as? [[String: Any]] ?? []).map { item in
             let authors = item["authors"] as? [[String: Any]] ?? []
@@ -390,6 +399,7 @@ struct PullRequestDetail: Equatable {
             author: login(json["author"]),
             labels: (json["labels"] as? [[String: Any]] ?? []).compactMap(PullRequestLabel.parse),
             reviewRequests: requests,
+            reviewTargets: PullRequestReviewTarget.parseRequests(json["reviewRequests"] as? [[String: Any]] ?? []),
             latestReviews: reviews(json["latestReviews"]),
             checks: PullRequestCheck.parseRollup(json["statusCheckRollup"]),
             comments: comments,
@@ -446,6 +456,9 @@ struct PullRequestDetail: Equatable {
         let text: String
         let body: String
         let date: Date?
+        /// The comment's node id and reactions, for the ones that take them.
+        var subjectId: String? = nil
+        var reactions: [PullRequestReactionCount] = []
         /// Order among events at the same moment, so Opened stays first.
         let sequence: Int
         var id: Int { sequence }
@@ -457,18 +470,22 @@ struct PullRequestDetail: Equatable {
     /// nothing on its own.
     func timeline(newestFirst: Bool) -> [TimelineItem] {
         var items: [TimelineItem] = []
-        func add(_ kind: TimelineItem.Kind, _ author: String, _ text: String, _ body: String = "", _ date: Date?) {
-            items.append(TimelineItem(kind: kind, author: author, text: text, body: body, date: date, sequence: items.count))
+        func add(_ kind: TimelineItem.Kind, _ author: String, _ text: String, _ body: String = "", _ date: Date?,
+                 subjectId: String? = nil, reactions: [PullRequestReactionCount] = []) {
+            items.append(TimelineItem(kind: kind, author: author, text: text, body: body, date: date,
+                                      subjectId: subjectId, reactions: reactions, sequence: items.count))
         }
         add(.opened, author, "Opened", "", createdAt)
         for commit in commits {
             add(.commit(sha: commit.oid), commit.author, commit.headline, "", commit.date)
         }
         for review in reviews where !(review.verdict == .commented && review.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
-            add(.review(review.verdict), review.author, review.verdict.title, review.body, review.submittedAt)
+            add(.review(review.verdict), review.author, review.verdict.title, review.body, review.submittedAt,
+                subjectId: review.nodeId, reactions: review.reactions)
         }
         for comment in comments {
-            add(.comment, comment.author, Self.firstLines(comment.body), comment.body, comment.createdAt)
+            add(.comment, comment.author, Self.firstLines(comment.body), comment.body, comment.createdAt,
+                subjectId: comment.nodeId, reactions: comment.reactions)
         }
         if state == "MERGED" {
             add(.merged, "", "Merged", "", mergedAt ?? closedAt)

@@ -15,6 +15,7 @@ struct RuntimePanel: View {
     @ObservedObject private var codexAgents = CodexAgentsStore.shared
     @ObservedObject private var motion = MotionPreferences.shared
     @State private var flashingEntryIDs: Set<String> = []
+    @State private var collapsedBranches: Set<String> = []
     /// Counts auto-close timers, so only the latest one closes the panel.
     @State private var autoCloseGeneration = 0
     /// How long a panel that opened itself stays open when not hovered.
@@ -47,6 +48,7 @@ struct RuntimePanel: View {
         .onChange(of: workspaceId) { _, _ in
             ui.seenRuntimeEntryIDs.formUnion(entries.map(\.id))
             flashingEntryIDs = []
+            collapsedBranches = []
             ui.runtimeExpandedEntryIDs = []
             reload()
         }
@@ -55,6 +57,7 @@ struct RuntimePanel: View {
             // in the previous scope stay open while the new list loads.
             withoutLayoutAnimation { ui.runtimeExpandedEntryIDs = [] }
             flashingEntryIDs = []
+            collapsedBranches = []
             ui.seenRuntimeEntryIDs.formUnion(entries.map(\.id))
             reload()
         }
@@ -69,33 +72,192 @@ struct RuntimePanel: View {
         .onReceive(refresh) { _ in reload() }
     }
 
+    #if DEBUG
+    nonisolated(unsafe) static var debugSample = false
+    /// ":sample:<variant>": "empty" shows nothing running, "partial" only
+    /// subagents and shells; anything else is the full set.
+    nonisolated(unsafe) static var debugVariant: String?
+
+    /// Made-up subagents, background tasks, monitors and shells.
+    private static var sampleEntries: [RuntimeEntry] {
+        func entry(_ id: String, _ kind: RuntimeKind, _ title: String, _ detail: String, location: String = "Fix the upload retry",
+                   command: String? = nil, prompt: String? = nil, output: String? = nil, process: String? = nil,
+                   depth: Int = 0, seed: Int = 0, agent: String? = nil, model: String? = nil,
+                   since: TimeInterval? = nil, pid: Int? = nil, pane: String? = nil) -> RuntimeEntry {
+            RuntimeEntry(id: id, kind: kind, title: title, detail: detail, location: location, command: command,
+                         prompt: prompt, output: output, process: process, depth: depth, accentSeed: seed,
+                         agentID: agent, modelName: model, paneId: pane,
+                         liveSince: since.map { Date().addingTimeInterval(-$0) }, pid: pid, parentID: id == "s1a" || id == "s1b" ? "s1" : nil)
+        }
+        let agents = [
+            entry("s1", .agent, "Explore the retry logic", "Working", command: nil,
+                  prompt: "Find every place uploads are retried and report what backoff each one uses.",
+                  output: "Found 3 call sites: Uploader.retry, Queue.drain and the share extension.",
+                  process: "Reading Sources/App/Uploader.swift", seed: 0, agent: "claude", model: "Sonnet 5.5", since: 94, pane: "p1"),
+            entry("s1a", .agent, "Trace Uploader.retry callers", "Working", prompt: "Who calls Uploader.retry, and with what limit?",
+                  output: "Queue.drain and ShareViewController.", process: "Searching for \"retry(\"",
+                  depth: 1, seed: 3, agent: "claude", model: "Haiku 5.5", since: 31, pane: "p2"),
+            entry("s1b", .agent, "Read the queue drain loop", "Needs input", prompt: "Summarise Queue.drain.",
+                  output: "Waiting for permission to read ~/Library/Caches.", process: "Waiting for permission",
+                  depth: 1, seed: 2, agent: "claude", model: "Haiku 5.5", since: 22),
+            entry("s2", .agent, "Write the backoff tests", "Working", prompt: "Cover the cap at 30 seconds and the jitter.",
+                  output: "RetryTests.swift: 4 cases written, running them now.", process: "Running swift test",
+                  depth: 0, seed: 1, agent: "claude", model: "Opus 5.5", since: 41, pid: 4242),
+            entry("s3", .agent, "Check the share extension", "Finished", prompt: "Does the extension use the same retry path?",
+                  output: "It does not: it has its own loop in ShareViewController.", process: "Finished",
+                  depth: 0, seed: 2, agent: "claude", model: "Haiku 5.5"),
+        ]
+        let tasks = [
+            entry("t1", .task, "swift test --parallel", "Running", command: "swift test --parallel",
+                  output: "Test Suite 'All tests' started\nTest Case 'RetryTests.testCap' passed (0.002 seconds)",
+                  process: "swift-test", since: 63, pid: 4243),
+            entry("t2", .task, "xcodebuild archive", "Running", command: "xcodebuild -scheme App archive",
+                  output: "Compiling 214 files…", process: "xcodebuild", since: 212, pid: 4244),
+            entry("t3", .task, "Lint the sources", "Failed", command: "swiftlint --strict",
+                  output: "Uploader.swift:88: error: line_length\nswiftlint exited with code 2", process: "swiftlint"),
+        ]
+        let monitors = [
+            entry("m1", .monitor, "Watching build/ for changes", "Active", command: "fswatch -o build",
+                  output: "3 events in the last minute", process: "fswatch", since: 1480),
+            entry("m2", .monitor, "Tailing the dev server", "Active", command: "tail -f logs/dev.log",
+                  output: "GET /api/upload 200 41ms\nPOST /api/upload 503 (retry 2 of 5)", process: "tail", since: 905),
+            entry("m3", .monitor, "CI: Build and test on master", "Waiting", command: "gh run watch",
+                  output: "Build and test in progress (2m 11s)", process: "gh", since: 130),
+        ]
+        let shells = [
+            entry("h1", .shell, "zsh", "Active", location: "Fix the upload retry", command: "zsh"),
+            entry("h2", .shell, "bash", "Active", location: "Dev server", command: "bash"),
+            entry("h3", .shell, "fish", "Active", location: "Scratch", command: "fish"),
+        ]
+        switch debugVariant {
+        case "empty": return []
+        case "partial": return agents + shells
+        default: return agents + tasks + monitors + shells
+        }
+    }
+    #endif
+
     /// One stack, so the modifiers on it run once, not per section.
     private var runtimeContent: some View {
-        VStack(alignment: .leading, spacing: 6) { runtimeList(entries) }
-    }
-
-    /// Every kind is a section, with 0 when it has nothing, so the page
-    /// keeps its shape.
-    private func runtimeList(_ current: [RuntimeEntry]) -> some View {
-        ForEach(RuntimeKind.allCases) { kind in
-            let rows = current.filter { $0.kind == kind }
-            SidePanelSectionView(kind.section, count: rows.count) {
-                if PlaneLoadingPreview.shows("overview") || (rows.isEmpty && store.loadingPaneProcesses
-                    && (targetPanes.contains { store.paneProcesses[$0.paneId] == nil }
-                        || activeSession.map { store.nativeRuntimeProcesses[$0.id] == nil } == true)) {
-                    VStack(spacing: 2) {
-                        ForEach(0..<2, id: \.self) { _ in PlaneSkeletonRow(width: 150, height: 36, detail: true) }
+        VStack(alignment: .leading, spacing: 8) {
+            runtimeList(entries, kinds: [.agent])
+            let background = entries.filter { $0.kind != .agent }
+            if !background.isEmpty {
+                SidePanelSectionView(.activity, trailing: {
+                    HStack(spacing: 4) {
+                        activityChip(.task, title: "Tasks", icon: "checklist", entries: background)
+                        activityChip(.monitor, title: "Monitors", icon: "eye", entries: background)
+                        activityChip(.shell, title: "Shells", icon: "terminal", entries: background)
                     }
-                } else if rows.isEmpty {
-                    Text(kind.emptyText)
-                        .font(Theme.captionFont)
-                        .foregroundStyle(Theme.textTertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                } else {
-                    section(kind, rows: rows)
+                }) {
+                    runtimeList(background, kinds: [.task, .monitor, .shell])
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private func activityChip(_ kind: RuntimeKind, title: String, icon: String, entries: [RuntimeEntry]) -> some View {
+        let count = entries.filter { $0.kind == kind }.count
+        if count > 0 {
+            Button {
+                motion.perform(.sidebar) {
+                    ui.setPanelSection(.activity, open: true)
+                    ui.setPanelSection(kind.section, open: true)
+                }
+            } label: {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 4) {
+                        Text(title)
+                        Text("\(count)").monospacedDigit().foregroundStyle(Theme.textPrimary)
+                    }.fixedSize()
+                    HStack(spacing: 4) {
+                        OctetIcon(icon, size: 10)
+                        Text("\(count)").monospacedDigit().foregroundStyle(Theme.textPrimary)
+                    }.fixedSize()
+                }
+                .font(Theme.interfaceFont(10))
+                .foregroundStyle(Theme.textSecondary)
+                .padding(.horizontal, 6).frame(height: 19)
+                .background(Theme.hover, in: Capsule())
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .help("Show \(count) \(title.lowercased())")
+            .accessibilityLabel("\(title), \(count)")
+        }
+    }
+
+    /// Every kind is a section so each stays discoverable: one with work
+    /// shows its rows; one with none is a single quiet line ("None").
+    private func runtimeList(_ current: [RuntimeEntry], kinds: [RuntimeKind]) -> some View {
+        ForEach(kinds) { kind in
+            let rows = current.filter { $0.kind == kind }
+            let loading = PlaneLoadingPreview.shows("overview") || AgentPresentationLogic.showsInitialRuntimeLoading(
+                rowCount: rows.count, scanning: store.loadingPaneProcesses,
+                hasUnscannedPane: targetPanes.contains { !store.scannedRuntimePaneIDs.contains($0.paneId) },
+                hasUnscannedNativeRoot: activeSession.map {
+                    $0.conversation.isRunning && $0.runtimePID != nil && store.nativeRuntimeProcesses[$0.id] == nil
+                } ?? false)
+            if kind == .agent {
+                if loading { OverviewRowsSkeleton(rows: 2, tree: true).padding(8) }
+                else if rows.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("No subagents yet").font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary)
+                        Text("Agents started by this tab will appear here with their progress and results.")
+                            .font(Theme.uiFont).foregroundStyle(Theme.textSecondary)
+                    }.frame(maxWidth: .infinity, alignment: .leading).padding(16)
+                } else { section(kind, rows: rows).padding(.vertical, 10).padding(.horizontal, 4) }
+            } else if !OverviewSections.isQuiet(count: rows.count, loading: loading) {
+                SidePanelSectionView(kind.section, count: loading ? nil : rows.count) {
+                    if loading {
+                        OverviewRowsSkeleton(rows: 2, tree: kind == .agent)
+                    } else {
+                        section(kind, rows: rows)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Stops the process behind a row.
+    private func stop(_ entry: RuntimeEntry) {
+        guard let pid = entry.pid else { return }
+        if kill(pid_t(pid), SIGTERM) != 0, errno != ESRCH {
+            ToastCenter.shared.fail(nil, "Couldn't stop \(entry.title)", detail: String(cString: strerror(errno)))
+        } else {
+            ToastCenter.shared.info("Stopped \(entry.title)")
+            reload()
+        }
+    }
+
+    private func copy(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        ClipboardWatcher.shared.acknowledge()
+    }
+
+    /// The row's ⋯ menu, also its right-click menu.
+    private func menu(for entry: RuntimeEntry) -> [OctetMenuItem] {
+        var items: [OctetMenuItem] = []
+        let expanded = ui.runtimeExpandedEntryIDs.contains(entry.id)
+        items.append(.action(expanded ? "Hide details" : "Show details and output",
+                             icon: expanded ? "chevron.down" : "chevron.right") { toggle(entry) })
+        if let paneId = entry.paneId, entry.kind == .agent {
+            items.append(.action("Show tab", icon: "arrow.right.square") { window.focusAgent(paneId: paneId) })
+        }
+        items.append(.divider)
+        if let command = entry.command ?? entry.prompt, !command.isEmpty {
+            items.append(.action(entry.kind == .agent ? "Copy prompt" : "Copy command", icon: "doc.on.doc") { copy(command) })
+        }
+        if let output = entry.output, !output.isEmpty {
+            items.append(.action("Copy latest output", icon: "doc.on.doc") { copy(output) })
+        }
+        if entry.pid != nil, entry.state != .done {
+            items.append(.divider)
+            items.append(.action("Stop", icon: "xmark.octagon", destructive: true) { stop(entry) })
+        }
+        return items
     }
 
     /// Opens or closes a row in place.
@@ -116,14 +278,49 @@ struct RuntimePanel: View {
     }
 
     private func section(_ kind: RuntimeKind, rows: [RuntimeEntry]) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            ForEach(rows) { row in
+        // Keep ancestry correct even when process discovery returns children first.
+        let ordered: [RuntimeEntry] = kind == .agent
+            ? RuntimeTree.order(rows, id: { $0.id }, parent: { $0.parentID }).map { entry, depth in
+                var row = entry; row.depth = depth; return row
+            } : rows
+        let visible = AgentPresentationLogic.visibleIDs(ordered.map { (id: $0.id, depth: $0.depth) }, collapsed: collapsedBranches)
+        let shown = ordered.filter { visible.contains($0.id) }
+        let guides = TreeGuides.compute(depths: kind == .agent ? shown.map(\.depth) : shown.map { _ in 0 })
+        return VStack(alignment: .leading, spacing: 1) {
+            if kind == .agent {
+                HStack(spacing: 10) {
+                    ForEach([RuntimeState.running, .waiting, .failed, .done], id: \.title) { state in
+                        let count = rows.filter { $0.state == state }.count
+                        if count > 0 {
+                            Text("\(count) \(state == .waiting ? "need you" : state.title.lowercased())")
+                                .foregroundStyle(state == .running ? Theme.textSecondary : state.color)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }.font(Theme.captionFont).padding(.horizontal, 8).padding(.bottom, 8)
+            }
+            ForEach(Array(shown.enumerated()), id: \.element.id) { index, row in
                 RuntimeRow(entry: row,
+                           guide: guides[index],
                            flashes: flashingEntryIDs.contains(row.id),
-                           expanded: ui.runtimeExpandedEntryIDs.contains(row.id)) { toggle(row) }
+                           expanded: ui.runtimeExpandedEntryIDs.contains(row.id),
+                           toggle: { toggle(row) },
+                           focus: row.kind == .agent ? row.paneId.map { paneId in { window.focusAgent(paneId: paneId) } } : nil,
+                           stop: row.pid != nil && row.state != .done && row.kind != .shell ? { stop(row) } : nil,
+                           menu: { menu(for: row) },
+                           childCount: rows.filter { $0.parentID == row.id }.count,
+                           branchCollapsed: collapsedBranches.contains(row.id),
+                           toggleBranch: {
+                               motion.perform(.sidebar, .spring(response: 0.32, dampingFraction: 0.86)) {
+                                   if !collapsedBranches.insert(row.id).inserted { collapsedBranches.remove(row.id) }
+                               }
+                           })
                     .id(row.id)
+                    .transition(motion.animates(.sidebar)
+                        ? .opacity.combined(with: .offset(y: 6)) : .identity)
             }
         }
+        .animation(motion.animation(.sidebar, .spring(response: 0.32, dampingFraction: 0.86)), value: shown.map(\.id))
     }
 
     private func revealNewEntries(_ ids: [String]) {
@@ -158,6 +355,10 @@ struct RuntimePanel: View {
     }
 
     private var entries: [RuntimeEntry] {
+        #if DEBUG
+        // Verification and demos: "planes:overview:sample" shows made-up work.
+        if Self.debugSample { return Self.sampleEntries }
+        #endif
         let snapshot = store.snapshot
         var result: [RuntimeEntry] = []
 
@@ -200,7 +401,8 @@ struct RuntimePanel: View {
                                            process: status == .done ? "Finished" : "Working in its tab",
                                            depth: viewer.depth, accentSeed: Self.seed(viewer.agent.paneId),
                                            agentID: viewer.agent.agent ?? "claude", modelName: nil,
-                                           paneId: viewer.agent.paneId, autoReveal: true))
+                                           paneId: viewer.agent.paneId, autoReveal: true,
+                                           parentID: viewer.agent.parentPaneId.map { "subagent-tab-" + $0 }))
             }
         }
 
@@ -271,7 +473,8 @@ struct RuntimePanel: View {
                                 process: Self.commandName(agent.agent), depth: depth,
                                 accentSeed: Self.seed(agent.agent), agentID: agent.agent, modelName: nil,
                                 paneId: agent.paneId,
-                                sessionId: sessionId, autoReveal: true)
+                                sessionId: sessionId, autoReveal: true, pid: agent.pid,
+                                parentID: ids.contains(agent.parentPid) ? "process-agent-\(agent.parentPid)" : nil)
         }
     }
 
@@ -358,7 +561,8 @@ struct RuntimePanel: View {
                             agentID: runtime.kind == .agent ? "claude" : nil,
                             modelName: runtime.kind == .agent ? session.map(modelName(for:)) : nil,
                             paneId: paneId, sessionId: session?.id, autoReveal: true,
-                            liveSince: carried || runtime.kind == .monitor ? nil : runtime.startedAt)
+                            liveSince: carried || runtime.kind == .monitor ? nil : runtime.startedAt,
+                            parentID: runtime.parentId.map { (carried ? "carried-" : "log-") + $0 })
     }
 
     private func activeMonitors(in session: AgentSession) -> [RuntimeEntry] {
@@ -401,11 +605,12 @@ struct RuntimePanel: View {
             let description = input["description"] as? String
             let executable = command.split(whereSeparator: \.isWhitespace).first
                 .map { Self.commandName(String($0)) }
-            let hasProcess = executable.map { expected in
-                (store.nativeRuntimeProcesses[session.id] ?? []).contains {
+            let runningProcess = executable.flatMap { expected in
+                (store.nativeRuntimeProcesses[session.id] ?? []).first {
                     Self.commandName($0.name).caseInsensitiveCompare(expected) == .orderedSame
                 }
-            } ?? false
+            }
+            let hasProcess = runningProcess != nil
             // A replayed log is full of background calls from processes that
             // have since exited; only this process's own may still be running.
             let current = session.processStartedAt.map { item.createdAt >= $0 } ?? false
@@ -418,12 +623,12 @@ struct RuntimePanel: View {
                                 process: command.split(whereSeparator: \.isWhitespace).first.map(String.init),
                                 depth: 0, accentSeed: Self.seed(item.id),
                                 agentID: nil, modelName: nil,
-                                paneId: nil, sessionId: session.id, autoReveal: true)
+                                paneId: nil, sessionId: session.id, autoReveal: true,
+                                pid: runningProcess?.pid)
         }
     }
 
     private func activeSubagents(in session: AgentSession) -> [RuntimeEntry] {
-        guard session.conversation.isRunning else { return [] }
         let now = Date()
         let calls: [(item: AgentItem, call: AgentToolCall)] = session.conversation.items.compactMap { item in
             guard case .tool(let call) = item.kind,
@@ -438,7 +643,9 @@ struct RuntimePanel: View {
         // Replayed launches without a result were cut off with an earlier
         // process, not running now.
         let started = session.processStartedAt ?? .distantFuture
-        var visible = Set(calls.filter { $0.call.result == nil && $0.item.createdAt >= started }.map { $0.item.id })
+        var visible = Set(calls.filter {
+            $0.item.createdAt >= started && ($0.call.result != nil || session.conversation.isRunning)
+        }.map { $0.item.id })
         // Keep the ownership chain visible even if an agent's launch call has
         // already returned while one of its descendants is still working.
         var frontier = Array(visible)
@@ -479,13 +686,14 @@ struct RuntimePanel: View {
             let elapsed = max(0, Int(now.timeIntervalSince(item.createdAt)))
             return RuntimeEntry(id: "agent-\(item.id)", kind: .agent,
                                 title: title.isEmpty ? "Subagent" : title,
-                                detail: call.result == nil ? "\(elapsed)s" : "Parent",
+                                detail: call.isError ? "Failed" : call.result == nil ? "\(elapsed)s" : "Finished",
                                 location: session.title, command: prompt,
                                 prompt: prompt, output: output, process: process,
                                 depth: depth, accentSeed: Self.seed(item.id),
-                                agentID: session.engine.agent, modelName: modelName(for: session),
+                                agentID: session.engine.agent, modelName: (input["model"] as? String) ?? modelName(for: session),
                                 paneId: nil, sessionId: session.id, autoReveal: true,
-                                liveSince: call.result == nil ? item.createdAt : nil)
+                                liveSince: call.result == nil ? item.createdAt : nil,
+                                parentID: item.parent.map { "agent-" + $0 })
         }
     }
 
@@ -526,10 +734,11 @@ struct RuntimePanel: View {
     }
 }
 
-private enum RuntimeKind: String, CaseIterable, Identifiable {
+enum RuntimeKind: String, CaseIterable, Identifiable {
     case agent, task, monitor, shell
     var id: String { rawValue }
     var title: String { section.title }
+    var singular: String { String(title.dropLast()) }
     var section: SidePanelSection {
         switch self {
         case .monitor: .monitors
@@ -538,6 +747,7 @@ private enum RuntimeKind: String, CaseIterable, Identifiable {
         case .shell: .shells
         }
     }
+    /// Said as a tooltip on a kind with nothing running.
     var emptyText: String {
         switch self {
         case .monitor: "No monitors. Builds and watchers the agent runs in the background show here."
@@ -548,7 +758,7 @@ private enum RuntimeKind: String, CaseIterable, Identifiable {
     }
 }
 
-private struct RuntimeEntry: Identifiable {
+struct RuntimeEntry: Identifiable {
     let id: String
     let kind: RuntimeKind
     let title: String
@@ -558,7 +768,7 @@ private struct RuntimeEntry: Identifiable {
     let prompt: String?
     let output: String?
     let process: String?
-    let depth: Int
+    var depth: Int
     let accentSeed: Int
     let agentID: String?
     let modelName: String?
@@ -570,6 +780,11 @@ private struct RuntimeEntry: Identifiable {
     /// Still running since then: the row counts up each second in place of
     /// `detail`.
     var liveSince: Date? = nil
+    /// The process behind it, when one can be named to stop.
+    var pid: Int? = nil
+    var parentID: String? = nil
+
+    var state: RuntimeState { RuntimeState.classify(detail: detail) }
 
     var tint: Color {
         guard kind == .agent else {
@@ -578,234 +793,5 @@ private struct RuntimeEntry: Identifiable {
         let colors = [Theme.palette.syntaxBuiltin, Theme.palette.syntaxFlag, Theme.palette.syntaxString,
                       Theme.palette.syntaxPath, Theme.palette.syntaxVariable]
         return Color(hex: colors[accentSeed % colors.count])
-    }
-}
-
-/// One runtime, as an accordion: the summary is always there, and a click
-/// opens its details beneath it, inside the same card.
-private struct RuntimeRow: View {
-    let entry: RuntimeEntry
-    let flashes: Bool
-    let expanded: Bool
-    let toggle: () -> Void
-    @ObservedObject private var motion = MotionPreferences.shared
-    @State private var hovered = false
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 0) {
-            if entry.depth > 0 {
-                Color.clear.frame(width: CGFloat(entry.depth - 1) * 12)
-                Image(systemName: "arrow.turn.down.right")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(entry.tint.opacity(0.72))
-                    .frame(width: 22)
-                    .padding(.top, 9)
-                    .accessibilityHidden(true)
-            }
-            VStack(alignment: .leading, spacing: 0) {
-                summary
-                if expanded {
-                    RuntimeDetails(entry: entry)
-                        .transition(motion.animates(.sidebar)
-                            ? .asymmetric(insertion: .opacity.combined(with: .offset(y: -6)), removal: .opacity)
-                            : .identity)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(flashes ? entry.tint.opacity(0.22)
-                        : expanded ? entry.tint.opacity(0.07)
-                        : hovered ? Theme.hover : Theme.card)
-            .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius)
-                .strokeBorder(expanded ? entry.tint.opacity(0.42) : Theme.border, lineWidth: 1))
-            .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .animation(motion.animation(.sidebar, .easeOut(duration: 0.55)), value: flashes)
-        .animation(motion.animation(.sidebar, .easeOut(duration: 0.14)), value: hovered)
-    }
-
-    /// The row's always-visible line, which opens and closes it.
-    private var summary: some View {
-        Button(action: toggle) {
-            HStack(alignment: .top, spacing: 8) {
-                RuntimeGlyph(entry: entry, size: 14).frame(width: 18)
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack {
-                        Text(entry.title).font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                        if let modelName = entry.modelName, !modelName.isEmpty {
-                            Text(modelName)
-                                .font(Theme.captionFont)
-                                .foregroundStyle(entry.tint)
-                                .lineLimit(1)
-                        }
-                        Spacer(minLength: 4)
-                        Group {
-                            if let since = entry.liveSince { ElapsedLabel(since: since) } else { Text(entry.detail) }
-                        }
-                        .font(Theme.captionFont).foregroundStyle(Theme.textTertiary).lineLimit(1)
-                    }
-                    Text(entry.location)
-                        .font(Theme.captionFont)
-                        .foregroundStyle(Theme.textTertiary)
-                        .lineLimit(1)
-                }
-                OctetIcon("chevron.right", size: 11)
-                    .foregroundStyle(expanded ? entry.tint : hovered ? Theme.textSecondary : Theme.textTertiary)
-                    .rotationEffect(.degrees(expanded ? 90 : 0))
-                    .padding(.top, 2)
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 7)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovered = $0 }
-        .help(expanded ? "Hide details" : "Show details")
-        .accessibilityLabel("\(entry.title), level \(entry.depth + 1), \(entry.detail), \(entry.location)")
-        .accessibilityValue(expanded ? "Expanded" : "Collapsed")
-        .accessibilityHint(expanded ? "Hides the details" : "Shows the details")
-    }
-}
-
-/// What a runtime row shows when open: its status, what it was asked or
-/// runs, its latest output, and where it belongs.
-private struct RuntimeDetails: View {
-    let entry: RuntimeEntry
-    @EnvironmentObject private var window: WindowContext
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Rectangle().fill(entry.tint.opacity(0.25)).frame(height: 1)
-            if let paneId = entry.paneId, entry.kind == .agent {
-                OctetButton(title: "Show Tab", kind: .secondary, compact: true) {
-                    window.focusAgent(paneId: paneId)
-                }
-            }
-            RuntimeDetailSection(title: "Status", tint: entry.tint) {
-                HStack(spacing: 7) {
-                    LoadingLine(width: 16, color: entry.tint)
-                    Text(entry.process ?? (entry.kind == .monitor ? "Watching" : "Active"))
-                        .font(Theme.uiFontMedium)
-                        .foregroundStyle(Theme.textPrimary)
-                        .lineLimit(1)
-                }
-            }
-            if let prompt = entry.prompt ?? entry.command, !prompt.isEmpty {
-                RuntimeDetailSection(title: entry.kind == .agent ? "Assigned prompt" : "Command", tint: entry.tint) {
-                    ExpandableText(text: prompt, font: entry.kind == .agent ? Theme.uiFont : Theme.monoFont)
-                }
-            }
-            if let output = entry.output, !output.isEmpty {
-                RuntimeDetailSection(title: "Latest output", tint: entry.tint) {
-                    ExpandableText(text: output, font: Theme.uiFont)
-                }
-            }
-            RuntimeDetailSection(title: "Context", tint: entry.tint) {
-                VStack(alignment: .leading, spacing: 4) {
-                    metadata("Session", entry.location)
-                    metadata("Runtime", String(entry.kind.title.dropLast()))
-                    if entry.kind == .agent { metadata("Hierarchy", "Level \(entry.depth + 1)") }
-                }
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.bottom, 10)
-    }
-
-    private func metadata(_ label: String, _ value: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(label).foregroundStyle(Theme.textTertiary).frame(width: 62, alignment: .leading)
-            Text(value).foregroundStyle(Theme.textPrimary).textSelection(.enabled).lineLimit(2)
-        }
-        .font(Theme.captionFont)
-    }
-}
-
-private struct RuntimeDetailSection<Content: View>: View {
-    let title: String
-    let tint: Color
-    let content: Content
-
-    init(title: String, tint: Color, @ViewBuilder content: () -> Content) {
-        self.title = title
-        self.tint = tint
-        self.content = content()
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(title.uppercased())
-                .font(Theme.headerFont)
-                .kerning(0.35)
-                .foregroundStyle(tint)
-            content
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-}
-
-/// Long prompts and output start at a few lines, so one open row doesn't
-/// push the rest of the list away; "Show all" opens the rest.
-private struct ExpandableText: View {
-    let text: String
-    let font: Font
-    static let collapsedLines = 6
-    @ObservedObject private var motion = MotionPreferences.shared
-    @State private var showsAll = false
-
-    private var isLong: Bool {
-        text.count > 360 || text.reduce(0) { $1 == "\n" ? $0 + 1 : $0 } >= Self.collapsedLines
-    }
-
-    /// The opening lines, cut here rather than by a line limit: selectable
-    /// text draws every line however few it was given room for, so a long
-    /// prompt ran over the sections below it.
-    private var collapsed: String {
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).prefix(Self.collapsedLines)
-        var shown = lines.joined(separator: "\n")
-        if shown.count > 360 { shown = String(shown.prefix(360)) }
-        return shown.count < text.count ? shown.trimmingCharacters(in: .whitespacesAndNewlines) + "…" : shown
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(showsAll ? text : collapsed)
-                .font(font)
-                .foregroundStyle(Theme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
-            if isLong {
-                Button(showsAll ? "Show less" : "Show all") {
-                    motion.perform(.sidebar, .smooth(duration: 0.2)) { showsAll.toggle() }
-                }
-                .buttonStyle(.plain)
-                .font(Theme.captionFont.weight(.medium))
-                .foregroundStyle(Theme.accent)
-            }
-        }
-    }
-}
-
-private struct RuntimeGlyph: View {
-    let entry: RuntimeEntry
-    let size: CGFloat
-
-    var body: some View {
-        Group {
-            if entry.kind == .monitor {
-                Image(systemName: "eye")
-                    .font(.system(size: size, weight: .medium))
-                    .foregroundStyle(entry.tint)
-            } else if entry.kind == .task {
-                OctetIcon("clock.arrow.circlepath", size: size).foregroundStyle(entry.tint)
-            } else if entry.kind == .agent, let brand = AgentBrand.forAgent(entry.agentID) {
-                AgentLogo(brand: brand, size: size)
-            } else if entry.kind == .agent {
-                OctetIcon("tool.agent", size: size).foregroundStyle(entry.tint)
-            } else {
-                OctetIcon("terminal", size: size).foregroundStyle(entry.tint)
-            }
-        }
-        .accessibilityHidden(true)
     }
 }

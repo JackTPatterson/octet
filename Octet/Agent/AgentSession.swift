@@ -2515,6 +2515,8 @@ final class AgentSession: ObservableObject, Identifiable {
     /// Where the transcript was scrolled to when the view went away (the
     /// item at the top), nil when it was following the latest.
     var transcriptReadingAt: String?
+    /// The conversation's find bar (Command-F).
+    let find = TranscriptFindState()
 
     @Published private(set) var shellRuns: [ShellPassthrough.Run] = []
     /// The `!` command running now.

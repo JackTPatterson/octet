@@ -148,11 +148,18 @@ struct PullRequestSummaryTab: View {
     @State private var bodyDraft = ""
     @State private var bodyHovered = false
     @State private var addingReviewer = false
-    @State private var reviewerDraft = ""
     @State private var pickingLabels = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if let error = model.actionError {
+                // Over the rows it's about; a click dismisses it.
+                ServiceBanner(text: error)
+                    .padding(.horizontal, -8)
+                    .contentShape(Rectangle())
+                    .onTapGesture { model.dismissActionError() }
+                    .help("Dismiss")
+            }
             metaRow("Reviewers", icon: "person.2") {
                 let reviewers = detail.reviewers
                 if reviewers.isEmpty {
@@ -163,9 +170,14 @@ struct PullRequestSummaryTab: View {
                     }
                 }
             } trailing: {
-                OctetIconButton(icon: "person.badge.plus", help: "Ask someone to review") { addingReviewer = true }
-                    .disabled(!detail.isOpen)
-                    .popover(isPresented: $addingReviewer, arrowEdge: .bottom) { reviewerPopover }
+                OctetIconButton(icon: "person.badge.plus", help: "Ask someone to review") {
+                    model.loadReviewCandidates()
+                    addingReviewer = true
+                }
+                .disabled(!detail.isOpen)
+                .popover(isPresented: $addingReviewer, arrowEdge: .bottom) {
+                    PullRequestReviewerPicker(model: model, detail: detail)
+                }
             }
             metaRow("Labels", icon: "tag") {
                 if detail.labels.isEmpty {
@@ -217,7 +229,7 @@ struct PullRequestSummaryTab: View {
                         .padding(.bottom, 8)
                 } else {
                     VStack(alignment: .leading, spacing: 10) {
-                        ForEach(conversation) { item in PullRequestCommentCard(item: item) }
+                        ForEach(conversation) { item in PullRequestCommentCard(item: item, model: model) }
                     }
                     .padding(.bottom, 8)
                 }
@@ -276,26 +288,6 @@ struct PullRequestSummaryTab: View {
         }
     }
 
-    private var reviewerPopover: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Request a Review").font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary)
-            OctetTextField(placeholder: "GitHub username", text: $reviewerDraft) { addReviewer() }
-            HStack {
-                Spacer()
-                OctetButton(title: "Request", kind: .primary, compact: true) { addReviewer() }
-                    .disabled(reviewerDraft.trimmingCharacters(in: .whitespaces).isEmpty)
-            }
-        }
-        .padding(12)
-        .frame(width: 260)
-        .background(Theme.card)
-    }
-
-    private func addReviewer() {
-        model.addReviewer(reviewerDraft)
-        reviewerDraft = ""
-        addingReviewer = false
-    }
 }
 
 private struct PullRequestReviewerChip: View {
@@ -415,6 +407,7 @@ private struct PullRequestLabelPicker: View {
 /// A comment or review in the Comments section.
 private struct PullRequestCommentCard: View {
     let item: PullRequestDetail.TimelineItem
+    @ObservedObject var model: PullRequestPlaneModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -435,6 +428,9 @@ private struct PullRequestCommentCard: View {
             }
             if !item.body.isEmpty {
                 MarkdownView(text: item.body)
+            }
+            if let subjectId = item.subjectId {
+                PullRequestReactionBar(model: model, subjectId: subjectId, reactions: item.reactions)
             }
         }
         .padding(10)

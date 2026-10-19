@@ -30,6 +30,9 @@ final class ToastCenter: ObservableObject {
     struct Handle { fileprivate let id: UUID }
 
     @Published private(set) var toasts: [Toast] = []
+    /// When each finished toast goes away; a toast under the pointer is held.
+    private var deadlines: [UUID: Date] = [:]
+    private var held: [UUID: TimeInterval] = [:]
 
     static let progressDelay: TimeInterval = 0.2
     static let maxVisible = 4
@@ -72,6 +75,31 @@ final class ToastCenter: ObservableObject {
 
     func dismiss(_ id: UUID) {
         toasts.removeAll { $0.id == id }
+        deadlines[id] = nil
+        held[id] = nil
+    }
+
+    /// The pointer is on a toast: it stays until the pointer leaves.
+    func hold(_ id: UUID) {
+        guard let deadline = deadlines[id] else { return }
+        held[id] = max(2, deadline.timeIntervalSinceNow)
+        deadlines[id] = nil
+    }
+
+    /// The pointer left: the toast gets what time it had left, at least 2s.
+    func release(_ id: UUID) {
+        guard let remaining = held.removeValue(forKey: id) else { return }
+        schedule(id, after: remaining)
+    }
+
+    private func schedule(_ id: UUID, after seconds: TimeInterval) {
+        let deadline = Date().addingTimeInterval(seconds)
+        deadlines[id] = deadline
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+            // A newer deadline, or a hold, supersedes this one.
+            guard let self, self.deadlines[id] == deadline else { return }
+            self.dismiss(id)
+        }
     }
 
     var visibleToasts: [Toast] {
@@ -94,9 +122,7 @@ final class ToastCenter: ObservableObject {
             id = toast.id
         }
         trim()
-        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
-            self?.dismiss(id)
-        }
+        schedule(id, after: seconds)
     }
 
     private func trim() {
@@ -107,7 +133,8 @@ final class ToastCenter: ObservableObject {
     }
 }
 
-/// Toast stack, bottom-right, card styling.
+/// Toast stack, bottom-right: flat glass cards that slide up, pause while
+/// the pointer is on them, and show their close and copy buttons on hover.
 struct ToastStack: View {
     @ObservedObject var center: ToastCenter
     @ObservedObject private var motion = MotionPreferences.shared
@@ -120,74 +147,85 @@ struct ToastStack: View {
                 ToastCard(toast: toast, perform: { action in
                     center.dismiss(toast.id)
                     action.perform()
-                }) { center.dismiss(toast.id) }
+                }, dismiss: { center.dismiss(toast.id) },
+                   hover: { inside in
+                    if inside { center.hold(toast.id) } else { center.release(toast.id) }
+                })
                     .frame(width: ToastCard.width, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
-                    .transition(motion.animates(.toasts) ? .move(edge: .trailing).combined(with: .opacity) : .identity)
+                    .transition(motion.animates(.toasts)
+                        ? .move(edge: .bottom).combined(with: .opacity).combined(with: .scale(scale: 0.96, anchor: .bottomTrailing))
+                        : .identity)
             }
         }
         .fixedSize(horizontal: true, vertical: true)
-        .animation(motion.animation(.toasts, .easeOut(duration: 0.18)), value: center.visibleToasts)
+        .animation(motion.animation(.toasts, .smooth(duration: 0.24)), value: center.visibleToasts)
         .padding(16)
         .background(HostWindowReader(host: host))
     }
 }
 
 private struct ToastCard: View {
-    static let width: CGFloat = 360
+    static let width: CGFloat = 348
 
     let toast: ToastCenter.Toast
     let perform: (ToastCenter.Action) -> Void
     let dismiss: () -> Void
+    let hover: (Bool) -> Void
+    @State private var hovered = false
+    @State private var copied = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            icon.frame(width: 16, height: 16)
-            VStack(alignment: .leading, spacing: 2) {
+            icon.frame(width: 16, height: 16).padding(.top, 1)
+            VStack(alignment: .leading, spacing: 3) {
                 Text(toast.title)
                     .font(Theme.uiFontMedium)
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(2)
                 if let detail = toast.detail, !detail.isEmpty {
                     Text(detail)
-                        .font(Theme.uiFont)
+                        .font(Theme.interfaceFont(12))
                         .foregroundStyle(Theme.textSecondary)
                         .lineLimit(4)
+                        .textSelection(.enabled)
+                }
+                if let action = toast.action {
+                    OctetButton(title: action.title, kind: .secondary, compact: true) { perform(action) }
+                        .padding(.top, 4)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .fixedSize(horizontal: false, vertical: true)
-            if let action = toast.action {
-                Button(action.title) { perform(action) }
-                    .font(Theme.uiFontMedium)
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Theme.accent)
-                    .padding(.horizontal, 8)
-                    .frame(height: 22)
-                    .background(Theme.accent.opacity(0.14))
-                    .clipShape(RoundedRectangle(cornerRadius: 5))
-            }
+            // Out of the way until the pointer is on the toast; always there
+            // for a failure, whose details are worth copying.
             if toast.style != .progress {
-                Button(action: dismiss) {
-                    OctetIcon("xmark", size: 16)
+                HStack(spacing: 0) {
+                    if toast.style == .failure, let detail = toast.detail, !detail.isEmpty {
+                        OctetIconButton(icon: copied ? "checkmark" : "doc.on.doc", help: "Copy details", compact: true) {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString("\(toast.title)\n\(detail)", forType: .string)
+                            copied = true
+                        }
+                    }
+                    OctetIconButton(icon: "xmark", help: "Dismiss", compact: true, action: dismiss)
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(Theme.textTertiary)
+                .opacity(hovered || toast.style == .failure ? 1 : 0)
+                .animation(.easeOut(duration: 0.12), value: hovered)
+                .offset(x: 4, y: -3)
             }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(
-            LinearGradient(
-                stops: [
-                    .init(color: accent.opacity(0.28), location: 0),
-                    .init(color: accent.opacity(0), location: 0.5),
-                ],
-                startPoint: .leading,
-                endPoint: .trailing
-            )
-        )
+        .padding(.vertical, 11)
         .octetGlass(cornerRadius: Theme.popoverRadius, fill: Theme.card)
+        .overlay(RoundedRectangle(cornerRadius: Theme.popoverRadius, style: .continuous)
+            .strokeBorder(toast.style == .failure ? accent.opacity(0.4) : .clear, lineWidth: 1))
+        .onHover { inside in
+            hovered = inside
+            hover(inside)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel([toast.title, toast.detail].compactMap { $0 }.joined(separator: ". "))
     }
 
     private var accent: Color {

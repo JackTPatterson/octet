@@ -5,12 +5,13 @@ import SwiftUI
 /// The kinds of plane the right panel can show. A plane is one tab in the
 /// panel's strip; the "+" picker adds them, after T3 Code's surfaces.
 enum PlaneKind: String, Codable, CaseIterable, Identifiable {
-    case overview, diff, files, git, pullRequest, pullRequests, terminal, browser, device
+    case overview, todos, diff, files, git, pullRequest, pullRequests, terminal, browser, device, ci, containers, tickets, containerLogs
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .overview: "Overview"
+        case .overview: "Agents"
+        case .todos: "TODO"
         case .diff: "Diff"
         case .files: "Files"
         case .git: "Git"
@@ -19,20 +20,29 @@ enum PlaneKind: String, Codable, CaseIterable, Identifiable {
         case .terminal: "Terminal"
         case .browser: "Browser"
         case .device: "Device"
+        case .ci: "CI"
+        case .containers: "Containers"
+        case .tickets: "Tickets"
+        case .containerLogs: "Container Logs"
         }
     }
 
     var icon: String {
         switch self {
         case .overview: "list.bullet.rectangle"
+        case .todos: "checklist"
         case .diff: "doc.diff"
         case .files: "folder"
         case .git: "branch"
         case .pullRequest: "pull.request"
-        case .pullRequests: "list"
+        case .pullRequests: "pull.request"
         case .terminal: "terminal"
         case .browser: "safari"
         case .device: "iphone"
+        case .ci: "ci"
+        case .containers: "containers"
+        case .tickets: "tickets"
+        case .containerLogs: "tool.read"
         }
     }
 
@@ -40,6 +50,7 @@ enum PlaneKind: String, Codable, CaseIterable, Identifiable {
     var key: Character {
         switch self {
         case .overview: "o"
+        case .todos: "u"
         case .diff: "d"
         case .files: "f"
         case .git: "g"
@@ -48,12 +59,17 @@ enum PlaneKind: String, Codable, CaseIterable, Identifiable {
         case .terminal: "t"
         case .browser: "b"
         case .device: "m"
+        case .ci: "c"
+        case .containers: "n"
+        case .tickets: "i"
+        case .containerLogs: "v"
         }
     }
 
     var detail: String {
         switch self {
-        case .overview: "Agents, tasks, todos and plugins for the tab in front"
+        case .overview: "Subagents and background activity for this workspace"
+        case .todos: "Agent plans and the project TODO list"
         case .diff: "What changed, file by file, with notes for the agent"
         case .files: "The project's files, to open beside the terminal"
         case .git: "Changes, commits and worktrees"
@@ -62,11 +78,19 @@ enum PlaneKind: String, Codable, CaseIterable, Identifiable {
         case .terminal: "A shell of its own in the panel"
         case .browser: "A page beside the terminal, like your dev server"
         case .device: "Watch and drive an iOS Simulator or Android Emulator"
+        case .ci: "Workflow runs for this repository"
+        case .containers: "Containers in the current Docker context"
+        case .tickets: "Project issues from GitHub, Jira, Linear and more"
+        case .containerLogs: "Logs for a specific Docker container"
         }
     }
 
+    static var addableCases: [PlaneKind] { allCases.filter { $0 != .containerLogs && $0 != .pullRequest } }
+
+    static let starterKinds: [PlaneKind] = [.overview, .todos, .diff, .files, .git, .pullRequests, .terminal, .browser, .device]
+
     /// Kinds that are one per panel: adding another shows the one there.
-    var single: Bool { self != .pullRequest && self != .device && self != .terminal }
+    var single: Bool { self != .pullRequest && self != .device && self != .terminal && self != .containerLogs }
 }
 
 /// One tab in the panel. Pull requests carry their number (none means the
@@ -77,10 +101,14 @@ struct Plane: Codable, Identifiable, Equatable {
     var number: Int?
     /// The simulator or emulator a device plane shows; none is its picker.
     var deviceId: String?
+    var dockerContext: String?
+    var containerID: String?
+    var containerName: String?
 
     static func make(_ kind: PlaneKind, number: Int? = nil, deviceId: String? = nil) -> Plane {
         switch kind {
-        case .pullRequest: Plane(id: "pr:" + (number.map(String.init) ?? "branch"), kind: kind, number: number)
+        case .pullRequest: Plane(id: "pullRequests", kind: .pullRequests, number: number ?? 0)
+        case .pullRequests: Plane(id: "pullRequests", kind: kind, number: number)
         // Several can be open, one per device; each its own tab.
         case .device: Plane(id: "device:" + UUID().uuidString, kind: kind, deviceId: deviceId)
         case .terminal: Plane(id: "terminal:" + UUID().uuidString, kind: kind)
@@ -88,7 +116,22 @@ struct Plane: Codable, Identifiable, Equatable {
         }
     }
 
-    static let defaults: [Plane] = [.make(.overview), .make(.git)]
+    static func migratedID(_ id: String) -> String { id.hasPrefix("pr:") ? "pullRequests" : id }
+
+    static func consolidated(_ planes: [Plane], active: String?) -> [Plane] {
+        let selected = planes.first { $0.id == active && ($0.kind == .pullRequest || $0.kind == .pullRequests) }
+        var seen = Set<String>()
+        return planes.compactMap { old in
+            var plane = old
+            if old.kind == .pullRequest || old.kind == .pullRequests {
+                let chosen = selected ?? old
+                plane = .make(chosen.kind, number: chosen.number)
+            }
+            return seen.insert(plane.id).inserted ? plane : nil
+        }
+    }
+
+    static let defaults: [Plane] = [.make(.overview), .make(.todos), .make(.git)]
 }
 
 /// What a plane shows on its tab beyond its kind: a pull request's number
@@ -107,6 +150,8 @@ struct PlaneBadge: Equatable {
 /// controls: maximize, the terminal drawer, and hide.
 struct PlaneStrip: View {
     @ObservedObject var ui: UIState
+    /// The project in front, whose actions the strip runs.
+    var directory: String?
     @State private var adding = false
     @Namespace private var selection
 
@@ -149,22 +194,16 @@ struct PlaneStrip: View {
             }
             }
             Spacer(minLength: 0)
-            if ui.sidePanelVisible {
-                OctetIconButton(icon: ui.sidePanelMaximized ? "arrow.down.right.and.arrow.up.left"
-                                    : "arrow.up.left.and.arrow.down.right",
-                                help: ui.sidePanelMaximized ? "Restore panel size" : "Maximize panel") {
-                    MotionPreferences.shared.perform(.sidebar) { ui.sidePanelMaximized.toggle() }
-                }
+            PlaneSplitMenu(ui: ui)
+            ProjectActionsControl(ui: ui, directory: directory)
+            OctetIconButton(icon: ui.sidePanelMaximized ? "arrow.down.right.and.arrow.up.left"
+                                : "arrow.up.left.and.arrow.down.right",
+                            help: ui.sidePanelMaximized ? "Restore panel size" : "Maximize panel") {
+                MotionPreferences.shared.perform(.sidebar) { ui.sidePanelMaximized.toggle() }
             }
-            OctetIconButton(icon: "panel.bottom", help: OctetShortcut.terminalDrawer.help("Toggle terminal drawer"),
-                            active: ui.terminalDrawerVisible) {
-                MotionPreferences.shared.perform(.sidebar) { ui.terminalDrawerVisible.toggle() }
-            }
-            OctetIconButton(icon: "sidebar.right", help: OctetShortcut.togglePanel.help("Hide the panel"), active: true) {
-                ui.sidePanelVisible = false
-            }
+            SidePanelButton(ui: ui)
         }
-        .padding(.trailing, 6)
+        .padding(.trailing, 8)
         .frame(height: Theme.tabBarHeight)
     }
 }
@@ -271,12 +310,19 @@ struct PlanePicker: View {
     @ObservedObject var ui: UIState
     var large = false
     var done: () -> Void = {}
+    private var savedShortcuts: String { ui.additionalPlaneShortcuts }
+    private var kinds: [PlaneKind] {
+        guard large else { return PlaneKind.addableCases }
+        return PlaneKind.starterKinds + PlaneKind.addableCases.filter {
+            !PlaneKind.starterKinds.contains($0) && savedShortcuts.split(separator: ",").contains(Substring($0.rawValue))
+        }
+    }
     @State private var highlighted: PlaneKind?
     @FocusState private var focused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
-            ForEach(PlaneKind.allCases) { kind in
+            ForEach(kinds) { kind in
                 row(kind)
             }
         }
@@ -293,7 +339,7 @@ struct PlanePicker: View {
         }
         .onKeyPress { press in
             guard press.modifiers.isEmpty || press.modifiers == .shift,
-                  let kind = PlaneKind.allCases.first(where: { String($0.key) == press.characters.lowercased() })
+                  let kind = kinds.first(where: { String($0.key) == press.characters.lowercased() })
             else { return .ignored }
             add(kind)
             return .handled
@@ -326,7 +372,6 @@ struct PlanePicker: View {
     }
 
     private func move(_ delta: Int) {
-        let kinds = PlaneKind.allCases
         let current = highlighted.flatMap { kinds.firstIndex(of: $0) } ?? (delta > 0 ? -1 : 0)
         highlighted = kinds[(current + delta + kinds.count) % kinds.count]
     }
@@ -340,6 +385,14 @@ struct PlanePicker: View {
 /// The panel with no planes: what can be opened, as a list to pick from.
 struct PlaneLauncher: View {
     @ObservedObject var ui: UIState
+    private var savedShortcuts: String { ui.additionalPlaneShortcuts }
+
+    private var launcherHeight: CGFloat {
+        let added = PlaneKind.addableCases.filter {
+            !PlaneKind.starterKinds.contains($0) && savedShortcuts.split(separator: ",").contains(Substring($0.rawValue))
+        }.count
+        return CGFloat(PlaneKind.starterKinds.count + added) * 41 + 50
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -347,7 +400,14 @@ struct PlaneLauncher: View {
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(Theme.textPrimary)
                 .padding(.horizontal, 10)
-            PlanePicker(ui: ui, large: true)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    PlanePicker(ui: ui, large: true)
+                    PlaneAddMore(ui: ui)
+                }
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            .frame(maxHeight: launcherHeight)
         }
         .frame(maxWidth: 320)
         .padding(20)

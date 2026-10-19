@@ -36,6 +36,8 @@ struct ConversationActionsMenu: View {
         }
         Button("Wait for Something…") { WaitCenter.shared.compose(workspaceId: session.workspaceId, session: session) }
             .help("Set this aside until something happens (a PR merged, a release, a date), and have it brought back with the next step")
+        Button("Check Back…") { CheckInCenter.shared.compose(workspaceId: session.workspaceId, session: session) }
+            .help("For work that takes days or weeks: bring this conversation back on a schedule, resuming it even if it has ended")
         Button("Move To…") { ConversationMover.moveAfterPicking([session], from: session.cwd, window: window) }
             .disabled(!session.canMove)
             .help(session.engine == .claude

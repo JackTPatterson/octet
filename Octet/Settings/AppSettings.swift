@@ -13,6 +13,8 @@ struct OctetSettings: Codable, Equatable {
     /// The hotkey drops a window down from the top of the screen, over
     /// full-screen apps, instead of bringing Octet forward.
     var hotkeyDropDown = false
+    /// The Octet Notch: an island at the top of the screen (see Octet/Notch).
+    var notch = NotchSettings()
     var newPaneDirectory: NewPaneDirectory = .follow
     var defaultShell = ""
     var shellMode: ShellMode = .auto
@@ -112,6 +114,7 @@ struct OctetSettings: Codable, Equatable {
     /// Agents can read the sidebar terminal (read only): a socket the app
     /// listens on and an MCP server in each agent's settings, both only
     /// while this is on. Off by default: a terminal can hold secrets.
+    var agentsReadIssues = false
     var agentsReadSidebarTerminal = false
     var agentsSuggestSidebarCommands = false
     /// Waits: agents can set one (an MCP tool and `octet-cli wait`) when work
@@ -120,6 +123,20 @@ struct OctetSettings: Codable, Equatable {
     var agentsSetWaits = true
     /// Offer to turn "once X happens, we can Y" in an agent's reply into a wait.
     var suggestWaits = true
+    /// Long-haul check-ins: nothing comes round while this is on.
+    var checkInsPaused = false
+    /// What a new check-in does by default: `CheckInMode`.
+    var checkInDefaultMode = "both"
+    /// Say so when a session marked working has done nothing for this long.
+    var stallDetection = true
+    var stallHours: Double = 6
+    /// No prompts sent to agents during these hours; they wait for the end.
+    var quietHours = false
+    var quietStartMinute = 22 * 60
+    var quietEndMinute = 7 * 60
+    /// Schedule macOS notifications for upcoming check-ins, so the reminder
+    /// comes even when Octet isn't running.
+    var checkInsNotifyWhenClosed = true
     /// Put Idle workspaces to sleep (terminals closed, brought back as they
     /// were) after this many days unused; zero never does. Only those where
     /// nothing would be lost: no agent working, nothing running, no server.
@@ -310,6 +327,7 @@ struct OctetSettings: Codable, Equatable {
         confirmQuit = value("confirmQuit", defaults.confirmQuit)
         globalHotkey = value("globalHotkey", defaults.globalHotkey)
         hotkeyDropDown = value("hotkeyDropDown", defaults.hotkeyDropDown)
+        notch = value("notch", defaults.notch)
         newPaneDirectory = value("newPaneDirectory", defaults.newPaneDirectory)
         defaultShell = value("defaultShell", defaults.defaultShell)
         shellMode = value("shellMode", defaults.shellMode)
@@ -375,10 +393,19 @@ struct OctetSettings: Codable, Equatable {
         readClaudeAccountUsage = value("readClaudeAccountUsage", defaults.readClaudeAccountUsage)
         peersEnabled = value("peersEnabled", defaults.peersEnabled)
         delegationEnabled = value("delegationEnabled", defaults.delegationEnabled)
+        agentsReadIssues = value("agentsReadIssues", defaults.agentsReadIssues)
         agentsReadSidebarTerminal = value("agentsReadSidebarTerminal", defaults.agentsReadSidebarTerminal)
         agentsSuggestSidebarCommands = value("agentsSuggestSidebarCommands", defaults.agentsSuggestSidebarCommands)
         agentsSetWaits = value("agentsSetWaits", defaults.agentsSetWaits)
         suggestWaits = value("suggestWaits", defaults.suggestWaits)
+        checkInsPaused = value("checkInsPaused", defaults.checkInsPaused)
+        checkInDefaultMode = value("checkInDefaultMode", defaults.checkInDefaultMode)
+        stallDetection = value("stallDetection", defaults.stallDetection)
+        stallHours = value("stallHours", defaults.stallHours)
+        quietHours = value("quietHours", defaults.quietHours)
+        quietStartMinute = value("quietStartMinute", defaults.quietStartMinute)
+        quietEndMinute = value("quietEndMinute", defaults.quietEndMinute)
+        checkInsNotifyWhenClosed = value("checkInsNotifyWhenClosed", defaults.checkInsNotifyWhenClosed)
         sleepIdleAfterDays = value("sleepIdleAfterDays", defaults.sleepIdleAfterDays)
         delegationApproval = value("delegationApproval", defaults.delegationApproval)
         peerName = value("peerName", defaults.peerName)
@@ -803,6 +830,7 @@ final class SettingsStore: ObservableObject {
     private func apply(from old: OctetSettings) {
         if values.keepAwake != old.keepAwake { SleepGuard.shared.update() }
         if values.globalHotkey != old.globalHotkey { GlobalHotkey.shared.apply(values.globalHotkey) }
+        if values.notch != old.notch { NotchController.shared.apply() }
         // Each feature's tools go into the agents' own settings only while it's on.
         if values.peersEnabled != old.peersEnabled {
             PeerCenter.shared.apply()
@@ -815,6 +843,12 @@ final class SettingsStore: ObservableObject {
         if values.agentsSetWaits != old.agentsSetWaits {
             WaitCenter.shared.applyServer()
             AgentMCPInstaller.shared.sync(server: WaitMCP.serverName)
+        }
+        if values.checkInsPaused != old.checkInsPaused || values.checkInsNotifyWhenClosed != old.checkInsNotifyWhenClosed {
+            CheckInCenter.shared.syncNotifications()
+        }
+        if values.agentsReadIssues != old.agentsReadIssues {
+            AgentMCPInstaller.shared.sync(server: IssueMCP.serverName)
         }
         if values.agentsReadSidebarTerminal != old.agentsReadSidebarTerminal
             || values.agentsSuggestSidebarCommands != old.agentsSuggestSidebarCommands {
