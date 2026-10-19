@@ -113,10 +113,14 @@ extension WindowContext {
     var logAwareVisualTabs: [String] {
         let workspace = focusedWorkspace?.workspaceId
         let conversations = AgentCenter.shared.sessions(in: workspace)
-        return orderedVisualTabs(displayedTabs.filter { !hidesAsConversationBackingTab($0.tabId, sessions: conversations) }.map { "terminal:" + $0.tabId }
-            + conversations.map { "conversation:" + $0.id }
-            + (editor.documents.isEmpty ? [] : ["editor:" + id.uuidString])
-            + workspaceContainerLogs.map(\.visualID))
+        let terminalTabs = displayedTabs.filter {
+            !hidesAsConversationBackingTab($0.tabId, sessions: conversations)
+        }
+        var ids: [String] = terminalTabs.map { "terminal:" + $0.tabId }
+        ids.append(contentsOf: conversations.map { "conversation:" + $0.id })
+        if !editor.documents.isEmpty { ids.append("editor:" + id.uuidString) }
+        ids.append(contentsOf: workspaceContainerLogs.map(\.visualID))
+        return orderedVisualTabs(ids)
     }
 
     var activeVisualTab: String? {
