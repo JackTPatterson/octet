@@ -15,6 +15,7 @@ struct TabBarView: View {
     @State private var dropGap: StripDrop?
 
     var body: some View {
+        let _ = RenderCounter.note("TabBarView")
         let workspaceId = window.focusedWorkspace?.workspaceId
         let conversations = agents.sessions(in: workspaceId)
         let tabs = window.displayedTabs.filter {
@@ -30,6 +31,13 @@ struct TabBarView: View {
             + (showsEditorTab ? ["editor:\(window.id.uuidString)"] : [])
             + window.workspaceContainerLogs.map(\.visualID)
         let orderedIds = window.orderedVisualTabs(currentIds)
+        // The terminal tabs the strip shows, in its order: what the tab menu
+        // moves among and closes, hidden backing tabs left alone.
+        let shownTabIds = orderedIds.compactMap { id -> String? in
+            guard id.hasPrefix("terminal:") else { return nil }
+            let tabId = String(id.dropFirst("terminal:".count))
+            return tabs.contains { $0.tabId == tabId } ? tabId : nil
+        }
         let showingConversation = agents.active(in: workspaceId) != nil
         let surfaceFocused = focusOwner.splitContext == nil || focusOwner.panelContext === window
         // A conversation in front means no terminal tab is.
@@ -53,7 +61,8 @@ struct TabBarView: View {
                                             selection: selection,
                                             handoffTitle: window.agentUIHandoffTabId == tab.tabId
                                                 ? window.agentUIHandoffTitle : nil,
-                                            paneOver: dropGap.map { $0 == .into(position) } ?? false)
+                                            paneOver: dropGap.map { $0 == .into(position) } ?? false,
+                                            shownTabIds: shownTabIds)
                                         .id(tab.tabId)
                                 } else if id.hasPrefix("conversation:"),
                                           let session = conversations.first(where: { "conversation:\($0.id)" == id }) {
@@ -280,6 +289,8 @@ private struct TabItem: View {
     let handoffTitle: String?
     /// A pane dragged by its handle is over this tab's middle: it would join it.
     var paneOver = false
+    /// The strip's terminal tabs in order, for the menu's moves and closes.
+    var shownTabIds: [String] = []
     @ObservedObject private var motion = MotionPreferences.shared
     @ObservedObject private var prompts = PromptQueueCenter.shared
     /// Holding ⌘ shows each tab's ⌘-number; rebinding redraws the labels.
@@ -298,6 +309,10 @@ private struct TabItem: View {
     }
 
     private var title: String { TabAutoName.display(label: tab.label, number: tab.number) }
+
+    /// Ends of the shown terminal tabs, which the menu's moves stop at.
+    private var isFirstShown: Bool { shownTabIds.first.map { $0 == tab.tabId } ?? true }
+    private var isLastShown: Bool { shownTabIds.last.map { $0 == tab.tabId } ?? true }
 
     /// What a plugin says the tab is running: its focused pane's, else the
     /// first pane that's running something it knows.
@@ -464,8 +479,8 @@ private struct TabItem: View {
                 get: { store.ownTabColor(tab) },
                 set: { store.setTabColor(tab, $0) }))
             Divider()
-            Button("Move Tab Left") { store.moveTab(tab.tabId, by: -1) }.disabled(index == 0)
-            Button("Move Tab Right") { store.moveTab(tab.tabId, by: 1) }.disabled(index >= count - 1)
+            Button("Move Tab Left") { store.moveTab(tab.tabId, by: -1, among: shownTabIds) }.disabled(isFirstShown)
+            Button("Move Tab Right") { store.moveTab(tab.tabId, by: 1, among: shownTabIds) }.disabled(isLastShown)
             Divider()
             Button("Move Tab to New Workspace") { WindowActions.tabToWorkspace(tab.tabId, in: window) }
                 .disabled(store.onlyPane(ofTab: tab.tabId) == nil)
@@ -481,9 +496,9 @@ private struct TabItem: View {
             Button("Close Tab") { window.closeTab(tab.tabId) }
             Button("Close Other Tabs") {
                 window.focusTab(tab.tabId)
-                store.closeTabs(except: tab.tabId)
-            }.disabled(count < 2)
-            Button("Close Tabs to the Right") { store.closeTabs(rightOf: tab.tabId) }.disabled(index >= count - 1)
+                store.closeTabs(except: tab.tabId, among: shownTabIds)
+            }.disabled(shownTabIds.count < 2)
+            Button("Close Tabs to the Right") { store.closeTabs(rightOf: tab.tabId, among: shownTabIds) }.disabled(isLastShown)
         }
         .help(jumpKeys.map { "\(handoffTitle ?? title)  \($0)" } ?? handoffTitle ?? title)
         .accessibilityElement(children: .combine)

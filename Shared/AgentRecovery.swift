@@ -26,6 +26,24 @@ struct AgentSessionRecord: Codable, Equatable, Identifiable {
     }
 }
 
+extension AgentSessionRecord {
+    // A defaulted field may be missing (an older build's record), so adding
+    // one doesn't cost the records already written.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        agent = try container.decode(String.self, forKey: .agent)
+        sessionId = try container.decodeIfPresent(String.self, forKey: .sessionId)
+        cwd = try container.decode(String.self, forKey: .cwd)
+        currentCwd = try container.decodeIfPresent(String.self, forKey: .currentCwd)
+        workspaceLabel = try container.decode(String.self, forKey: .workspaceLabel)
+        tabLabel = try container.decode(String.self, forKey: .tabLabel)
+        terminalId = try container.decode(String.self, forKey: .terminalId)
+        firstSeen = try container.decode(Date.self, forKey: .firstSeen)
+        lastSeen = try container.decode(Date.self, forKey: .lastSeen)
+        handled = try container.decodeIfPresent(Bool.self, forKey: .handled) ?? false
+    }
+}
+
 enum AgentRecovery {
     /// Resume commands from the session server's native session restore table.
     static func resumeCommand(agent: String, sessionId: String) -> String? {

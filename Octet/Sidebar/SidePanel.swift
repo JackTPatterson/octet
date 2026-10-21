@@ -247,7 +247,7 @@ struct SidePanel: View {
         case .tickets: TicketsPlane(directory: planeDirectory, visible: shows(plane))
         case .git:
             // The panel scrolls itself, so its header and commit box stay put.
-            GitPanel(model: window.git, ui: ui)
+            GitPanel(model: window.git, ui: ui, focusedTab: window.displayedFocusedTabId)
         case .diff: DiffPlane(store: store, ui: ui)
         case .files: FilesPlane(ui: ui, directory: planeDirectory)
         case .browser: BrowserPlane(ui: ui, directory: planeDirectory)

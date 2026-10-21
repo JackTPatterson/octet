@@ -27,6 +27,10 @@ struct NewTabFreshness {
     /// has been there, so a prompt redrawn mid-typing can't move it right.
     private var promptColumn: [String: Int] = [:]
     private var inFront: (tab: String, since: Date)?
+    /// Tabs already judged fresh from a settled reading. Coming back to one,
+    /// the splash shows at once rather than after the wait; the wait still
+    /// decides whether it stays.
+    private(set) var seenFresh: Set<String> = []
 
     /// Whether `tab` should show the splash, given one reading of its grid:
     /// the cursor's position and how many rows through it hold text.
@@ -35,11 +39,14 @@ struct NewTabFreshness {
         if inFront?.tab != tab { inFront = (tab, now) }
         guard !used.contains(tab) else { return false }
         let settled = settles(tab: tab, at: now) == nil
+        // The grid may still be the last tab's: nothing it shows counts yet.
+        if !settled, seenFresh.contains(tab) { return true }
         let movedOn = promptRow[tab].map { cursorRow > $0 } ?? false
         if rowsInUse > Self.promptRows || movedOn {
             // Hidden either way; only a settled reading can make it final.
             if settled {
                 used.insert(tab)
+                seenFresh.remove(tab)
                 promptRow[tab] = nil
                 promptColumn[tab] = nil
             }
@@ -55,7 +62,9 @@ struct NewTabFreshness {
         }
         // A just-selected tab can still contain the previous tab's prompt.
         // Keep the splash hidden until this tab's first reading settles.
-        return settled && rowsInUse > 0
+        guard settled, rowsInUse > 0 else { return false }
+        seenFresh.insert(tab)
+        return true
     }
 
     /// When a reading of `tab` will be believed, if not yet: the caller looks
@@ -69,6 +78,7 @@ struct NewTabFreshness {
     /// The tab closed; its id won't come back.
     mutating func forget(_ tab: String) {
         used.remove(tab)
+        seenFresh.remove(tab)
         promptRow[tab] = nil
         promptColumn[tab] = nil
         if inFront?.tab == tab { inFront = nil }

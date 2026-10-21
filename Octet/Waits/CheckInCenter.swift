@@ -186,8 +186,7 @@ final class CheckInCenter: ObservableObject {
             wait.title = title.isEmpty ? CheckInDraft.defaultTitle(prompt: draft.prompt) : title
             wait.next = draft.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
             wait.checkIn?.mode = draft.mode
-            wait.checkIn?.recurrence = recurrence
-            wait.checkIn?.finishedAt = nil
+            wait.checkIn?.reschedule(recurrence, nextDue: recurrence?.start ?? first, previousDue: wait.nextCheckAt)
             wait.nextCheckAt = recurrence?.start ?? first
             wait.condition = .date(wait.nextCheckAt)
             waits.update(wait)
@@ -297,6 +296,11 @@ final class CheckInCenter: ObservableObject {
         let now = Date()
         if !info.isFinished, wait.nextCheckAt <= now, !info.paused {
             comeRound(id, now: now, person: true)
+        } else if !info.wakeQueued, info.hasReminder, info.log.last?.sent == true {
+            // Both modes: the prompt already went when it came round, and the
+            // reminder only says so. Sending it again would run it twice.
+            dismissReminder(id)
+            if let workspaceId = wait.origin.workspaceId { show(workspaceId) }
         } else if info.wakeQueued || (info.hasReminder && info.mode.wakesAgent) {
             runNow(id, now: now)
         } else if let workspaceId = wait.origin.workspaceId {
@@ -581,7 +585,8 @@ final class CheckInCenter: ObservableObject {
             notices[id] = StallNotice(id: id, label: label, quietFor: 0, token: token,
                                       workspaceId: agent.workspaceId, paneId: agent.paneId, conversationId: nil)
         }
-        sampleScreens(of: workingPanes, store: store, now: now)
+        // Reading panes' screens is only for noticing stalls: not with that off.
+        if threshold > 0 { sampleScreens(of: workingPanes, store: store, now: now) }
         let found = tracker.observe(subjects, now: now, threshold: threshold)
         // Notices whose session has moved on, or is gone, drop away.
         stalls = stalls.filter { notice in

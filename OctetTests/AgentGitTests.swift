@@ -120,6 +120,54 @@ final class AgentGitReadTests: XCTestCase {
     }
 }
 
+final class AgentGitCacheTests: XCTestCase {
+    func testTheDefaultBranchIsKeptForAWhile() {
+        var now = Date(timeIntervalSince1970: 0)
+        let cache = AgentGitCache(baseLifetime: 60, now: { now })
+        var asked = 0
+        let find: (String, Git) -> String? = { _, _ in asked += 1; return asked == 1 ? nil : "main" }
+        XCTAssertNil(cache.defaultBranch(top: "/r", git: Git(), find: find))
+        XCTAssertNil(cache.defaultBranch(top: "/r", git: Git(), find: find))
+        XCTAssertEqual(asked, 1)
+        now = now.addingTimeInterval(61)
+        XCTAssertEqual(cache.defaultBranch(top: "/r", git: Git(), find: find), "main")
+        XCTAssertEqual(asked, 2)
+    }
+
+    func testAReadIsKeptWhileItsFingerprintHolds() {
+        var now = Date(timeIntervalSince1970: 0)
+        let cache = AgentGitCache(readLifetime: 30, now: { now })
+        cache.store(AgentGit.Checkout(top: "/r"), signature: "a")
+        XCTAssertNotNil(cache.checkout(top: "/r", signature: "a"))
+        XCTAssertNil(cache.checkout(top: "/r", signature: "b"))
+        now = now.addingTimeInterval(31)
+        XCTAssertNil(cache.checkout(top: "/r", signature: "a"))
+    }
+
+    func testTheFingerprintSeesAFileEditedAgain() {
+        // Same status line both times; only the file's own time and size differ.
+        let status = "# branch.oid abc\0# branch.head main\01 .M N... 100644 100644 100644 1 1 a.txt\0"
+        var stamps = ["/r/a.txt": "1:10"]
+        let first = AgentGit.signature(top: "/r", status: status) { stamps[$0] ?? "-" }
+        XCTAssertEqual(first, AgentGit.signature(top: "/r", status: status) { stamps[$0] ?? "-" })
+        stamps["/r/a.txt"] = "2:12"
+        XCTAssertNotEqual(first, AgentGit.signature(top: "/r", status: status) { stamps[$0] ?? "-" })
+    }
+
+    func testARenameKeepsWhereItCameFrom() {
+        let text = "2 R. N... 100644 100644 100644 1 1 R100 new.txt\0old.txt\0"
+        XCTAssertEqual(AgentGit.parseStatus(text).1.first?.originalPath, "old.txt")
+    }
+
+    func testGitFailingIsAFailureNotNothing() {
+        let folder = NSTemporaryDirectory() + "octet-not-a-repo-\(UUID().uuidString)"
+        try? FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: folder) }
+        guard case .failure(let failure) = AgentGit.readResult(top: folder) else { return XCTFail("read a folder that isn't a repository") }
+        XCTAssertFalse(failure.message.isEmpty)
+    }
+}
+
 final class AgentEditsTests: XCTestCase {
     private func json(_ object: Any) -> String {
         String(decoding: try! JSONSerialization.data(withJSONObject: object, options: .withoutEscapingSlashes), as: UTF8.self)

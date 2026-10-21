@@ -124,6 +124,25 @@ final class OctetShortcutsTests: XCTestCase {
         XCTAssertEqual(Octet.PaletteModel.duplicateIds(["a", "b"]), [])
     }
 
+    /// A repeated id is shown once, the first row kept, in the main list
+    /// and in a sub-list; results are there without a redraw asking.
+    @MainActor
+    func testPaletteShowsEachIdOnce() {
+        func item(_ id: String, _ title: String) -> Octet.PaletteItem {
+            Octet.PaletteItem(id: id, kind: Octet.PaletteKind.plugin, title: title, icon: .symbol("x"), effect: .run {})
+        }
+        let model = Octet.PaletteModel()
+        model.reload(items: [item("test.dup", "First"), item("test.other", "Other"), item("test.dup", "Second")])
+        let dups = model.results.filter { $0.item.id == "test.dup" }
+        XCTAssertEqual(dups.count, 1)
+        XCTAssertEqual(dups.first?.item.title, "First")
+        model.query = "oth"
+        XCTAssertEqual(model.results.map(\.item.id), ["test.other"])
+        model.subList = ("Logs", [item("log.1", "One"), item("log.1", "Again"), item("log.2", "Two")])
+        model.query = ""
+        XCTAssertEqual(model.results.map(\.item.title), ["One", "Two"])
+    }
+
     /// Every fixed palette action has an id of its own: a second row with
     /// the same id is silently dropped by the palette.
     @MainActor

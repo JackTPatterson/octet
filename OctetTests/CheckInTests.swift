@@ -160,6 +160,59 @@ final class CheckInRecurrenceTests: XCTestCase {
         XCTAssertEqual(once.statusLine(nextDue: start), "Done")
     }
 
+    func testEditingAFinishedOneRunsItsWholeScheduleAgain() {
+        let utc = calendar()
+        let start = date(2026, 10, 1)
+        var info = CheckInInfo(mode: .both, recurrence: .every(1, .days, startingAt: start, count: 2))
+        _ = info.occur(due: start, now: start, calendar: utc)
+        _ = info.occur(due: date(2026, 10, 2), now: date(2026, 10, 2), calendar: utc)
+        info.dueSince = date(2026, 10, 2)
+        info.dueMissed = 1
+        XCTAssertTrue(info.isFinished)
+
+        let restart = date(2026, 11, 1)
+        info.reschedule(.every(1, .days, startingAt: restart, count: 2), nextDue: restart, previousDue: date(2026, 10, 2))
+        XCTAssertFalse(info.isFinished)
+        XCTAssertEqual(info.fired, 0)
+        XCTAssertNil(info.dueSince)
+        XCTAssertEqual(info.dueMissed, 0)
+        // Both runs, not one.
+        XCTAssertNotNil(info.occur(due: restart, now: restart, calendar: utc).next)
+        XCTAssertNil(info.occur(due: date(2026, 11, 2), now: date(2026, 11, 2), calendar: utc).next)
+    }
+
+    func testEditingOnlyTheWordsKeepsTheCount() {
+        let utc = calendar()
+        let start = date(2026, 10, 1)
+        let rule = CheckInRecurrence.every(1, .days, startingAt: start, count: 3)
+        var info = CheckInInfo(mode: .both, recurrence: rule)
+        _ = info.occur(due: start, now: start, calendar: utc)
+        let next = date(2026, 10, 2)
+        // The sheet starts the rule at the next time; same rule, same time.
+        info.reschedule(.every(1, .days, startingAt: next, count: 3), nextDue: next, previousDue: next)
+        XCTAssertEqual(info.fired, 1)
+        // Another rule starts counting again.
+        info.reschedule(.every(2, .days, startingAt: next, count: 3), nextDue: next, previousDue: next)
+        XCTAssertEqual(info.fired, 0)
+    }
+
+    func testOlderCheckInsMissingDefaultedFieldsStillLoad() throws {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let json = """
+        {"mode": "both", "recurrence": {"kind": "daily", "start": "2026-10-01T09:00:00Z"},
+         "log": [{"at": "2026-10-01T09:00:00Z", "due": "2026-10-01T09:00:00Z", "outcome": "somethingNew"}]}
+        """
+        let info = try decoder.decode(CheckInInfo.self, from: Data(json.utf8))
+        XCTAssertFalse(info.paused)
+        XCTAssertEqual(info.fired, 0)
+        XCTAssertEqual(info.recurrence?.hour, 9)
+        XCTAssertEqual(info.recurrence?.every, 1)
+        XCTAssertEqual(info.log.count, 1)
+        XCTAssertEqual(info.log[0].outcome, .skipped)
+        XCTAssertFalse(info.log[0].manual)
+    }
+
     func testTheRecordKeepsTheLatestEntries() {
         var info = CheckInInfo(mode: .both, recurrence: nil)
         for index in 0..<(CheckInInfo.logLimit + 5) {

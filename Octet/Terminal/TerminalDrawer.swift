@@ -526,6 +526,7 @@ final class DrawerTerminals: ObservableObject {
             // The main terminal straight, not via focusTerminal(), which may
             // hand the keys to the visual twin's composer instead.
             func mainSurface(in view: NSView) -> TerminalEngine.SurfaceView? {
+                guard !view.isHidden else { return nil }
                 if let surface = view as? TerminalEngine.SurfaceView,
                    !surfaces.values.contains(where: { $0.view === surface }) { return surface }
                 return view.subviews.lazy.compactMap(mainSurface).first

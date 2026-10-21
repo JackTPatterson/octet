@@ -19,6 +19,19 @@ struct WorkspacePanelState: Codable {
 extension UIState {
     private func panelKey(_ workspace: String) -> String { "octet.workspacePanel.\(workspace)" }
 
+    /// Each defaults store's records as last saved or read, so switching
+    /// workspaces doesn't read and decode one every time. Every write goes
+    /// through `saveWorkspacePanel`, which keeps them current for all windows.
+    private final class PanelRecords { var states: [String: WorkspacePanelState] = [:] }
+    private static let panelRecords = NSMapTable<UserDefaults, PanelRecords>.weakToStrongObjects()
+
+    private var records: PanelRecords {
+        if let records = Self.panelRecords.object(forKey: panelDefaults) { return records }
+        let records = PanelRecords()
+        Self.panelRecords.setObject(records, forKey: panelDefaults)
+        return records
+    }
+
     private var panelSnapshot: WorkspacePanelState {
         WorkspacePanelState(planes: planes, activePlaneID: activePlaneId,
                             splitIDs: splitPlaneIds, sideBySide: splitSideBySide,
@@ -28,8 +41,10 @@ extension UIState {
     }
 
     func saveWorkspacePanel() {
-        guard !restoringWorkspacePanel, let id = panelWorkspaceID,
-              let data = try? JSONEncoder().encode(panelSnapshot) else { return }
+        guard !restoringWorkspacePanel, let id = panelWorkspaceID else { return }
+        let state = panelSnapshot
+        guard let data = try? JSONEncoder().encode(state) else { return }
+        records.states[id] = state
         panelDefaults.set(data, forKey: panelKey(id))
     }
 
@@ -42,16 +57,18 @@ extension UIState {
         // merely because an older window is switching away.
         if let previous = panelWorkspaceID { workspaceClosedPlanes[previous] = closedPlanes }
         closedPlanes = workspaceClosedPlanes[workspace] ?? []
-        let saved = panelDefaults.data(forKey: panelKey(workspace))
+        let saved = records.states[workspace] ?? panelDefaults.data(forKey: panelKey(workspace))
             .flatMap { try? JSONDecoder().decode(WorkspacePanelState.self, from: $0) }
         let migrationKey = "octet.workspacePanel.migrated"
         var state = saved ?? WorkspacePanelState()
-        if saved == nil, !panelDefaults.bool(forKey: migrationKey) {
-            state = panelSnapshot
-            state.folded = Set(panelDefaults.stringArray(forKey: "octet.sidePanel.folded") ?? [])
-            state.opened = Set(panelDefaults.stringArray(forKey: "octet.sidePanel.opened") ?? [])
+        if !panelDefaults.bool(forKey: migrationKey) {
+            if saved == nil {
+                state = panelSnapshot
+                state.folded = Set(panelDefaults.stringArray(forKey: "octet.sidePanel.folded") ?? [])
+                state.opened = Set(panelDefaults.stringArray(forKey: "octet.sidePanel.opened") ?? [])
+            }
+            panelDefaults.set(true, forKey: migrationKey)
         }
-        panelDefaults.set(true, forKey: migrationKey)
         // Move the formerly embedded todo list into a discoverable tab once.
         // A user who subsequently closes it keeps that choice.
         let todoMigrationKey = "octet.workspacePanel.todosTab.\(workspace)"

@@ -55,6 +55,9 @@ final class GitPanelModel: ObservableObject {
     @Published private(set) var hasRepository = false
     @Published private(set) var loading = false
     @Published private(set) var loaded = false
+    /// Checkouts git failed to read, by top level, with what it said: shown
+    /// with Retry, not as "Not in a repository".
+    @Published private(set) var failures: [String: String] = [:]
     private var loadedScope: [String] = []
     /// What's running in each checkout from the panel itself (Pushing…),
     /// by its top level.
@@ -67,16 +70,26 @@ final class GitPanelModel: ObservableObject {
 
     func sectionBinding(_ key: String) -> Binding<Bool> {
         Binding(get: { self.openSections.contains(key) },
-                set: { if $0 { self.openSections.insert(key) } else { self.openSections.remove(key) } })
+                set: {
+                    if $0 { self.openSections.insert(key) } else { self.openSections.remove(key) }
+                    // Worktree details are only read while the section is open.
+                    if $0, key == "worktrees" { self.refresh() }
+                })
     }
 
     private weak var window: WindowContext?
     private var timer: Timer?
-    private var generation = 0
     private var reading = false
-    /// Folder → its checkout's top level, so a refresh doesn't ask git again.
-    private var tops: [String: String?] = [:]
+    /// A refresh asked for while one was reading: run again when it's done,
+    /// rather than drop it (a commit's own refresh would be lost).
+    private var rerun = false
+    /// Folder → its checkout's top level and when that was found, so a
+    /// refresh doesn't ask git again. "Not a repository" is asked again
+    /// after a while: `git init`, or git failing once, shouldn't stick.
+    private var tops: [String: (top: String?, at: Date)] = [:]
+    static let notARepositoryLifetime: TimeInterval = 20
     private let editLog = AgentEditLog()
+    private let cache = AgentGitCache()
     static let interval: TimeInterval = 4
 
     /// Changed files across the checkouts, for the button.
@@ -174,23 +187,24 @@ final class GitPanelModel: ObservableObject {
             if has != hasRepository { hasRepository = has }
             return
         }
-        guard !reading else { return }
+        guard !reading else { rerun = true; return }
         reading = true
         let scope = scoped.map(\.directory).sorted()
         if scope != loadedScope { loaded = false; loadedScope = scope }
         if groups.isEmpty { loading = true }
-        generation += 1
-        let generation = self.generation
         let sessionWide = everyone()
         let known = tops
-        let editLog = self.editLog
+        let editLog = self.editLog, cache = self.cache
+        let worktreeDetails = openSections.contains("worktrees")
+        let notARepositoryLifetime = Self.notARepositoryLifetime
         DispatchQueue.global(qos: .userInitiated).async {
             let git = Git()
             var tops = known
             func topLevel(of directory: String) -> String? {
-                if let known = tops[directory] { return known }
+                if let known = tops[directory],
+                   known.top != nil || Date().timeIntervalSince(known.at) < notARepositoryLifetime { return known.top }
                 let found = git.topLevel(directory)
-                tops[directory] = found
+                tops[directory] = (found, Date())
                 return found
             }
             // One group per checkout, in the order its workers appear.
@@ -204,12 +218,19 @@ final class GitPanelModel: ObservableObject {
                 }
             }
             let edited = Self.edits(of: scoped.map { ($0.worker, $0.records) }, log: editLog)
-            let groups = order.compactMap { top in
-                AgentGit.read(top: top, git: git).map { checkout in
-                    Group(checkout: checkout, workers: workers[top] ?? [], editors: Self.editors(of: checkout, edited: edited))
+            var failures: [String: String] = [:]
+            let groups = order.compactMap { top -> Group? in
+                switch AgentGit.readResult(top: top, git: git, cache: cache) {
+                case .success(let checkout):
+                    return Group(checkout: checkout, workers: workers[top] ?? [], editors: Self.editors(of: checkout, edited: edited))
+                case .failure(let failure):
+                    failures[top] = failure.message
+                    return nil
                 }
             }
-            let worktrees = order.first.map { AgentGit.worktrees(top: $0, git: git) } ?? []
+            // The list is cheap; how far each has gone, and whether it's
+            // clean, is a git status per worktree, read only when shown.
+            let worktrees = order.first.map { AgentGit.worktrees(top: $0, git: git, details: worktreeDetails, cache: cache) } ?? []
             // Each worker sits in the deepest worktree containing it.
             var byWorktree: [String: [Worker]] = [:]
             for (worker, directory) in sessionWide {
@@ -220,15 +241,24 @@ final class GitPanelModel: ObservableObject {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     self.reading = false
-                    self.loading = false
                     self.tops = tops
-                    guard generation == self.generation else { return }
-                    self.loaded = true
-                    if groups != self.groups { self.groups = groups }
-                    if worktrees != self.worktrees { self.worktrees = worktrees }
-                    if byWorktree != self.worktreeWorkers { self.worktreeWorkers = byWorktree }
-                    let has = !groups.isEmpty
-                    if has != self.hasRepository { self.hasRepository = has }
+                    // Read for a tab no longer in front: read again for the
+                    // one that is, without showing this.
+                    let current = self.scope().map(\.directory).sorted()
+                    if current == scope {
+                        self.loading = false
+                        self.loaded = true
+                        if groups != self.groups { self.groups = groups }
+                        if worktrees != self.worktrees { self.worktrees = worktrees }
+                        if byWorktree != self.worktreeWorkers { self.worktreeWorkers = byWorktree }
+                        if failures != self.failures { self.failures = failures }
+                        let has = !groups.isEmpty
+                        if has != self.hasRepository { self.hasRepository = has }
+                    }
+                    if self.rerun || current != scope {
+                        self.rerun = false
+                        self.refresh()
+                    }
                 }
             }
         }
@@ -347,24 +377,32 @@ final class GitPanelModel: ObservableObject {
 
     func toggleStaged(_ file: AgentGit.FileChange, in top: String) {
         runGit(failure: "Couldn't \(file.staged ? "unstage" : "stage") \(file.path)") {
-            if file.staged { try ReviewDiff.unstage(path: file.path, in: top) } else { try ReviewDiff.stage(path: file.path, in: top) }
+            // A rename is two paths in the index; both move together.
+            if file.staged { try ReviewDiff.unstage(paths: file.paths, in: top) } else { try ReviewDiff.stage(paths: file.paths, in: top) }
         }
     }
 
     /// Throws a file's changes away at once; the toast's Undo puts back
     /// what was there, unless the file changed again since.
     func discard(_ file: AgentGit.FileChange, in top: String) {
-        runGit(failure: "Couldn't discard \(file.path)") { () throws -> DiscardedFile in
+        runGit(failure: "Couldn't discard \(file.path)") { () throws -> [DiscardedFile] in
             let git = Git()
-            var kept = DiscardedFile.capture(file.path, in: top)
+            // A rename's old path comes back too, so it's kept for Undo.
+            var kept = file.paths.map { DiscardedFile.capture($0, in: top) }
             if file.kind == .untracked {
-                try FileManager.default.removeItem(atPath: (top as NSString).appendingPathComponent(file.path))
+                // To the Trash, not deleted: an untracked entry can be a whole
+                // folder, a nested clone or worktree with work of its own.
+                var landed: NSURL?
+                try FileManager.default.trashItem(at: URL(fileURLWithPath: (top as NSString).appendingPathComponent(file.path)),
+                                                  resultingItemURL: &landed)
+                kept[0].trashed = landed as URL?
             } else if file.kind == .added {
                 try git.run(["rm", "-q", "-f", "--", file.path], in: top)
             } else {
-                try git.run(["restore", "--source=HEAD", "--staged", "--worktree", "--", file.path], in: top)
+                // For a rename, both paths: the new one goes, the old one is back.
+                try git.run(["restore", "--source=HEAD", "--staged", "--worktree", "--"] + file.paths, in: top)
             }
-            kept.discarded(in: top)
+            for index in kept.indices { kept[index].discarded(in: top) }
             return kept
         } done: { [weak self] kept in
             ToastCenter.shared.info("Discarded \((file.path as NSString).lastPathComponent)", detail: file.path, after: 8,
@@ -372,9 +410,14 @@ final class GitPanelModel: ObservableObject {
         }
     }
 
-    private func undoDiscard(_ kept: DiscardedFile, in top: String) {
-        runGit(failure: "Couldn't undo the discard") { try kept.undo(in: top) } done: { _ in
-            ToastCenter.shared.info("Restored \((kept.path as NSString).lastPathComponent)",
+    private func undoDiscard(_ kept: [DiscardedFile], in top: String) {
+        guard let first = kept.first else { return }
+        runGit(failure: "Couldn't undo the discard") {
+            // Checked first, so a half-done undo never happens.
+            if let moved = kept.first(where: { !$0.canUndo(in: top) }) { throw DiscardedFile.Changed(path: moved.path) }
+            for file in kept { try file.undo(in: top) }
+        } done: { _ in
+            ToastCenter.shared.info("Restored \((first.path as NSString).lastPathComponent)",
                                     detail: "Its changes are back, unstaged.")
         }
     }
@@ -406,19 +449,30 @@ final class GitPanelModel: ObservableObject {
             ToastCenter.shared.info("Write a commit message first", detail: "Or Write Message asks the agent for one.")
             return
         }
-        let plan = GitRemote.commitPlan(files: checkout.files)
-        let pushArgs = push ? Self.pushArguments(checkout) : nil
+        let branch = checkout.branch
         perform(in: top, label: "Committing…", failure: "Couldn't commit") { git in
-            if plan.stageAll { try git.run(["add", "-A"], in: top) }
+            // Decided now, not from the panel's last read: something staged
+            // since (or unstaged) changes what "Commit" means.
+            if !Self.hasStaged(in: top, git: git) { try git.run(["add", "-A"], in: top) }
             let sha = try ReviewDiff.commitStaged(message: message, in: top, git: git)
-            if push, let pushArgs { try git.run(pushArgs, in: top, environment: Self.remoteEnvironment) }
-            return sha
-        } done: { [weak self] sha in
+            let count = (try? git.run(["diff-tree", "--root", "--no-commit-id", "-r", "--name-only", "HEAD"], in: top))
+                .map { $0.split(separator: "\n").count } ?? 0
+            if push, let pushArgs = Self.pushArguments(branch: branch, in: top, git: git) {
+                try git.run(pushArgs, in: top, environment: Self.remoteEnvironment)
+            }
+            return (sha, count)
+        } done: { [weak self] (sha: String, count: Int) in
             self?.drafts[top] = nil
-            let what = Recap.count(plan.count, "file")
+            let what = Recap.count(count, "file")
             ToastCenter.shared.info("Committed \(sha)\(push ? " and pushed" : "")", detail: "\(what): \(message.split(separator: "\n").first ?? "")",
                                     after: 8, action: push ? nil : .init(title: "Undo") { self?.undoCommit(sha, in: top) })
         }
+    }
+
+    /// Whether anything is in the index that HEAD doesn't have.
+    nonisolated private static func hasStaged(in top: String, git: Git) -> Bool {
+        // Exits 1 when there's a difference, which `run` throws for.
+        (try? git.run(["diff", "--cached", "--quiet"], in: top)) == nil
     }
 
     /// Takes the last commit back, keeping its changes staged, if it's
@@ -427,18 +481,29 @@ final class GitPanelModel: ObservableObject {
         perform(in: top, label: "Undoing…", failure: "Couldn't undo the commit") { git in
             let head = try git.run(["rev-parse", "--short", "HEAD"], in: top)
             guard head == sha else { throw Checkpoints.GitError(description: "Something was committed after it; undo that first.") }
-            try git.run(["reset", "--soft", "HEAD~1"], in: top)
+            if (try? git.run(["rev-parse", "-q", "--verify", "HEAD~1"], in: top)) == nil {
+                // A shallow clone's oldest commit has no parent here either,
+                // but deleting the branch there would lose history.
+                if (try? git.run(["rev-parse", "--is-shallow-repository"], in: top)) == "true" {
+                    throw Checkpoints.GitError(description: "This clone is shallow, so its parent isn't here to go back to.")
+                }
+                // The repository's first commit has no parent to reset to:
+                // the branch goes back to unborn, the index keeps the files.
+                try git.run(["update-ref", "-d", "HEAD"], in: top)
+            } else {
+                try git.run(["reset", "--soft", "HEAD~1"], in: top)
+            }
         } done: { _ in ToastCenter.shared.info("Commit undone", detail: "Its changes are staged again.") }
     }
 
     func push(_ checkout: AgentGit.Checkout) {
-        guard let arguments = Self.pushArguments(checkout) else {
-            ToastCenter.shared.info("Nowhere to push", detail: checkout.branch.name == nil
-                ? "HEAD is detached; check out a branch first." : "This repository has no remote.")
-            return
-        }
         let publishing = checkout.branch.upstream == nil
+        let branch = checkout.branch
         perform(in: checkout.top, label: publishing ? "Publishing…" : "Pushing…", failure: "Couldn't push") { git in
+            guard let arguments = Self.pushArguments(branch: branch, in: checkout.top, git: git) else {
+                throw Checkpoints.GitError(description: branch.name == nil
+                    ? "HEAD is detached; check out a branch first." : "This repository has no remote.")
+            }
             try git.run(arguments, in: checkout.top, environment: Self.remoteEnvironment)
         } done: { _ in
             ToastCenter.shared.info(publishing ? "Published \(checkout.branch.name ?? "the branch")" : "Pushed")
@@ -476,10 +541,13 @@ final class GitPanelModel: ObservableObject {
             ToastCenter.shared.info("Check out a branch first", detail: "HEAD is detached.")
             return
         }
-        let publish = checkout.branch.upstream == nil ? Self.pushArguments(checkout) : nil
+        let publishing = checkout.branch.upstream == nil
         let remoteName = checkout.branch.upstream.map { String($0.prefix { $0 != "/" }) }
-        perform(in: checkout.top, label: publish == nil ? "Opening…" : "Publishing…", failure: "Couldn't open a pull request") { git in
-            if let publish { try git.run(publish, in: checkout.top, environment: Self.remoteEnvironment) }
+        let state = checkout.branch
+        perform(in: checkout.top, label: publishing ? "Publishing…" : "Opening…", failure: "Couldn't open a pull request") { git in
+            if publishing, let publish = Self.pushArguments(branch: state, in: checkout.top, git: git) {
+                try git.run(publish, in: checkout.top, environment: Self.remoteEnvironment)
+            }
             let remotes = (try? git.run(["remote"], in: checkout.top))?.split(separator: "\n").map(String.init) ?? []
             guard let name = remoteName ?? (remotes.contains("origin") ? "origin" : remotes.first) else {
                 throw Checkpoints.GitError(description: "This repository has no remote.")
@@ -492,9 +560,10 @@ final class GitPanelModel: ObservableObject {
         } done: { page in NSWorkspace.shared.open(page) }
     }
 
-    private static func pushArguments(_ checkout: AgentGit.Checkout) -> [String]? {
-        let remotes = (try? Git().run(["remote"], in: checkout.top))?.split(separator: "\n").map(String.init) ?? []
-        return GitRemote.pushArguments(branch: checkout.branch.name, upstream: checkout.branch.upstream, remotes: remotes)
+    /// Runs git, so only off the main thread.
+    nonisolated private static func pushArguments(branch: AgentGit.Branch, in top: String, git: Git) -> [String]? {
+        let remotes = (try? git.run(["remote"], in: top))?.split(separator: "\n").map(String.init) ?? []
+        return GitRemote.pushArguments(branch: branch.name, upstream: branch.upstream, remotes: remotes)
     }
 
     /// No prompt can be answered from the panel: ssh fails rather than asks.

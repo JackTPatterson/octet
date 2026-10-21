@@ -206,12 +206,8 @@ struct OpenCodeStream: Equatable {
                                      session: String?, to conversation: inout AgentConversation) {
         guard field == nil || field == "text" else { return }
         if let messageId, roles[messageId] == "user" { return }
-        if let position = conversation.items.firstIndex(where: { $0.id == partId }) {
-            switch conversation.items[position].kind {
-            case .text(let text): conversation.items[position].kind = .text(text + delta)
-            case .thinking(let text): conversation.items[position].kind = .thinking(text + delta)
-            default: break
-            }
+        if let position = conversation.items.lastIndex(where: { $0.id == partId }) {
+            conversation.appendDelta(delta, at: position, thinking: nil)
             return
         }
         // A delta ahead of its part: the part's type says what it is.
@@ -241,7 +237,7 @@ struct OpenCodeStream: Equatable {
                                  summary: (state["title"] as? String).flatMap { $0.isEmpty ? nil : $0 }
                                     ?? AgentConversation.toolSummary(name: name, input: input),
                                  input: AgentConversation.prettyJSON(input) ?? "",
-                                 inputData: try? JSONSerialization.data(withJSONObject: input))
+                                 inputData: try? JSONSerialization.data(withJSONObject: input, options: .sortedKeys))
         switch state["status"] as? String {
         case "completed":
             call.result = state["output"] as? String ?? ""

@@ -34,6 +34,8 @@ struct IdleDock: View {
     @AppStorage("octet.idleDock.snoozedCollapsed") private var snoozedCollapsed = false
     /// The old dock's key, so a dock folded before stays folded.
     @AppStorage("octet.idleDock.collapsed") private var idleCollapsed = false
+    /// This dock, to IdleCenter, which reads only while one is open.
+    @State private var dockId = UUID()
 
     static let headerHeight: CGFloat = 32
     static let rowHeight: CGFloat = 36
@@ -53,7 +55,12 @@ struct IdleDock: View {
                     if !shelves.snoozed.isEmpty {
                         ShelfHeader(title: "Snoozed", count: shelves.snoozed.count, tone: .info,
                                     help: "Moved out of the way until a time, or until something happens. Each comes back by itself.",
-                                    collapsed: $snoozedCollapsed) { _ in EmptyView() }
+                                    collapsed: $snoozedCollapsed) { _ in
+                            // A snooze only you can end asks on its row; folded, the header says so.
+                            if shelves.snoozed.contains(where: { waits.snooze(of: $0.workspaceId)?.needsAnswer() == true }) {
+                                Circle().fill(Theme.accent).frame(width: 6, height: 6).help("One asks you something")
+                            }
+                        }
                         if !snoozedCollapsed {
                             ForEach(shelves.snoozed) { workspace in
                                 IdleRow(store: store, workspace: workspace, snoozed: true)
@@ -93,8 +100,14 @@ struct IdleDock: View {
         .animation(motion.animation(.sidebar, Self.spring), value: idle.sleeping.map(\.id))
         .background(Theme.sidebar)
         .clipped()
-        .onAppear { idle.refresh() }
+        // What idle workspaces hold is read (git in each) only while a
+        // shelf here is open to show it.
+        .onAppear { idle.dock(dockId, open: shelfOpen) }
+        .onChange(of: shelfOpen) { _, open in idle.dock(dockId, open: open) }
+        .onDisappear { idle.dock(dockId, open: false) }
     }
+
+    private var shelfOpen: Bool { !idleCollapsed || !snoozedCollapsed }
 
     /// Rows come in from above, where the main list is, and leave the same
     /// way, fading as they go; without motion they simply appear.
@@ -440,19 +453,48 @@ private struct IdleRow: View {
                 .foregroundStyle(Theme.info)
                 .help("Back " + IdleShelves.wakeDescription(wake, now: now))
         } else if let wait = waits.snooze(of: id) {
-            OctetIcon("clock", size: 12).foregroundStyle(Theme.info)
-                .help("Back when " + (wait.title.isEmpty ? wait.condition.description : wait.title))
+            if wait.needsAnswer(now: now) {
+                // Only you can say it's happened (or it's been a long while):
+                // asked here, or the snooze would last for good unseen.
+                Text(wait.isManual ? "Happened?" : "Still needed?")
+                    .font(Theme.captionFont.weight(.medium)).foregroundStyle(Theme.accent)
+                    .help("Back when " + (wait.title.isEmpty ? wait.condition.description : wait.title)
+                          + ". Hover to answer.")
+            } else {
+                OctetIcon("clock", size: 12).foregroundStyle(Theme.info)
+                    .help("Back when " + (wait.title.isEmpty ? wait.condition.description : wait.title))
+            }
         } else {
-            Text(WorkspaceActivity.ageLabel(since: store.activity.lastActive(id), now: now))
+            let lastActive = store.activity.lastActive(id)
+            Text(WorkspaceActivity.ageLabel(since: lastActive, now: now))
                 .font(Theme.interfaceFont(11.5).monospacedDigit())
                 .foregroundStyle(Theme.textTertiary)
-                .help("Last used")
+                .help(idleReason(lastActive: lastActive))
         }
+    }
+
+    /// Why it's in Idle: put there by hand, or left unused.
+    private func idleReason(lastActive: Date?) -> String {
+        let since = lastActive.map { WaitSchedule.dateLabel($0) }
+        if store.isParked(workspace.workspaceId) {
+            return "Moved here by you" + (since.map { ". Last used \($0)." } ?? ".")
+        }
+        return since.map { "Unused since \($0)" } ?? "Unused a while"
     }
 
     private var actions: some View {
         let id = workspace.workspaceId
         return HStack(spacing: 2) {
+            if snoozed, let wait = waits.snooze(of: id), wait.needsAnswer() {
+                if wait.isManual {
+                    RowTextButton(title: "Yes", help: "It's happened: back to the list") { waits.markReady(wait.id) }
+                    RowTextButton(title: "Not yet", help: "Ask again in \(Recap.count(wait.askEveryDays, "day"))") {
+                        waits.confirm(wait.id)
+                    }
+                } else {
+                    RowTextButton(title: "Keep", help: "Still wanted: keep waiting") { waits.confirm(wait.id) }
+                }
+            }
             SnoozeButton(store: store, workspaceId: id, snoozed: snoozed)
             if !snoozed {
                 OctetIconButton(icon: "moon.zzz", help: "Sleep: close its terminals, and bring it back as it was when woken",
@@ -614,7 +656,7 @@ private struct SleepingRow: View {
             Button("Forget…") { IdleCenter.shared.confirmForget([record]) }
         }
         .help("\(record.summary)\n" + HandoffBrief.abbreviate(record.cwd) + (record.branch.map { " on \($0)" } ?? "")
-              + "\nAsleep since \(WaitSchedule.dateLabel(record.sleptAt)). Click to wake it as it was.")
+              + "\nAsleep since \(WaitSchedule.dateLabel(record.sleptAt)). \(record.causeText).\nClick to wake it as it was.")
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(record.label), asleep")
     }

@@ -120,6 +120,10 @@ struct EngineSession {
         NSApp.terminate(nil)
     }
 
+    /// Starting the server, one request at a time.
+    private static let launching = DispatchQueue(label: "octet.engine-launch", qos: .userInitiated)
+    nonisolated(unsafe) private static var lastLaunch = Date.distantPast
+
     /// Starts the session server when none answers. It runs detached, so it
     /// and everything in its panes outlive Octet.
     func ensureServer() {
@@ -127,8 +131,12 @@ struct EngineSession {
         var environment = TerminalEnvironment.sanitized(ProcessInfo.processInfo.environment)
             .merging(self.environment) { $1 }
         environment["HERDR_STARTUP_CWD"] = NSHomeDirectory()
-        DispatchQueue.global(qos: .userInitiated).async {
+        Self.launching.async {
             if (try? EngineSocketConnection(path: socketPath)) != nil { return }
+            // Asked again (at launch, then by the window) before the first
+            // server is listening: one server, not two.
+            if Date().timeIntervalSince(Self.lastLaunch) < 5 { return }
+            Self.lastLaunch = Date()
             let launch = Process()
             launch.executableURL = URL(fileURLWithPath: "/bin/sh")
             // The shell backgrounds the server and exits, so launchd adopts it.

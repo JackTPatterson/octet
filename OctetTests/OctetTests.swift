@@ -447,6 +447,28 @@ final class FuzzyMatcherTests: XCTestCase {
         let match = try XCTUnwrap(FuzzyMatcher.match("nt", in: "New Tab"))
         XCTAssertEqual(match.indices, [0, 4])
     }
+
+    /// The prefix bonus ignores spaces on both sides, as the match does:
+    /// "new tab" is a prefix of "New Tab" but not of "New-Tab".
+    func testPrefixBonusHoldsForQueriesWithSpaces() throws {
+        let spaced = try XCTUnwrap(FuzzyMatcher.match("new tab", in: "New Tab"))
+        let dashed = try XCTUnwrap(FuzzyMatcher.match("new tab", in: "New-Tab"))
+        XCTAssertEqual(spaced.indices, dashed.indices)
+        XCTAssertEqual(spaced.score, dashed.score + 20)
+    }
+
+    func testTightMatchesNeedRunsOrWordStarts() {
+        XCTAssertNotNil(FuzzyMatcher.match("dev", in: "~/Developer/apps", tight: true))
+        XCTAssertNotNil(FuzzyMatcher.match("dap", in: "~/Developer/apps", tight: true))
+        XCTAssertNil(FuzzyMatcher.match("vlp", in: "~/Developer/apps", tight: true))
+        XCTAssertNotNil(FuzzyMatcher.match("vlp", in: "~/Developer/apps"))
+    }
+
+    func testIndicesLineUpWhenLowercasingChangesLength() throws {
+        // "İ" lowercases to two scalars; the offsets still count characters.
+        let match = try XCTUnwrap(FuzzyMatcher.match("ab", in: "İxab"))
+        XCTAssertEqual(match.indices, [2, 3])
+    }
 }
 
 final class PaletteRankingTests: XCTestCase {
@@ -477,9 +499,53 @@ final class PaletteRankingTests: XCTestCase {
         XCTAssertEqual(ranked.last, "action.newTab")
     }
 
+    /// Subtitles and keywords (full folder paths) don't match letters
+    /// scattered across them.
+    func testSecondaryFieldsNeedTightMatches() {
+        let folder = [PaletteSearchable(id: "project.x", kind: .project, title: "octet",
+                                        subtitle: "~/Developer/apps/octet", keywords: [])]
+        XCTAssertTrue(PaletteRanking.rank(folder, query: "vlp", filter: nil, recentIds: []).isEmpty)
+        XCTAssertEqual(PaletteRanking.rank(folder, query: "apps", filter: nil, recentIds: []).map(\.id), ["project.x"])
+    }
+
+    /// The "Recent" header covers only the recents placed first: at most
+    /// three with no filter, none for a query.
+    func testRankCountsTheRecentsItPutsFirst() {
+        let recents = ["action.closeTab", "action.newTab", "workspace.w1", "agent.w1:p2", "gone"]
+        let zero = PaletteRanking.rankCountingRecents(entries, query: "", filter: nil, recentIds: recents)
+        XCTAssertEqual(zero.recentCount, 3)
+        XCTAssertEqual(Array(zero.results.prefix(3).map(\.id)), ["action.closeTab", "action.newTab", "workspace.w1"])
+        // The fourth recent is in the list, but in its kind's place.
+        XCTAssertEqual(zero.results[3].id, "agent.w1:p2")
+        XCTAssertEqual(PaletteRanking.rankCountingRecents(entries, query: "", filter: .action, recentIds: recents).recentCount, 2)
+        XCTAssertEqual(PaletteRanking.rankCountingRecents(entries, query: "tab", filter: nil, recentIds: recents).recentCount, 0)
+        XCTAssertEqual(PaletteRanking.rankCountingRecents(entries, query: "", filter: nil, recentIds: []).recentCount, 0)
+    }
+
+    func testFirstByIdKeepsTheFirstOfEachId() {
+        let ids = PaletteRanking.firstById(["a1", "b1", "a2", "c1", "b2"]) { String($0.prefix(1)) }
+        XCTAssertEqual(ids, ["a1", "b1", "c1"])
+    }
+
     func testChipFilterAndRecencyRecording() {
         XCTAssertEqual(PaletteRanking.rank(entries, query: "", filter: .agent, recentIds: []).map(\.id), ["agent.w1:p2"])
         XCTAssertEqual(PaletteRanking.recording("b", in: ["a", "b", "c"]), ["b", "a", "c"])
+    }
+}
+
+final class ProjectSearchGroupsAppendTests: XCTestCase {
+    /// Batches added to the groups come out as grouping everything at once.
+    func testAppendingBatchesMatchesGroupingAll() {
+        func match(_ path: String, _ line: Int) -> ProjectSearchMatch {
+            ProjectSearchMatch(path: path, line: line, text: "x", ranges: [])
+        }
+        let first = [match("a.swift", 1), match("b.swift", 2), match("a.swift", 3)]
+        let second = [match("c.swift", 1), match("b.swift", 9), match("a.swift", 7)]
+        var groups = ProjectSearchGroups.group(first)
+        var index = Dictionary(groups.enumerated().map { ($1.path, $0) }, uniquingKeysWith: { first, _ in first })
+        ProjectSearchGroups.append(second, startingAt: first.count, to: &groups, index: &index)
+        XCTAssertEqual(groups, ProjectSearchGroups.group(first + second))
+        XCTAssertEqual(index["c.swift"], 2)
     }
 }
 
@@ -549,6 +615,20 @@ final class WorkspaceActivityTests: XCTestCase {
         XCTAssertEqual(split.idle.map(\.workspaceId), ["w2"])
     }
 
+    func testViewedWorkspaceRestampsOnlyEverySoOften() {
+        let t0 = Date(timeIntervalSince1970: 1_500_000)
+        var activity = WorkspaceActivity()
+        let snap = snapshot([workspace("w1")], focused: "w1")
+        activity.observe(snap, viewedWorkspaceId: "w1", now: t0)
+        let before = activity
+        // The next snapshots, 1.5s apart, change nothing: nothing to redraw.
+        activity.observe(snap, viewedWorkspaceId: "w1", now: t0.addingTimeInterval(1.5))
+        XCTAssertEqual(activity, before)
+        let later = t0.addingTimeInterval(WorkspaceActivity.viewedRestamp)
+        activity.observe(snap, viewedWorkspaceId: "w1", now: later)
+        XCTAssertEqual(activity.lastActive("w1"), later)
+    }
+
     func testAgentChangesRefreshAndBusyAgentsNeverIdle() {
         let t0 = Date(timeIntervalSince1970: 2_000_000)
         var activity = WorkspaceActivity()
@@ -563,6 +643,31 @@ final class WorkspaceActivityTests: XCTestCase {
         XCTAssertFalse(activity.isIdle(ws[0], snapshot: working, pinned: [], idleAfter: 60, now: t1.addingTimeInterval(9999)))
         XCTAssertFalse(activity.isIdle(ws[0], snapshot: changed, pinned: ["w1"], idleAfter: 60, now: t1.addingTimeInterval(9999)))
         XCTAssertTrue(activity.isIdle(ws[0], snapshot: changed, pinned: [], idleAfter: 60, now: t1.addingTimeInterval(9999)))
+    }
+
+    func testOctetsOwnConversationsKeepAWorkspaceInUse() {
+        let t0 = Date(timeIntervalSince1970: 4_000_000)
+        var activity = WorkspaceActivity()
+        let ws = [workspace("w1")]
+        let snap = snapshot(ws)
+        activity.observe(snap, viewedWorkspaceId: nil, now: t0)
+        let later = t0.addingTimeInterval(5 * 3600)
+        XCTAssertTrue(activity.isIdle(ws[0], snapshot: snap, pinned: [], idleAfter: 60, now: later))
+        // A conversation mid-turn, or asking, keeps it out of Idle.
+        XCTAssertFalse(activity.isIdle(ws[0], snapshot: snap, pinned: [], conversations: ConversationActivity(working: ["w1"]),
+                                       idleAfter: 60, now: later))
+        XCTAssertFalse(activity.isIdle(ws[0], snapshot: snap, pinned: [], conversations: ConversationActivity(blocked: ["w1"]),
+                                       idleAfter: 60, now: later))
+        XCTAssertTrue(activity.isIdle(ws[0], snapshot: snap, pinned: [], conversations: ConversationActivity(working: ["w2"]),
+                                      idleAfter: 60, now: later))
+        // A turn starting counts as use; nothing changing doesn't.
+        activity.observe(snap, viewedWorkspaceId: nil, conversations: .init(), now: later)
+        XCTAssertEqual(activity.lastActive("w1"), t0)
+        activity.observe(snap, viewedWorkspaceId: nil, conversations: ConversationActivity(signatures: ["w1": "c1=1:true:false|"]), now: later)
+        XCTAssertEqual(activity.lastActive("w1"), later)
+        let partition = activity.partition(ws, snapshot: snap, pinned: [], conversations: ConversationActivity(working: ["w1"]),
+                                           idleAfter: 60, now: later.addingTimeInterval(9999))
+        XCTAssertEqual(partition.active.map(\.workspaceId), ["w1"])
     }
 
     func testMovedToIdleStaysThereThoughBusyFocusedAndRecentlyUsed() {
@@ -1072,6 +1177,27 @@ final class TipTests: XCTestCase {
         XCTAssertEqual(third?.id, "idle")
         // All seen: it wraps instead of going blank.
         XCTAssertEqual(Tips.following(third, seen: ["always", "agents", "idle"], context: context, deck: deck)?.id, "always")
+    }
+
+    func testOnceAllAreSeenItMovesOnFromTheLastShown() {
+        var context = TipContext()
+        context.agentCount = 1
+        let seen: Set<String> = ["always", "agents", "idle"]
+        XCTAssertEqual(Tips.next(seen: seen, context: context, after: "always", deck: deck)?.id, "agents")
+        XCTAssertEqual(Tips.next(seen: seen, context: context, after: "agents", deck: deck)?.id, "always")
+        // The last one no longer applies: the next that does, in deck order.
+        XCTAssertEqual(Tips.next(seen: seen, context: TipContext(), after: "agents", deck: deck)?.id, "always")
+        // Something unseen still comes first.
+        XCTAssertEqual(Tips.next(seen: ["always"], context: context, after: "always", deck: deck)?.id, "agents")
+    }
+
+    func testWorktreeTipIsOnlyForThoseWithoutOne() throws {
+        let tip = try XCTUnwrap(Tips.all.first { $0.id == "worktree" })
+        var context = TipContext()
+        context.workspaceCount = 2
+        XCTAssertTrue(tip.applies(context))
+        context.hasWorktree = true
+        XCTAssertFalse(tip.applies(context))
     }
 
     func testEveryShippedTipIsDistinctAndReadable() {
@@ -2761,6 +2887,21 @@ final class NewTabFreshnessTests: XCTestCase {
         // Erased back to the prompt's own end: that is the real start.
         XCTAssertTrue(freshness.observe(tab: "t1", cursorRow: 0, cursorColumn: 4, rowsInUse: 1, at: at(settled + 1)))
         XCTAssertFalse(freshness.observe(tab: "t1", cursorRow: 0, cursorColumn: 5, rowsInUse: 1, at: at(settled + 2)))
+    }
+
+    func testAFreshTabShowsAtOnceOnReturn() {
+        var freshness = NewTabFreshness()
+        _ = freshness.observe(tab: "t1", cursorRow: 0, rowsInUse: 1, at: at(0))
+        XCTAssertTrue(freshness.observe(tab: "t1", cursorRow: 0, rowsInUse: 1, at: at(settled)))
+        _ = freshness.observe(tab: "t2", cursorRow: 9, rowsInUse: 10, at: at(5))
+        // Back to t1: the grid still shows t2's output, but t1 was fresh.
+        XCTAssertTrue(freshness.observe(tab: "t1", cursorRow: 9, rowsInUse: 10, at: at(10)))
+        XCTAssertFalse(freshness.used.contains("t1"))
+        XCTAssertTrue(freshness.observe(tab: "t1", cursorRow: 0, rowsInUse: 1, at: at(10 + settled)))
+        // Once used it waits again, and stays hidden.
+        _ = freshness.observe(tab: "t1", cursorRow: 5, rowsInUse: 6, at: at(20))
+        _ = freshness.observe(tab: "t2", cursorRow: 9, rowsInUse: 10, at: at(25))
+        XCTAssertFalse(freshness.observe(tab: "t1", cursorRow: 0, rowsInUse: 1, at: at(30)))
     }
 
     func testTabsAreJudgedApart() {

@@ -752,19 +752,33 @@ struct RuntimePanel: View {
     /// A section's rows in drawing order, with folded branches left out.
     /// `rooted`: the rows hang off the group's header, one level in.
     private func shownRows(_ kind: RuntimeKind, rows: [RuntimeEntry], rooted: Bool = false) -> [RuntimeEntry] {
-        // Keep ancestry correct even when process discovery returns children first.
-        // Louder first (needs you, then working, then done), keeping each
-        // branch's own order; the tree then keeps children under parents.
-        let sorted = rows.enumerated().sorted { a, b in
+        let ordered: [RuntimeEntry] = kind == .agent
+            ? treeOrdered(Self.louderFirst(rows), rooted: rooted)
+            : rows.map { entry in var row = entry; row.depth = rooted ? 1 : 0; return row }
+        return foldedAway(ordered)
+    }
+
+    /// Louder first (needs you, then working, then done), keeping each
+    /// branch's own order; the tree then keeps children under parents.
+    private static func louderFirst(_ rows: [RuntimeEntry]) -> [RuntimeEntry] {
+        rows.enumerated().sorted { a, b in
             let (x, y) = (a.element.state, b.element.state)
             if x.bucket != y.bucket { return x.bucket < y.bucket }
             if x.priority != y.priority { return x.priority > y.priority }
             return a.offset < b.offset
         }.map(\.element)
-        let ordered: [RuntimeEntry] = kind == .agent
-            ? RuntimeTree.order(sorted, id: { $0.id }, parent: { $0.parentID }).map { entry, depth in
-                var row = entry; row.depth = depth + (rooted ? 1 : 0); return row
-            } : rows.map { entry in var row = entry; row.depth = rooted ? 1 : 0; return row }
+    }
+
+    /// Children under their parents, each a level in; ancestry holds even
+    /// when process discovery returns children first.
+    private func treeOrdered(_ rows: [RuntimeEntry], rooted: Bool) -> [RuntimeEntry] {
+        RuntimeTree.order(rows, id: { $0.id }, parent: { $0.parentID }).map { entry, depth in
+            var row = entry; row.depth = depth + (rooted ? 1 : 0); return row
+        }
+    }
+
+    /// Leaves out the rows inside folded branches.
+    private func foldedAway(_ ordered: [RuntimeEntry]) -> [RuntimeEntry] {
         let visible = AgentPresentationLogic.visibleIDs(ordered.map { (id: $0.id, depth: $0.depth) }, collapsed: collapsedBranches)
         return ordered.filter { visible.contains($0.id) }
     }
@@ -778,7 +792,10 @@ struct RuntimePanel: View {
     /// subagents (however deep), then its background tasks and monitors.
     /// The group draws the edges, so they reach its header.
     private func groupTree(_ group: RuntimeGroup, agents: [RuntimeEntry], background: [RuntimeEntry]) -> some View {
-        rowList(shownRows(.agent, rows: agents, rooted: true) + shownRows(.task, rows: background, rooted: true),
+        // One tree: a subagent's own background tasks sit under it, after
+        // its subagents, rather than after every subagent with an edge
+        // reaching back over them all. Tasks of the root agent come last.
+        rowList(foldedAway(treeOrdered(Self.louderFirst(agents) + background, rooted: true)),
                 all: agents + background, root: Self.treeRootID(group))
     }
 

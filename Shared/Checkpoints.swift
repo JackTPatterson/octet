@@ -196,9 +196,16 @@ struct Git {
         let exited = DispatchSemaphore(value: 0)
         process.terminationHandler = { _ in exited.signal() }
         try process.run()
-        // Read before waiting, so a large output can't fill the pipe and stall.
+        // Both read before waiting and at the same time, so neither pipe can
+        // fill and stall git: hooks write their output to stderr, often lots.
+        var errorData = Data()
+        let errorsRead = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .utility).async {
+            errorData = errors.fileHandleForReading.readDataToEndOfFile()
+            errorsRead.signal()
+        }
         let data = output.fileHandleForReading.readDataToEndOfFile()
-        let errorData = errors.fileHandleForReading.readDataToEndOfFile()
+        errorsRead.wait()
         exited.wait()
         guard process.terminationStatus == 0 else {
             throw Checkpoints.GitError(description: String(decoding: errorData, as: UTF8.self)

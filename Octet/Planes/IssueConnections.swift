@@ -19,6 +19,26 @@ enum IssueCredentialStore {
         connections(tracker).first { $0.id == TrackerConnection.legacyId }?.credentials
     }
 
+    /// Whether any connection is saved for a tracker, from the entries'
+    /// names alone: no secret is read, so the Keychain never has to ask.
+    static func hasConnection(_ tracker: IssueTracker) -> Bool {
+        #if DEBUG && !OCTET_CLI
+        if ServiceSample.shows("tickets") { return !ServiceSample.connections(tracker).isEmpty }
+        #endif
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitAll,
+        ]
+        var items: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &items) == errSecSuccess, let rows = items as? [[String: Any]] else { return false }
+        return rows.contains { row in
+            guard let name = row[kSecAttrAccount as String] as? String else { return false }
+            return name == tracker.rawValue || name.hasPrefix(tracker.rawValue + ":")
+        }
+    }
+
     /// Every saved connection for a tracker, the old single entry first.
     static func connections(_ tracker: IssueTracker) -> [TrackerConnection] {
         #if DEBUG && !OCTET_CLI

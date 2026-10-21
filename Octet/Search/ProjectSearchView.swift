@@ -67,7 +67,11 @@ final class ProjectSearchModel: ObservableObject {
     private var generation = 0
     /// Results of the search before stay up until the new one finds its
     /// first batch, so the list doesn't flash empty on every keystroke.
-    private var replaceOnNext = false
+    /// They're dimmed meanwhile, and Return doesn't open one: they're for
+    /// a query no longer typed.
+    @Published private(set) var replaceOnNext = false
+    /// Where each file's group is in `groups`, so a batch adds to them.
+    private var groupIndex: [String: Int] = [:]
 
     init(root: String) { self.root = root }
 
@@ -94,6 +98,7 @@ final class ProjectSearchModel: ObservableObject {
         let options = options
         error = nil
         guard !options.query.isEmpty else {
+            replaceOnNext = false
             set([])
             truncated = false
             searching = false
@@ -110,12 +115,16 @@ final class ProjectSearchModel: ObservableObject {
                     await self?.receive(batch, generation: generation)
                 }
                 guard let self, self.generation == generation, !Task.isCancelled else { return }
-                if self.replaceOnNext { self.set([]) }
+                if self.replaceOnNext {
+                    self.replaceOnNext = false
+                    self.set([])
+                }
                 self.truncated = outcome.truncated
                 self.engine = outcome.engine
                 self.searching = false
             } catch {
                 guard let self, self.generation == generation, !Task.isCancelled else { return }
+                self.replaceOnNext = false
                 self.set([])
                 self.searching = false
                 switch error {
@@ -134,13 +143,18 @@ final class ProjectSearchModel: ObservableObject {
             selection = 0
             set(batch)
         } else {
-            set(matches + batch)
+            // Added to the groups there are, not all of them grouped again.
+            var groups = self.groups
+            ProjectSearchGroups.append(batch, startingAt: matches.count, to: &groups, index: &groupIndex)
+            matches += batch
+            self.groups = groups
         }
     }
 
     private func set(_ matches: [ProjectSearchMatch]) {
         self.matches = matches
         groups = ProjectSearchGroups.group(matches)
+        groupIndex = Dictionary(groups.enumerated().map { ($1.path, $0) }, uniquingKeysWith: { first, _ in first })
         selection = min(selection, max(0, matches.count - 1))
     }
 
@@ -149,7 +163,11 @@ final class ProjectSearchModel: ObservableObject {
         selection = (selection + delta + matches.count) % matches.count
     }
 
-    var selected: ProjectSearchMatch? { matches.indices.contains(selection) ? matches[selection] : nil }
+    /// The match Return opens: none while the list is the last query's.
+    var selected: ProjectSearchMatch? {
+        guard !replaceOnNext, matches.indices.contains(selection) else { return nil }
+        return matches[selection]
+    }
 }
 
 /// Draws Search in Project in the window it's open in.
@@ -349,6 +367,7 @@ struct ProjectSearchDialog: View {
                         }
                     }
                     .padding(.bottom, 6)
+                    .opacity(model.replaceOnNext ? 0.5 : 1)
                 }
             }
             .frame(height: 420)

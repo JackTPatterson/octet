@@ -12,6 +12,9 @@ struct ReviewDiff: Equatable {
         let text: String
         /// Position in its file's diff, for identity.
         let index: Int
+        /// Followed by "\ No newline at end of file": the file ends here
+        /// without one, which a staged hunk has to say too or git adds it.
+        var noNewline = false
 
         var id: Int { index }
         /// The line a comment on it refers to: the new file's, or the old
@@ -71,6 +74,9 @@ struct ReviewDiff: Equatable {
         var added = 0
         var removed = 0
         var binary = false
+        /// An added or deleted file's mode (`100755` for a script), which a
+        /// staged hunk must carry or git takes the file as plain.
+        var mode: String?
         /// Too big to draw; counted but not shown.
         var tooLarge = false
 
@@ -133,8 +139,16 @@ struct ReviewDiff: Equatable {
             }
             guard current != nil else { continue }
             if hunkHeader == nil {
-                if line.hasPrefix("new file mode") { current!.status = .added; continue }
-                if line.hasPrefix("deleted file mode") { current!.status = .deleted; continue }
+                if line.hasPrefix("new file mode ") {
+                    current!.status = .added
+                    current!.mode = String(line.dropFirst("new file mode ".count))
+                    continue
+                }
+                if line.hasPrefix("deleted file mode ") {
+                    current!.status = .deleted
+                    current!.mode = String(line.dropFirst("deleted file mode ".count))
+                    continue
+                }
                 if line.hasPrefix("Binary files ") { current!.binary = true; continue }
                 if line.hasPrefix("+++ b/") { current!.path = String(line.dropFirst(6)); continue }
                 if line.hasPrefix("--- ") || line.hasPrefix("+++ ") || line.hasPrefix("index ") { continue }
@@ -148,13 +162,18 @@ struct ReviewDiff: Equatable {
                 continue
             }
             guard hunkHeader != nil, let marker = line.first else { continue }
+            if marker == "\\" {
+                // "\ No newline at end of file", about the line before it.
+                if !hunkLines.isEmpty { hunkLines[hunkLines.count - 1].noNewline = true }
+                continue
+            }
             let body = String(line.dropFirst())
             let kind: Line.Kind
             switch marker {
             case "+": kind = .added; current!.added += 1
             case "-": kind = .removed; current!.removed += 1
             case " ": kind = .context
-            default: continue   // "\ No newline at end of file"
+            default: continue
             }
             if current!.added + current!.removed > fileLimit || drawn >= totalLimit { current!.tooLarge = true }
             guard !current!.tooLarge else { continue }
@@ -207,8 +226,8 @@ struct ReviewDiff: Equatable {
     static func patch(for file: File, hunk: Hunk) -> String {
         var text = "diff --git a/\(file.path) b/\(file.path)\n"
         switch file.status {
-        case .added: text += "new file mode 100644\n--- /dev/null\n+++ b/\(file.path)\n"
-        case .deleted: text += "deleted file mode 100644\n--- a/\(file.path)\n+++ /dev/null\n"
+        case .added: text += "new file mode \(file.mode ?? "100644")\n--- /dev/null\n+++ b/\(file.path)\n"
+        case .deleted: text += "deleted file mode \(file.mode ?? "100644")\n--- a/\(file.path)\n+++ /dev/null\n"
         case .modified: text += "--- a/\(file.path)\n+++ b/\(file.path)\n"
         }
         text += hunk.header + "\n"
@@ -219,6 +238,7 @@ struct ReviewDiff: Equatable {
             case .removed: text += "-"
             }
             text += line.text + "\n"
+            if line.noNewline { text += "\\ No newline at end of file\n" }
         }
         return text
     }
@@ -233,13 +253,23 @@ struct ReviewDiff: Equatable {
     }
 
     static func stage(path: String, in directory: String, git: Git = Git()) throws {
+        try stage(paths: [path], in: directory, git: git)
+    }
+
+    /// Several paths at once: a rename's new and old paths.
+    static func stage(paths: [String], in directory: String, git: Git = Git()) throws {
         guard let top = git.topLevel(directory) else { throw Checkpoints.GitError(description: "Not a git repository") }
-        try git.run(["add", "-A", "--", path], in: top)
+        try git.run(["add", "-A", "--"] + paths, in: top)
     }
 
     static func unstage(path: String, in directory: String, git: Git = Git()) throws {
+        try unstage(paths: [path], in: directory, git: git)
+    }
+
+    /// Unstaging only a rename's new path would leave its old one staged as deleted.
+    static func unstage(paths: [String], in directory: String, git: Git = Git()) throws {
         guard let top = git.topLevel(directory) else { throw Checkpoints.GitError(description: "Not a git repository") }
-        try git.run(["reset", "-q", "--", path], in: top)
+        try git.run(["reset", "-q", "--"] + paths, in: top)
     }
 
     /// Paths with anything staged, relative to the top of the repository.
@@ -301,6 +331,16 @@ struct ReviewDiff: Equatable {
         } catch {
             return .failure(.git(String(describing: error)))
         }
+    }
+
+    /// The working tree's fingerprint (see `AgentGit.signature`): when it
+    /// hasn't moved, a read would find what the last one did. Nil when git
+    /// can't say, which means read.
+    static func signature(in directory: String, git: Git = Git()) -> String? {
+        guard let top = git.topLevel(directory),
+              let status = try? git.run(["status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all"], in: top)
+        else { return nil }
+        return AgentGit.signature(top: top, status: status)
     }
 
     /// `ignoreWhitespace` leaves out lines that changed only in spacing, as

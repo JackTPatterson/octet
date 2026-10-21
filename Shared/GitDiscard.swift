@@ -11,6 +11,9 @@ struct DiscardedFile: Equatable {
     let before: Data?
     /// What the discard left; nil when it removed the file.
     var after: Data?
+    /// Where an untracked file or folder went in the Trash, which is what
+    /// Undo moves back: a folder (a clone, a worktree) has no contents to keep.
+    var trashed: URL?
 
     static func read(_ path: String, in top: String) -> Data? {
         FileManager.default.contents(atPath: (top as NSString).appendingPathComponent(path))
@@ -28,7 +31,10 @@ struct DiscardedFile: Equatable {
 
     /// Still as the discard left it.
     func canUndo(in top: String) -> Bool {
-        Self.read(path, in: top) == after
+        if trashed != nil {
+            return !FileManager.default.fileExists(atPath: (top as NSString).appendingPathComponent(path))
+        }
+        return Self.read(path, in: top) == after
     }
 
     struct Changed: Error, CustomStringConvertible {
@@ -40,10 +46,18 @@ struct DiscardedFile: Equatable {
     func undo(in top: String) throws {
         guard canUndo(in: top) else { throw Changed(path: path) }
         let url = URL(fileURLWithPath: (top as NSString).appendingPathComponent(path))
+        if let trashed {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try FileManager.default.moveItem(at: trashed, to: url)
+            return
+        }
+        var isDirectory: ObjCBool = false
         if let before {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try before.write(to: url, options: .atomic)
-        } else if FileManager.default.fileExists(atPath: url.path) {
+        } else if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), !isDirectory.boolValue {
+            // Never a folder: nil here only means there were no bytes to keep
+            // (a submodule's, say), not that nothing was there.
             try FileManager.default.removeItem(at: url)
         }
     }

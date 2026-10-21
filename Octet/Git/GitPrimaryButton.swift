@@ -66,10 +66,13 @@ struct GitPrimaryButton: View {
     private func help(_ action: GitPrimaryAction) -> String {
         let upstream = checkout.branch.upstream ?? "upstream"
         let plan = GitRemote.commitPlan(files: checkout.files)
+        // Nothing staged stages everything, new files included; say so.
+        let untracked = plan.stageAll && checkout.files.contains { $0.kind == .untracked }
         let what = plan.stageAll ? "all \(Recap.count(plan.count, "change"))" : "the \(Recap.count(plan.count, "staged file"))"
+        let note = untracked ? ". Untracked files are included" : ""
         switch action.kind {
-        case .commit: return "Commit \(what) (⌘↩)"
-        case .commitAndPush: return "Commit \(what), then push to \(upstream) (⌘↩)"
+        case .commit: return "Commit \(what)\(note) (⌘↩)"
+        case .commitAndPush: return "Commit \(what), then push to \(upstream)\(note) (⌘↩)"
         case .push: return "Push \(Recap.count(checkout.branch.ahead, "commit")) to \(upstream)"
         case .pull: return "Pull \(Recap.count(checkout.branch.behind, "commit")) from \(upstream), only when it fast-forwards"
         case .publish: return "Push this branch to the remote and track it"

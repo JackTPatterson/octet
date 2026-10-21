@@ -40,8 +40,10 @@ struct ConversationView: View {
                 ComposerQueueDrawer(session: session, bridge: bridge)
                 WaitSuggestionBanner(session: session)
                 CheckInSuggestionBanner(session: session)
-                let suggestedCommands = AgentComposerSyntax.suggestedShellCommands(in: session.conversation.items)
-                if !session.conversation.isRunning, !suggestedCommands.isEmpty {
+                // Only read once the turn is over, not on every streamed token.
+                let suggestedCommands = session.conversation.isRunning
+                    ? [] : AgentComposerSyntax.suggestedShellCommands(in: session.conversation.items)
+                if !suggestedCommands.isEmpty {
                     SuggestedCommandsPanel(session: session, commands: suggestedCommands)
                 }
                 if let question = session.pendingQuestion, session.pendingPermission == nil {
@@ -74,6 +76,8 @@ struct ConversationView: View {
         .animation(motion.animation(.approvals, .smooth(duration: 0.26)), value: session.pendingPermission?.id)
         .animation(motion.animation(.approvals, .smooth(duration: 0.26)), value: session.pendingQuestion?.id)
         .background(Theme.terminalBackground)
+        .modifier(EscapeStopsTurn(session: session, blocked: enlarged != nil || dropdowns.openId != nil,
+                                  inMainArea: !window.isBeside("conversation:" + session.id)))
         .octetDropdownHost(dropdowns)
         .environment(\.openImage) { enlarged = $0 }
         .overlay {
@@ -306,8 +310,6 @@ private struct ProjectLocation: View {
     @State private var changes: WorkingTreeChanges?
     @State private var pullRequest: GitHubPullRequest?
     @State private var loadingPullRequest = false
-    private let refresh = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
-    private let pullRequestRefresh = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
     var body: some View {
         HStack(spacing: 7) {
@@ -366,11 +368,23 @@ private struct ProjectLocation: View {
         .onChange(of: directory) { _, _ in
             changes = nil
             pullRequest = nil
+            // A lookup for the old folder mustn't keep the new one waiting.
+            loadingPullRequest = false
             reloadChanges()
             reloadPullRequest()
         }
-        .onReceive(refresh) { _ in reloadChanges() }
-        .onReceive(pullRequestRefresh) { _ in reloadPullRequest() }
+        // Changes every 3 seconds and the pull request every 30, for as long
+        // as the header shows. A Timer.publish stored on the view was made
+        // anew on every redraw.
+        .task(id: directory) {
+            var ticks = 0
+            while true {
+                do { try await Task.sleep(for: .seconds(3)) } catch { return }
+                ticks += 1
+                reloadChanges()
+                if ticks % 10 == 0 { reloadPullRequest() }
+            }
+        }
     }
 
     private var sourceLabel: String? {
@@ -409,8 +423,8 @@ private struct ProjectLocation: View {
             ], in: path)
             let value = result.status == 0 ? GitHubPullRequest.parse(Data(result.output.utf8)) : nil
             DispatchQueue.main.async {
-                guard path == directory else { return }
                 loadingPullRequest = false
+                guard path == directory else { return }
                 // A successful empty lookup means the branch has no PR. A
                 // transient auth/network failure keeps the last useful chip.
                 if result.status == 0 { pullRequest = value }
@@ -572,6 +586,10 @@ private struct Transcript: View {
     /// The tool call whose whole output is open over the transcript.
     @State private var outputItem: String?
     @State private var changesCache = TurnChangesCache()
+    /// The rows and the rest, kept while a reply streams in (see
+    /// `TranscriptLayoutCache`): worked out again only when the items
+    /// change shape, not on every token.
+    @State private var layoutCache = TranscriptLayoutCache()
     /// The row at the top of the view, to come back to it.
     @State private var position: String?
     /// Folded runs of tool calls that have been opened, by row id.
@@ -579,6 +597,8 @@ private struct Transcript: View {
     /// How many rows there were when the view left the end, for "Jump to
     /// Latest" to say how many came since.
     @State private var rowsWhenLeft: Int?
+    /// A follow-to-the-end scroll is already on its way.
+    @State private var scrollQueued = false
 
     /// Starts where it should on its very first layout: where you were
     /// reading, else the latest (`defaultScrollAnchor`). Scrolling there
@@ -599,9 +619,9 @@ private struct Transcript: View {
         let items = session.conversation.items
         let running = session.conversation.isRunning
         let blocking = blockingState
-        let shown = items.filter(Self.isShown)
-        let rows = TranscriptTimeline.rows(shown)
-        let byId = Dictionary(shown.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let layout = layoutCache.layout(for: session.conversation)
+        let rows = layout.rows
+        let byId = { (id: String) in layout.item(id, in: items) }
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
@@ -611,10 +631,12 @@ private struct Transcript: View {
                         EmptyConversation(session: session)
                     }
                     if blocking == nil {
-                        let depths = Self.depths(items)
-                        let turns = changesCache.turns(items, cwd: session.cwd, running: running, isShown: Self.isShown)
-                        let lastId = shown.last?.id
-                        let regenerable = Self.regenerableReply(session)
+                        let depths = layout.depths
+                        let thinkingDurations = layout.thinkingDurations
+                        let turns = changesCache.turns(items, layout: layoutCache.generation, cwd: session.cwd,
+                                                       running: running, isShown: Self.isShown)
+                        let lastId = layout.lastShownId
+                        let regenerable = Self.regenerableReply(session, reply: layout.lastTextPosition.map { items[$0] })
                         ForEach(rows) { row in
                             let first = row.itemIds.first ?? ""
                             let depth = depths[first] ?? 0
@@ -622,18 +644,18 @@ private struct Transcript: View {
                                 Group {
                                     switch row {
                                     case .item(let id):
-                                        if let item = byId[id] {
+                                        if let item = byId(id) {
                                             if let report = session.usageReports[item.id] {
                                                 UsageCard(report: report)
                                             } else {
                                                 ItemRow(item: item, running: running, isLast: id == lastId,
-                                                        thinkingDuration: Self.thinkingDuration(item, in: items),
+                                                        thinkingDuration: thinkingDurations[item.id],
                                                         canRegenerate: id == regenerable)
                                                     .equatable()
                                             }
                                         }
                                     case .toolRun(let ids):
-                                        ToolRunRow(items: ids.compactMap { byId[$0] }, running: running,
+                                        ToolRunRow(items: ids.compactMap(byId), running: running,
                                                    expanded: Binding(get: { openRuns.contains(row.id) },
                                                                      set: { open in
                                                                          if open { openRuns.insert(row.id) } else { openRuns.remove(row.id) }
@@ -642,7 +664,7 @@ private struct Transcript: View {
                                     }
                                 }
                                 .contextMenu {
-                                    if case .item(let id) = row, let item = byId[id] {
+                                    if case .item(let id) = row, let item = byId(id) {
                                         MessageMenu(session: session, bridge: bridge, item: item)
                                     }
                                 }
@@ -701,8 +723,15 @@ private struct Transcript: View {
             }
             // Follow the stream only while at the end, so reading back isn't
             // yanked away; a button jumps to the latest instead.
+            // At most every tenth of a second: once per streamed token kept
+            // layout busy scrolling. The last change is always followed.
             .onChange(of: items) { _, _ in
-                if atBottom { proxy.scrollTo("bottom", anchor: .bottom) }
+                guard atBottom, !scrollQueued else { return }
+                scrollQueued = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    scrollQueued = false
+                    if atBottom { proxy.scrollTo("bottom", anchor: .bottom) }
+                }
             }
             // Find in conversation: go to the current match, once what it
             // opens has taken its height. A match inside a folded run opens it.
@@ -751,7 +780,7 @@ private struct Transcript: View {
             }
             #endif
             .overlay(alignment: .trailing) {
-                let marks = TranscriptPromptMark.marks(shown)
+                let marks = layout.marks
                 if blocking == nil, marks.count > 1 {
                     TranscriptMinimap(marks: marks, current: Self.currentPrompt(position, rows: rows, items: byId)) { id in
                         withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id, anchor: .top) }
@@ -817,35 +846,28 @@ private struct Transcript: View {
         )
     }
 
-    /// The reply Regenerate is offered on, if any.
-    static func regenerableReply(_ session: AgentSession) -> String? {
-        guard let reply = session.conversation.items.last(where: { if case .text = $0.kind { true } else { false } }),
-              MessageResend.canRegenerate(reply, in: session) else { return nil }
+    /// The reply Regenerate is offered on, if any: the last reply, found
+    /// with the layout, so a streaming turn doesn't search for it.
+    static func regenerableReply(_ session: AgentSession, reply: AgentItem?) -> String? {
+        guard let reply, MessageResend.canRegenerate(reply, in: session) else { return nil }
         return reply.id
     }
 
-    /// How long a thinking block took, from the item after it.
-    static func thinkingDuration(_ item: AgentItem, in items: [AgentItem]) -> TimeInterval? {
-        guard case .thinking = item.kind, let index = items.firstIndex(where: { $0.id == item.id }),
-              index + 1 < items.count else { return nil }
-        return AgentElapsed.thinking(item, next: items[index + 1])
-    }
-
     /// The prompt at or above the top of the view.
-    static func currentPrompt(_ position: String?, rows: [TranscriptRow], items: [String: AgentItem]) -> String? {
+    static func currentPrompt(_ position: String?, rows: [TranscriptRow], items: (String) -> AgentItem?) -> String? {
         let top = position.flatMap { id in rows.firstIndex { $0.id == id } } ?? rows.count - 1
         guard top >= 0 else { return nil }
         return rows[...min(top, rows.count - 1)].reversed().first { row in
-            if case .item(let id) = row, case .user = items[id]?.kind { return true }
+            if case .item(let id) = row, case .user = items(id)?.kind { return true }
             return false
         }?.id
     }
 
     /// The prompt before or after the one at the top of the view.
     static func prompt(_ direction: ConversationBridge.Jump.Direction, from position: String?,
-                       rows: [TranscriptRow], items: [String: AgentItem], atBottom: Bool) -> String? {
+                       rows: [TranscriptRow], items: (String) -> AgentItem?, atBottom: Bool) -> String? {
         let prompts = rows.indices.filter { index in
-            if case .item(let id) = rows[index], case .user = items[id]?.kind { return true }
+            if case .item(let id) = rows[index], case .user = items(id)?.kind { return true }
             return false
         }
         guard !prompts.isEmpty else { return nil }
@@ -854,25 +876,6 @@ private struct Transcript: View {
         case .previous: return prompts.last { $0 < top }.map { rows[$0].id } ?? rows[prompts[0]].id
         case .next: return prompts.first { $0 > top }.map { rows[$0].id }
         }
-    }
-
-    /// How deep each item sits: 0 for the conversation's own, 1 for a
-    /// subagent's, 2 for that subagent's own subagent's, and so on, by
-    /// following each item's parent call up.
-    static func depths(_ items: [AgentItem]) -> [String: Int] {
-        let parents = Dictionary(items.map { ($0.id, $0.parent) }, uniquingKeysWith: { first, _ in first })
-        var depths: [String: Int] = [:]
-        for item in items where item.parent != nil {
-            var depth = 0
-            var parent = item.parent
-            var seen = Set<String>()
-            while let id = parent, seen.insert(id).inserted {
-                depth += 1
-                parent = parents[id] ?? nil
-            }
-            depths[item.id] = depth
-        }
-        return depths
     }
 
     /// The page that replaces the transcript when the agent can't go on:
@@ -894,13 +897,7 @@ private struct Transcript: View {
 }
 
 extension Transcript {
-    /// Thinking blocks arrive empty when the model keeps its reasoning to
-    /// itself; there's nothing to expand.
-    static func isShown(_ item: AgentItem) -> Bool {
-        if item.queued { return false }
-        if case .thinking(let text) = item.kind { return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        return true
-    }
+    static func isShown(_ item: AgentItem) -> Bool { TranscriptTimeline.isShown(item) }
 }
 
 private struct SuggestedCommandsPanel: View {
@@ -1989,16 +1986,10 @@ private struct Composer: View {
                               let digit = Int(press.characters), (1...9).contains(digit) else { return .ignored }
                         return questions.pick(number: digit, session: session) ? .handled : .ignored
                     }
-                    .onKeyPress(.leftArrow) {
-                        // ← on an empty message opens the agents board and
-                        // sends this conversation to the background.
-                        guard text.isEmpty, attachments.isEmpty else { return .ignored }
-                        AgentCenter.shared.sendToBackground(session)
-                        return .handled
-                    }
+                    .onKeyPress(keys: [.leftArrow]) { press in sendToBackground(press) }
                     .onKeyPress(.upArrow, phases: [.down, .repeat]) { press in
                         // ⌘↑ in an empty box: the prompt before, in the transcript.
-                        if press.modifiers == .command, text.isEmpty {
+                        if ComposerKeys.isCommandOnly(press.modifiers), text.isEmpty {
                             bridge.jumpToPrompt(.previous)
                             return .handled
                         }
@@ -2012,7 +2003,7 @@ private struct Composer: View {
                         return .handled
                     }
                     .onKeyPress(.downArrow, phases: [.down, .repeat]) { press in
-                        if press.modifiers == .command, text.isEmpty {
+                        if ComposerKeys.isCommandOnly(press.modifiers), text.isEmpty {
                             bridge.jumpToPrompt(.next)
                             return .handled
                         }
@@ -2197,6 +2188,16 @@ private struct Composer: View {
     /// A paste or drop: image data as an image, files by URL (images as
     /// images, anything else as a path). Says whether any of it could be
     /// taken; what fails to load is said, not dropped silently.
+
+    /// ← on an empty message opens the agents board and sends this
+    /// conversation to the background. A plain ← only, and not mid-turn:
+    /// moving restarts the agent, which would cut the turn off.
+    private func sendToBackground(_ press: KeyPress) -> KeyPress.Result {
+        guard text.isEmpty, attachments.isEmpty, !session.conversation.isRunning,
+              press.modifiers.isDisjoint(with: [.command, .control, .option, .shift]) else { return .ignored }
+        AgentCenter.shared.sendToBackground(session)
+        return .handled
+    }
     private func load(_ providers: [NSItemProvider]) -> Bool {
         var accepted = false
         for provider in providers {
@@ -2381,7 +2382,12 @@ private struct Composer: View {
         // Mid-turn: steer by default where the engine can, ⌘ flipping it.
         let delivery: AgentSession.Delivery = session.canSteer && !commandHeld ? .steer : .queue
         // Diff review notes the person chose to send along go with it, once.
-        session.send(ReviewNotesOutbox.shared.attach(to: message, cwd: session.cwd), attachments: images, delivery: delivery)
+        let sent = session.send(ReviewNotesOutbox.shared.attach(to: message, cwd: session.cwd), attachments: images, delivery: delivery)
+        // The agent wouldn't start: the draft comes back rather than vanishing.
+        if !sent, text.isEmpty, attachments.isEmpty {
+            text = message
+            attachments = images
+        }
     }
 }
 
@@ -2445,6 +2451,170 @@ private struct NoReferenceMatches: View {
             .padding(.vertical, 8)
         }
         .accessibilityLabel("No matching files")
+    }
+}
+
+/// Modifier checks for the composer's keys.
+enum ComposerKeys {
+    /// Only ⌘ held. Arrow keys also carry the numeric-pad and function
+    /// flags, so an exact comparison never matched ⌘↑ or ⌘↓.
+    static func isCommandOnly(_ modifiers: EventModifiers) -> Bool {
+        modifiers.subtracting([.numericPad, .function, .capsLock]) == .command
+    }
+}
+
+/// Esc stops a running turn from anywhere in the conversation, not only
+/// from the message box. Text being edited and other views that take keys
+/// (a terminal beside it, a web page) keep their own Esc. With two
+/// conversations in one window (one beside the terminal, one over it), Esc
+/// stops only the one last clicked or typed in, else the one over it.
+@MainActor
+final class ConversationEscape: ObservableObject {
+    weak var session: AgentSession?
+    weak var window: NSWindow?
+    /// The conversation's own area of the window, to tell clicks and
+    /// typing in it from those in the other one.
+    weak var area: NSView?
+    /// Something in the view takes Esc first: an enlarged image, a menu.
+    var blocked = false
+    /// Over the terminal rather than beside it.
+    var inMainArea = true
+    private var monitor: Any?
+
+    /// A conversation showing in a window, for choosing which one Esc stops.
+    struct Candidate: Equatable {
+        let id: String
+        let inMainArea: Bool
+        /// Has something Esc can stop: a turn, or a `!` command.
+        var busy = true
+    }
+
+    /// Every conversation's Esc that's listening, to find the others in
+    /// the same window.
+    private static var live: [WeakEscape] = []
+    private struct WeakEscape { weak var escape: ConversationEscape? }
+    /// The conversation last clicked or typed in, by window.
+    private static var lastActive: [ObjectIdentifier: String] = [:]
+
+    func start() {
+        guard monitor == nil else { return }
+        Self.live.removeAll { $0.escape == nil || $0.escape === self }
+        Self.live.append(WeakEscape(escape: self))
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown]) { [weak self] event in
+            MainActor.assumeIsolated { self?.handle(event) == true ? nil : event }
+        }
+    }
+
+    func stop() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+        Self.live.removeAll { $0.escape == nil || $0.escape === self }
+    }
+
+    /// Which conversation Esc is for: the one last clicked or typed in,
+    /// while it still shows, else the one over the terminal.
+    static func target(among candidates: [Candidate], lastActive: String?) -> String? {
+        // Esc is for stopping something: the one last used when it has
+        // something running, else one that does, the main area's first.
+        let busy = candidates.filter(\.busy)
+        let pool = busy.isEmpty ? candidates : busy
+        if let lastActive, pool.contains(where: { $0.id == lastActive }) { return lastActive }
+        return (pool.first { $0.inMainArea } ?? pool.first)?.id
+    }
+
+    private func handle(_ event: NSEvent) -> Bool {
+        guard let session, let window, event.window === window else { return false }
+        noteActivity(event, session: session, window: window)
+        guard event.type == .keyDown, !blocked, window.attachedSheet == nil,
+              Self.isPlainEscape(keyCode: event.keyCode, flags: event.modifierFlags),
+              !Self.takesEscape(window.firstResponder) else { return false }
+        // Only one conversation in the window answers; the rest let it pass.
+        let others = Self.live.compactMap(\.escape).filter { $0.window === window && $0.session != nil }
+        let candidates = others.map { escape in
+            Candidate(id: escape.session?.id ?? "", inMainArea: escape.inMainArea,
+                      busy: escape.session.map { $0.conversation.isRunning || $0.shellRunning != nil } ?? false)
+        }
+        guard Self.target(among: candidates, lastActive: Self.lastActive[ObjectIdentifier(window)]) == session.id
+        else { return false }
+        // As in the message box: a `!` command first, then the turn.
+        if session.shellRunning != nil {
+            session.stopShell()
+            return true
+        }
+        guard session.conversation.isRunning else { return false }
+        session.interrupt()
+        return true
+    }
+
+    /// A click in this conversation, or typing into something in it (its
+    /// message box), makes it the one Esc stops.
+    private func noteActivity(_ event: NSEvent, session: AgentSession, window: NSWindow) {
+        guard let area, !area.isHiddenOrHasHiddenAncestor else { return }
+        let frame = area.convert(area.bounds, to: nil)
+        let inside: Bool
+        if event.type == .keyDown {
+            guard let view = window.firstResponder as? NSView, view.window === window else { return }
+            let rect = view.convert(view.visibleRect, to: nil)
+            inside = frame.contains(CGPoint(x: rect.midX, y: rect.midY))
+        } else {
+            inside = frame.contains(event.locationInWindow)
+        }
+        if inside { Self.lastActive[ObjectIdentifier(window)] = session.id }
+    }
+
+    static func isPlainEscape(keyCode: UInt16, flags: NSEvent.ModifierFlags) -> Bool {
+        keyCode == 53 && flags.intersection(.deviceIndependentFlagsMask).subtracting([.capsLock, .numericPad, .function]).isEmpty
+    }
+
+    /// Whether the view with the keyboard handles Esc itself: editable text
+    /// (the message box, find, rename) or an AppKit view that isn't
+    /// SwiftUI's own, such as a terminal. Selectable transcript text and
+    /// SwiftUI's controls don't.
+    static func takesEscape(_ responder: NSResponder?) -> Bool {
+        guard let responder, !(responder is NSWindow) else { return false }
+        if let text = responder as? NSTextView { return text.isEditable }
+        return !String(describing: type(of: responder)).contains("Hosting")
+    }
+}
+
+/// Wires `ConversationEscape` to the conversation's window while it shows.
+private struct EscapeStopsTurn: ViewModifier {
+    let session: AgentSession
+    let blocked: Bool
+    let inMainArea: Bool
+    @StateObject private var escape = ConversationEscape()
+
+    func body(content: Content) -> some View {
+        content
+            .background(WindowReader(escape: escape))
+            .onAppear {
+                escape.session = session
+                escape.start()
+            }
+            .onDisappear { escape.stop() }
+            .onChange(of: blocked, initial: true) { _, now in escape.blocked = now }
+            .onChange(of: inMainArea, initial: true) { _, now in escape.inMainArea = now }
+    }
+
+    private struct WindowReader: NSViewRepresentable {
+        let escape: ConversationEscape
+
+        func makeNSView(context: Context) -> Reader {
+            let view = Reader()
+            view.escape = escape
+            return view
+        }
+
+        func updateNSView(_ view: Reader, context: Context) {}
+
+        final class Reader: NSView {
+            weak var escape: ConversationEscape?
+            override func viewDidMoveToWindow() {
+                super.viewDidMoveToWindow()
+                escape?.window = window
+                escape?.area = self
+            }
+        }
     }
 }
 

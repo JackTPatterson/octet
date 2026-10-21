@@ -61,7 +61,19 @@ struct AgentConversation: Equatable {
     var permissionMode: String?
     var cwd: String?
     var slashCommands: [String] = []
-    var items: [AgentItem] = []
+    /// Any change made through here counts as a change of shape, so the
+    /// transcript lays itself out again; only text streaming into an item
+    /// (`appendDelta`, `setLiveOutput`) leaves the revision as it was. Not
+    /// reading `oldValue` keeps in-place mutation from copying the array.
+    var items: [AgentItem] = [] {
+        didSet { structureRevision &+= 1 }
+    }
+    /// Moves on whenever `items` changes shape: an item added, removed,
+    /// reordered or changed in anything but its streaming text. The
+    /// transcript keys what it works out from the items on this, the count
+    /// and the last id, which are cheap to compare on every token. It starts
+    /// anywhere, so two conversations made apart don't share a revision.
+    private(set) var structureRevision = UInt64.random(in: 0 ... .max)
     /// A turn is in flight: from sending a message until its `result`.
     var isRunning = false
     /// Cumulative, at list price, as the agent reports it.
@@ -110,6 +122,56 @@ struct AgentConversation: Equatable {
         isRunning = true
         lastError = nil
         limitHit = nil
+    }
+
+    /// Adds a streamed piece to the text (`thinking` false) or thinking
+    /// (true) item `id`; nil takes either. Returns whether `id` was such an
+    /// item. The block streaming is nearly always the last item, so it's
+    /// looked for from the end.
+    @discardableResult
+    mutating func appendDelta(_ delta: String, to id: String, thinking: Bool?) -> Bool {
+        guard let position = items.lastIndex(where: { $0.id == id }) else { return false }
+        return appendDelta(delta, at: position, thinking: thinking)
+    }
+
+    /// The same, for the item at `position`. The string grows in place
+    /// rather than being copied for every token.
+    @discardableResult
+    mutating func appendDelta(_ delta: String, at position: Int, thinking: Bool?) -> Bool {
+        // Text growing is the one change that isn't a change of shape.
+        let revision = structureRevision
+        defer { structureRevision = revision }
+        switch items[position].kind {
+        case .text(var text) where thinking != true:
+            guard !delta.isEmpty else { return true }
+            // Dropping the item's reference first leaves `text` the only
+            // owner of its buffer, so the append doesn't copy it.
+            items[position].kind = .text("")
+            text += delta
+            items[position].kind = .text(text)
+            return true
+        case .thinking(var text) where thinking != false:
+            guard !delta.isEmpty else { return true }
+            items[position].kind = .thinking("")
+            text += delta
+            items[position].kind = .thinking(text)
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Sets a running tool call's streamed output, which only redraws its
+    /// own row, so the transcript keeps its layout. Returns whether the item
+    /// at `position` is a call still waiting on its result.
+    @discardableResult
+    mutating func setLiveOutput(_ output: String?, at position: Int) -> Bool {
+        guard case .tool(var call) = items[position].kind, call.result == nil else { return false }
+        let revision = structureRevision
+        defer { structureRevision = revision }
+        call.liveOutput = output
+        items[position].kind = .tool(call)
+        return true
     }
 
     /// Remembers where a rewind to user message `id` resumes.
@@ -302,13 +364,7 @@ struct AgentConversation: Equatable {
                 items.append(AgentItem(id: id, kind: kind))
                 openBlocks[index] = id
             }
-            guard let position = items.firstIndex(where: { $0.id == id }) else { return }
-            let delta = update["delta"] as? String ?? ""
-            switch items[position].kind {
-            case .text(let text): items[position].kind = .text(text + delta)
-            case .thinking(let text): items[position].kind = .thinking(text + delta)
-            default: break
-            }
+            appendDelta(update["delta"] as? String ?? "", to: id, thinking: nil)
         case "toolcall_start":
             let id = update["id"] as? String ?? "\(messageId):\(index)"
             upsertTool(id: id, name: Self.piToolName(update["toolName"] as? String ?? "tool"), input: nil, parent: nil)
@@ -415,15 +471,11 @@ struct AgentConversation: Equatable {
             }
         case "content_block_delta":
             guard let index = event["index"] as? Int, let id = openBlocks[index],
-                  let delta = event["delta"] as? [String: Any],
-                  let position = items.firstIndex(where: { $0.id == id }) else { return }
-            switch (delta["type"] as? String, items[position].kind) {
-            case ("text_delta", .text(let text)):
-                items[position].kind = .text(text + (delta["text"] as? String ?? ""))
-            case ("thinking_delta", .thinking(let text)):
-                items[position].kind = .thinking(text + (delta["thinking"] as? String ?? ""))
-            default:
-                break
+                  let delta = event["delta"] as? [String: Any] else { return }
+            switch delta["type"] as? String {
+            case "text_delta": appendDelta(delta["text"] as? String ?? "", to: id, thinking: false)
+            case "thinking_delta": appendDelta(delta["thinking"] as? String ?? "", to: id, thinking: true)
+            default: break
             }
         case "message_stop":
             openBlocks = [:]
@@ -516,6 +568,13 @@ struct AgentConversation: Equatable {
 
     // MARK: - Helpers
 
+    /// A tool call's input as bytes, keys sorted: the same input always
+    /// makes the same bytes, so a call compares equal to itself however
+    /// it was read (unsorted, the order changed from one encoding to the next).
+    private static func inputData(_ input: [String: Any]) -> Data? {
+        try? JSONSerialization.data(withJSONObject: input, options: .sortedKeys)
+    }
+
     private mutating func upsertTool(id: String, name: String, input: [String: Any]?, parent: String?) {
         let summary = input.map { Self.toolSummary(name: name, input: $0) } ?? ""
         let detail = input.flatMap(Self.prettyJSON) ?? ""
@@ -523,11 +582,11 @@ struct AgentConversation: Equatable {
             if let input {
                 call.summary = summary
                 call.input = detail
-                call.inputData = try? JSONSerialization.data(withJSONObject: input)
+                call.inputData = Self.inputData(input)
             }
             items[position].kind = .tool(call)
         } else {
-            let data = input.flatMap { try? JSONSerialization.data(withJSONObject: $0) }
+            let data = input.flatMap(Self.inputData)
             items.append(AgentItem(id: id, kind: .tool(AgentToolCall(name: name, summary: summary, input: detail, inputData: data)), parent: parent))
         }
     }

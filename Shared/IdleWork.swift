@@ -80,3 +80,16 @@ struct IdleWork: Equatable, Codable {
         return work
     }
 }
+
+extension IdleWork {
+    // Every field has a default, so one missing (an older build's note)
+    // reads as nothing rather than failing the sleeping workspace it's in.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        branch = try container.decodeIfPresent(String.self, forKey: .branch)
+        uncommitted = try container.decodeIfPresent(Int.self, forKey: .uncommitted) ?? 0
+        unpushed = try container.decodeIfPresent(Int.self, forKey: .unpushed) ?? 0
+        ports = try container.decodeIfPresent([Int].self, forKey: .ports) ?? []
+        mergedWorktree = try container.decodeIfPresent(Bool.self, forKey: .mergedWorktree) ?? false
+    }
+}

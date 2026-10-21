@@ -116,10 +116,17 @@ final class AgentSession: ObservableObject, Identifiable {
     let engine: Engine
     let workspaceId: String
     let cwd: String
-    @Published var conversation = AgentConversation() {
+    /// Not @Published, and its didSet never reads oldValue: either one keeps
+    /// a second copy of the transcript alive, so every streamed token copied
+    /// all of it. Mutated in place, the change is announced just after.
+    var conversation = AgentConversation() {
         didSet {
-            if conversation.costUSD != oldValue.costUSD { UsageLedgerStore.shared.noteCost(of: self, from: oldValue.costUSD) }
-            if conversation.isRunning != oldValue.isRunning {
+            objectWillChange.send()
+            let previousCost = lastCostUSD
+            lastCostUSD = conversation.costUSD
+            if conversation.costUSD != previousCost { UsageLedgerStore.shared.noteCost(of: self, from: previousCost) }
+            if conversation.isRunning != lastIsRunning {
+                lastIsRunning = conversation.isRunning
                 AgentCenter.shared.objectWillChange.send()
                 // The turn that restarts carried work has had its chance;
                 // whatever it started again now shows up on its own.
@@ -130,12 +137,13 @@ final class AgentSession: ObservableObject, Identifiable {
                     if contextHistory.count > 200 { contextHistory.removeFirst(contextHistory.count - 200) }
                 }
                 // The next follow-up goes once the turn has fully settled.
-                if !conversation.isRunning, !heldPrompts.isEmpty {
-                    DispatchQueue.main.async { [weak self] in self?.releaseHeldPrompt() }
-                }
+                if !conversation.isRunning { releaseHeldPromptSoon() }
             }
         }
     }
+    /// What `conversation` last had for the two values its didSet watches.
+    private var lastCostUSD: Double?
+    private var lastIsRunning = false
     /// Work the terminal process had running when this conversation took
     /// over from it, shown until the first turn here has started it again.
     @Published private(set) var carriedRuntimes: [HandoffRuntime] = []
@@ -392,13 +400,17 @@ final class AgentSession: ObservableObject, Identifiable {
     var threadId: String?
     /// What each call Octet has made to the app server was for, by id, so an
     /// answer (or an error) lands where it belongs.
-    private enum CodexCall { case handshake, thread, turn, settings, interrupt, command(String), steer(String, [[String: Any]]), mcpStatus }
+    private enum CodexCall { case handshake, thread, turn, settings, interrupt, command(String), steer(QueuedTurn), mcpStatus }
     private var codexCalls: [Int: CodexCall] = [:]
     private var nextRequestId = 0
+    /// A message waiting to start a Codex turn: its transcript item's id
+    /// (two identical messages are still two), and what it sends.
+    private struct QueuedTurn {
+        let id: String
+        let input: [[String: Any]]
+    }
     /// Messages sent before the thread was open, in order.
-    private var queuedTurns: [String] = []
-    /// What each waiting message sends, with its images.
-    private var queuedInputs: [String: [[String: Any]]] = [:]
+    private var queuedTurns: [QueuedTurn] = []
     /// The Codex turn running now, which a message sent mid-turn steers.
     private var codexTurnId: String?
 
@@ -443,10 +455,18 @@ final class AgentSession: ObservableObject, Identifiable {
     /// Sends the oldest held follow-up, unless the turn ended on something
     /// that would only stop it again (a usage limit, a missing agent).
     private func releaseHeldPrompt() {
-        guard !conversation.isRunning, !heldPrompts.isEmpty, conversation.limitHit == nil, launchFailure == nil,
+        guard !closed, !conversation.isRunning, !heldPrompts.isEmpty, conversation.limitHit == nil, launchFailure == nil,
               pendingPermission == nil, pendingQuestion == nil else { return }
         let next = heldPrompts.removeFirst()
-        send(next.text, attachments: next.attachments)
+        // An agent that wouldn't start keeps it waiting, first in line.
+        if !send(next.text, attachments: next.attachments) { heldPrompts.insert(next, at: 0) }
+    }
+
+    /// The same, once whatever is answering a card or ending a turn has
+    /// finished, so a send never starts in the middle of it.
+    func releaseHeldPromptSoon() {
+        guard !heldPrompts.isEmpty else { return }
+        DispatchQueue.main.async { [weak self] in self?.releaseHeldPrompt() }
     }
 
     /// Takes a held follow-up out of the queue now: steered into the turn
@@ -455,10 +475,12 @@ final class AgentSession: ObservableObject, Identifiable {
         guard let index = heldPrompts.firstIndex(where: { $0.id == id }) else { return }
         let prompt = heldPrompts.remove(at: index)
         if !conversation.isRunning {
-            return send(prompt.text, attachments: prompt.attachments)
+            if !send(prompt.text, attachments: prompt.attachments) { heldPrompts.insert(prompt, at: 0) }
+            return
         }
         if canSteer {
-            return send(prompt.text, attachments: prompt.attachments, delivery: .steer)
+            send(prompt.text, attachments: prompt.attachments, delivery: .steer)
+            return
         }
         heldPrompts.insert(prompt, at: 0)
         interrupt()
@@ -544,7 +566,10 @@ final class AgentSession: ObservableObject, Identifiable {
               policyHeld: policyHeld, policyOverridden: policyOverridden ? true : nil)
     }
 
-    static func restore(_ saved: Saved, workspaceId: String, start: Bool = true) -> AgentSession {
+    /// `replayInBackground` reads a Claude log off the main thread; only for
+    /// launch, where nothing is sent before the history is back.
+    static func restore(_ saved: Saved, workspaceId: String, start: Bool = true,
+                        replayInBackground: Bool = false) -> AgentSession {
         let engine = saved.engine ?? .claude
         let session = AgentSession(workspaceId: workspaceId, cwd: saved.cwd, engine: engine, model: saved.model,
                                    permissionMode: PermissionMode(rawValue: saved.permissionMode) ?? .default,
@@ -560,13 +585,15 @@ final class AgentSession: ObservableObject, Identifiable {
         session.policyOverridden = saved.policyOverridden == true
         session.needsRestart = false
         switch engine {
-        case .claude:
+        case .claude where !replayInBackground:
+            // Resumed to be sent to at once: the history must be there first.
             session.conversation = restoredTranscript(saved, engine: engine) ?? session.conversation
-        case .codex:
+        case .claude, .codex:
             // Finding a Codex thread's log means asking its database, which
-            // runs a process; done here, launch would wait on one per thread.
+            // runs a process, and a long Claude log takes a while to replay;
+            // done here, launch would wait on every one of them.
             DispatchQueue.global(qos: .userInitiated).async {
-                let transcript = restoredTranscript(saved, engine: .codex)
+                let transcript = restoredTranscript(saved, engine: engine)
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
                         // Unless the conversation has moved on since.
@@ -757,16 +784,19 @@ final class AgentSession: ObservableObject, Identifiable {
         return "Working"
     }
 
-    func send(_ text: String, attachments: [Attachment] = [], delivery: Delivery = .queue) {
+    /// Returns false only when the message didn't go because the agent
+    /// couldn't be started, so the caller can give it back to the person.
+    @discardableResult
+    func send(_ text: String, attachments: [Attachment] = [], delivery: Delivery = .queue) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty || !attachments.isEmpty else { return }
+        guard !trimmed.isEmpty || !attachments.isEmpty else { return true }
         takeBaselineIfNeeded()
         let wasRunning = conversation.isRunning
         // Typed in full rather than picked from the menu, /remote-control
         // (and Claude Code's /rc) still switches it here.
         if engine == .claude, ["/remote-control", "/rc"].contains(trimmed), attachments.isEmpty {
             setRemoteControl(!remoteControlEngaged)
-            return
+            return true
         }
         // `/rename` renames the session in Claude Code and the tab here.
         if trimmed.hasPrefix("/rename ") {
@@ -777,17 +807,17 @@ final class AgentSession: ObservableObject, Identifiable {
         // its own.
         if engine != .opencode, attachments.isEmpty, let command = ShellPassthrough.command(in: trimmed) {
             runShell(command)
-            return
+            return true
         }
         if engine == .opencode, ["/undo", "/redo"].contains(trimmed), attachments.isEmpty {
             // Carried out on the session, not sent to the model.
             if trimmed == "/undo" { undoOpenCode() } else { redoOpenCode() }
-            return
+            return true
         }
         // Mid-turn, a message waits with Octet unless it steers the turn.
         if wasRunning, delivery == .queue || !canSteer {
             heldPrompts.append(HeldPrompt(text: text, attachments: attachments))
-            return
+            return true
         }
         if engine == .opencode {
             if !conversation.isRunning { turnStartedAt = Date() }
@@ -797,10 +827,15 @@ final class AgentSession: ObservableObject, Identifiable {
                 provisionalTitle = title
             }
             if trimmed == "/compact" { compactOpenCode() } else { sendOpenCode(trimmed, attachments: attachments) }
-            return
+            return true
         }
         if needsRestart || process?.isRunning != true { restart() }
-        guard stdin != nil else { return }
+        guard stdin != nil else {
+            // Nothing is in the transcript yet; say why rather than drop it.
+            let why = startupError.map { " " + $0 } ?? ""
+            notice("Couldn't start \(engine.displayName), so the message wasn't sent.\(why)", style: .error)
+            return false
+        }
         if !conversation.isRunning { turnStartedAt = Date() }
         // The item shares the message's uuid, so a queued one can be
         // taken back from Claude Code by it.
@@ -849,16 +884,17 @@ final class AgentSession: ObservableObject, Identifiable {
         case .codex:
             let input = Self.codexInput(sent, attachments)
             // The thread may still be opening, and a turn needs its id.
-            guard let threadId else { queuedTurns.append(trimmed); queuedInputs[trimmed] = input; return }
+            let turn = QueuedTurn(id: messageId, input: input)
+            guard let threadId else { queuedTurns.append(turn); return true }
             // Mid-turn, it goes into the running turn, as Codex's own
             // composer does; a message sent between turns waits.
             if wasRunning, let turnId = codexTurnId {
-                call("turn/steer", ["threadId": threadId, "input": input, "expectedTurnId": turnId], as: .steer(trimmed, input))
+                call("turn/steer", ["threadId": threadId, "input": input, "expectedTurnId": turnId], as: .steer(turn))
                 if let index = conversation.items.firstIndex(where: { $0.id == messageId }) { conversation.items[index].queued = false }
-                return
+                return true
             }
-            if wasRunning { queuedTurns.append(trimmed); queuedInputs[trimmed] = input; return }
-            startTurn(trimmed, threadId: threadId, input: input)
+            if wasRunning { queuedTurns.append(turn); return true }
+            startTurn(threadId: threadId, input: input)
         case .opencode:
             break
         case .pi:
@@ -872,6 +908,7 @@ final class AgentSession: ObservableObject, Identifiable {
             if wasRunning { message["streamingBehavior"] = "steer" }
             if write(message) { hasTurns = true }
         }
+        return true
     }
 
     /// Writes one message to the agent's stdin: a stream-json line for Claude
@@ -913,8 +950,7 @@ final class AgentSession: ObservableObject, Identifiable {
         return images + (text.isEmpty ? [] : [["type": "text", "text": text]])
     }
 
-    private func startTurn(_ text: String, threadId: String, input: [[String: Any]]? = nil) {
-        let input = input ?? queuedInputs.removeValue(forKey: text) ?? [["type": "text", "text": text]]
+    private func startTurn(threadId: String, input: [[String: Any]]) {
         var params: [String: Any] = ["threadId": threadId, "input": input]
         // Every turn carries the effort picked, so it holds even if a
         // settings update mid-conversation wasn't taken.
@@ -950,7 +986,10 @@ final class AgentSession: ObservableObject, Identifiable {
     /// Claude Code takes a signal, Codex an interrupt for the thread.
     func interrupt() {
         if engine == .opencode {
-            if conversation.isRunning { interruptOpenCode() }
+            if conversation.isRunning {
+                interruptOpenCode()
+                dismissPending(message: "The turn was stopped.")
+            }
             return
         }
         guard let process, process.isRunning, conversation.isRunning else { return }
@@ -969,6 +1008,8 @@ final class AgentSession: ObservableObject, Identifiable {
         case .pi:
             write(["type": "abort"])
         }
+        // A card left up would outlive the turn and hold the follow-ups.
+        dismissPending(message: "The turn was stopped.")
     }
 
     /// Whether a message waiting behind the running turn can be taken back:
@@ -1241,14 +1282,13 @@ final class AgentSession: ObservableObject, Identifiable {
 
     /// Takes a queued message back before the agent gets to it.
     func cancelQueued(_ item: AgentItem) {
-        guard canCancelQueued(item), case .user(let text) = item.kind else { return }
+        guard canCancelQueued(item), case .user = item.kind else { return }
         switch engine {
         case .claude:
             write(["type": "control_request", "request_id": UUID().uuidString,
                    "request": ["subtype": "cancel_async_message", "message_uuid": item.id]])
         case .codex:
-            if let index = queuedTurns.firstIndex(of: text) { queuedTurns.remove(at: index) }
-            if !queuedTurns.contains(text) { queuedInputs[text] = nil }
+            queuedTurns.removeAll { $0.id == item.id }
         default:
             return
         }
@@ -1292,18 +1332,32 @@ final class AgentSession: ObservableObject, Identifiable {
     private func resumeNow() {
         resumeTimer = nil
         resumeAt = nil
-        guard !conversation.isRunning else { return }
+        // A card waiting on an answer still decides what happens next.
+        guard !conversation.isRunning, pendingPermission == nil, pendingQuestion == nil else { return }
+        // A follow-up held for after the limit goes instead of a bare "continue".
+        if !heldPrompts.isEmpty {
+            let next = heldPrompts.removeFirst()
+            if !send(next.text, attachments: next.attachments) { heldPrompts.insert(next, at: 0) }
+            return
+        }
         send("Continue where you left off.")
     }
 
     func close() {
+        closed = true
         cancelResume()
         denyAllPending(message: "The conversation was closed.")
         if engine == .opencode { closeOpenCode() }
         stopProcess()
         permissionServer?.stop()
         permissionServer = nil
+        // No process is left to end the turn, so it ends here.
+        conversation.isRunning = false
     }
+
+    /// Set by close(), so nothing held is sent from a conversation that's
+    /// gone; a move to the background that fails clears it again.
+    private var closed = false
 
     // MARK: - Permissions
 
@@ -1358,6 +1412,7 @@ final class AgentSession: ObservableObject, Identifiable {
         } else {
             permissionQueue.removeAll { $0.0.id == id }
         }
+        releaseHeldPromptSoon()
     }
 
     func answerPermission(allow: Bool, note: String? = nil, forSession: Bool = false, always: Bool = false) {
@@ -1390,6 +1445,8 @@ final class AgentSession: ObservableObject, Identifiable {
             pendingPermission = next
             permissionReply = nextReply
         }
+        // The last card answered after the turn ended: what was held goes.
+        releaseHeldPromptSoon()
     }
 
     #if DEBUG
@@ -1738,11 +1795,20 @@ final class AgentSession: ObservableObject, Identifiable {
     }
 
     private func denyAllPending(message: String) {
-        permissionReply?(AgentPermissionRequest.decision(allow: false, input: [:], message: message))
-        permissionQueue.forEach { $0.1(AgentPermissionRequest.decision(allow: false, input: [:], message: message)) }
+        let reply = permissionReply, queue = permissionQueue
         permissionQueue = []
         pendingPermission = nil
         permissionReply = nil
+        reply?(AgentPermissionRequest.decision(allow: false, input: [:], message: message))
+        queue.forEach { $0.1(AgentPermissionRequest.decision(allow: false, input: [:], message: message)) }
+    }
+
+    /// Refuses every approval and skips every question still waiting, for a
+    /// turn that's over: their cards would otherwise stay up and hold the
+    /// follow-ups behind them.
+    private func dismissPending(message: String) {
+        denyAllPending(message: message)
+        for question in [pendingQuestion].compactMap({ $0 }) + questionQueue { rejectQuestion(question) }
     }
 
     // MARK: - Remote Control
@@ -1842,6 +1908,9 @@ final class AgentSession: ObservableObject, Identifiable {
 
     private func restart() {
         stopProcess()
+        // A partial line from a process that ended on its own isn't part of
+        // the next one's output.
+        lineBuffer = Data()
         needsRestart = false
         startupError = nil
         launchFailure = nil
@@ -1906,19 +1975,7 @@ final class AgentSession: ObservableObject, Identifiable {
         process.standardInput = input
         process.standardOutput = output
         process.standardError = errors
-        output.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            DispatchQueue.main.async { MainActor.assumeIsolated { self?.consume(data) } }
-        }
-        errors.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            let text = String(decoding: handle.availableData, as: UTF8.self)
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self else { return }
-                    self.stderrTail = String((self.stderrTail + text).suffix(2000))
-                }
-            }
-        }
+        readOutput(output, errors: errors)
         process.terminationHandler = { [weak self] finished in
             let status = finished.terminationStatus
             DispatchQueue.main.async { MainActor.assumeIsolated { self?.processEnded(status: status, process: finished) } }
@@ -2073,19 +2130,7 @@ final class AgentSession: ObservableObject, Identifiable {
         process.standardInput = input
         process.standardOutput = output
         process.standardError = errors
-        output.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            DispatchQueue.main.async { MainActor.assumeIsolated { self?.consume(data) } }
-        }
-        errors.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            let text = String(decoding: handle.availableData, as: UTF8.self)
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self else { return }
-                    self.stderrTail = String((self.stderrTail + text).suffix(2000))
-                }
-            }
-        }
+        readOutput(output, errors: errors)
         process.terminationHandler = { [weak self] finished in
             let status = finished.terminationStatus
             DispatchQueue.main.async { MainActor.assumeIsolated { self?.processEnded(status: status, process: finished) } }
@@ -2124,6 +2169,28 @@ final class AgentSession: ObservableObject, Identifiable {
             .merging(BrowserControl.environment(session: EngineSession.name)) { _, ours in ours }
     }
 
+    /// Feeds the process's output to `consume` and keeps the tail of its
+    /// errors. Each handler lets go at end of file, which it would otherwise
+    /// be called with over and over once the process has gone.
+    private func readOutput(_ output: Pipe, errors: Pipe) {
+        output.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            if data.isEmpty { handle.readabilityHandler = nil }
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.consume(data) } }
+        }
+        errors.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            if data.isEmpty { handle.readabilityHandler = nil; return }
+            let text = String(decoding: data, as: UTF8.self)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.stderrTail = String((self.stderrTail + text).suffix(2000))
+                }
+            }
+        }
+    }
+
     private func stopProcess() {
         guard let process else { return }
         (process.standardOutput as? Pipe)?.fileHandleForReading.readabilityHandler = nil
@@ -2134,12 +2201,30 @@ final class AgentSession: ObservableObject, Identifiable {
         self.process = nil
         stdin = nil
         lineBuffer = Data()
+        tearDown(reason: "\(engine.displayName) was stopped.")
+    }
+
+    /// Lets go of everything the process had waiting on it, stopped or
+    /// ended on its own: control requests are answered with an error and an
+    /// MCP check with nothing, so no caller waits forever; Codex's calls and
+    /// turn are forgotten; and approval and question cards are refused.
+    private func tearDown(reason: String) {
+        let replies = controlReplies
+        controlReplies = [:]
+        for reply in replies.values { reply(["subtype": "error", "error": reason, "success": false]) }
+        codexCalls = [:]
+        codexTurnId = nil
+        finishMCPCheck(nil)
+        dismissPending(message: reason)
     }
 
     private func processEnded(status: Int32, process ended: Process) {
         guard ended === process else { return }
         self.process = nil
         stdin = nil
+        // Its last output can still be on the way here, so lineBuffer is
+        // left for it and cleared as the next process starts instead.
+        tearDown(reason: "\(engine.displayName) exited.")
         // The remote session ends with the process; the next one rejoins it.
         if remoteControl != .off { remoteControl = wantsRemoteControl ? .connecting : .off }
         if conversation.isRunning || status != 0 {
@@ -2429,14 +2514,15 @@ final class AgentSession: ObservableObject, Identifiable {
         }
         if method == "turn/started" {
             codexTurnId = ((message["params"] as? [String: Any])?["turn"] as? [String: Any])?["id"] as? String
-        } else if method == "turn/completed" {
+        } else if ["turn/completed", "turn/failed", "turn/aborted"].contains(method) {
+            // Any end of the turn: steering one that's gone would be refused.
             codexTurnId = nil
         }
         conversation.applyCodex(message)
         if ["turn/completed", "turn/failed", "turn/aborted"].contains(method),
            let threadId, !queuedTurns.isEmpty {
             let next = queuedTurns.removeFirst()
-            startTurn(next, threadId: threadId)
+            startTurn(threadId: threadId, input: next.input)
         }
         if method == "account/rateLimits/updated", !conversation.usageWindows.isEmpty {
             AccountStore.shared.updateCodexWindows(conversation.usageWindows)
@@ -2461,20 +2547,19 @@ final class AgentSession: ObservableObject, Identifiable {
             // Anything typed while the thread was opening goes now, in order.
             let queued = queuedTurns
             queuedTurns = []
-            for text in queued { startTurn(text, threadId: id) }
+            for turn in queued { startTurn(threadId: id, input: turn.input) }
         case .turn:
             // A turn Codex refuses never starts, so nothing else would end it
             // and the composer would say "working" forever.
             if let error { conversation.applyCodex(["method": "turn/failed", "params": ["error": ["message": error]]]) }
-        case .steer(let text, let input):
+        case .steer(let turn):
             // The turn ended first, or Codex wouldn't take it: it goes as
             // the next turn instead.
             guard error != nil else { return }
             if let threadId, !conversation.isRunning {
-                startTurn(text, threadId: threadId, input: input)
+                startTurn(threadId: threadId, input: turn.input)
             } else {
-                queuedTurns.append(text)
-                queuedInputs[text] = input
+                queuedTurns.append(turn)
             }
         case .settings:
             // Changing a running thread rides on Codex's experimental API,
@@ -2700,10 +2785,8 @@ final class AgentSession: ObservableObject, Identifiable {
     func dropShellRuns() { shellRuns = [] }
 
     private func updateShell(_ itemId: String, live: String) {
-        guard let index = conversation.items.firstIndex(where: { $0.id == itemId }),
-              case .tool(var call) = conversation.items[index].kind, call.result == nil else { return }
-        call.liveOutput = ShellPassthrough.clip(live, limit: 200_000)
-        conversation.items[index].kind = .tool(call)
+        guard let index = conversation.items.firstIndex(where: { $0.id == itemId }) else { return }
+        conversation.setLiveOutput(ShellPassthrough.clip(live, limit: 200_000), at: index)
     }
 
     private func finishShell(_ itemId: String, command: String, output: String, status: Int32, stopped: Bool) {
@@ -2795,6 +2878,7 @@ final class AgentSession: ObservableObject, Identifiable {
         // Codex has no supervisor to hand a thread to; its own board lists
         // every thread anyway, so there's nothing to move.
         guard engine == .claude, hasTurns else { completion(false); return }
+        // Stopped first, so two processes never write the session at once.
         close()
         var arguments = ["claude", "--bg", "--resume", sessionId, "--model", model, "--permission-mode", permissionMode.rawValue]
         if let effort, Self.supportsEffort(model: model) { arguments += ["--effort", effort] }
@@ -2804,6 +2888,8 @@ final class AgentSession: ObservableObject, Identifiable {
             DispatchQueue.main.async {
                 if result.status != 0 {
                     ToastCenter.shared.fail(nil, "Couldn't move the conversation to the background", detail: result.output)
+                    // It stays here: the next message starts the agent again.
+                    self.closed = false
                 }
                 completion(result.status == 0)
             }
@@ -2953,7 +3039,7 @@ final class AgentCenter: ObservableObject {
               let saved = try? JSONDecoder().decode([AgentSession.Saved].self, from: data) else { return }
         for entry in saved {
             guard let workspaceId = workspaceFor(entry.cwd) ?? fallback else { continue }
-            sessions.append(AgentSession.restore(entry, workspaceId: workspaceId))
+            sessions.append(AgentSession.restore(entry, workspaceId: workspaceId, replayInBackground: true))
         }
     }
 

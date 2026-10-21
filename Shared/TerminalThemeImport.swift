@@ -145,7 +145,7 @@ enum TerminalThemeImport {
 
     /// Sensible ANSI colours for a file that only sets background and
     /// foreground, so an import is never half a theme.
-    private static func defaults(background: String, foreground: String) -> [String] {
+    static func defaults(background: String, foreground: String) -> [String] {
         let dark = !isLight(background)
         let base = dark
             ? ["1d1f21", "cc6666", "b5bd68", "f0c674", "81a2be", "b294bb", "8abeb7", "c5c8c6"]

@@ -23,15 +23,21 @@ enum ShellIntegration {
         let fish = directory.appendingPathComponent("fish/fish/vendor_conf.d", isDirectory: true)
         try files.createDirectory(at: zsh, withIntermediateDirectories: true)
         try files.createDirectory(at: fish, withIntermediateDirectories: true)
-        try zshenv.write(to: zsh.appendingPathComponent(".zshenv"), atomically: true, encoding: .utf8)
-        try zshIntegration.write(to: directory.appendingPathComponent("octet.zsh"), atomically: true, encoding: .utf8)
-        try fishIntegration.write(to: fish.appendingPathComponent("octet.fish"), atomically: true, encoding: .utf8)
-        try bashIntegration.write(to: directory.appendingPathComponent("octet.bash"), atomically: true, encoding: .utf8)
+        try write(zshenv, to: zsh.appendingPathComponent(".zshenv"))
+        try write(zshIntegration, to: directory.appendingPathComponent("octet.zsh"))
+        try write(fishIntegration, to: fish.appendingPathComponent("octet.fish"))
+        try write(bashIntegration, to: directory.appendingPathComponent("octet.bash"))
         let wrapper = directory.appendingPathComponent("octet-shell")
-        try wrapperScript(shell: shell, login: login, directory: directory.path)
-            .write(to: wrapper, atomically: true, encoding: .utf8)
+        try write(wrapperScript(shell: shell, login: login, directory: directory.path), to: wrapper)
         try files.setAttributes([.posixPermissions: 0o755], ofItemAtPath: wrapper.path)
         return wrapper.path
+    }
+
+    /// Written only when it differs: install runs every launch, and the
+    /// files are almost always already as they should be.
+    private static func write(_ text: String, to url: URL) throws {
+        guard (try? String(contentsOf: url, encoding: .utf8)) != text else { return }
+        try text.write(to: url, atomically: true, encoding: .utf8)
     }
 
     /// folder<TAB>variable<TAB>value per line, shallow folders first so the

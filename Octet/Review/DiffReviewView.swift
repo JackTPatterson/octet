@@ -26,7 +26,17 @@ final class DiffReviewModel: ObservableObject {
     /// Files with something staged: a commit takes only those when any are.
     @Published private(set) var staged: Set<String> = []
     private var timer: Timer?
-    private var generation = 0
+    /// One read at a time: a slow one isn't raced by the next tick (whose
+    /// result would win, dropping it), and a refresh asked for meanwhile
+    /// runs once it's done.
+    private var reading = false
+    private var rerun: (quietly: Bool, ifChanged: Bool)?
+    /// The working tree's fingerprint at the last good read, and what it
+    /// was read as, so a tick where nothing moved skips the snapshot. Read
+    /// again after a while anyway, for what the fingerprint can't see (the
+    /// default branch moving in another worktree).
+    private var lastRead: (signature: String, base: ReviewDiff.Base, ignoreWhitespace: Bool, at: Date)?
+    private static let fullReadInterval: TimeInterval = 30
 
     /// A best-of-N attempt's starting point, offered as a third comparison.
     let attemptBase: ReviewDiff.Base?
@@ -46,7 +56,7 @@ final class DiffReviewModel: ObservableObject {
         // Agents keep working while it's open; follow along.
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 4, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refresh(quietly: true) }
+            MainActor.assumeIsolated { self?.refresh(quietly: true, ifChanged: true) }
         }
     }
 
@@ -55,16 +65,42 @@ final class DiffReviewModel: ObservableObject {
         timer = nil
     }
 
-    func refresh(quietly: Bool = false) {
-        generation += 1
-        let generation = self.generation, directory = self.directory, base = self.base, ignoreWhitespace = self.ignoreWhitespace
+    /// `ifChanged` is the poll's: it reads only when the working tree's
+    /// fingerprint moved (a `git status` and some file times), since a read
+    /// snapshots the whole tree into a temporary index.
+    func refresh(quietly: Bool = false, ifChanged: Bool = false) {
         if !quietly { loading = true }
+        guard !reading else {
+            // Merged with any already waiting: the louder, more thorough one.
+            rerun = (quietly: quietly && (rerun?.quietly ?? true), ifChanged: ifChanged && (rerun?.ifChanged ?? true))
+            return
+        }
+        reading = true
+        let directory = self.directory, base = self.base, ignoreWhitespace = self.ignoreWhitespace
+        let previous = ifChanged ? lastRead.flatMap { Date().timeIntervalSince($0.at) < Self.fullReadInterval ? $0 : nil } : nil
         DispatchQueue.global(qos: .userInitiated).async {
-            let result = ReviewDiff.readResult(in: directory, base: base, ignoreWhitespace: ignoreWhitespace)
-            let staged = ReviewDiff.stagedPaths(in: directory)
+            let signature = ReviewDiff.signature(in: directory)
+            let unchanged = signature != nil && previous.map {
+                $0.signature == signature && $0.base == base && $0.ignoreWhitespace == ignoreWhitespace
+            } == true
+            let result = unchanged ? nil : ReviewDiff.readResult(in: directory, base: base, ignoreWhitespace: ignoreWhitespace)
+            let staged = unchanged ? nil : ReviewDiff.stagedPaths(in: directory)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
-                    guard self.generation == generation else { return }
+                    self.reading = false
+                    defer {
+                        if let rerun = self.rerun {
+                            self.rerun = nil
+                            self.refresh(quietly: rerun.quietly, ifChanged: rerun.ifChanged)
+                        }
+                    }
+                    // The base changed while reading; the rerun reads it.
+                    guard self.base == base, self.ignoreWhitespace == ignoreWhitespace, let result, let staged else { return }
+                    if case .success = result, let signature {
+                        self.lastRead = (signature, base, ignoreWhitespace, Date())
+                    } else {
+                        self.lastRead = nil
+                    }
                     if staged != self.staged { self.staged = staged }
                     self.loading = false
                     let diff = try? result.get()
@@ -183,9 +219,14 @@ final class DiffReviewModel: ObservableObject {
         }
     }
 
+    /// Only against HEAD: the other comparisons show committed work too.
+    var canCommit: Bool { base == .uncommitted }
+
     /// Commits what's staged, or every change shown when nothing is.
     func commitAll() {
         let message = commitMessage, directory = self.directory, onlyStaged = !staged.isEmpty
+        // Return in the field lands here too, past the button's .disabled.
+        guard canCommit, !committing, !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         committing = true
         DispatchQueue.global(qos: .userInitiated).async {
             let outcome = Result {
@@ -422,7 +463,7 @@ struct DiffReviewView: View {
         VStack(spacing: 0) {
             ReviewNotesTray(model: model, store: store) { note in model.selectedPath = note.path }
             // Done reviewing: commit what's here.
-            if model.comments.isEmpty, model.diff.map({ !$0.files.isEmpty }) == true {
+            if model.canCommit, model.comments.isEmpty, model.diff.map({ !$0.files.isEmpty }) == true {
                 Rectangle().fill(Theme.divider).frame(height: 1)
                 HStack(spacing: 10) {
                     Spacer()

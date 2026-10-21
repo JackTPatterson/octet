@@ -43,13 +43,21 @@ final class BranchPickerModel: ObservableObject {
         let top = top
         DispatchQueue.global(qos: .userInitiated).async {
             let git = Git()
-            let local = (try? git.run(["for-each-ref", "--format=" + GitBranches.listFormat, "refs/heads"], in: top)) ?? ""
-            let remote = (try? git.run(["for-each-ref", "--format=" + GitBranches.remoteFormat, "refs/remotes"], in: top)) ?? ""
-            let locals = GitBranches.parseLocal(local)
-            let all = GitBranches.sorted(locals + GitBranches.parseRemote(remote, local: locals))
+            // A git failure says so, rather than looking like "No branches."
+            let outcome = Result { () throws -> [GitBranches.Entry] in
+                let local = try git.run(["for-each-ref", "--format=" + GitBranches.listFormat, "refs/heads"], in: top)
+                let remote = try git.run(["for-each-ref", "--format=" + GitBranches.remoteFormat, "refs/remotes"], in: top)
+                let locals = GitBranches.parseLocal(local)
+                return GitBranches.sorted(locals + GitBranches.parseRemote(remote, local: locals))
+            }
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
-                    self.entries = all
+                    switch outcome {
+                    case .success(let all): self.entries = all
+                    case .failure(let error):
+                        // What was listed before stays, with why it may be stale.
+                        self.failure = "Couldn't list branches: " + GitRemote.explain(String(describing: error))
+                    }
                     self.loaded = true
                 }
             }
@@ -103,8 +111,16 @@ final class BranchPickerModel: ObservableObject {
                 let plan = GitBranches.switchPlan(porcelain: try git.run(["status", "--porcelain"], in: top))
                 if case .needsStash(let files) = plan { return .held(files) }
             }
-            if moving, stashing { try git.run(["stash", "push", "-m", "Octet: before creating \(name)"], in: top) }
-            try git.run(["switch", "-c", name] + start, in: top)
+            let stashed = moving && stashing
+            if stashed { try git.run(["stash", "push", "-m", "Octet: before creating \(name)"], in: top) }
+            do {
+                try git.run(["switch", "-c", name] + start, in: top)
+            } catch {
+                // As checking out does: the changes come back rather than
+                // waiting in the stash with nothing saying so.
+                if stashed { _ = try? git.run(["stash", "pop"], in: top) }
+                throw error
+            }
             return .done(moving && stashing ? "Stashed your changes" : nil)
         } held: { [self] files in
             held = Held(entry: GitBranches.Entry(name: name), files: files)
@@ -288,11 +304,14 @@ struct BranchPickerPanel: View {
         if !model.loaded {
             LoadingLine(width: 14).frame(maxWidth: .infinity).padding(.vertical, 16)
         } else if rows.isEmpty {
-            Text(model.query.isEmpty ? "No branches." : "No branch matches.")
-                .font(Theme.captionFont)
-                .foregroundStyle(Theme.textTertiary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 12).padding(.vertical, 10)
+            // When listing failed, the banner above says why instead.
+            if model.failure == nil || !model.query.isEmpty {
+                Text(model.query.isEmpty ? "No branches." : "No branch matches.")
+                    .font(Theme.captionFont)
+                    .foregroundStyle(Theme.textTertiary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12).padding(.vertical, 10)
+            }
         } else {
             ScrollView {
                 VStack(alignment: .leading, spacing: 1) {

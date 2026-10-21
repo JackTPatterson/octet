@@ -208,6 +208,22 @@ final class TurnChangesCache {
         return cached
     }
 
+    /// The same, keyed on the transcript layout's generation instead of a
+    /// pass over the items: it moves whenever the items change shape, which
+    /// covers everything the pass above looks at.
+    func turns(_ items: [AgentItem], layout generation: Int, cwd: String?, running: Bool,
+               isShown: (AgentItem) -> Bool) -> [String: TurnChanges] {
+        var hasher = Hasher()
+        hasher.combine(generation)
+        hasher.combine(running)
+        hasher.combine(cwd)
+        let signature = hasher.finalize()
+        if signature == self.signature { return cached }
+        self.signature = signature
+        cached = Self.compute(items, cwd: cwd, running: running, isShown: isShown)
+        return cached
+    }
+
     static func compute(_ items: [AgentItem], cwd: String?, running: Bool,
                         isShown: (AgentItem) -> Bool) -> [String: TurnChanges] {
         let shown = Set(items.filter(isShown).map(\.id))

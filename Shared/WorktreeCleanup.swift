@@ -35,12 +35,16 @@ enum WorktreeCleanup {
     }
 
     /// Every worktree of the repository `directory` is in, marked. Sizes are
-    /// left to `measure`, which is slower.
-    static func list(in directory: String, git: Git = Git()) -> [Worktree] {
+    /// left to `measure`, which is slower; without `details`, so are the
+    /// marks, which take a `git status` in every worktree. `base` gives the
+    /// default branch when the caller already knows it.
+    static func list(in directory: String, git: Git = Git(), details: Bool = true,
+                     base knownBase: (() -> String?)? = nil) -> [Worktree] {
         guard let top = git.topLevel(directory),
               let text = try? git.run(["worktree", "list", "--porcelain"], in: top) else { return [] }
         var worktrees = parse(text)
-        let base = ReviewDiff.defaultBranch(top: top, git: git)
+        guard details else { return worktrees }
+        let base = knownBase.map { $0() } ?? ReviewDiff.defaultBranch(top: top, git: git)
         let merged = Set(base.flatMap { try? git.run(["branch", "--format=%(refname:short)", "--merged", $0], in: top) }?
             .split(separator: "\n").map(String.init) ?? [])
         for index in worktrees.indices where !worktrees[index].isMain {

@@ -21,13 +21,19 @@ struct SidebarView: View {
     /// The project the sidebar is narrowed to, by its folder; empty for all.
     @AppStorage("octet.sidebar.project") private var projectFilter = ""
     @StateObject private var dropdowns = OctetDropdownState()
-    /// The result the arrow keys are on, by position in the results.
-    @State private var highlighted = 0
+    /// The result the arrow keys are on, by its workspace: a position would
+    /// land on another workspace as the results change. Nil is the first.
+    @State private var highlightedId: String?
+    /// What the query finds, worked out when it changes (after a short
+    /// pause) and every few seconds while searching, not on every redraw:
+    /// it reads every conversation.
+    @State private var searchMatches = SearchMatches.none
     @FocusState private var searchFocused: Bool
 
     private var searching: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty }
 
     var body: some View {
+        let _ = RenderCounter.note("SidebarView")
         VStack(spacing: 0) {
             controlBar
             if tabDrag.tabId != nil {
@@ -111,6 +117,19 @@ struct SidebarView: View {
         // Peeks come back once the pointer has left the sidebar.
         .onHover { if !$0 { HoverIntent.navigating = false } }
         .onReceive(window.ui.$sidebarSearchRequest.dropFirst()) { _ in searchFocused = true }
+        .task(id: query) {
+            guard searching else { return searchMatches = .none }
+            try? await Task.sleep(for: .milliseconds(120))
+            // Kept fresh while searching, for what agents say meanwhile.
+            while !Task.isCancelled {
+                refreshMatches()
+                try? await Task.sleep(for: .seconds(2))
+            }
+        }
+        // A workspace opened or closed shows (or goes) straight away.
+        .onChange(of: window.ownWorkspaces.map(\.workspaceId)) { _, _ in
+            if searching { refreshMatches() }
+        }
     }
 
     /// Search, the onboarding checklist, and project filtering: search with a button for a new
@@ -141,7 +160,7 @@ struct SidebarView: View {
                 // Up and down move through the results; Return opens one.
                 .onKeyPress(.downArrow) { moveHighlight(1) }
                 .onKeyPress(.upArrow) { moveHighlight(-1) }
-                .onChange(of: query) { _, _ in highlighted = 0 }
+                .onChange(of: query) { _, _ in highlightedId = nil }
                 .help(OctetShortcut.searchWorkspaces.help("Search workspaces"))
             if !query.isEmpty {
                 Button(action: clearSearch) {
@@ -254,7 +273,7 @@ struct SidebarView: View {
     /// idle ones it finds; groups aren't collapsed while searching. A
     /// workspace is found by its names and folders, or by what was said in
     /// its conversations, which then shows under it.
-    private var matches: (groups: [ProjectGroup], idle: [EngineWorkspace], snippets: [String: SidebarSearch.Snippet]) {
+    private func computeMatches() -> SearchMatches {
         var snippets: [String: SidebarSearch.Snippet] = [:]
         func hit(_ workspace: EngineWorkspace, group: String?) -> Bool {
             if found(workspace, group: group) { return true }
@@ -267,7 +286,24 @@ struct SidebarView: View {
             return hits.isEmpty ? nil : ProjectGroup(id: group.id, name: group.name, workspaces: hits)
         }
         let idle = window.idleWorkspaces.filter { hit($0, group: nil) }
-        return (groups, idle, snippets)
+        return SearchMatches(query: query, groups: groups, idle: idle, snippets: snippets)
+    }
+
+    private func refreshMatches() {
+        searchMatches = computeMatches()
+    }
+
+    /// The matches for what's typed now: worked out here when the keys come
+    /// faster than the pause before a search.
+    private func currentMatches() -> SearchMatches {
+        if searchMatches.query != query { refreshMatches() }
+        return searchMatches
+    }
+
+    /// The workspace the arrow keys are on, while it's still a result.
+    private var highlightedResult: String? {
+        guard let highlightedId else { return searchMatches.order.first }
+        return searchMatches.position[highlightedId] != nil ? highlightedId : nil
     }
 
     /// What was said in a workspace's conversations, oldest first.
@@ -283,16 +319,14 @@ struct SidebarView: View {
         }
     }
 
-    /// The results in the order shown, for the arrow keys.
-    private func results(_ matches: (groups: [ProjectGroup], idle: [EngineWorkspace], snippets: [String: SidebarSearch.Snippet])) -> [EngineWorkspace] {
-        matches.groups.flatMap(\.workspaces) + matches.idle
-    }
-
     private func moveHighlight(_ step: Int) -> KeyPress.Result {
         guard searching else { return .ignored }
-        let count = results(matches).count
-        guard count > 0 else { return .handled }
-        highlighted = (highlighted + step + count) % count
+        let order = currentMatches().order
+        guard !order.isEmpty else { return .handled }
+        let current = highlightedResult.flatMap { searchMatches.position[$0] }
+        // From none, down goes to the first and up to the last.
+        let next = current.map { ($0 + step + order.count) % order.count } ?? (step > 0 ? 0 : order.count - 1)
+        highlightedId = order[next]
         return .handled
     }
 
@@ -305,13 +339,13 @@ struct SidebarView: View {
 
     @ViewBuilder
     private var searchResults: some View {
-        let matches = matches
-        let order = results(matches).map(\.workspaceId)
+        let matches = searchMatches
+        let on = highlightedResult
         ForEach(matches.groups) { group in
             VStack(alignment: .leading, spacing: 4) {
                 resultsHeader(group.name)
                 ForEach(group.workspaces) { workspace in
-                    result(workspace, snippet: matches.snippets[workspace.workspaceId], at: order.firstIndex(of: workspace.workspaceId))
+                    result(workspace, snippet: matches.snippets[workspace.workspaceId], highlighted: workspace.workspaceId == on)
                 }
             }
         }
@@ -319,11 +353,12 @@ struct SidebarView: View {
             VStack(alignment: .leading, spacing: 4) {
                 resultsHeader("Idle")
                 ForEach(matches.idle) { workspace in
-                    result(workspace, snippet: matches.snippets[workspace.workspaceId], at: order.firstIndex(of: workspace.workspaceId))
+                    result(workspace, snippet: matches.snippets[workspace.workspaceId], highlighted: workspace.workspaceId == on)
                 }
             }
         }
-        if matches.groups.isEmpty, matches.idle.isEmpty, !window.ownWorkspaces.isEmpty {
+        // Only once the search for what's typed has run, not in the pause before.
+        if matches.query == query, matches.groups.isEmpty, matches.idle.isEmpty, !window.ownWorkspaces.isEmpty {
             Text("No workspace matches “\(query.trimmingCharacters(in: .whitespaces))”")
                 .font(Theme.captionFont)
                 .foregroundStyle(Theme.textTertiary)
@@ -346,31 +381,32 @@ struct SidebarView: View {
     /// the keyboard.
     /// A result: the workspace's card, ringed while the arrow keys are on
     /// it, and what was said that matched, when that's how it was found.
-    private func result(_ workspace: EngineWorkspace, snippet: SidebarSearch.Snippet?, at index: Int?) -> some View {
-        let on = index == highlighted
-        return VStack(alignment: .leading, spacing: 3) {
+    private func result(_ workspace: EngineWorkspace, snippet: SidebarSearch.Snippet?, highlighted on: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
             WorkspaceCard(store: store, workspace: workspace)
             if let snippet { SnippetLine(snippet: snippet).padding(.horizontal, 10) }
         }
         .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius + 2)
             .strokeBorder(on ? Theme.accent.opacity(0.7) : .clear, lineWidth: 1.5))
-        .onHover { if $0, let index { highlighted = index } }
+        .onHover { if $0 { highlightedId = workspace.workspaceId } }
         .padding(.horizontal, 8)
     }
 
     /// Return in the search: the result the arrow keys are on.
     private func openHighlighted() {
         guard searching else { return }
-        let found = results(matches)
-        guard !found.isEmpty else { return }
-        let pick = found[min(max(highlighted, 0), found.count - 1)]
+        _ = currentMatches()
+        // The workspace ringed, or nothing when that one has gone.
+        guard let pick = highlightedResult else { return }
         clearSearch()
-        window.focusWorkspace(pick.workspaceId)
+        window.focusWorkspace(pick)
     }
 
     private func clearSearch() {
         query = ""
         searchFocused = false
+        // The keys go back to the terminal, as the palette's do.
+        OctetTerminalRuntime.focusTerminal()
     }
 
     /// A project's workspaces show this many before "Show more".
@@ -399,7 +435,7 @@ struct SidebarView: View {
                                         worktree: { $0.worktree })) { run in
                     VStack(spacing: 2) {
                         ForEach(run.workspaces) { workspace in
-                            WorkspaceCard(store: store, workspace: workspace)
+                            WorkspaceCard(store: store, workspace: workspace, groupFolder: group.id)
                         }
                         if !run.isBare {
                             BranchChip(run: run)
@@ -427,8 +463,17 @@ struct SidebarView: View {
     }
 
     static func isRepository(_ group: ProjectGroup) -> Bool {
-        group.id != ProjectGroup.otherId && FileManager.default.fileExists(atPath: group.id + "/.git")
+        guard group.id != ProjectGroup.otherId else { return false }
+        let now = Date()
+        if let known = repositoryChecks[group.id], now.timeIntervalSince(known.at) < 60 { return known.isRepository }
+        let isRepository = FileManager.default.fileExists(atPath: group.id + "/.git")
+        repositoryChecks[group.id] = (isRepository, now)
+        return isRepository
     }
+
+    /// Whether each group's folder is a repository, looked up on disk once a
+    /// minute rather than at every redraw of every header.
+    private static var repositoryChecks: [String: (isRepository: Bool, at: Date)] = [:]
 
     /// What a group header stands for: workspaces are grouped by the project
     /// their tab's folder is in, and move when that folder does.
@@ -517,6 +562,9 @@ private struct WorkspaceCard: View {
     @EnvironmentObject private var window: WindowContext
     @ObservedObject var store: SessionStore
     let workspace: EngineWorkspace
+    /// The folder of the group the card is listed under: its own folder line
+    /// is left out when it says only that. Nil where there's no group (search).
+    var groupFolder: String?
     @State private var hovered = false
     @State private var renaming = false
     @StateObject private var peek = HoverIntent()
@@ -529,7 +577,7 @@ private struct WorkspaceCard: View {
         // Servers running here, e.g. each worktree's dev server.
         let ports = portsWatcher.ports(inWorkspace: workspace.workspaceId, snapshot: store.snapshot)
         VStack(spacing: 4) {
-            card
+            card(ports: ports)
             if !ports.isEmpty {
                 ScrollView(.horizontal) {
                     HStack(spacing: 4) {
@@ -550,7 +598,7 @@ private struct WorkspaceCard: View {
         .animation(motion.animation(.sidebar), value: ports)
     }
 
-    @ViewBuilder private var card: some View {
+    @ViewBuilder private func card(ports: [Int]) -> some View {
         let snapshot = store.snapshot
         let isSelected = workspace.workspaceId == window.panelContext.focusedWorkspace?.workspaceId
         // Open in another window: a click brings that window forward.
@@ -558,8 +606,9 @@ private struct WorkspaceCard: View {
             .map { $0 !== window && $0 !== window.splitContext } ?? false
         let agents = snapshot.agents(inWorkspace: workspace.workspaceId)
         let agent = store.primaryAgent(in: agents)
-        let session = conversations.active(in: workspace.workspaceId)
-            ?? conversations.sessions(in: workspace.workspaceId).first
+        // Looked up once: each lookup walks every conversation in Octet.
+        let sessions = conversations.sessions(in: workspace.workspaceId)
+        let session = conversations.active(in: workspace.workspaceId) ?? sessions.first
         let handoffAgent = window.agentUIHandoffWorkspaceId == workspace.workspaceId
             ? window.agentUIHandoff : nil
         // Once a native agent starts moving into Octet, the workspace adopts
@@ -571,7 +620,7 @@ private struct WorkspaceCard: View {
         // The loudest of the workspace's agents speaks for it, in the shared
         // vocabulary (approval > input > failed > working > … > done).
         let status: AgentState = handoffAgent != nil ? AgentState(agent?.agentStatus ?? .working)
-            : AgentState.rollUp(conversations.sessions(in: workspace.workspaceId).map(\.agentState)
+            : AgentState.rollUp(sessions.map(\.agentState)
                 + agents.filter { !$0.isSubagentViewer }.map { AgentState($0.agentStatus) }
                 + [AgentState(workspace.agentStatus)])
         let directory = snapshot.directory(ofWorkspace: workspace.workspaceId)
@@ -580,7 +629,7 @@ private struct WorkspaceCard: View {
         var seenBrands = Set<String>()
         let brands = ([brand]
             + agents.map { AgentBrand.forAgent($0.agent) }
-            + conversations.sessions(in: workspace.workspaceId).map { AgentBrand.forAgent($0.engine.agent) })
+            + sessions.map { AgentBrand.forAgent($0.engine.agent) })
             .compactMap { $0 }.filter { seenBrands.insert($0.displayName).inserted }
 
         let receded = !isSelected && (status == .idle || status == .unknown)
@@ -589,7 +638,7 @@ private struct WorkspaceCard: View {
         // group's header, not on each of its workspaces.
         let mark = Group {
             if status == .unknown,
-               let logo = LanguageLogo(service: portsWatcher.service(inWorkspace: workspace.workspaceId, snapshot: snapshot), size: 13) {
+               let logo = LanguageLogo(service: ports.lazy.compactMap { portsWatcher.services[$0] }.first, size: 13) {
                 logo.help("Serving on localhost")
             } else if status == .working {
                 // The sub-row below carries what the agent is doing: the title
@@ -624,8 +673,9 @@ private struct WorkspaceCard: View {
                         .help("Open in another window. Click to bring it forward.")
                 }
             }
-            // Always shown: the folder is what decides the card's group.
-            if let directory {
+            // The folder decides the card's group, so it shows where it says
+            // more than the group's header does: a subfolder, or another folder.
+            if let directory, directory != groupFolder, abbreviateHome(directory) != workspace.label {
                 Text(abbreviateHome(directory))
                     .font(Theme.Text.mono(11))
                     .foregroundStyle(Theme.textTertiary)
@@ -1226,4 +1276,26 @@ private struct ProjectPickerPanel: View {
         let current = ids.firstIndex(of: highlighted ?? selected) ?? 0
         highlighted = ids[(current + delta + ids.count) % ids.count]
     }
+}
+
+/// What a sidebar search found: workspaces under their groups, then idle
+/// ones, with where each is in the order shown, for the arrow keys.
+private struct SearchMatches {
+    let query: String
+    let groups: [ProjectGroup]
+    let idle: [EngineWorkspace]
+    let snippets: [String: SidebarSearch.Snippet]
+    let order: [String]
+    let position: [String: Int]
+
+    init(query: String, groups: [ProjectGroup], idle: [EngineWorkspace], snippets: [String: SidebarSearch.Snippet]) {
+        self.query = query
+        self.groups = groups
+        self.idle = idle
+        self.snippets = snippets
+        order = groups.flatMap(\.workspaces).map(\.workspaceId) + idle.map(\.workspaceId)
+        position = Dictionary(order.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    static let none = SearchMatches(query: "", groups: [], idle: [], snippets: [:])
 }

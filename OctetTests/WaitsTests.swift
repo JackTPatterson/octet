@@ -171,6 +171,19 @@ final class WaitsTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode([Wait].self, from: data), [wait])
     }
 
+    func testOlderWaitsMissingDefaultedFieldsStillLoad() throws {
+        let wait = Wait(title: "t", condition: .manual("They reply"), next: "n", origin: origin, now: now)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(wait)) as? [String: Any])
+        for key in ["id", "autoContinue", "state", "failures", "askEveryDays"] { object.removeValue(forKey: key) }
+        let read = try JSONDecoder().decode(Wait.self, from: JSONSerialization.data(withJSONObject: object))
+        XCTAssertEqual(read.title, "t")
+        XCTAssertFalse(read.id.isEmpty)
+        XCTAssertEqual(read.state, .waiting)
+        XCTAssertEqual(read.askEveryDays, 3)
+        XCTAssertEqual(read.failures, 0)
+        XCTAssertFalse(read.autoContinue)
+    }
+
     func testRepliesThatLeaveWorkWaitingAreNoticed() {
         let found = WaitSuggestion.detect("All done for now. Once https://github.com/acme/api/pull/142 is merged, we can remove the old /v1/users endpoint.")
         XCTAssertEqual(found?.next, "Remove the old /v1/users endpoint")

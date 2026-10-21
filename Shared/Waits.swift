@@ -156,6 +156,33 @@ struct Wait: Codable, Equatable, Identifiable {
     }
 }
 
+extension Wait {
+    // Fields with a default may be missing (written by an older build), so
+    // adding one doesn't drop the waits already on disk.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        title = try container.decode(String.self, forKey: .title)
+        condition = try container.decode(WaitCondition.self, forKey: .condition)
+        next = try container.decode(String.self, forKey: .next)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        createdBy = try container.decode(String.self, forKey: .createdBy)
+        origin = try container.decode(Origin.self, forKey: .origin)
+        brief = try container.decodeIfPresent(String.self, forKey: .brief)
+        autoContinue = try container.decodeIfPresent(Bool.self, forKey: .autoContinue) ?? false
+        checkIn = try container.decodeIfPresent(CheckInInfo.self, forKey: .checkIn)
+        state = try container.decodeIfPresent(State.self, forKey: .state) ?? .waiting
+        baseline = try container.decodeIfPresent(String.self, forKey: .baseline)
+        lastCheckedAt = try container.decodeIfPresent(Date.self, forKey: .lastCheckedAt)
+        lastResult = try container.decodeIfPresent(String.self, forKey: .lastResult)
+        failures = try container.decodeIfPresent(Int.self, forKey: .failures) ?? 0
+        nextCheckAt = try container.decode(Date.self, forKey: .nextCheckAt)
+        readyAt = try container.decodeIfPresent(Date.self, forKey: .readyAt)
+        confirmedAt = try container.decode(Date.self, forKey: .confirmedAt)
+        askEveryDays = try container.decodeIfPresent(Int.self, forKey: .askEveryDays) ?? 3
+    }
+}
+
 /// What a wait waits for, and how Octet can tell.
 enum WaitCondition: Codable, Equatable {
     enum PullRequestEvent: String, Codable, CaseIterable {

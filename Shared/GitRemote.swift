@@ -81,7 +81,8 @@ enum GitRemote {
     static let pullArguments = ["pull", "--ff-only"]
     static let fetchArguments = ["fetch", "--all", "--prune"]
 
-    /// Commit: what's staged, or everything when nothing is.
+    /// Commit: what's staged, or everything (untracked files too) when
+    /// nothing is. For labels only: the commit itself asks the index again.
     static func commitPlan(files: [AgentGit.FileChange]) -> (stageAll: Bool, count: Int) {
         let staged = files.filter(\.staged).count
         return staged > 0 ? (false, staged) : (true, files.count)

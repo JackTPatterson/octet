@@ -15,6 +15,9 @@ struct WorkspaceActivity: Equatable {
     private var signatures: [String: String] = [:]
 
     static let defaultIdleAfter: TimeInterval = 2 * 60 * 60
+    /// How stale the workspace on screen's stamp gets before it's renewed;
+    /// ages show in minutes and idling takes hours, so this is never seen.
+    static let viewedRestamp: TimeInterval = 30
 
     init(stamps: [String: Date] = [:]) {
         self.stamps = stamps
@@ -25,6 +28,7 @@ struct WorkspaceActivity: Equatable {
     mutating func observe(
         _ snapshot: EngineSnapshot,
         viewedWorkspaceId: String?,
+        conversations: ConversationActivity = .init(),
         now: Date = Date(),
         recover: (EngineWorkspace) -> Date? = { _ in nil }
     ) {
@@ -34,7 +38,9 @@ struct WorkspaceActivity: Equatable {
 
         for workspace in snapshot.workspaces {
             let id = workspace.workspaceId
-            let signature = Self.signature(of: id, in: snapshot)
+            // Octet's own conversations count too: they never show in the
+            // snapshot, so a workspace used only through one would idle.
+            let signature = Self.signature(of: id, in: snapshot) + "#" + (conversations.signatures[id] ?? "")
             if stamps[id] == nil {
                 stamps[id] = min(recover(workspace) ?? now, now)
             } else if let previous = signatures[id], previous != signature {
@@ -42,7 +48,11 @@ struct WorkspaceActivity: Equatable {
             }
             signatures[id] = signature
         }
-        if let viewedWorkspaceId, present.contains(viewedWorkspaceId) {
+        // On screen counts as use, but restamped only every so often: the
+        // snapshot comes every 1.5s, and a new stamp each time would redraw
+        // everything that watches activity while nothing changed.
+        if let viewedWorkspaceId, present.contains(viewedWorkspaceId),
+           now.timeIntervalSince(stamps[viewedWorkspaceId] ?? .distantPast) >= Self.viewedRestamp {
             stamps[viewedWorkspaceId] = now
         }
     }
@@ -70,20 +80,23 @@ struct WorkspaceActivity: Equatable {
     }
 
     /// Splits workspaces into those kept in view and those gone idle. Never
-    /// idle: pinned, focused, or an agent that is working or needs input,
-    /// unless moved to Idle by hand.
+    /// idle: pinned, focused, or an agent (a terminal's, or one of Octet's
+    /// conversations) that is working or needs input, unless moved to Idle
+    /// by hand.
     func partition(
         _ workspaces: [EngineWorkspace],
         snapshot: EngineSnapshot,
         pinned: Set<String>,
         parked: Set<String> = [],
+        conversations: ConversationActivity = .init(),
         idleAfter: TimeInterval,
         now: Date = Date()
     ) -> (active: [EngineWorkspace], idle: [EngineWorkspace]) {
         var active: [EngineWorkspace] = []
         var idle: [EngineWorkspace] = []
         for workspace in workspaces {
-            if isIdle(workspace, snapshot: snapshot, pinned: pinned, parked: parked, idleAfter: idleAfter, now: now) {
+            if isIdle(workspace, snapshot: snapshot, pinned: pinned, parked: parked, conversations: conversations,
+                      idleAfter: idleAfter, now: now) {
                 idle.append(workspace)
             } else {
                 active.append(workspace)
@@ -98,6 +111,7 @@ struct WorkspaceActivity: Equatable {
         snapshot: EngineSnapshot,
         pinned: Set<String>,
         parked: Set<String> = [],
+        conversations: ConversationActivity = .init(),
         idleAfter: TimeInterval,
         now: Date = Date()
     ) -> Bool {
@@ -109,6 +123,7 @@ struct WorkspaceActivity: Equatable {
         if id == snapshot.focusedWorkspaceId { return false }
         let busy = snapshot.agents(inWorkspace: id).contains { $0.agentStatus == .working || $0.agentStatus == .blocked }
         if busy || workspace.agentStatus == .working || workspace.agentStatus == .blocked { return false }
+        if conversations.isBusy(id) { return false }
         guard let stamp = stamps[id] else { return false }
         return now.timeIntervalSince(stamp) >= idleAfter
     }
@@ -153,6 +168,20 @@ struct WorkspaceActivity: Equatable {
         default: return "\(Int(seconds / (86_400 * 7)))w"
         }
     }
+}
+
+/// Octet's own conversations in each workspace, as far as idling and
+/// sleeping go. Plain data, read from them by the app.
+struct ConversationActivity: Equatable {
+    /// Workspaces with a conversation mid-turn.
+    var working: Set<String> = []
+    /// Workspaces with a conversation asking permission or a question.
+    var blocked: Set<String> = []
+    /// What changes as they're used (their length, running, asking), by
+    /// workspace, so using one counts as using the workspace.
+    var signatures: [String: String] = [:]
+
+    func isBusy(_ workspaceId: String) -> Bool { working.contains(workspaceId) || blocked.contains(workspaceId) }
 }
 
 /// Recovers a last-activity time from Claude Code's own transcripts.

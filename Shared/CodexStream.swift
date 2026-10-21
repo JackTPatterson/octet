@@ -40,15 +40,12 @@ extension AgentConversation {
             // A long command's output as it comes, not only when it ends.
             guard let id = params["itemId"] as? String, let delta = params["delta"] as? String,
                   let position = items.firstIndex(where: { $0.id == id }),
-                  case .tool(var call) = items[position].kind, call.result == nil else { return }
-            call.liveOutput = (call.liveOutput ?? "") + delta
-            items[position].kind = .tool(call)
+                  case .tool(let call) = items[position].kind, call.result == nil else { return }
+            setLiveOutput((call.liveOutput ?? "") + delta, at: position)
         case "item/reasoning/summaryTextDelta", "item/reasoning/textDelta":
             // Thinking as it happens; the full text replaces it when done.
             guard let id = params["itemId"] as? String, let delta = params["delta"] as? String else { return }
-            if let position = items.firstIndex(where: { $0.id == id }), case .thinking(let text) = items[position].kind {
-                items[position].kind = .thinking(text + delta)
-            } else {
+            if !appendDelta(delta, to: id, thinking: true) {
                 items.append(AgentItem(id: id, kind: .thinking(delta)))
             }
         case "thread/tokenUsage/updated":
@@ -194,9 +191,7 @@ extension AgentConversation {
     }
 
     private mutating func appendCodexText(id: String, delta: String) {
-        if let position = items.firstIndex(where: { $0.id == id }), case .text(let text) = items[position].kind {
-            items[position].kind = .text(text + delta)
-        } else {
+        if !appendDelta(delta, to: id, thinking: false) {
             items.append(AgentItem(id: id, kind: .text(delta)))
         }
     }

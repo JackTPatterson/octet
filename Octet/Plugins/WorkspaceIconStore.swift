@@ -25,6 +25,8 @@ final class WorkspaceIconStore: ObservableObject {
 
     private func read(_ directory: String) {
         let host = OctetPluginHost.shared
+        // Read before the plugins are, it would find none and wait a minute.
+        guard host.isLoaded else { return host.whenLoaded { [weak self] in self?.read(directory) } }
         let entries = host.plugins.filter(host.isEnabled).flatMap { plugin in
             plugin.manifest.contributes.workspaceIcons.filter { !$0.run.isEmpty }.map { ($0, plugin) }
         }

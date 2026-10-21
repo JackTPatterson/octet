@@ -44,3 +44,60 @@ final class PluginMenuTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: plugin.directory + "/detect.sh"))
     }
 }
+
+final class PluginDiscoveryGateTests: XCTestCase {
+    func testWorkWaitsForTheFirstScanThenRunsAtOnce() {
+        var gate = PluginDiscoveryGate<String>()
+        let scan = gate.begin()
+        XCTAssertFalse(gate.isLoaded)
+        XCTAssertTrue(gate.hold("attach"))
+        XCTAssertTrue(gate.hold("icon"))
+        XCTAssertEqual(gate.finish(scan), ["attach", "icon"])
+        XCTAssertTrue(gate.isLoaded)
+        // Once loaded, the caller runs it itself.
+        XCTAssertFalse(gate.hold("later"))
+        XCTAssertEqual(gate.finish(gate.begin()), [])
+    }
+
+    func testAReloadWinsOverTheLaunchScanFinishingAfterIt() {
+        var gate = PluginDiscoveryGate<String>()
+        let launch = gate.begin()
+        XCTAssertTrue(gate.hold("attach"))
+        let reload = gate.begin()
+        XCTAssertEqual(gate.finish(reload), ["attach"])
+        // The launch scan read the disk before the install: dropped.
+        XCTAssertNil(gate.finish(launch))
+        XCTAssertTrue(gate.isLoaded)
+    }
+
+    func testAStaleScanLeavesWorkWaitingForTheLatest() {
+        var gate = PluginDiscoveryGate<String>()
+        let first = gate.begin()
+        let second = gate.begin()
+        XCTAssertTrue(gate.hold("attach"))
+        XCTAssertNil(gate.finish(first))
+        XCTAssertFalse(gate.isLoaded)
+        XCTAssertEqual(gate.finish(second), ["attach"])
+    }
+
+    /// The scan off the main thread finds the same built-in plugins as one on it.
+    func testBackgroundDiscoveryMatchesDiscoveryOnMain() {
+        let bundled = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Plugins").path
+        let onMain = OctetPlugins.discover(bundled: bundled, user: "/nonexistent")
+        XCTAssertFalse(onMain.plugins.isEmpty)
+        XCTAssertEqual(Set(onMain.plugins.filter { $0.manifest.feature != nil }.map(\.id)),
+                       ["agent-delegation", "browser-control", "other-macs"])
+        let done = expectation(description: "scanned")
+        var background: [OctetPlugin] = []
+        DispatchQueue.global(qos: .userInitiated).async {
+            let found = OctetPlugins.discover(bundled: bundled, user: "/nonexistent").plugins
+            DispatchQueue.main.async {
+                background = found
+                done.fulfill()
+            }
+        }
+        wait(for: [done], timeout: 10)
+        XCTAssertEqual(background, onMain.plugins)
+    }
+}

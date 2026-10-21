@@ -15,8 +15,13 @@ enum AgentGit {
         /// Lines, against HEAD; nil for binary files and untracked ones.
         var added: Int?
         var removed: Int?
+        /// For a rename, where it came from: discarding or unstaging it has
+        /// to put that path back too.
+        var originalPath: String?
 
         var id: String { path }
+        /// Every path the change touches, the new one first.
+        var paths: [String] { [path] + (originalPath.map { [$0] } ?? []) }
     }
 
     struct Branch: Equatable {
@@ -104,14 +109,14 @@ enum AgentGit {
                 // original path follows as its own entry.
                 let fields = entry.split(separator: " ", maxSplits: marker == "1" ? 8 : 9, omittingEmptySubsequences: false)
                 guard fields.count >= (marker == "1" ? 9 : 10), let xy = fields.dropFirst().first, xy.count == 2 else { continue }
-                if marker == "2" { _ = entries.popFirst() }
+                let original = marker == "2" ? entries.popFirst() : nil
                 let index = xy.first!, worktree = xy.last!
                 let kind: FileChange.Kind
                 if marker == "2" { kind = .renamed }
                 else if index == "A" { kind = .added }
                 else if index == "D" || worktree == "D" { kind = .deleted }
                 else { kind = .modified }
-                files.append(FileChange(path: String(fields.last!), kind: kind, staged: index != "."))
+                files.append(FileChange(path: String(fields.last!), kind: kind, staged: index != ".", originalPath: original))
             case "u":
                 let fields = entry.split(separator: " ", maxSplits: 10, omittingEmptySubsequences: false)
                 guard fields.count >= 11 else { continue }
@@ -155,11 +160,31 @@ enum AgentGit {
 
     // MARK: - Reading
 
+    /// Why a checkout couldn't be read: git failed (a lock, a corrupt
+    /// index), which the panel shows with Retry rather than as "Not in a
+    /// repository".
+    struct ReadFailure: Error, Equatable {
+        let message: String
+    }
+
+    /// Everything about the checkout at `top`, or nil when git fails.
+    static func read(top: String, git: Git = Git(), commitLimit: Int = 30, cache: AgentGitCache? = nil) -> Checkout? {
+        try? readResult(top: top, git: git, commitLimit: commitLimit, cache: cache).get()
+    }
+
     /// Everything about the checkout at `top`. Slow-ish (a handful of git
-    /// calls); run it off the main thread.
-    static func read(top: String, git: Git = Git(), commitLimit: Int = 30) -> Checkout? {
-        guard let status = try? git.run(["status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all"], in: top)
-        else { return nil }
+    /// calls); run it off the main thread. With a cache, a checkout whose
+    /// status and git bookkeeping haven't moved costs one `git status`.
+    static func readResult(top: String, git: Git = Git(), commitLimit: Int = 30,
+                           cache: AgentGitCache? = nil) -> Result<Checkout, ReadFailure> {
+        let status: String
+        do {
+            status = try git.run(["status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all"], in: top)
+        } catch {
+            return .failure(ReadFailure(message: String(describing: error)))
+        }
+        let signature = cache == nil ? nil : self.signature(top: top, status: status)
+        if let cache, let signature, let kept = cache.checkout(top: top, signature: signature) { return .success(kept) }
         var checkout = Checkout(top: top)
         (checkout.branch, checkout.files) = parseStatus(status)
 
@@ -180,7 +205,7 @@ enum AgentGit {
             checkout.operation.conflicts = checkout.conflicted.count
         }
 
-        checkout.base = ReviewDiff.defaultBranch(top: top, git: git)
+        checkout.base = cache.map { $0.defaultBranch(top: top, git: git) } ?? ReviewDiff.defaultBranch(top: top, git: git)
         if hasHead, let base = checkout.base {
             let baseName = base.replacingOccurrences(of: "origin/", with: "")
             checkout.onBase = checkout.branch.name == baseName || checkout.branch.name == base
@@ -196,14 +221,49 @@ enum AgentGit {
             }
         }
         checkout.checkpoints = Array(Checkpoints.list(in: top, git: git).prefix(20))
-        return checkout
+        if let cache, let signature { cache.store(checkout, signature: signature) }
+        return .success(checkout)
+    }
+
+    /// A cheap fingerprint of a checkout: its status, when each changed file
+    /// was last written (a file edited again keeps the same status line),
+    /// and when git's own bookkeeping last moved (staging, commits, fetches).
+    /// The same fingerprint means a full read would find the same thing.
+    static func signature(top: String, status: String, stamp: (String) -> String = AgentGit.stamp) -> String {
+        var parts = [status]
+        for file in parseStatus(status).1 {
+            parts += file.paths.map { stamp((top as NSString).appendingPathComponent($0)) }
+        }
+        if let gitDir = GitBranch.location(for: top)?.gitDir {
+            var common = gitDir
+            if let raw = (try? String(contentsOfFile: gitDir + "/commondir", encoding: .utf8))?
+                .trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty {
+                common = raw.hasPrefix("/") ? raw : (gitDir as NSString).appendingPathComponent(raw)
+            }
+            parts += ["index", "HEAD", "logs/HEAD"].map { stamp(gitDir + "/" + $0) }
+            parts += ["packed-refs", "FETCH_HEAD"].map { stamp(common + "/" + $0) }
+        }
+        return parts.joined(separator: "\u{1f}")
+    }
+
+    /// When a file was last written and how big it is; "-" when it's gone.
+    static func stamp(_ path: String) -> String {
+        var info = stat()
+        guard lstat(path, &info) == 0 else { return "-" }
+        return "\(info.st_mtimespec.tv_sec).\(info.st_mtimespec.tv_nsec):\(info.st_size)"
     }
 
     /// Every worktree of the repository `top` is in, with how far each has
-    /// gone from the default branch.
-    static func worktrees(top: String, git: Git = Git()) -> [Worktree] {
-        let base = ReviewDiff.defaultBranch(top: top, git: git)
-        return WorktreeCleanup.list(in: top, git: git).map { listed in
+    /// gone from the default branch. Without `details` only the list itself
+    /// is read, for when nothing on screen shows the rest.
+    static func worktrees(top: String, git: Git = Git(), details: Bool = true, cache: AgentGitCache? = nil) -> [Worktree] {
+        guard details else {
+            return WorktreeCleanup.list(in: top, git: git, details: false).map {
+                Worktree(path: $0.path, branch: $0.branch, isMain: $0.isMain)
+            }
+        }
+        let base = cache.map { $0.defaultBranch(top: top, git: git) } ?? ReviewDiff.defaultBranch(top: top, git: git)
+        return WorktreeCleanup.list(in: top, git: git, base: { base }).map { listed in
             var worktree = Worktree(path: listed.path, branch: listed.branch, isMain: listed.isMain,
                                     merged: listed.merged, dirty: listed.dirty)
             if let base, let branch = listed.branch, !listed.isMain,
@@ -213,6 +273,48 @@ enum AgentGit {
             }
             return worktree
         }
+    }
+}
+
+/// What the panel keeps between reads: each repository's default branch for
+/// a minute (it almost never changes, and finding it is up to five git
+/// calls), and each checkout's last read with its fingerprint. A kept read
+/// is still redone now and then, for what the fingerprint can't see (the
+/// default branch moving in another worktree, a new checkpoint).
+final class AgentGitCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var bases: [String: (name: String?, at: Date)] = [:]
+    private var checkouts: [String: (signature: String, checkout: AgentGit.Checkout, at: Date)] = [:]
+    let baseLifetime: TimeInterval
+    let readLifetime: TimeInterval
+    private let now: () -> Date
+
+    init(baseLifetime: TimeInterval = 60, readLifetime: TimeInterval = 30, now: @escaping () -> Date = Date.init) {
+        self.baseLifetime = baseLifetime
+        self.readLifetime = readLifetime
+        self.now = now
+    }
+
+    func defaultBranch(top: String, git: Git, find: (String, Git) -> String? = ReviewDiff.defaultBranch) -> String? {
+        let now = now()
+        if let kept = lock.withLock({ bases[top] }), now.timeIntervalSince(kept.at) < baseLifetime { return kept.name }
+        let name = find(top, git)
+        lock.withLock { bases[top] = (name, now) }
+        return name
+    }
+
+    /// The last read of `top`, when nothing it depends on has moved since.
+    func checkout(top: String, signature: String) -> AgentGit.Checkout? {
+        lock.withLock {
+            guard let kept = checkouts[top], kept.signature == signature,
+                  now().timeIntervalSince(kept.at) < readLifetime else { return nil }
+            return kept.checkout
+        }
+    }
+
+    func store(_ checkout: AgentGit.Checkout, signature: String) {
+        let now = now()
+        lock.withLock { checkouts[checkout.top] = (signature, checkout, now) }
     }
 }
 

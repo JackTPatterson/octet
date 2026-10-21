@@ -254,11 +254,14 @@ final class OctetTerminalRuntime {
     }
 
     private static func findPane(_ paneId: String, in view: NSView) -> PaneMirrorView? {
+        // Panes of other tabs are kept, hidden: never theirs.
+        guard !view.isHidden else { return nil }
         if let pane = view as? PaneMirrorView, pane.paneId == paneId { return pane }
         return view.subviews.lazy.compactMap { findPane(paneId, in: $0) }.first
     }
 
     private static func firstSurface(in view: NSView) -> TerminalEngine.SurfaceView? {
+        guard !view.isHidden else { return nil }
         if let surface = view as? TerminalEngine.SurfaceView { return surface }
         for sub in view.subviews {
             if let surface = firstSurface(in: sub) { return surface }

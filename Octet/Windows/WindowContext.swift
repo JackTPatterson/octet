@@ -18,6 +18,33 @@ struct OctetWindowSpec: Codable, Hashable {
     var frame: CGRect?
 }
 
+/// Debug builds with OCTET_RENDER_COUNT=1 count how often the chrome
+/// redraws and how often a window says it changed, logged every 10s, to
+/// measure what store updates cost. A no-op otherwise.
+@MainActor
+enum RenderCounter {
+    #if DEBUG
+    static let enabled = ProcessInfo.processInfo.environment["OCTET_RENDER_COUNT"] == "1"
+    private static var counts: [String: Int] = [:]
+    private static var timer: Timer?
+    #endif
+
+    static func note(_ name: String) {
+        #if DEBUG
+        guard enabled else { return }
+        counts[name, default: 0] += 1
+        guard timer == nil else { return }
+        timer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { _ in
+            MainActor.assumeIsolated {
+                let line = counts.keys.sorted().map { "\($0)=\(counts[$0] ?? 0)" }.joined(separator: " ")
+                FileHandle.standardError.write(Data("[render-count] \(Date().timeIntervalSince1970) \(line)\n".utf8))
+                counts = [:]
+            }
+        }
+        #endif
+    }
+}
+
 /// One Octet window, and the workspace and tab it shows.
 ///
 /// With one window, every member here forwards to `SessionStore` exactly as
@@ -128,13 +155,28 @@ final class WindowContext: ObservableObject, Identifiable {
                 let extra = ids.filter { !known.contains($0) }
                 // Kept whole, with what hasn't arrived, for when it does.
                 visualTabOrders[workspace] = held + extra
-                return held.filter(present.contains) + extra
+                let shown = held.filter(present.contains) + extra
+                shownTabOrders[workspace] = shown
+                return shown
             }
             heldStripOrders[workspace] = nil
         }
         let order = TabStripOrder.reconcile(previous: previous, current: ids)
         visualTabOrders[workspace] = order
+        shownTabOrders[workspace] = order
         return order
+    }
+
+    /// The strip as last drawn. While a drop is held it can be shorter than
+    /// `visualTabOrders`, which keeps tabs that haven't arrived yet.
+    private var shownTabOrders: [String: [String]] = [:]
+
+    /// A gap in the strip as drawn, as a gap in `order`, the order kept:
+    /// the gap before the same tab, so tabs the strip skips don't shift it.
+    private func keptGap(_ gap: Int, in workspace: String, order: [String]) -> Int {
+        guard let shown = shownTabOrders[workspace] else { return gap }
+        guard gap < shown.count else { return order.count }
+        return order.firstIndex(of: shown[max(0, gap)]) ?? gap
     }
 
     /// Strip orders a drop made, until the engine's order matches them.
@@ -156,7 +198,8 @@ final class WindowContext: ObservableObject, Identifiable {
     /// to the place that keeps it where it was dropped.
     func moveVisualTab(_ id: String, toGap gap: Int) {
         let workspace = focusedWorkspace?.workspaceId ?? ""
-        let order = TabStripOrder.moving(id, toGap: gap, in: visualTabOrders[workspace] ?? [])
+        let kept = visualTabOrders[workspace] ?? []
+        let order = TabStripOrder.moving(id, toGap: keptGap(gap, in: workspace, order: kept), in: kept)
         objectWillChange.send()
         visualTabOrders[workspace] = order
         guard TabStripOrder.isTerminal(id) else { return }
@@ -174,7 +217,7 @@ final class WindowContext: ObservableObject, Identifiable {
         let id = TabStripOrder.terminalPrefix + tabId
         var order = visualTabOrders[workspace] ?? []
         if !order.contains(id) { order.append(id) }
-        order = TabStripOrder.moving(id, toGap: gap, in: order)
+        order = TabStripOrder.moving(id, toGap: keptGap(gap, in: workspace, order: order), in: order)
         visualTabOrders[workspace] = order
         hold(order, in: workspace)
         // The snapshot may not have it yet: it arrived last.
@@ -200,7 +243,10 @@ final class WindowContext: ObservableObject, Identifiable {
     /// Since when this window has listed no workspace of its own.
     fileprivate var emptySince: Date?
     private var watch: AnyCancellable?
+    /// Whether this turn's store changes have already been passed on.
+    private var forwardedStoreChange = false
     private var containerLogsWatch: AnyCancellable?
+    private var countWatch: AnyCancellable?
 
     init(spec: OctetWindowSpec, store: SessionStore) {
         id = spec.id
@@ -211,8 +257,20 @@ final class WindowContext: ObservableObject, Identifiable {
         pendingSplitEdge = spec.splitEdge ?? .right
         pendingSplitTabIDs = spec.splitTabIDs
         // The chrome reads through here, so a store change is a change here.
-        watch = store.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
+        // One refresh sets several of the store's values at once; SwiftUI
+        // reads them all after the turn, so the first notice covers the rest.
+        // A process scan's values are read only by views watching the store.
+        watch = store.objectWillChange.sink { [weak self] in
+            RenderCounter.note("store.willChange")
+            guard let self, !self.forwardedStoreChange, !store.isPublishingScanOnly else { return }
+            self.forwardedStoreChange = true
+            self.objectWillChange.send()
+            DispatchQueue.main.async { [weak self] in self?.forwardedStoreChange = false }
+        }
         containerLogsWatch = containerLogs.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
+        #if DEBUG
+        if RenderCounter.enabled { countWatch = objectWillChange.sink { RenderCounter.note("window.willChange") } }
+        #endif
     }
 
     private var registry: WindowRegistry { .shared }

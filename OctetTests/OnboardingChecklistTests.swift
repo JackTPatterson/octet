@@ -67,4 +67,23 @@ final class OnboardingDetectionTests: XCTestCase {
         XCTAssertNil(GhosttyFontConfig.parse("font-family =\nfont-size = nope").family)
         XCTAssertNil(GhosttyFontConfig.parse("font-size = nope").size)
     }
+
+    func testAChoiceMadeInOctetCountsForNotifications() {
+        XCTAssertEqual(OnboardingChecklistStep.detected(OnboardingSignals(notificationsChosen: true)), ["notifications"])
+    }
+
+    func testGitHubSignInIsReadFromGhHosts() {
+        XCTAssertTrue(OnboardingSignals.githubSignedIn(hostsYAML: """
+        # gh hosts
+        github.com:
+            user: me
+            git_protocol: https
+        """))
+        XCTAssertFalse(OnboardingSignals.githubSignedIn(hostsYAML: "{}\n"))
+        XCTAssertFalse(OnboardingSignals.githubSignedIn(hostsYAML: "# github.com:\n    user: me"))
+        XCTAssertEqual(OnboardingSignals.githubHostsPath(home: "/Users/me", environment: [:]), "/Users/me/.config/gh/hosts.yml")
+        XCTAssertEqual(OnboardingSignals.githubHostsPath(home: "/Users/me", environment: ["XDG_CONFIG_HOME": "/x"]), "/x/gh/hosts.yml")
+        XCTAssertEqual(OnboardingSignals.githubHostsPath(home: "/Users/me", environment: ["GH_CONFIG_DIR": "/g", "XDG_CONFIG_HOME": "/x"]),
+                       "/g/hosts.yml")
+    }
 }

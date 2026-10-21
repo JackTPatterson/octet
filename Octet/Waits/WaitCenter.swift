@@ -69,7 +69,7 @@ final class WaitCenter: ObservableObject {
         guard let data = try? Data(contentsOf: url) else { return [] }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        return (try? decoder.decode([Wait].self, from: data)) ?? []
+        return LossyList.decode(Wait.self, from: data, file: url, decoder: decoder)
     }
 
     private func save() {

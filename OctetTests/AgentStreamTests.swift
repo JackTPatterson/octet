@@ -820,3 +820,65 @@ final class PiSessionTreeTests: XCTestCase {
         XCTAssertEqual(PiSessionTree.text(lines), "● Add login\n    ○ Use cookies\n    ● Use JWT instead")
     }
 }
+
+final class AgentStreamDeltaTests: XCTestCase {
+    private func stream(_ inner: [String: Any]) -> [String: Any] {
+        ["type": "stream_event", "event": inner, "parent_tool_use_id": NSNull()]
+    }
+
+    func testDeltasAppendToTheirOwnBlockOnly() {
+        var conversation = AgentConversation()
+        conversation.apply(stream(["type": "message_start", "message": ["id": "d1"]]))
+        conversation.apply(stream(["type": "content_block_start", "index": 0, "content_block": ["type": "thinking", "thinking": ""]]))
+        conversation.apply(stream(["type": "content_block_start", "index": 1, "content_block": ["type": "text", "text": ""]]))
+        conversation.apply(stream(["type": "content_block_delta", "index": 0, "delta": ["type": "thinking_delta", "thinking": "Hmm"]]))
+        conversation.apply(stream(["type": "content_block_delta", "index": 1, "delta": ["type": "text_delta", "text": "Hi"]]))
+        conversation.apply(stream(["type": "content_block_delta", "index": 0, "delta": ["type": "thinking_delta", "thinking": "…"]]))
+        conversation.apply(stream(["type": "content_block_delta", "index": 1, "delta": ["type": "text_delta", "text": " there"]]))
+        // A delta of the wrong type for its block changes nothing.
+        conversation.apply(stream(["type": "content_block_delta", "index": 1, "delta": ["type": "thinking_delta", "thinking": "x"]]))
+        XCTAssertEqual(conversation.items.map(\.kind), [.thinking("Hmm…"), .text("Hi there")])
+    }
+
+    func testAppendDeltaKeepsEarlierCopiesUnchanged() {
+        var conversation = AgentConversation()
+        conversation.items = [AgentItem(id: "a", kind: .text("one"))]
+        let before = conversation
+        XCTAssertTrue(conversation.appendDelta(" two", to: "a", thinking: false))
+        XCTAssertFalse(conversation.appendDelta("x", to: "a", thinking: true))
+        XCTAssertFalse(conversation.appendDelta("x", to: "missing", thinking: nil))
+        XCTAssertTrue(conversation.appendDelta("", to: "a", thinking: nil))
+        XCTAssertEqual(conversation.items.map(\.kind), [.text("one two")])
+        XCTAssertEqual(before.items.map(\.kind), [.text("one")])
+    }
+
+    func testLongStreamBuildsTheWholeText() {
+        var conversation = AgentConversation()
+        conversation.apply(stream(["type": "message_start", "message": ["id": "d2"]]))
+        conversation.apply(stream(["type": "content_block_start", "index": 0, "content_block": ["type": "text", "text": ""]]))
+        for index in 0..<2000 {
+            conversation.apply(stream(["type": "content_block_delta", "index": 0, "delta": ["type": "text_delta", "text": "\(index % 10)"]]))
+        }
+        guard case .text(let text) = conversation.items.last?.kind else { return XCTFail("no text") }
+        XCTAssertEqual(text.count, 2000)
+        XCTAssertTrue(text.hasPrefix("0123456789"))
+    }
+
+    func testCodexDeltasAppendOrStartTheirItem() {
+        var conversation = AgentConversation()
+        conversation.applyCodex(["method": "item/reasoning/textDelta", "params": ["itemId": "r1", "delta": "Look"]])
+        conversation.applyCodex(["method": "item/reasoning/textDelta", "params": ["itemId": "r1", "delta": "ing"]])
+        conversation.applyCodex(["method": "item/agentMessage/delta", "params": ["itemId": "m1", "delta": "Do"]])
+        conversation.applyCodex(["method": "item/agentMessage/delta", "params": ["itemId": "m1", "delta": "ne"]])
+        XCTAssertEqual(conversation.items.map(\.kind), [.thinking("Looking"), .text("Done")])
+    }
+
+    func testPiDeltasAppendToTheOpenBlock() {
+        var conversation = AgentConversation()
+        conversation.applyPi(["type": "message_start", "message": ["id": "p1"]])
+        conversation.applyPi(["type": "message_update", "assistantMessageEvent": ["type": "text_start", "contentIndex": 0]])
+        conversation.applyPi(["type": "message_update", "assistantMessageEvent": ["type": "text_delta", "contentIndex": 0, "delta": "Ye"]])
+        conversation.applyPi(["type": "message_update", "assistantMessageEvent": ["type": "text_delta", "contentIndex": 0, "delta": "s"]])
+        XCTAssertEqual(conversation.items.map(\.kind), [.text("Yes")])
+    }
+}

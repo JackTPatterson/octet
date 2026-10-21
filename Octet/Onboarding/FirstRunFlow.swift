@@ -50,6 +50,19 @@ final class FirstRunCenter: ObservableObject {
     func finish() {
         presented = false
     }
+
+    /// The agents Octet can run a conversation with that this Mac has.
+    static func installedAgents(_ agents: [DiscoveredAgent]) -> [AgentSession.Engine] {
+        let found = Set(agents.filter { $0.executablePath != nil }.map(\.id))
+        return AgentSession.Engine.offered.filter { found.contains($0.rawValue) }
+    }
+
+    /// The agent the Agent page shows as chosen: the default when it's
+    /// installed, otherwise the first one that is.
+    static func agentChoice(defaultAgent: String, installed: [AgentSession.Engine]) -> AgentSession.Engine? {
+        let current = AgentSession.Engine(rawValue: defaultAgent) ?? .claude
+        return installed.contains(current) ? current : installed.first
+    }
 }
 
 struct FirstRunFlow: View {
@@ -111,7 +124,14 @@ private struct FirstRunCard: View {
     private func advance() {
         switch center.page {
         case .appearance: OnboardingChecklistStore.shared.set(.appearance, complete: true)
-        case .agent: break
+        case .agent:
+            // The page only showed its pick; it becomes the default here,
+            // from the list as it is now.
+            let installed = FirstRunCenter.installedAgents(AgentDiscoveryStore.shared.agents)
+            if let choice = FirstRunCenter.agentChoice(defaultAgent: settings.values.defaultAgent, installed: installed),
+               choice.rawValue != settings.values.defaultAgent {
+                settings.values.defaultAgent = choice.rawValue
+            }
         case .notifications: OnboardingChecklistStore.shared.set(.notifications, complete: true)
         }
         center.next()
@@ -177,16 +197,23 @@ private struct FirstRunAppearance: View {
                 .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).strokeBorder(Theme.border, lineWidth: 1))
             }
         }
-        .task { ghostty = Self.findGhostty() }
+        .task {
+            // Once per page: the file reads happen off the main thread, and
+            // only the installed-font check (AppKit) comes back to it.
+            guard ghostty == nil else { return }
+            guard var find = await Task.detached(operation: { Self.readGhostty() }).value else { return }
+            find.family = find.family.flatMap { name in CustomFonts.allFamilies.contains(name) ? name : nil }
+            ghostty = find.theme == nil && find.family == nil && find.size == nil ? nil : find
+        }
     }
 
-    static func findGhostty(home: String = NSHomeDirectory()) -> GhosttyFind? {
+    /// The Ghostty config's colours and font, as written; the font isn't
+    /// checked against what's installed yet.
+    nonisolated static func readGhostty(home: String = NSHomeDirectory()) -> GhosttyFind? {
         let paths = TerminalThemeImport.searchPaths(home: home).filter { $0.localizedCaseInsensitiveContains("ghostty") }
         guard let text = paths.lazy.compactMap({ try? String(contentsOfFile: $0, encoding: .utf8) }).first else { return nil }
         let font = GhosttyFontConfig.parse(text)
-        let family = font.family.flatMap { name in CustomFonts.allFamilies.contains(name) ? name : nil }
-        let find = GhosttyFind(theme: TerminalThemeImport.importFromConfig(home: home), family: family, size: font.size)
-        return find.theme == nil && find.family == nil && find.size == nil ? nil : find
+        return GhosttyFind(theme: TerminalThemeImport.importFromConfig(home: home), family: font.family, size: font.size)
     }
 
     private func apply(_ find: GhosttyFind) {
@@ -210,9 +237,11 @@ private struct FirstRunAgent: View {
     @ObservedObject private var discovery = AgentDiscoveryStore.shared
 
     /// The agents Octet can run a conversation with that this Mac has.
-    private var installed: [AgentSession.Engine] {
-        let found = Set(discovery.agents.filter { $0.executablePath != nil }.map(\.id))
-        return AgentSession.Engine.offered.filter { found.contains($0.rawValue) }
+    private var installed: [AgentSession.Engine] { FirstRunCenter.installedAgents(discovery.agents) }
+
+    /// Shown as chosen, but only saved on Continue (or a click).
+    private var choice: AgentSession.Engine? {
+        FirstRunCenter.agentChoice(defaultAgent: settings.values.defaultAgent, installed: installed)
     }
 
     var body: some View {
@@ -238,12 +267,6 @@ private struct FirstRunAgent: View {
                         agentRow(engine)
                     }
                 }
-                .onAppear {
-                    // A default that isn't installed moves to one that is.
-                    if !installed.contains(.preferred), let first = installed.first {
-                        settings.values.defaultAgent = first.rawValue
-                    }
-                }
             }
         }
     }
@@ -257,7 +280,7 @@ private struct FirstRunAgent: View {
     }
 
     private func agentRow(_ engine: AgentSession.Engine) -> some View {
-        let chosen = settings.values.defaultAgent == engine.rawValue
+        let chosen = choice == engine
         let found = discovery.agents.first { $0.id == engine.rawValue }
         return Button { settings.values.defaultAgent = engine.rawValue } label: {
             HStack(spacing: Theme.Space.md) {

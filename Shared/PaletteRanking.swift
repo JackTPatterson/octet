@@ -65,6 +65,18 @@ enum PaletteRanking {
         filter chipFilter: PaletteKind?,
         recentIds: [String]
     ) -> [PaletteRankedResult] {
+        rankCountingRecents(entries, query: rawQuery, filter: chipFilter, recentIds: recentIds).results
+    }
+
+    /// `rank`, also saying how many of the first results it put there for
+    /// being recent: the rows the "Recent" header covers. Zero for a query,
+    /// which ranks recents in with the rest.
+    static func rankCountingRecents(
+        _ entries: [PaletteSearchable],
+        query rawQuery: String,
+        filter chipFilter: PaletteKind?,
+        recentIds: [String]
+    ) -> (results: [PaletteRankedResult], recentCount: Int) {
         let (prefixFilter, query) = PaletteKind.parse(rawQuery)
         let filter = prefixFilter ?? chipFilter
         let candidates = entries.filter { filter == nil || $0.kind == filter }
@@ -86,16 +98,19 @@ enum PaletteRanking {
                     return l == r ? lhs.offset < rhs.offset : l < r
                 }
                 .map(\.element)
-            return (Array(recent) + rest).prefix(maxResults).map {
+            let results = (Array(recent) + rest).prefix(maxResults).map {
                 PaletteRankedResult(id: $0.id, score: 0, titleIndices: [])
             }
+            return (results, min(recent.count, maxResults))
         }
 
         var results: [PaletteRankedResult] = []
         for entry in candidates {
             let titleMatch = FuzzyMatcher.match(query, in: entry.title)
+            // Subtitles and keywords (folder paths among them) only count a
+            // tight match: scattered letters across a long path aren't a hit.
             let secondary = ([entry.subtitle] + entry.keywords)
-                .compactMap { FuzzyMatcher.match(query, in: $0)?.score }
+                .compactMap { FuzzyMatcher.match(query, in: $0, tight: true)?.score }
                 .max()
                 .map { $0 * 6 / 10 }
             guard let best = [titleMatch?.score, secondary].compactMap({ $0 }).max() else { continue }
@@ -106,7 +121,14 @@ enum PaletteRanking {
                 titleIndices: titleMatch?.indices ?? []
             ))
         }
-        return Array(results.sorted { $0.score > $1.score }.prefix(maxResults))
+        return (Array(results.sorted { $0.score > $1.score }.prefix(maxResults)), 0)
+    }
+
+    /// `items` with each id once, the first kept: a repeated id would be
+    /// drawn twice under one SwiftUI identity.
+    static func firstById<T>(_ items: [T], id: (T) -> String) -> [T] {
+        var seen = Set<String>()
+        return items.filter { seen.insert(id($0)).inserted }
     }
 
     /// Most-recent-first list with `id` moved to the front.

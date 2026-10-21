@@ -313,6 +313,8 @@ extension AgentSession: OpenCodeServer.Listener {
         questionQueue.removeAll { $0.id == id }
         guard pendingQuestion?.id == id else { return }
         pendingQuestion = questionQueue.isEmpty ? nil : questionQueue.removeFirst()
+        // The last one answered after the turn ended: what was held goes.
+        releaseHeldPromptSoon()
     }
 
     // MARK: - Events

@@ -36,6 +36,9 @@ struct OctetApp: App {
         // other program in its panes.
         TerminalEnvironment.clearInheritedTerminalVariables()
         let session = EngineSession.make()
+        // Started now, not once the window has been laid out: a cold server
+        // is the longest wait before the first terminal.
+        session?.ensureServer()
         let settings = SettingsStore.shared
         settings.sessionConfigPath = session?.configPath
         settings.writeSessionConfig()
@@ -74,11 +77,23 @@ struct OctetApp: App {
                     guard !Self.started else { return }
                     Self.started = true
                     store.start()
-                    AccountStore.shared.start()
                     ModelPolicyStore.shared.start()
-                    AgentsStore.shared.start()
-                    CodexAgentsStore.shared.start()
-                    AgentDiscoveryStore.shared.scanIfStale()
+                    // Each starts a CLI or two; a moment later, they're not
+                    // competing with the first terminal. The accounts show
+                    // what was saved meanwhile.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                        AccountStore.shared.start()
+                        AgentsStore.shared.start()
+                        CodexAgentsStore.shared.start()
+                    }
+                    // A scan runs every agent CLI: with a list already
+                    // kept, launch rescans only every few hours. Settings
+                    // can still look again.
+                    let discovery = AgentDiscoveryStore.shared
+                    discovery.scanIfStale(after: discovery.agents.isEmpty ? 0 : 6 * 60 * 60)
+                    // In between, a cheap look at the bin folders catches a
+                    // CLI installed, removed or updated since the last scan.
+                    discovery.watchForChanges()
                     AgentMCPInstaller.shared.start()
                     RecapCenter.shared.start()
                     repairInstalledSubagentHooks()
@@ -120,8 +135,11 @@ struct OctetApp: App {
     private func repairInstalledSubagentHooks() {
         guard AgentConfigWrites.allowedHere,
               let cli = Bundle.main.url(forAuxiliaryExecutable: "octet-cli")?.path else { return }
-        for spec in SubagentHookInstaller.available() where SubagentHookInstaller.isInstalled(spec) {
-            _ = try? SubagentHookInstaller.install(cliPath: cli, spec: spec)
+        // Reads and rewrites each agent's config: kept off the main thread.
+        DispatchQueue.global(qos: .utility).async {
+            for spec in SubagentHookInstaller.available() where SubagentHookInstaller.isInstalled(spec) {
+                _ = try? SubagentHookInstaller.install(cliPath: cli, spec: spec)
+            }
         }
     }
 }

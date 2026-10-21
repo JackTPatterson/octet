@@ -420,6 +420,41 @@ struct OctetPlugin: Identifiable, Equatable {
     var id: String { manifest.id }
 }
 
+/// Keeps track of plugin scans. The one at launch runs off the main thread,
+/// so work that needs the plugin list waits here until a scan is in; and a
+/// scan started later (a reload after an install) wins over an older one
+/// that finishes after it.
+struct PluginDiscoveryGate<Work> {
+    /// Whether any scan's result has been taken.
+    private(set) var isLoaded = false
+    private var latest = 0
+    private var waiting: [Work] = []
+
+    /// Starts a scan, returning its number for `finish`.
+    mutating func begin() -> Int {
+        latest += 1
+        return latest
+    }
+
+    /// Takes scan `scan`'s result: the work that was waiting, to run now, or
+    /// nil when a newer scan has started since and this one is stale.
+    mutating func finish(_ scan: Int) -> [Work]? {
+        guard scan == latest else { return nil }
+        isLoaded = true
+        let work = waiting
+        waiting = []
+        return work
+    }
+
+    /// Holds `work` until the first scan is in. False when one already is,
+    /// so the caller runs it now.
+    mutating func hold(_ work: Work) -> Bool {
+        guard !isLoaded else { return false }
+        waiting.append(work)
+        return true
+    }
+}
+
 enum OctetPlugins {
     /// Where people install plugins.
     static func userDirectory(home: String = NSHomeDirectory()) -> String {

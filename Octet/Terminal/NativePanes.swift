@@ -9,7 +9,8 @@ import SwiftUI
 @MainActor
 final class PaneMirrorView: NSView {
     /// Every pane's view by pane id, for what acts on a pane's own terminal
-    /// (scrolling it, reading where it's scrolled to).
+    /// (scrolling it, reading where it's scrolled to). The one shown last
+    /// wins: a grid keeps the panes of other tabs, hidden.
     private static let live = NSMapTable<NSString, PaneMirrorView>.strongToWeakObjects()
     static func view(of paneId: String) -> PaneMirrorView? { live.object(forKey: paneId as NSString) }
 
@@ -99,17 +100,30 @@ final class PaneMirrorView: NSView {
 
     deinit { stream.stop() }
 
+    /// Shown in its tab, or kept hidden while another tab is in front. A
+    /// hidden pane keeps its stream and its size, so coming back to it is
+    /// instant; its terminal just stops drawing.
+    func setShown(_ shown: Bool) {
+        guard isHidden == shown else { return }
+        isHidden = !shown
+        if let handle = surface.surface { ghostty_surface_set_occlusion(handle, shown) }
+        if shown { Self.live.setObject(self, forKey: paneId as NSString) }
+    }
+
     /// Blank rows under the cursor that output is moved down by, so short
     /// output sits at the bottom of the pane ("Terminal text: Bottom"). The
     /// grid keeps its size: those rows hang below the view, empty.
     private var droppedRows = 0
+    /// A row's height in points, from the grid's metrics: the surface's own
+    /// `cellSize` is never set for a mirror, which left every drop at zero.
+    private var rowHeight: CGFloat = 0
     /// Scrolling owns the view for a moment; anchoring waits.
     private var anchoringPausedUntil = Date.distantPast
 
     override func layout() {
         super.layout()
         // Not flipped: down is toward zero.
-        let drop = CGFloat(droppedRows) * (surface.cellSize.height > 0 ? surface.cellSize.height : 0)
+        let drop = CGFloat(droppedRows) * rowHeight
         surface.frame = bounds.offsetBy(dx: 0, dy: -drop)
     }
 
@@ -127,8 +141,10 @@ final class PaneMirrorView: NSView {
     /// cursor, nothing if anything below it holds text.
     func updateBottomAnchor(enabled: Bool) {
         guard Date() >= anchoringPausedUntil, !inLiveResize, TabDrag.shared.item == nil else { return }
+        let height = rowHeight
         let rows = enabled ? blankRowsBelowCursor() : 0
-        guard rows != droppedRows else { return }
+        // A new font size moves the same rows by a different distance.
+        guard rows != droppedRows || (rows > 0 && rowHeight != height) else { return }
         droppedRows = rows
         needsLayout = true
         layoutSubtreeIfNeeded()
@@ -138,6 +154,7 @@ final class PaneMirrorView: NSView {
         guard let handle = surface.surface else { return 0 }
         var metrics = ghostty_surface_grid_metrics_s()
         guard ghostty_surface_grid_metrics(handle, &metrics), metrics.cursor_in_viewport else { return 0 }
+        rowHeight = CGFloat(metrics.cell_height)
         let below = Int(metrics.rows) - 1 - Int(metrics.cursor_row)
         guard below > 0 else { return 0 }
         var text = ghostty_text_s()
@@ -154,16 +171,26 @@ final class PaneMirrorView: NSView {
     /// The stream starts once the view knows its grid, so the engine's
     /// replay is drawn for the size it will stay at.
     private var started = false
+    private var pendingStart: DispatchWorkItem?
 
     private func gridChanged(_ size: ghostty_surface_size_s) {
         guard size.columns > 0, size.rows > 0 else { return }
         let grid = PaneStream.Size(cols: Int(size.columns), rows: Int(size.rows),
                                    widthPx: Int(size.width_px), heightPx: Int(size.height_px))
         stream.resize(grid)
-        if !started {
-            started = true
-            stream.start()
+        guard !started else { return }
+        // A new surface reports a provisional grid (97×34) before layout
+        // gives it its own. Started on that, the engine replays the pane
+        // at the wrong height and the two sides reflow it differently, losing
+        // the last rows: wait for the size to hold for a few frames.
+        pendingStart?.cancel()
+        let start = DispatchWorkItem { [weak self] in
+            guard let self, !self.started else { return }
+            self.started = true
+            self.stream.start()
         }
+        pendingStart = start
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06, execute: start)
     }
 
     // MARK: - Copy mode
@@ -331,9 +358,12 @@ final class PaneGeometry: ObservableObject {
 
 /// A tab's panes, each its own terminal, placed as the engine lays them out.
 /// Views are kept by pane id across layouts, so a split or a resize moves
-/// a pane's terminal rather than starting it again.
+/// a pane's terminal rather than starting it again. Panes of tabs switched
+/// away from are kept too, hidden, so switching back doesn't replay them.
 struct NativePaneGrid: NSViewRepresentable {
     let layout: PaneLayout?
+    /// Every pane the engine still has: a kept pane that isn't goes at once.
+    var livePanes: Set<String>?
     /// The tab shown, whose layout the engine works out for this view's size.
     let tabId: String?
     let focusedPaneId: String?
@@ -348,7 +378,8 @@ struct NativePaneGrid: NSViewRepresentable {
     func makeNSView(context: Context) -> GridView { GridView(geometry: geometry) }
 
     func updateNSView(_ view: GridView, context: Context) {
-        view.update(layout: layout, focusedPaneId: focusedPaneId, socketPath: socketPath, gutter: gutter, focus: focus)
+        view.update(layout: layout, livePanes: livePanes, focusedPaneId: focusedPaneId, socketPath: socketPath,
+                    gutter: gutter, focus: focus)
         view.report(tabId: tabId, viewport: viewport)
     }
 
@@ -356,7 +387,15 @@ struct NativePaneGrid: NSViewRepresentable {
 
     @MainActor
     final class GridView: NSView {
+        /// Every kept pane, shown or not.
         private var panes: [String: PaneMirrorView] = [:]
+        /// The panes in the layout shown, in its order.
+        private var shownIds: [String] = []
+        /// Kept panes by when they were last shown, oldest first.
+        private var recent: [String] = []
+        /// How many panes of other tabs stay ready, hidden. Each is a whole
+        /// terminal and a stream, so the least recently shown go past it.
+        static let keptHidden = 24
         private var paneLayout: PaneLayout?
         private var gutter: CGFloat = 4
         private var focusedPaneId: String?
@@ -408,7 +447,8 @@ struct NativePaneGrid: NSViewRepresentable {
         private func measure() {
             let bottom = SettingsStore.shared.values.textPosition == .bottom
             var found: [String: PaneGeometry.Pane] = [:]
-            for (id, view) in panes {
+            for id in shownIds {
+                guard let view = panes[id] else { continue }
                 view.updateBottomAnchor(enabled: bottom)
                 guard let handle = view.surface.surface else { continue }
                 var metrics = ghostty_surface_grid_metrics_s()
@@ -448,32 +488,58 @@ struct NativePaneGrid: NSViewRepresentable {
                                 cursorTop: top, cursorBottom: top + pane.cellSize.height)
         }
 
-        func update(layout: PaneLayout?, focusedPaneId: String?, socketPath: String, gutter: CGFloat,
-                    focus: @escaping (String) -> Void) {
+        func update(layout: PaneLayout?, livePanes: Set<String>?, focusedPaneId: String?, socketPath: String,
+                    gutter: CGFloat, focus: @escaping (String) -> Void) {
             self.paneLayout = layout
             self.gutter = gutter
-            let ids = Set(layout?.panes.map(\.id) ?? [])
+            shownIds = layout?.panes.map(\.id) ?? []
+            let ids = Set(shownIds)
+            // Panes of other tabs are hidden, not dropped: their terminals
+            // stay current, so coming back shows them at once. A closed
+            // pane's goes for good.
+            var hidKeys = false
             for (id, view) in panes where !ids.contains(id) {
-                view.removeFromSuperview()
-                panes[id] = nil
+                if let livePanes, !livePanes.contains(id) {
+                    drop(id)
+                } else if !view.isHidden {
+                    if window?.firstResponder === view.surface { hidKeys = true }
+                    view.setShown(false)
+                }
             }
             var added = false
-            for id in ids where panes[id] == nil {
-                let view = PaneMirrorView(paneId: id, socketPath: socketPath)
-                addSubview(view)
-                panes[id] = view
-                added = true
+            for id in shownIds {
+                if let view = panes[id] {
+                    if view.isHidden {
+                        view.setShown(true)
+                        added = true
+                    }
+                } else {
+                    let view = PaneMirrorView(paneId: id, socketPath: socketPath)
+                    addSubview(view)
+                    panes[id] = view
+                    added = true
+                }
+                recent.removeAll { $0 == id }
+                recent.append(id)
             }
+            for id in recent.filter({ !ids.contains($0) }).dropLast(Self.keptHidden) { drop(id) }
             for (id, view) in panes { view.onFocus = { focus(id) } }
             needsLayout = true
-            // Typing goes to the engine's focused pane, as it moves.
-            if focusedPaneId != self.focusedPaneId {
+            // Typing goes to the engine's focused pane, as it moves, and
+            // never stays with a pane that was just hidden.
+            if focusedPaneId != self.focusedPaneId || hidKeys {
                 self.focusedPaneId = focusedPaneId
                 takeFocus(moved: true)
             } else if added {
                 // The first panes can arrive after the grid joined its window.
                 takeFocus(moved: false)
             }
+        }
+
+        private func drop(_ id: String) {
+            panes[id]?.removeFromSuperview()
+            panes[id] = nil
+            recent.removeAll { $0 == id }
         }
 
         /// The first focus can come before the grid is in a window, where
@@ -488,7 +554,7 @@ struct NativePaneGrid: NSViewRepresentable {
         /// (the drawer's): only from whatever SwiftUI left holding them.
         private func takeFocus(moved: Bool) {
             // No focused pane known yet: the layout's first.
-            let id = focusedPaneId.flatMap { panes[$0] != nil ? $0 : nil } ?? paneLayout?.panes.first?.id
+            let id = focusedPaneId.flatMap { shownIds.contains($0) && panes[$0] != nil ? $0 : nil } ?? shownIds.first
             guard let window, let id, let view = panes[id],
                   window.firstResponder !== view.surface else { return }
             let current = window.firstResponder

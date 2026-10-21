@@ -84,3 +84,24 @@ extension TerminalTheme {
         return zip(a, b).map { String(format: "%02x", Int((($0 + ($1 - $0) * amount)).rounded())) }.joined()
     }
 }
+
+extension TerminalTheme {
+    private enum CodingKeys: String, CodingKey { case name, background, foreground, accent, ansi, isLight }
+
+    /// A saved imported theme needs only its name and two colours: the rest
+    /// is filled in the way an import would, so one odd field doesn't lose it.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let background = try container.decode(String.self, forKey: .background)
+        let foreground = try container.decode(String.self, forKey: .foreground)
+        let ansi = try? container.decodeIfPresent([String].self, forKey: .ansi)
+        self.init(
+            name: try container.decode(String.self, forKey: .name),
+            background: background,
+            foreground: foreground,
+            accent: (try? container.decodeIfPresent(String.self, forKey: .accent)) ?? foreground,
+            ansi: ansi.flatMap { $0.count == 16 ? $0 : nil } ?? TerminalThemeImport.defaults(background: background, foreground: foreground),
+            isLight: (try? container.decodeIfPresent(Bool.self, forKey: .isLight)) ?? TerminalThemeImport.isLight(background)
+        )
+    }
+}

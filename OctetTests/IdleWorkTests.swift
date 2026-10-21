@@ -116,21 +116,77 @@ final class WorkspaceSleepTests: XCTestCase {
 
     func testOnlyWhatWouldLoseNothingSleepsByItself() {
         let quiet = snapshot()
-        XCTAssertNil(WorkspaceSleep.reasonToStayAwake(workspace, snapshot: quiet, busyPanes: [], ports: [], pinned: false, shown: false))
+        XCTAssertNil(WorkspaceSleep.reasonToStayAwake(workspace, snapshot: quiet, busyPanes: [], records: ["term1": record], ports: [], pinned: false, shown: false))
         // The agent's own pane counts as busy (the agent runs there) but is resumed on waking.
-        XCTAssertNil(WorkspaceSleep.reasonToStayAwake(workspace, snapshot: quiet, busyPanes: ["w1:p1"], ports: [], pinned: false, shown: false))
-        XCTAssertNotNil(WorkspaceSleep.reasonToStayAwake(workspace, snapshot: quiet, busyPanes: ["w1:p2"], ports: [], pinned: false, shown: false))
-        XCTAssertNotNil(WorkspaceSleep.reasonToStayAwake(workspace, snapshot: quiet, busyPanes: [], ports: [3000], pinned: false, shown: false))
-        XCTAssertNotNil(WorkspaceSleep.reasonToStayAwake(workspace, snapshot: quiet, busyPanes: [], ports: [], pinned: true, shown: false))
-        XCTAssertNotNil(WorkspaceSleep.reasonToStayAwake(workspace, snapshot: quiet, busyPanes: [], ports: [], pinned: false, shown: true))
-        XCTAssertNotNil(WorkspaceSleep.reasonToStayAwake(workspace, snapshot: snapshot(focused: "w1"), busyPanes: [], ports: [], pinned: false, shown: false))
-        XCTAssertNotNil(WorkspaceSleep.reasonToStayAwake(workspace, snapshot: snapshot(agentStatus: .blocked), busyPanes: [], ports: [],
+        XCTAssertNil(WorkspaceSleep.reasonToStayAwake(workspace, snapshot: quiet, busyPanes: ["w1:p1"], records: ["term1": record], ports: [], pinned: false, shown: false))
+        XCTAssertNotNil(WorkspaceSleep.reasonToStayAwake(workspace, snapshot: quiet, busyPanes: ["w1:p2"], records: ["term1": record], ports: [], pinned: false, shown: false))
+        XCTAssertNotNil(WorkspaceSleep.reasonToStayAwake(workspace, snapshot: quiet, busyPanes: [], records: ["term1": record], ports: [3000], pinned: false, shown: false))
+        XCTAssertNotNil(WorkspaceSleep.reasonToStayAwake(workspace, snapshot: quiet, busyPanes: [], records: ["term1": record], ports: [], pinned: true, shown: false))
+        XCTAssertNotNil(WorkspaceSleep.reasonToStayAwake(workspace, snapshot: quiet, busyPanes: [], records: ["term1": record], ports: [], pinned: false, shown: true))
+        XCTAssertNotNil(WorkspaceSleep.reasonToStayAwake(workspace, snapshot: snapshot(focused: "w1"), busyPanes: [], records: ["term1": record], ports: [], pinned: false, shown: false))
+        XCTAssertNotNil(WorkspaceSleep.reasonToStayAwake(workspace, snapshot: snapshot(agentStatus: .blocked), busyPanes: [], records: ["term1": record], ports: [],
                                                           pinned: false, shown: false))
 
         let now = Date(timeIntervalSince1970: 100 * 86_400)
         XCTAssertTrue(WorkspaceSleep.isDue(lastActive: now.addingTimeInterval(-15 * 86_400), afterDays: 14, now: now))
         XCTAssertFalse(WorkspaceSleep.isDue(lastActive: now.addingTimeInterval(-13 * 86_400), afterDays: 14, now: now))
         XCTAssertFalse(WorkspaceSleep.isDue(lastActive: .distantPast, afterDays: 0, now: now))
+    }
+
+    func testWhatSleepWouldEndOrLoseKeepsItAwake() {
+        let quiet = snapshot()
+        let records = ["term1": record]
+        func reason(busy: Set<String> = [], jobs: Set<String> = [], records: [String: AgentSessionRecord],
+                    conversations: ConversationActivity = .init(), in snapshot: EngineSnapshot? = nil) -> String? {
+            WorkspaceSleep.reasonToStayAwake(workspace, snapshot: snapshot ?? quiet, busyPanes: busy, agentJobs: jobs,
+                                             records: records, conversations: conversations, ports: [], pinned: false, shown: false)
+        }
+        // Something the agent left running behind it ends with the terminal.
+        XCTAssertEqual(reason(jobs: ["w1:p1"], records: records), "An agent has something running in the background.")
+        // Jobs in another workspace's pane don't count.
+        XCTAssertNil(reason(jobs: ["w9:p1"], records: records))
+        // An agent with no session to resume wouldn't come back.
+        XCTAssertEqual(reason(records: [:]), "An agent here can't be resumed.")
+        var unknown = record
+        unknown.sessionId = nil
+        XCTAssertEqual(reason(records: ["term1": unknown]), "An agent here can't be resumed.")
+        // Octet's own conversations, working or asking, hold it too.
+        XCTAssertEqual(reason(records: records, conversations: ConversationActivity(working: ["w1"])), "An agent is working.")
+        XCTAssertEqual(reason(records: records, conversations: ConversationActivity(blocked: ["w1"])), "An agent is waiting on you.")
+        XCTAssertNil(reason(records: records, conversations: ConversationActivity(working: ["w2"], blocked: ["w3"])))
+    }
+
+    func testSleepingRecordsSayWhoPutThemToSleep() throws {
+        var slept = WorkspaceSleep.capture(workspace, snapshot: snapshot(), records: ["term1": record], conversations: [],
+                                           branch: nil, project: nil, lastActive: nil, work: nil, now: Date(timeIntervalSince1970: 9))
+        XCTAssertEqual(slept.cause, .manual)
+        XCTAssertEqual(slept.causeText, "Put to sleep by you")
+        slept.cause = .automatic(afterDays: 14)
+        XCTAssertEqual(slept.causeText, "Put to sleep by itself after 14 days unused")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + "/sleeping.json")
+        SleepingWorkspacesFile(workspaces: [slept]).save(to: url)
+        XCTAssertEqual(SleepingWorkspacesFile.load(from: url).workspaces, [slept])
+    }
+
+    func testOlderRecordsMissingDefaultedFieldsStillLoad() throws {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        // An older build's note: no id, conversations, cause; its tab's
+        // agent record has no `handled`, its work only a branch.
+        let json = """
+        {"label": "api", "cwd": "/repo", "sleptAt": "2026-01-02T03:04:05Z",
+         "tabs": [{"label": "Claude", "cwd": "/repo",
+                   "agent": {"agent": "claude", "sessionId": "s1", "cwd": "/repo", "workspaceLabel": "api", "tabLabel": "Claude",
+                             "terminalId": "term1", "firstSeen": "2026-01-01T00:00:00Z", "lastSeen": "2026-01-01T00:00:00Z"}}],
+         "work": {"branch": "main"}}
+        """
+        let slept = try decoder.decode(SleepingWorkspace.self, from: Data(json.utf8))
+        XCTAssertEqual(slept.label, "api")
+        XCTAssertFalse(slept.id.isEmpty)
+        XCTAssertEqual(slept.conversations, [])
+        XCTAssertEqual(slept.cause, .manual)
+        XCTAssertEqual(slept.tabs[0].agent?.handled, false)
+        XCTAssertEqual(slept.work, IdleWork(branch: "main"))
     }
 
     func testTheListSurvivesARoundTrip() {

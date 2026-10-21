@@ -25,7 +25,9 @@ final class ShellRecoveryController: ObservableObject {
     /// No new look until the check has run, so it compares against the old one.
     private var holdUntil = Date.distantPast
     private var capturing = false
-    private var lastCapture = Date.distantPast
+    /// From launch: the first capture waits its interval rather than reading
+    /// every pane while they're all loading.
+    private var lastCapture = Date()
     private var lastSnapshot: EngineSnapshot = .empty
     /// What each dump last held, to skip rewriting unchanged output.
     private var written: [String: Int] = [:]

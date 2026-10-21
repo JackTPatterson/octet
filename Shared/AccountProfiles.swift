@@ -31,6 +31,21 @@ struct AccountProfile: Codable, Equatable, Identifiable {
     }
 }
 
+extension AccountProfile {
+    private enum CodingKeys: String, CodingKey { case id, name, agent, home }
+
+    /// An account saved without its agent is taken as Claude's, as
+    /// `variable(for:)` already does for anything but Codex; the rest is
+    /// required.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        agent = (try? container.decodeIfPresent(String.self, forKey: .agent)) ?? "claude"
+        home = try container.decode(String.self, forKey: .home)
+    }
+}
+
 /// A folder (and everything under it) using an account.
 struct AccountAssignment: Codable, Equatable {
     var folder: String

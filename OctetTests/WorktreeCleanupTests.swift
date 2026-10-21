@@ -41,6 +41,11 @@ final class WorktreeCleanupTests: XCTestCase {
         try git.run(id + ["commit", "-qm", "unmerged work"], in: base + "/open")
         try "edited\n".write(toFile: base + "/busy/a.txt", atomically: true, encoding: .utf8)
 
+        // Without details, only the list: nothing is marked yet.
+        let listed = WorktreeCleanup.list(in: repo, git: git, details: false)
+        XCTAssertEqual(listed.count, 4)
+        XCTAssertFalse(listed.contains { $0.merged || $0.dirty })
+
         let worktrees = WorktreeCleanup.list(in: repo, git: git)
         let byBranch = Dictionary(uniqueKeysWithValues: worktrees.map { ($0.branch ?? "", $0) })
         XCTAssertEqual(byBranch["done"]?.removable, true)

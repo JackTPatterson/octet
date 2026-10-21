@@ -76,23 +76,49 @@ enum AgentDiscovery {
     /// What every known agent looks like on this machine. `version` runs each
     /// CLI it found, so this belongs off the main thread.
     static func scan(home: String = NSHomeDirectory(), readVersions: Bool = true) -> [DiscoveredAgent] {
+        scanRecordingFingerprint(home: home, readVersions: readVersions).agents
+    }
+
+    /// A scan, plus a fingerprint of what it looked at so a later cheap check
+    /// can tell whether anything changed since.
+    static func scanRecordingFingerprint(home: String = NSHomeDirectory(), readVersions: Bool = true)
+        -> (agents: [DiscoveredAgent], fingerprint: AgentDiscoveryFingerprint?) {
         let shellPath = loginShellPath()
         let pathDirectories = (shellPath ?? "").components(separatedBy: ":").filter { !$0.isEmpty }
         let directories = searchDirectories(shellPath: shellPath, home: home)
+        // Stamped before looking, so a change made mid-scan shows next time.
+        let directoryStamps = AgentDiscoveryFingerprint.record(shellPath: shellPath ?? "", directories: directories,
+                                                               executables: [], home: home)
         let manager = FileManager.default
-        return AgentHosts.all(home: home).map { host in
+        var agents = AgentHosts.all(home: home).map { host in
             let command = AgentHosts.executables[host.id] ?? host.cli
             let path = locate(command: command, in: directories)
             var agent = DiscoveredAgent(id: host.id, displayName: host.displayName, executablePath: path,
                                         version: nil,
                                         configPath: manager.fileExists(atPath: host.home) ? host.home : nil,
                                         command: command)
-            if readVersions, let path { agent.version = version(of: path) }
             // A shell runs the first match on its PATH, so the bare name is
             // safe only when that match is the one found here.
             agent.onShellPath = path.map { locate(command: command, in: pathDirectories) == $0 }
             return agent
         }
+        // Before the versions run, for the same reason. Without a shell
+        // PATH there's no baseline worth trusting, so the next check rescans.
+        var fingerprint: AgentDiscoveryFingerprint?
+        if shellPath != nil {
+            fingerprint = directoryStamps
+            for path in agents.compactMap(\.executablePath) { fingerprint?.executables[path] = FileStamp.of(path) }
+        }
+        if readVersions {
+            // All at once: one after another, a few slow CLIs add up.
+            let versions = VersionResults(count: agents.count)
+            let paths = agents.map(\.executablePath)
+            DispatchQueue.concurrentPerform(iterations: paths.count) { index in
+                if let path = paths[index] { versions.set(index, version(of: path)) }
+            }
+            for index in agents.indices { agents[index].version = versions.get(index) }
+        }
+        let present = agents
         .filter(\.isPresent)
         .sorted { first, second in
             let ranks = (AgentHosts.preferredOrder.firstIndex(of: first.id) ?? AgentHosts.preferredOrder.count,
@@ -100,6 +126,27 @@ enum AgentDiscovery {
             return ranks.0 == ranks.1
                 ? first.displayName.localizedCaseInsensitiveCompare(second.displayName) == .orderedAscending
                 : ranks.0 < ranks.1
+        }
+        return (present, fingerprint)
+    }
+
+    /// Versions read on several threads at once.
+    private final class VersionResults: @unchecked Sendable {
+        private let lock = NSLock()
+        private var values: [String?]
+
+        init(count: Int) { values = Array(repeating: nil, count: count) }
+
+        func set(_ index: Int, _ value: String?) {
+            lock.lock()
+            values[index] = value
+            lock.unlock()
+        }
+
+        func get(_ index: Int) -> String? {
+            lock.lock()
+            defer { lock.unlock() }
+            return values[index]
         }
     }
 

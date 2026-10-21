@@ -3,7 +3,7 @@ import Foundation
 /// The getting-started steps. Each one notices itself where Octet can tell
 /// it's done (an agent on the PATH, a project open, notifications allowed),
 /// and can still be checked off by hand, since opening a screen proves
-/// nothing and some steps (an issue tracker over gh) can't be seen.
+/// nothing and not every setup can be seen.
 enum OnboardingChecklistStep: String, CaseIterable, Identifiable {
     case project, agent, appearance, issues, notifications
     var id: String { rawValue }
@@ -37,10 +37,13 @@ struct OnboardingSignals: Equatable {
     var agentInstalled = false
     /// A theme, font or size other than the one Octet started with.
     var appearanceChanged = false
-    /// A Linear or Jira connection saved.
+    /// A Linear or Jira connection saved, or GitHub CLI signed in.
     var trackerConnected = false
     /// macOS lets Octet post notifications.
     var notificationsAllowed = false
+    /// How Octet notifies was changed in its own Settings: a choice made,
+    /// even one that doesn't need macOS's permission.
+    var notificationsChosen = false
 
     /// Whether `directory` is somewhere a project lives: not home, not the
     /// root, not a system folder a fresh terminal starts in.
@@ -49,6 +52,24 @@ struct OnboardingSignals: Equatable {
         let homePath = (home as NSString).standardizingPath
         guard !path.isEmpty, path != "/", path != homePath, path.hasPrefix("/") else { return false }
         return !["/tmp", "/private/tmp", "/Users", "/Applications"].contains(path)
+    }
+
+    /// Where GitHub CLI keeps its signed-in hosts, as gh itself looks:
+    /// `GH_CONFIG_DIR`, then `XDG_CONFIG_HOME/gh`, then `~/.config/gh`.
+    static func githubHostsPath(home: String, environment: [String: String]) -> String {
+        if let dir = environment["GH_CONFIG_DIR"], !dir.isEmpty { return dir + "/hosts.yml" }
+        if let xdg = environment["XDG_CONFIG_HOME"], !xdg.isEmpty { return xdg + "/gh/hosts.yml" }
+        return home + "/.config/gh/hosts.yml"
+    }
+
+    /// Whether a gh `hosts.yml` lists a host, which it does once signed in
+    /// (the token itself may be in the Keychain). Hosts are its top-level keys.
+    static func githubSignedIn(hostsYAML: String) -> Bool {
+        hostsYAML.components(separatedBy: .newlines).contains { line in
+            guard let first = line.first, !first.isWhitespace, first != "#" else { return false }
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            return trimmed.hasSuffix(":") && trimmed.count > 1
+        }
     }
 }
 
@@ -60,7 +81,7 @@ extension OnboardingChecklistStep {
         if signals.agentInstalled { done.insert(Self.agent.rawValue) }
         if signals.appearanceChanged { done.insert(Self.appearance.rawValue) }
         if signals.trackerConnected { done.insert(Self.issues.rawValue) }
-        if signals.notificationsAllowed { done.insert(Self.notifications.rawValue) }
+        if signals.notificationsAllowed || signals.notificationsChosen { done.insert(Self.notifications.rawValue) }
         return done
     }
 }

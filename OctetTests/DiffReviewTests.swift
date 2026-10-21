@@ -205,4 +205,69 @@ final class DiffReviewTests: XCTestCase {
         XCTAssertFalse(committed.contains("twenty-eight"))
         XCTAssertEqual(try git.run(["status", "--porcelain"], in: repo), "M a.txt\n?? new.txt")
     }
+
+    func testAHunkKeepsTheMissingNewlineAndTheFilesMode() throws {
+        let text = """
+        diff --git a/run.sh b/run.sh
+        new file mode 100755
+        --- /dev/null
+        +++ b/run.sh
+        @@ -0,0 +1,2 @@
+        +#!/bin/sh
+        +echo hi
+        \\ No newline at end of file
+        """
+        let file = try XCTUnwrap(ReviewDiff.parse(text).first)
+        XCTAssertEqual(file.mode, "100755")
+        XCTAssertEqual(file.hunks.first?.lines.count, 2)
+        XCTAssertEqual(file.hunks.first?.lines.last?.noNewline, true)
+        let patch = ReviewDiff.patch(for: file, hunk: file.hunks[0])
+        XCTAssertTrue(patch.contains("new file mode 100755\n"))
+        XCTAssertTrue(patch.hasSuffix("+echo hi\n\\ No newline at end of file\n"))
+    }
+
+    func testStagingAHunkAtTheEndOfAFileWithoutANewline() throws {
+        let git = Git()
+        let repo = FileManager.default.temporaryDirectory.appendingPathComponent("octet-eof-\(UUID().uuidString)").path
+        defer { try? FileManager.default.removeItem(atPath: repo) }
+        try FileManager.default.createDirectory(atPath: repo, withIntermediateDirectories: true)
+        try git.run(["init", "-q"], in: repo)
+        try git.run(["config", "user.email", "t@t"], in: repo)
+        try git.run(["config", "user.name", "t"], in: repo)
+        try "one\ntwo".write(toFile: repo + "/a.txt", atomically: true, encoding: .utf8)
+        try git.run(["add", "."], in: repo)
+        try git.run(["commit", "-qm", "base"], in: repo)
+        try "one\n2".write(toFile: repo + "/a.txt", atomically: true, encoding: .utf8)
+        try "#!/bin/sh\necho hi\n".write(toFile: repo + "/run.sh", atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: repo + "/run.sh")
+
+        let diff = try XCTUnwrap(ReviewDiff.read(in: repo, base: .uncommitted, git: git))
+        for file in diff.files { try ReviewDiff.stage(ReviewDiff.patch(for: file, hunk: file.hunks[0]), in: repo, git: git) }
+        // The index has exactly what's on disk: no newline added at the end.
+        XCTAssertNoThrow(try git.run(["diff", "--quiet", "--", "a.txt"], in: repo))
+        XCTAssertTrue(try git.run(["ls-files", "-s", "run.sh"], in: repo).hasPrefix("100755"))
+    }
+
+    func testARenameUnstagesBothItsPaths() throws {
+        let git = Git()
+        let repo = FileManager.default.temporaryDirectory.appendingPathComponent("octet-rename-\(UUID().uuidString)").path
+        defer { try? FileManager.default.removeItem(atPath: repo) }
+        try FileManager.default.createDirectory(atPath: repo, withIntermediateDirectories: true)
+        try git.run(["init", "-q"], in: repo)
+        try "a\n".write(toFile: repo + "/old.txt", atomically: true, encoding: .utf8)
+        try git.run(["add", "."], in: repo)
+        try git.run(["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base"], in: repo)
+        try git.run(["mv", "old.txt", "new.txt"], in: repo)
+        let renamed = try XCTUnwrap(AgentGit.read(top: repo, git: git)?.files.first)
+        XCTAssertEqual(renamed.kind, .renamed)
+        XCTAssertEqual(renamed.paths, ["new.txt", "old.txt"])
+
+        try ReviewDiff.unstage(paths: renamed.paths, in: repo, git: git)
+        XCTAssertEqual(try git.run(["diff", "--cached", "--name-only"], in: repo), "")
+        try ReviewDiff.stage(paths: renamed.paths, in: repo, git: git)
+        // Discarding it, as the panel does: the new path goes, the old one is back.
+        try git.run(["restore", "--source=HEAD", "--staged", "--worktree", "--"] + renamed.paths, in: repo)
+        XCTAssertEqual(try git.run(["status", "--porcelain"], in: repo), "")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: repo + "/old.txt"))
+    }
 }

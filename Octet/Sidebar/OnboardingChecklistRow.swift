@@ -11,8 +11,11 @@ final class OnboardingChecklistStore: ObservableObject {
     @Published private(set) var completed: Set<String>
     /// Steps Octet can see are done (OnboardingSignals).
     @Published private(set) var detected: Set<String> = []
-    /// Put away with "Done — Hide"; Help › Getting Started brings it back.
+    /// Put away with Hide; Help › Getting Started brings it back.
     @Published private(set) var hidden: Bool
+    /// An issue tracker is connected, as last checked off the main thread.
+    @Published private(set) var trackerConnected = false
+    private var trackerCheck: Task<Void, Never>?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -40,12 +43,23 @@ final class OnboardingChecklistStore: ObservableObject {
         hidden = value
         defaults.set(value, forKey: Self.hiddenKey)
     }
+
+    /// Looks again for a connected tracker. That's a Keychain query and a
+    /// file read, so it runs off the main thread and the last answer is kept.
+    func refreshTrackers() {
+        guard trackerCheck == nil else { return }
+        trackerCheck = Task { [weak self] in
+            let connected = await Task.detached(priority: .utility) { OnboardingSignalsReader.trackerConnected() }.value
+            self?.trackerConnected = connected
+            self?.trackerCheck = nil
+        }
+    }
 }
 
 /// Reads what Octet can see of the person's setup for the checklist.
 @MainActor
 enum OnboardingSignalsReader {
-    static func read(store: SessionStore, includeTrackers: Bool) -> OnboardingSignals {
+    static func read(store: SessionStore, trackerConnected: Bool) -> OnboardingSignals {
         let values = SettingsStore.shared.values
         let defaults = OctetSettings.defaults
         let home = NSHomeDirectory()
@@ -60,11 +74,25 @@ enum OnboardingSignalsReader {
                 || values.importedTheme != nil
                 || values.fontFamily != defaults.fontFamily
                 || values.fontSize != defaults.fontSize,
-            // A keychain read, so only when asked.
-            trackerConnected: includeTrackers
-                && [IssueTracker.linear, .jira].contains { !IssueCredentialStore.connections($0).isEmpty },
-            notificationsAllowed: NotificationPermission.shared.status == .allowed
+            trackerConnected: trackerConnected,
+            notificationsAllowed: NotificationPermission.shared.status == .allowed,
+            notificationsChosen: values.notifications != defaults.notifications
+                || values.notificationDelaySeconds != defaults.notificationDelaySeconds
+                || values.agentSounds != defaults.agentSounds
+                || values.notifyFinished != defaults.notifyFinished
+                || values.notifyNeedsInput != defaults.notifyNeedsInput
+                || values.notifyFailed != defaults.notifyFailed
         )
+    }
+
+    /// GitHub CLI signed in, or a Linear or Jira connection saved. Blocking:
+    /// call it off the main thread.
+    nonisolated static func trackerConnected() -> Bool {
+        let hosts = OnboardingSignals.githubHostsPath(home: NSHomeDirectory(), environment: ProcessInfo.processInfo.environment)
+        if let text = try? String(contentsOfFile: hosts, encoding: .utf8), OnboardingSignals.githubSignedIn(hostsYAML: text) {
+            return true
+        }
+        return [IssueTracker.linear, .jira].contains { IssueCredentialStore.hasConnection($0) }
     }
 }
 
@@ -77,7 +105,6 @@ struct OnboardingChecklistRow: View {
     let openProject: () -> Void
     @State private var showing = false
     @State private var hovered = false
-    @State private var trackerConnected = false
 
     private var total: Int { OnboardingChecklistStep.allCases.count }
 
@@ -85,7 +112,11 @@ struct OnboardingChecklistRow: View {
         if !checklist.hidden {
             row
                 .onAppear { refresh(trackers: true) }
-                .onReceive(window.store.$snapshot.map(\.workspaces.count).removeDuplicates()) { _ in refresh() }
+                // Each workspace's folder, so moving one into a project counts.
+                .onReceive(window.store.$snapshot.map { snapshot in
+                    snapshot.workspaces.map { snapshot.directory(ofWorkspace: $0.workspaceId) }
+                }.removeDuplicates()) { _ in refresh() }
+                .onReceive(checklist.$trackerConnected) { _ in refresh() }
                 .onReceive(discovery.$agents) { _ in refresh() }
                 .onReceive(permission.$status) { _ in refresh() }
                 .onChange(of: settings.values) { _, _ in refresh() }
@@ -112,11 +143,14 @@ struct OnboardingChecklistRow: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Onboarding checklist")
             .accessibilityValue("\(checklist.done.count) of \(total) complete")
+            .accessibilityAction(named: "Hide Checklist") { hide() }
             if checklist.isComplete {
                 OctetButton(title: "Done — Hide", kind: .ghost, compact: true) { hide() }
                     .help("Put the checklist away. Help › Getting Started brings it back.")
             }
         }
+        // Not everyone wants every step: it can go away before it's done.
+        .contextMenu { Button("Hide Checklist") { hide() } }
         .foregroundStyle(Theme.textSecondary)
         .padding(.leading, 6).padding(.trailing, 4)
         .frame(height: 30)
@@ -145,9 +179,10 @@ struct OnboardingChecklistRow: View {
                     FirstRunCenter.shared.present()
                 }
                 Spacer()
-                if checklist.isComplete {
-                    OctetButton(title: "Done — Hide", kind: .primary, compact: true) { hide() }
-                }
+                // Always offered: some steps may never apply to you.
+                OctetButton(title: checklist.isComplete ? "Done — Hide" : "Hide",
+                            kind: checklist.isComplete ? .primary : .ghost, compact: true) { hide() }
+                    .help("Put the checklist away. Help › Getting Started brings it back.")
             }
         }
         .padding(18).frame(width: 360).foregroundStyle(Theme.textPrimary).background(Theme.chrome)
@@ -157,9 +192,10 @@ struct OnboardingChecklistRow: View {
         let auto = checklist.detected.contains(step.rawValue)
         return HStack(alignment: .top, spacing: 10) {
             if auto {
+                // The step's value says Done; the tick is only for the eye.
                 OctetIcon("checkmark.circle.fill", size: 16).foregroundStyle(Theme.success)
                     .frame(width: 16, height: 16)
-                    .accessibilityLabel("Done")
+                    .accessibilityHidden(true)
             } else {
                 Toggle(step.title, isOn: Binding(get: { checklist.completed.contains(step.rawValue) },
                                                  set: { checklist.set(step, complete: $0) }))
@@ -172,19 +208,19 @@ struct OnboardingChecklistRow: View {
                 Text(auto ? "Done. Octet noticed." : step.detail)
                     .font(Theme.captionFont).foregroundStyle(Theme.textSecondary)
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityValue(checklist.isDone(step) ? "Done" : "Not done")
             Spacer(minLength: 4)
             OctetButton(title: "Open", kind: .ghost, compact: true) { open(step) }
+                .accessibilityLabel("Open: " + step.title)
         }
         .accessibilityElement(children: .contain)
+        .accessibilityLabel(step.title)
     }
 
     private func refresh(trackers: Bool = false) {
-        if trackers {
-            trackerConnected = OnboardingSignalsReader.read(store: window.store, includeTrackers: true).trackerConnected
-        }
-        var signals = OnboardingSignalsReader.read(store: window.store, includeTrackers: false)
-        signals.trackerConnected = trackerConnected
-        checklist.update(signals)
+        if trackers { checklist.refreshTrackers() }
+        checklist.update(OnboardingSignalsReader.read(store: window.store, trackerConnected: checklist.trackerConnected))
     }
 
     private func hide() {

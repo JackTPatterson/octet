@@ -222,7 +222,7 @@ enum ProjectSearchGroups {
     struct Group: Equatable, Identifiable {
         let path: String
         /// (index into the flat list, match)
-        let matches: [Indexed]
+        var matches: [Indexed]
         var id: String { path }
     }
 
@@ -239,6 +239,22 @@ enum ProjectSearchGroups {
             byPath[match.path, default: []].append(Indexed(index: index, match: match))
         }
         return order.map { Group(path: $0, matches: byPath[$0] ?? []) }
+    }
+
+    /// `batch` added to `groups`, the matches after the first `start`:
+    /// each into its file's group, or a new group at the end. `index` says
+    /// where each file's group is, and is kept up to date.
+    static func append(_ batch: [ProjectSearchMatch], startingAt start: Int, to groups: inout [Group],
+                       index: inout [String: Int]) {
+        for (offset, match) in batch.enumerated() {
+            let entry = Indexed(index: start + offset, match: match)
+            if let at = index[match.path] {
+                groups[at].matches.append(entry)
+            } else {
+                index[match.path] = groups.count
+                groups.append(Group(path: match.path, matches: [entry]))
+            }
+        }
     }
 }
 

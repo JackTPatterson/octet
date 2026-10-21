@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Foundation
 
 /// The plugins Octet has loaded, and which of them are on. Plugins that ship
@@ -12,18 +13,47 @@ final class OctetPluginHost: ObservableObject {
     /// Folders that looked like plugins but couldn't be loaded, and why.
     @Published private(set) var problems: [String] = []
 
-    private init() { reload() }
+    /// Reading every manifest is slow enough to hold up launch, so the
+    /// first scan runs on another thread; `plugins` is empty until it's in.
+    private init() { reloadInBackground() }
 
     var bundledDirectory: String? { Bundle.main.resourceURL?.appendingPathComponent("Plugins").path }
     var userDirectory: String { OctetPlugins.userDirectory() }
 
+    private var discovery = PluginDiscoveryGate<@MainActor () -> Void>()
+
+    /// Whether the plugins on disk have been read yet.
+    var isLoaded: Bool { discovery.isLoaded }
+
+    /// Runs `work` once the plugins have been read: now, if they have.
+    func whenLoaded(_ work: @escaping @MainActor () -> Void) {
+        if !discovery.hold(work) { work() }
+    }
+
+    /// Reads the plugins again, here and now, as after an install.
     func reload() {
-        let bundled = bundledDirectory
-        let user = userDirectory
-        let found = OctetPlugins.discover(bundled: bundled, user: user)
+        let scan = discovery.begin()
+        publish(OctetPlugins.discover(bundled: bundledDirectory, user: userDirectory), scan: scan)
+    }
+
+    private func reloadInBackground() {
+        let scan = discovery.begin()
+        let bundled = bundledDirectory, user = userDirectory
+        DispatchQueue.global(qos: .userInitiated).async {
+            let found = OctetPlugins.discover(bundled: bundled, user: user)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { OctetPluginHost.shared.publish(found, scan: scan) }
+            }
+        }
+    }
+
+    private func publish(_ found: (plugins: [OctetPlugin], problems: [String]), scan: Int) {
+        // A reload since has read the disk after this scan did.
+        guard let waiting = discovery.finish(scan) else { return }
         plugins = found.plugins
         problems = found.problems
         runtimeMatcher = nil
+        waiting.forEach { $0() }
     }
 
     // MARK: - Runtime icons
@@ -31,14 +61,29 @@ final class OctetPluginHost: ObservableObject {
     private var runtimeMatcher: RuntimeMatcher?
     private weak var store: SessionStore?
     private var runtimeTimer: Timer?
+    /// When the engine first answered. Each scan asks it about every pane,
+    /// so none starts in the burst of requests right after it connects.
+    private var connectedSince: Date?
+    private var connection: AnyCancellable?
+    private static let scanAfterConnect: TimeInterval = 2
 
     /// Starts marking tabs with what their panes run, for as long as a
     /// plugin with runtime rules is on.
     func attach(_ store: SessionStore) {
         self.store = store
-        PluginSettingsStore.install(plugins)
-        installFormerlyBuiltIn()
-        startUpdateChecks()
+        // These need the plugin list, so they wait for the first scan.
+        whenLoaded { [weak self] in
+            guard let self else { return }
+            PluginSettingsStore.install(self.plugins)
+            self.installFormerlyBuiltIn()
+            self.startUpdateChecks()
+            self.refreshRuntimes()
+        }
+        connection = store.$isConnected.sink { [weak self] connected in
+            MainActor.assumeIsolated {
+                if connected, self?.connectedSince == nil { self?.connectedSince = Date() }
+            }
+        }
         runtimeTimer?.invalidate()
         runtimeTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.refreshRuntimes() }
@@ -47,6 +92,8 @@ final class OctetPluginHost: ObservableObject {
     }
 
     private func refreshRuntimes() {
+        // Before the first scan there are no rules to match by.
+        guard isLoaded, let connectedSince, Date().timeIntervalSince(connectedSince) >= Self.scanAfterConnect else { return }
         let matcher = runtimeMatcher ?? RuntimeMatcher(plugins: plugins.filter(isEnabled))
         runtimeMatcher = matcher
         store?.refreshPaneRuntimes(matcher: matcher)
@@ -100,6 +147,7 @@ final class OctetPluginHost: ObservableObject {
 
     /// The icon an enabled plugin has for a runtime, by its id.
     func runtimeBadge(id: String) -> RuntimeBadge? {
+        guard isLoaded else { return nil }
         let matcher = runtimeMatcher ?? RuntimeMatcher(plugins: plugins.filter(isEnabled))
         runtimeMatcher = matcher
         return matcher.badge(id: id)
@@ -319,6 +367,8 @@ final class OctetPluginHost: ObservableObject {
     /// Installs a registry plugin a link asked for, once the person agrees:
     /// it runs shell commands as them, and a web page can open the link.
     func installFromLink(id: String) {
+        // A link can launch Octet; what's installed is known once it's read.
+        guard isLoaded else { return whenLoaded { [weak self] in self?.installFromLink(id: id) } }
         loadRegistry(force: !registryLoaded) { [weak self] in
             guard let self else { return }
             guard let entry = self.registry.first(where: { $0.id == id }) else {

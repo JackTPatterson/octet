@@ -12,7 +12,10 @@ struct RootView: View {
     @ObservedObject private var motion = MotionPreferences.shared
     @ObservedObject private var settings = SettingsStore.shared
     @ObservedObject private var confirmations = ConfirmCenter.shared
-    @StateObject private var paneGeometry = PaneGeometry()
+    /// Held, not observed: it changes with every cursor move, and observing
+    /// it here redrew the whole window (sidebar included) as output streamed.
+    /// What draws from it observes it itself (FocusedGridReader, overlays).
+    @State private var paneGeometry = PaneGeometry()
     @StateObject private var splash = NewTabSplashModel()
     @StateObject private var statusBar = StatusBarModel()
     @StateObject private var liveScroll = LiveScrollWatcher()
@@ -52,6 +55,7 @@ struct RootView: View {
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {
+        let _ = RenderCounter.note("RootView")
         Group {
             if embedded { embeddedWorkspaceSurface }
             else { layered }
@@ -62,7 +66,8 @@ struct RootView: View {
             if visible {
                 store.refreshPlugins()
                 palette.reset()
-                let items = PaletteCatalog.items(window: window)
+                palette.projectPaths = ProjectDirectories.list()
+                let items = PaletteCatalog.items(window: window, projectPaths: palette.projectPaths)
                 palette.reload(items: items)
                 if let query = ui.paletteQuery {
                     ui.paletteQuery = nil
@@ -88,7 +93,7 @@ struct RootView: View {
         }
         .onChange(of: store.plugins) { _, _ in
             if ui.paletteVisible, palette.prompt == nil {
-                palette.reload(items: PaletteCatalog.items(window: window))
+                palette.reload(items: PaletteCatalog.items(window: window, projectPaths: palette.projectPaths))
             }
         }
         .onChange(of: window.focusedPaneId) { _, _ in twin.snapshotChanged() }
@@ -130,8 +135,13 @@ struct RootView: View {
                     fallback: window.focusedWorkspace?.workspaceId
                 )
             }
+            // Snapshots come in bursts while agents work: one rebuild for
+            // each quarter second, checked again when it runs.
             if ui.paletteVisible, palette.prompt == nil {
-                palette.reload(items: PaletteCatalog.items(window: window))
+                palette.reloadSoon { [ui, palette, window] in
+                    guard ui.paletteVisible, palette.prompt == nil else { return nil }
+                    return PaletteCatalog.items(window: window, projectPaths: palette.projectPaths)
+                }
             }
         }
         .background(settings.values.effectiveBackgroundOpacity < 1 ? Color.clear : Theme.terminalBackground)
@@ -249,10 +259,14 @@ struct RootView: View {
                             ZStack(alignment: .leading) {
                                 Rectangle().fill(Theme.divider).frame(width: 1)
                                     .frame(maxHeight: .infinity, alignment: .leading)
-                                SidePanel(store: store, ui: ui)
-                                    .environmentObject(window.panelContext)
-                                    .frame(width: width - 1)
-                                    .padding(.leading, 1)
+                                // Not built until first opened: a panel left
+                                // closed costs nothing at launch.
+                                if ui.sidePanelEverShown {
+                                    SidePanel(store: store, ui: ui)
+                                        .environmentObject(window.panelContext)
+                                        .frame(width: width - 1)
+                                        .padding(.leading, 1)
+                                }
                                 if !ui.sidePanelMaximized { SidePanelResizeHandle(ui: ui) }
                             }
                             .frame(width: width, alignment: .leading)
@@ -1126,29 +1140,33 @@ struct RootView: View {
                     } else if let hints = ui.hints {
                         HintsOverlay(session: hints, geometry: paneGeometry, window: window)
                         .id(hints.id)
-                    } else if let grid = paneGeometry.focusedGrid, let tab = splash.tabId,
-                              tab == window.displayedFocusedTabId {
-                        newTabSplash(clearOf: grid)
-                            .id(tab)
-                            .transition(motion.animates(.tabs) ? .opacity : .identity)
                     } else {
-                        let layout = store.snapshot.layouts.first { $0.tabId == window.displayedFocusedTabId }
-                        ZStack {
-                            SearchHighlightView(geometry: paneGeometry)
-                            LiveScrollPills(watcher: liveScroll, geometry: paneGeometry)
-                            if let tab = window.displayedFocusedTabId, let layout = liveLayout(of: tab) {
-                                PaneCards(layout: layout, cells: cellGeometry, focusedPane: window.focusedPaneId)
-                                if tabDrag.item == nil {
-                                    PaneDividers(layout: layout, cells: cellGeometry, move: { pane, sideBySide, cells in
-                                        store.moveDivider(beside: pane, sideBySide: sideBySide, by: cells)
-                                    }, equalize: { pane in
-                                        store.call("pane.equalize", ["pane_id": pane], failure: "Couldn't make the panes equal") { _ in }
-                                    })
+                        FocusedGridReader(geometry: paneGeometry) { grid in
+                            if let grid, let tab = splash.tabId,
+                                      tab == window.displayedFocusedTabId {
+                                newTabSplash(clearOf: grid)
+                                    .id(tab)
+                                    .transition(motion.animates(.tabs) ? .opacity : .identity)
+                            } else {
+                                let layout = store.snapshot.layouts.first { $0.tabId == window.displayedFocusedTabId }
+                                ZStack {
+                                    SearchHighlightView(geometry: paneGeometry)
+                                    LiveScrollPills(watcher: liveScroll, geometry: paneGeometry)
+                                    if let tab = window.displayedFocusedTabId, let layout = liveLayout(of: tab) {
+                                        PaneCards(layout: layout, cells: cellGeometry, focusedPane: window.focusedPaneId)
+                                        if tabDrag.item == nil {
+                                            PaneDividers(layout: layout, cells: cellGeometry, move: { pane, sideBySide, cells in
+                                                store.moveDivider(beside: pane, sideBySide: sideBySide, by: cells)
+                                            }, equalize: { pane in
+                                                store.call("pane.equalize", ["pane_id": pane], failure: "Couldn't make the panes equal") { _ in }
+                                            })
+                                        }
+                                    }
+                                    OutputFindHost(find: window.outputFind,
+                                                   layout: window.displayedFocusedTabId.flatMap { liveLayout(of: $0) },
+                                                   cells: cellGeometry)
                                 }
                             }
-                            OutputFindHost(find: window.outputFind,
-                                           layout: window.displayedFocusedTabId.flatMap { liveLayout(of: $0) },
-                                           cells: cellGeometry)
                         }
                     }
                     // The one beside the terminal shows there instead.
@@ -1461,6 +1479,7 @@ struct RootView: View {
     /// engine's stream of it.
     private func sessionTerminal(_ session: EngineSession) -> some View {
         NativePaneGrid(layout: window.displayedFocusedTabId.flatMap { liveLayout(of: $0) },
+                       livePanes: Set(store.snapshot.panes.map(\.paneId)),
                        tabId: window.displayedFocusedTabId,
                        focusedPaneId: window.focusedPaneId,
                        socketPath: session.socketPath,
@@ -1582,6 +1601,7 @@ final class UIState: ObservableObject {
     /// The right panel, with every section (`SidePanel`).
     @Published var sidePanelVisible = UserDefaults.standard.bool(forKey: "octet.sidePanelVisible") {
         didSet {
+            if sidePanelVisible && !sidePanelEverShown { sidePanelEverShown = true }
             saveWorkspacePanel()
             if !sidePanelVisible && !restoringWorkspacePanel {
                 // T3 Code: hiding the panel over a streaming device floats
@@ -1636,6 +1656,9 @@ final class UIState: ObservableObject {
 
     /// What planes say about themselves on their tabs, e.g. "#12" in green.
     @Published var planeBadges: [String: PlaneBadge] = [:]
+    /// Whether the panel has been open this launch. It's built only from
+    /// then on, and kept, so what its planes loaded survives closing it.
+    @Published private(set) var sidePanelEverShown = UserDefaults.standard.bool(forKey: "octet.sidePanelVisible")
     /// The panel over the whole window's content, the terminal left as it is
     /// underneath. Restored with this workspace’s other panel settings.
     @Published var sidePanelMaximized = false { didSet { saveWorkspacePanel() } }
@@ -2153,4 +2176,13 @@ private struct FocusedClaude: Equatable {
     let sessionId: String
     let cwd: String
     let pid: Int?
+}
+
+/// Reads the focused pane's grid for what's drawn from it (the new-tab
+/// splash), so only this redraws as the cursor moves, not the window.
+private struct FocusedGridReader<Content: View>: View {
+    @ObservedObject var geometry: PaneGeometry
+    @ViewBuilder let content: (TerminalGrid?) -> Content
+
+    var body: some View { content(geometry.focusedGrid) }
 }

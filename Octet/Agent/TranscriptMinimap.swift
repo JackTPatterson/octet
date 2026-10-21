@@ -1,32 +1,5 @@
 import SwiftUI
 
-/// One of your prompts on the transcript's rail.
-struct TranscriptPromptMark: Identifiable, Equatable {
-    let id: String
-    let prompt: String
-    /// The start of the agent's reply to it, when there's one yet.
-    let reply: String?
-    /// Where it sits in the transcript, 0 at the top and 1 at the end.
-    let position: Double
-
-    /// Your prompts among `items` (the shown ones), each with the first
-    /// words of the reply that followed it.
-    static func marks(_ items: [AgentItem]) -> [TranscriptPromptMark] {
-        guard items.count > 1 else { return [] }
-        var marks: [TranscriptPromptMark] = []
-        for (index, item) in items.enumerated() {
-            guard case .user(let text) = item.kind else { continue }
-            let reply = items[(index + 1)...].lazy.prefix { if case .user = $0.kind { false } else { true } }
-                .compactMap { next -> String? in if case .text(let reply) = next.kind { reply } else { nil } }
-                .first { !$0.isEmpty }
-            marks.append(TranscriptPromptMark(id: item.id, prompt: text,
-                                              reply: reply.map { String(MarkdownPlain.plain($0).prefix(160)) },
-                                              position: Double(index) / Double(items.count - 1)))
-        }
-        return marks
-    }
-}
-
 /// A thin rail beside the transcript with a strip for each of your prompts,
 /// where it sits in the conversation. Hovering one shows the prompt and how
 /// the reply began; clicking goes there. ⌘↑ and ⌘↓ in an empty message box

@@ -43,6 +43,7 @@ enum DebugSnapshot {
     }
 
     private static func findSurface(in view: NSView) -> TerminalEngine.SurfaceView? {
+        guard !view.isHidden else { return nil }
         if let surface = view as? TerminalEngine.SurfaceView { return surface }
         for sub in view.subviews { if let surface = findSurface(in: sub) { return surface } }
         return nil

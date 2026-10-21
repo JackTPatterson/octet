@@ -14,6 +14,10 @@ final class AgentUsageTracker: ObservableObject {
 
     private unowned let store: SessionStore
     private var paths: [String: String] = [:]
+    /// Agents whose session wasn't found, and when: not looked for again
+    /// for a while, as each look can list folders.
+    private var misses: [String: Date] = [:]
+    private static let retryMissAfter: TimeInterval = 60
     private var lastRead = Date.distantPast
     private static let interval: TimeInterval = 5
 
@@ -29,20 +33,42 @@ final class AgentUsageTracker: ObservableObject {
     /// only while Octet is the active app.
     func refreshIfDue() {
         guard NSApp?.isActive == true, Date().timeIntervalSince(lastRead) >= Self.interval else { return }
-        lastRead = Date()
-        let agents = store.snapshot.agents.compactMap { agent -> (terminal: String, path: String)? in
-            guard let terminal = agent.terminalId else { return nil }
-            if let known = paths[terminal] { return (terminal, known) }
-            guard let path = transcriptPath(for: agent) else { return nil }
-            paths[terminal] = path
-            return (terminal, path)
+        let now = Date()
+        lastRead = now
+        // Asked at most once, not once per agent.
+        var resumable: [AgentSessionRecord]?
+        var known: [(terminal: String, path: String)] = []
+        var lookups: [(terminal: String, lookup: PathLookup)] = []
+        for agent in store.snapshot.agents {
+            guard let terminal = agent.terminalId else { continue }
+            if let path = paths[terminal] {
+                known.append((terminal, path))
+                continue
+            }
+            if let missed = misses[terminal], now.timeIntervalSince(missed) < Self.retryMissAfter { continue }
+            let records = resumable ?? store.recovery.resumableSessions()
+            resumable = records
+            guard let lookup = transcriptLookup(for: agent, terminal: terminal, resumable: records) else {
+                misses[terminal] = now
+                continue
+            }
+            lookups.append((terminal, lookup))
         }
-        guard !agents.isEmpty else { return }
+        guard !known.isEmpty || !lookups.isEmpty else { return }
         let kinds = Dictionary(store.snapshot.agents.compactMap { agent in
             agent.terminalId.map { ($0, agent.agent ?? "") }
         }, uniquingKeysWith: { first, _ in first })
 
         DispatchQueue.global(qos: .utility).async {
+            // Finding a Codex session lists its folders: done here, not on main.
+            var resolved: [String: String?] = [:]
+            for (terminal, lookup) in lookups {
+                switch lookup {
+                case .path(let path): resolved[terminal] = path
+                case .codex(let sessionId): resolved[terminal] = AgentSessionFiles.codexPath(forSession: sessionId)
+                }
+            }
+            let agents = known + resolved.compactMap { terminal, path in path.map { (terminal, $0) } }
             var found: [String: TwinUsage] = [:]
             var activity: [String: String] = [:]
             for agent in agents {
@@ -58,6 +84,9 @@ final class AgentUsageTracker: ObservableObject {
             }
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
+                for (terminal, path) in resolved {
+                    if let path { self.paths[terminal] = path; self.misses[terminal] = nil } else { self.misses[terminal] = now }
+                }
                 for (terminal, usage) in found where self.usage[terminal] != usage {
                     self.usage[terminal] = usage
                 }
@@ -68,18 +97,25 @@ final class AgentUsageTracker: ObservableObject {
         }
     }
 
+    /// How to find an agent's session file: a path already, or a Codex
+    /// session to look for.
+    private enum PathLookup {
+        case path(String)
+        case codex(sessionId: String)
+    }
+
     /// Where this agent writes its session, from what recovery already knows.
-    private func transcriptPath(for agent: EngineAgent) -> String? {
-        guard let terminal = agent.terminalId,
-              let record = store.recovery.resumableSessions().first(where: { $0.terminalId == terminal })
+    private func transcriptLookup(for agent: EngineAgent, terminal: String,
+                                  resumable: [AgentSessionRecord]) -> PathLookup? {
+        guard let record = resumable.first(where: { $0.terminalId == terminal })
                 ?? store.recovery.record(forTerminal: terminal),
               let sessionId = record.sessionId else { return nil }
         switch AgentBrand.forAgent(agent.agent)?.id {
         case "codex":
-            return AgentSessionFiles.codexPath(forSession: sessionId)
+            return .codex(sessionId: sessionId)
         default:
             let directory = ClaudeTranscriptActivity.projectDirectory(forCwd: record.cwd)
-            return "\(directory)/\(sessionId).jsonl"
+            return .path("\(directory)/\(sessionId).jsonl")
         }
     }
 

@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Foundation
 import SwiftUI
 
@@ -112,7 +113,11 @@ final class SessionStore: ObservableObject {
     /// were already open, which aren't new connections.
     private(set) var sshScans = 0
     private var loadingPaneRuntimes = false
-    @Published private(set) var loadingPaneProcesses = false
+    /// Not published: it flips twice a scan, and every view watching the
+    /// store would redraw for it. The runtime panel rebuilds on `paneScanEnded`.
+    private(set) var loadingPaneProcesses = false
+    /// Each process scan's end, changed or not, so loading rows settle.
+    let paneScanEnded = PassthroughSubject<Void, Never>()
     /// An empty or unavailable process response is still a completed first scan.
     @Published private(set) var scannedRuntimePaneIDs: Set<String> = []
     /// True while the focused pane sits at its shell's own prompt.
@@ -150,6 +155,9 @@ final class SessionStore: ObservableObject {
     private var refreshScheduled = false
     private var eventThread: Thread?
     private var pollTimer: Timer?
+    #if DEBUG
+    private var changeCounts: [AnyCancellable] = []
+    #endif
 
     init(client: EngineClient) {
         self.client = client
@@ -175,10 +183,14 @@ final class SessionStore: ObservableObject {
         let storedIdleAfter = defaults.double(forKey: Self.idleAfterKey)
         if storedIdleAfter > 0 { idleAfter = storedIdleAfter }
         scheduleSnoozeWake()
+        #if DEBUG
+        if RenderCounter.enabled { changeCounts = countChanges() }
+        #endif
     }
 
     var focusedWorkspace: EngineWorkspace? {
-        snapshot.workspaces.first { $0.workspaceId == snapshot.focusedWorkspaceId }
+        pendingFocusedWorkspaceId.flatMap { id in snapshot.workspaces.first { $0.workspaceId == id } }
+            ?? snapshot.workspaces.first { $0.workspaceId == snapshot.focusedWorkspaceId }
             ?? snapshot.workspaces.first(where: \.focused)
     }
 
@@ -191,6 +203,9 @@ final class SessionStore: ObservableObject {
     // Tab clicks and closes show immediately instead of waiting for the session server's
     // round trip, so the tab bar animates the moment you act.
     @Published private(set) var pendingFocusedTabId: String?
+    /// A workspace clicked to, shown before the session server has moved
+    /// there; its active tab is the pending tab meanwhile.
+    @Published private(set) var pendingFocusedWorkspaceId: String?
     @Published private(set) var pendingClosedTabIds: Set<String> = []
     private var pendingFocusDeadline = Date.distantPast
 
@@ -204,6 +219,11 @@ final class SessionStore: ObservableObject {
     }
 
     private func settleOptimisticTabs(with snapshot: EngineSnapshot) {
+        if let pending = pendingFocusedWorkspaceId,
+           snapshot.focusedWorkspaceId == pending || Date() > pendingFocusDeadline
+            || !snapshot.workspaces.contains(where: { $0.workspaceId == pending }) {
+            pendingFocusedWorkspaceId = nil
+        }
         if let pending = pendingFocusedTabId,
            snapshot.focusedTabId == pending || Date() > pendingFocusDeadline
             || !snapshot.tabs.contains(where: { $0.tabId == pending }) {
@@ -229,7 +249,11 @@ final class SessionStore: ObservableObject {
         IdleCenter.shared.start(store: self)
         let client = self.client
         let thread = Thread { [weak self] in
+            // Retried quickly at first: a server just started is listening
+            // within moments, and a fixed half second was most of the wait.
+            var retry: TimeInterval = 0.05
             while self != nil {
+                let began = Date()
                 do {
                     try client.subscribe(connectionCreated: { _ in
                         Task { @MainActor [weak self] in
@@ -245,7 +269,9 @@ final class SessionStore: ObservableObject {
                 } catch {
                     Task { @MainActor [weak self] in self?.lostConnection(engineGone: true) }
                 }
-                Thread.sleep(forTimeInterval: 0.5)
+                // A connection that held a while went away: start over fast.
+                retry = Date().timeIntervalSince(began) > 2 ? 0.05 : min(retry * 2, 0.5)
+                Thread.sleep(forTimeInterval: retry)
             }
         }
         thread.name = "octet.terminal-events"
@@ -302,6 +328,19 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    /// Set while a process scan publishes what it found. Only views that
+    /// observe the store themselves (or models subscribed to these values)
+    /// read them, so windows don't pass these changes on to all their chrome.
+    /// A view that reads one through `WindowContext` alone must observe the
+    /// store too.
+    private(set) var isPublishingScanOnly = false
+
+    private func publishingScanOnly(_ change: () -> Void) {
+        isPublishingScanOnly = true
+        defer { isPublishingScanOnly = false }
+        change()
+    }
+
     func refreshPaneProcesses(in workspaceId: String?, nativeRoots: [String: Int] = [:], allPanes: Bool = true) {
         guard !loadingPaneProcesses else { return }
         // Inspect all panes so the global agent board includes model CLIs
@@ -318,10 +357,12 @@ final class SessionStore: ObservableObject {
         guard !panes.isEmpty || !nativeRoots.isEmpty else {
             // Nothing to scan here; another workspace's last scan stays.
             guard carried.isEmpty else { return }
-            paneProcesses = [:]
-            nativeRuntimeProcesses = [:]
-            spawnedRuntimeAgents = []
-            terminalRuntimes = [:]
+            publishingScanOnly {
+                if !paneProcesses.isEmpty { paneProcesses = [:] }
+                if !nativeRuntimeProcesses.isEmpty { nativeRuntimeProcesses = [:] }
+                if !spawnedRuntimeAgents.isEmpty { spawnedRuntimeAgents = [] }
+                if !terminalRuntimes.isEmpty { terminalRuntimes = [:] }
+            }
             return
         }
         loadingPaneProcesses = true
@@ -439,12 +480,20 @@ final class SessionStore: ObservableObject {
             for agent in previousSpawned where spawned[agent.pid] == nil { spawned[agent.pid] = agent }
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.scannedRuntimePaneIDs = scanned.union(previousScanned)
-                self.paneProcesses = found
-                self.nativeRuntimeProcesses = nativeFound
-                self.spawnedRuntimeAgents = spawned.values.sorted { $0.pid < $1.pid }
-                if logRuntimes != self.terminalRuntimes { self.terminalRuntimes = logRuntimes }
+                // Each scan finds much the same; publishing only what changed
+                // keeps everything watching the store (the sidebar's every
+                // card) from redrawing every few seconds.
+                self.publishingScanOnly {
+                    let scannedIDs = scanned.union(previousScanned)
+                    if scannedIDs != self.scannedRuntimePaneIDs { self.scannedRuntimePaneIDs = scannedIDs }
+                    if found != self.paneProcesses { self.paneProcesses = found }
+                    if nativeFound != self.nativeRuntimeProcesses { self.nativeRuntimeProcesses = nativeFound }
+                    let spawnedAgents = spawned.values.sorted { $0.pid < $1.pid }
+                    if spawnedAgents != self.spawnedRuntimeAgents { self.spawnedRuntimeAgents = spawnedAgents }
+                    if logRuntimes != self.terminalRuntimes { self.terminalRuntimes = logRuntimes }
+                }
                 self.loadingPaneProcesses = false
+                self.paneScanEnded.send()
             }
         }
     }
@@ -482,9 +531,11 @@ final class SessionStore: ObservableObject {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.loadingPaneRuntimes = false
-                if found != self.paneRuntimes { self.paneRuntimes = found }
                 self.sshScans += 1
-                if ssh != self.paneSSH { self.paneSSH = ssh }
+                self.publishingScanOnly {
+                    if found != self.paneRuntimes { self.paneRuntimes = found }
+                    if ssh != self.paneSSH { self.paneSSH = ssh }
+                }
             }
         }
     }
@@ -566,45 +617,37 @@ final class SessionStore: ObservableObject {
         return tree.filter { family.contains($0.pid) && !roots.contains($0.pid) }
     }
 
+    /// Which refresh's details (branches, focused process, recovery) last
+    /// landed, so a slow one never overwrites a newer one.
+    private var refreshSequence = 0
+    private var appliedDetailSequence = 0
+
     /// `then` runs once the new snapshot is applied, or it failed.
     func refresh(then: (@MainActor () -> Void)? = nil) {
         let client = self.client
         let inference = recovery.inferenceRequest()
         let chosenPane = processPane?()
+        refreshSequence += 1
+        let sequence = refreshSequence
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = Result { try client.snapshot() }
-            // Disk reads stay off the main thread.
             let snapshot = try? result.get()
-            // One extra call: what the focused pane is actually running.
-            let focusedPaneId = chosenPane.flatMap { id in snapshot?.panes.contains { $0.paneId == id } == true ? id : nil }
-                ?? snapshot?.focusedPaneId
-                ?? snapshot?.panes.first(where: \.focused)?.paneId
-            let process = focusedPaneId.flatMap { paneId in
-                (try? client.call("pane.process_info", ["pane_id": paneId])).flatMap(ShellPrompt.parse)
-            }
-            let branches = snapshot.map(Self.readBranches)
-            let locations = snapshot.map(Self.readLocations)
-            let inferred = snapshot.flatMap { snapshot in
-                inference.map { AgentSessionFiles.infer(agents: snapshot.agents, firstSeen: $0) }
-            }
+            // The snapshot is drawn as soon as it arrives, with the branches
+            // and places last read; the slower reads below follow it.
             DispatchQueue.main.async {
                 guard let self else { return }
                 switch result {
                 case .success(let snapshot):
                     // It answered, so it's there, whatever the events said.
                     if !self.isConnected { self.isConnected = true }
-                    if process != self.focusedProcess { self.focusedProcess = process }
-                    if focusedPaneId != self.focusedProcessPaneId { self.focusedProcessPaneId = focusedPaneId }
                     // Closed tabs wait in a workspace nothing else sees.
                     self.closedTabs.observe(snapshot)
                     SleepGuard.shared.observe(snapshot)
                     AccountProfiles.noteDirectories(snapshot)
                     CheckpointRecorder.shared.observe(snapshot)
                     let visible = ClosedTabs.visible(snapshot)
-                    self.recovery.observe(visible, inferred: inferred ?? [:],
-                                          allTerminals: Set(snapshot.agents.compactMap(\.terminalId)))
                     self.shellRecovery.observe(visible)
-                    self.apply(visible, branches: branches ?? [:], locations: locations ?? [:])
+                    self.apply(visible, branches: self.branches, locations: self.agentLocations)
                     PromptQueueCenter.shared.observe(visible)
                 case .failure(let error):
                     if Self.isUnreachable(error) {
@@ -616,6 +659,33 @@ final class SessionStore: ObservableObject {
                     }
                 }
                 then?()
+            }
+            guard let snapshot else { return }
+            // Disk reads stay off the main thread.
+            // One extra call: what the focused pane is actually running.
+            let focusedPaneId = chosenPane.flatMap { id in snapshot.panes.contains { $0.paneId == id } ? id : nil }
+                ?? snapshot.focusedPaneId
+                ?? snapshot.panes.first(where: \.focused)?.paneId
+            let process = focusedPaneId.flatMap { paneId in
+                (try? client.call("pane.process_info", ["pane_id": paneId])).flatMap(ShellPrompt.parse)
+            }
+            let branches = Self.readBranches(snapshot)
+            let locations = Self.readLocations(snapshot)
+            let inferred = inference.map { AgentSessionFiles.infer(agents: snapshot.agents, firstSeen: $0) }
+            DispatchQueue.main.async {
+                guard let self, sequence > self.appliedDetailSequence else { return }
+                self.appliedDetailSequence = sequence
+                if process != self.focusedProcess { self.focusedProcess = process }
+                if focusedPaneId != self.focusedProcessPaneId { self.focusedProcessPaneId = focusedPaneId }
+                let visible = ClosedTabs.visible(snapshot)
+                self.recovery.observe(visible, inferred: inferred ?? [:],
+                                      allTerminals: Set(snapshot.agents.compactMap(\.terminalId)))
+                if locations != self.agentLocations { self.agentLocations = locations }
+                if branches != self.branches {
+                    self.branches = branches
+                    // Naming saw the old branches in the first pass.
+                    self.autoNameWorkspaces(in: self.snapshot, branches: branches)
+                }
             }
         }
     }
@@ -733,40 +803,69 @@ final class SessionStore: ObservableObject {
     @Published private(set) var currentTip: Tip?
     private var seenTips: Set<String> = []
     private static let seenTipsKey = "octet.tips.seen" + keySuffix
+    /// The last tip shown, so once all have been seen the next launch moves
+    /// on from it instead of opening on the first again.
+    private static let lastTipKey = "octet.tips.last" + keySuffix
 
     private func refreshTip() {
+        // This runs on every snapshot: setting a value, even the same one,
+        // redraws every window, so only what changed is set.
         guard SettingsStore.shared.values.showTips else {
-            currentTip = nil
+            if currentTip != nil { currentTip = nil }
+            if !tipPosition.isEmpty { tipPosition = "" }
             return
         }
         let context = tipContext()
         // Keep the current tip while it still fits the session.
-        if let currentTip, currentTip.applies(context) { return }
-        currentTip = Tips.next(seen: seenTips, context: context)
+        if let currentTip, currentTip.applies(context) {
+            updateTipPosition(context)
+            return
+        }
+        let next = Tips.next(seen: seenTips, context: context,
+                             after: UserDefaults.standard.string(forKey: Self.lastTipKey))
+        if next != currentTip { currentTip = next }
         markTipSeen()
+        updateTipPosition(context)
     }
 
-    /// `3/12`, so it reads as something to page through.
-    var tipPosition: String {
-        let relevant = Tips.all.filter { $0.applies(tipContext()) }
-        guard let currentTip, let index = relevant.firstIndex(of: currentTip) else { return "" }
-        return "\(index + 1)/\(relevant.count)"
+    /// `3/12`, so it reads as something to page through. Worked out when the
+    /// tip or session changes, not on every redraw of the card.
+    @Published private(set) var tipPosition = ""
+
+    private func updateTipPosition(_ context: TipContext) {
+        let relevant = Tips.all.filter { $0.applies(context) }
+        let position = currentTip.flatMap { relevant.firstIndex(of: $0) }.map { "\($0 + 1)/\(relevant.count)" } ?? ""
+        if position != tipPosition { tipPosition = position }
     }
 
     /// Steps to another tip on click.
     func nextTip() {
-        currentTip = Tips.following(currentTip, seen: seenTips, context: tipContext())
+        let context = tipContext()
+        currentTip = Tips.following(currentTip, seen: seenTips, context: context)
         markTipSeen()
+        updateTipPosition(context)
     }
 
-    /// The × on the card: no more tips until Settings turns them back on.
+    /// The × on the card: no more tips until Settings turns them back on,
+    /// with a moment to take it back.
     func dismissTips() {
+        let dismissed = currentTip
         SettingsStore.shared.values.showTips = false
         currentTip = nil
+        tipPosition = ""
+        ToastCenter.shared.info("Tips turned off", detail: "Settings › General › Help & tips turns them back on", after: 6,
+                                action: .init(title: "Undo") { [weak self] in
+            guard let self else { return }
+            SettingsStore.shared.values.showTips = true
+            currentTip = dismissed
+            refreshTip()
+        })
     }
 
     private func markTipSeen() {
-        guard let currentTip, seenTips.insert(currentTip.id).inserted else { return }
+        guard let currentTip else { return }
+        UserDefaults.standard.set(currentTip.id, forKey: Self.lastTipKey)
+        guard seenTips.insert(currentTip.id).inserted else { return }
         UserDefaults.standard.set(Array(seenTips), forKey: Self.seenTipsKey)
     }
 
@@ -892,7 +991,7 @@ final class SessionStore: ObservableObject {
         lastFocusedWorkspaceId = focused
         releaseParked(in: snapshot)
         let viewed = NSApp?.isActive == true && !parkedWorkspaceIds.contains(focused ?? "") ? focused : nil
-        updated.observe(snapshot, viewedWorkspaceId: viewed) { workspace in
+        updated.observe(snapshot, viewedWorkspaceId: viewed, conversations: AgentCenter.shared.idleActivity) { workspace in
             let claudeCwds = snapshot.agents(inWorkspace: workspace.workspaceId)
                 .filter { AgentBrand.forAgent($0.agent)?.id == "claude" }
                 .compactMap { $0.cwd }
@@ -910,7 +1009,7 @@ final class SessionStore: ObservableObject {
     func repartition() {
         let split = activity.partition(
             snapshot.workspaces, snapshot: snapshot, pinned: pinnedWorkspaceIds,
-            parked: parkedWorkspaceIds, idleAfter: idleAfter
+            parked: parkedWorkspaceIds, conversations: AgentCenter.shared.idleActivity, idleAfter: idleAfter
         )
         let idleIds = Set(split.idle.map(\.workspaceId))
         let active = groups.compactMap { group -> ProjectGroup? in
@@ -922,6 +1021,8 @@ final class SessionStore: ObservableObject {
     }
 
     func isPinned(_ workspaceId: String) -> Bool { pinnedWorkspaceIds.contains(workspaceId) }
+    /// Moved to Idle by hand (or snoozed), rather than left unused.
+    func isParked(_ workspaceId: String) -> Bool { parkedWorkspaceIds.contains(workspaceId) }
 
     // MARK: Subagent tabs
 
@@ -1189,6 +1290,7 @@ final class SessionStore: ObservableObject {
         _ params: [String: Any],
         toast text: ToastText? = nil,
         failure failureTitle: String? = nil,
+        refreshAtOnce: Bool = false,
         then: (@MainActor ([String: Any]) -> Void)? = nil
     ) {
         let client = self.client
@@ -1213,7 +1315,7 @@ final class SessionStore: ObservableObject {
                         self.lastError = message
                     }
                 }
-                self.scheduleRefresh()
+                if refreshAtOnce { self.refresh() } else { self.scheduleRefresh() }
             }
         }
     }
@@ -1233,7 +1335,10 @@ final class SessionStore: ObservableObject {
 
     /// Tells the engine the size, in cells, a tab is shown at, so its layout
     /// is worked out for it. Quiet: an engine without the call keeps its own.
-    func setViewport(tab: String, columns: Int, rows: Int) {
+    func setViewport(tab: String, columns: Int, rows: Int, again: Bool = false) {
+        // Coming back to a tab reports its size again; the engine already has
+        // it, and laying the tab out again would only resize its panes.
+        if !again, let sent = viewports[tab], sent.columns == columns, sent.rows == rows { return }
         viewports[tab] = (columns, rows)
         let client = self.client
         DispatchQueue.global(qos: .utility).async {
@@ -1249,7 +1354,7 @@ final class SessionStore: ObservableObject {
     private func resendViewports() {
         let live = Set(snapshot.tabs.map(\.tabId))
         if !live.isEmpty { viewports = viewports.filter { live.contains($0.key) } }
-        for (tab, size) in viewports { setViewport(tab: tab, columns: size.columns, rows: size.rows) }
+        for (tab, size) in viewports { setViewport(tab: tab, columns: size.columns, rows: size.rows, again: true) }
     }
 
     private static func describe(_ error: Error) -> String {
@@ -1267,7 +1372,16 @@ final class SessionStore: ObservableObject {
         snapshot.workspaces.first { $0.workspaceId == id }?.label ?? "workspace"
     }
 
-    func focusWorkspace(_ id: String) { perform("workspace.focus", ["workspace_id": id]) }
+    func focusWorkspace(_ id: String) {
+        // Shown at once, as a tab click is, rather than after the round trip
+        // and the snapshot that follows it.
+        if id != focusedWorkspace?.workspaceId, let workspace = snapshot.workspaces.first(where: { $0.workspaceId == id }) {
+            pendingFocusedWorkspaceId = id
+            pendingFocusedTabId = workspace.activeTabId
+            pendingFocusDeadline = Date().addingTimeInterval(1.5)
+        }
+        perform("workspace.focus", ["workspace_id": id], refreshAtOnce: true)
+    }
     func focusTab(_ id: String) {
         AgentCenter.shared.activeId = nil
         AgentCenter.shared.board = nil
@@ -1695,7 +1809,13 @@ final class SessionStore: ObservableObject {
     }
 
     var focusedPaneId: String? {
-        snapshot.focusedPaneId ?? snapshot.panes.first(where: \.focused)?.paneId
+        // A tab not yet in front in the engine: its own focused pane, so keys
+        // typed right after switching go where they're seen.
+        if let pending = pendingFocusedTabId, pending != snapshot.focusedTabId {
+            let panes = snapshot.panes.filter { $0.tabId == pending }
+            if let pane = panes.first(where: \.focused) ?? panes.first { return pane.paneId }
+        }
+        return snapshot.focusedPaneId ?? snapshot.panes.first(where: \.focused)?.paneId
     }
 
     enum SplitDirection: String { case right, down }
@@ -1800,10 +1920,22 @@ final class SessionStore: ObservableObject {
         return snapshot.tabs(inWorkspace: workspace)
     }
 
-    func moveTab(_ id: String, by offset: Int) {
-        guard let index = tabs(besideTab: id).firstIndex(where: { $0.tabId == id }) else { return }
-        // A gap after the tab's own slot counts from before the move.
-        moveTab(id, toGap: offset > 0 ? index + offset + 1 : index + offset)
+    /// `shown` is the tab strip's terminal tabs in order, when it hides
+    /// some (a conversation's backing tab): the move steps over those, as
+    /// the strip's menu counts them.
+    func moveTab(_ id: String, by offset: Int, among shown: [String]? = nil) {
+        let tabs = tabs(besideTab: id)
+        guard let index = tabs.firstIndex(where: { $0.tabId == id }) else { return }
+        guard let shown else {
+            // A gap after the tab's own slot counts from before the move.
+            return moveTab(id, toGap: offset > 0 ? index + offset + 1 : index + offset)
+        }
+        guard let position = shown.firstIndex(of: id) else { return }
+        let target = max(0, min(shown.count - 1, position + offset))
+        guard target != position,
+              let neighbor = tabs.firstIndex(where: { $0.tabId == shown[target] }) else { return }
+        // Just past the shown tab it passes, hidden ones between included.
+        moveTab(id, toGap: offset > 0 ? neighbor + 1 : neighbor)
     }
 
     /// The session server's `insert_index` is a gap in the current order: the tab lands
@@ -1824,14 +1956,17 @@ final class SessionStore: ObservableObject {
         perform("tab.move", ["tab_id": id, "insert_index": gap], failure: "Couldn't move \(label)")
     }
 
-    func closeTabs(except id: String) {
-        for tab in tabs(besideTab: id) where tab.tabId != id { closeTab(tab.tabId) }
+    /// `shown` limits it to the strip's tabs, in the strip's order: a tab
+    /// it hides isn't one the person sees to close.
+    func closeTabs(except id: String, among shown: [String]? = nil) {
+        let ids = shown ?? tabs(besideTab: id).map(\.tabId)
+        for tabId in ids where tabId != id { closeTab(tabId) }
     }
 
-    func closeTabs(rightOf id: String) {
-        let tabs = tabs(besideTab: id)
-        guard let index = tabs.firstIndex(where: { $0.tabId == id }) else { return }
-        for tab in tabs[(index + 1)...] { closeTab(tab.tabId) }
+    func closeTabs(rightOf id: String, among shown: [String]? = nil) {
+        let ids = shown ?? tabs(besideTab: id).map(\.tabId)
+        guard let index = ids.firstIndex(of: id) else { return }
+        for tabId in ids[(index + 1)...] { closeTab(tabId) }
     }
 
     // MARK: - Plugins
@@ -2109,3 +2244,44 @@ final class RuntimeLogTails: @unchecked Sendable {
         tails = tails.filter { sessionIds.contains(String($0.key.split(separator: "|", maxSplits: 1).first ?? "")) }
     }
 }
+
+#if DEBUG
+extension SessionStore {
+    /// For OCTET_RENDER_COUNT: which of the store's values change, and how often.
+    func countChanges() -> [AnyCancellable] {
+        [
+            $snapshot.sink { _ in RenderCounter.note("store.snapshot") },
+            $groups.sink { _ in RenderCounter.note("store.groups") },
+            $movedWorkspaces.sink { _ in RenderCounter.note("store.movedWorkspaces") },
+            $branches.sink { _ in RenderCounter.note("store.branches") },
+            $agentLocations.sink { _ in RenderCounter.note("store.agentLocations") },
+            $plugins.sink { _ in RenderCounter.note("store.plugins") },
+            $activeGroups.sink { _ in RenderCounter.note("store.activeGroups") },
+            $idleWorkspaces.sink { _ in RenderCounter.note("store.idleWorkspaces") },
+            $activity.sink { _ in RenderCounter.note("store.activity") },
+            $pinnedWorkspaceIds.sink { _ in RenderCounter.note("store.pinnedWorkspaceIds") },
+            $snoozedUntil.sink { _ in RenderCounter.note("store.snoozedUntil") },
+            $workspaceColors.sink { _ in RenderCounter.note("store.workspaceColors") },
+            $tabColors.sink { _ in RenderCounter.note("store.tabColors") },
+            $idleAfter.sink { _ in RenderCounter.note("store.idleAfter") },
+            $focusedProcess.sink { _ in RenderCounter.note("store.focusedProcess") },
+            $paneProcesses.sink { _ in RenderCounter.note("store.paneProcesses") },
+            $nativeRuntimeProcesses.sink { _ in RenderCounter.note("store.nativeRuntimeProcesses") },
+            $spawnedRuntimeAgents.sink { _ in RenderCounter.note("store.spawnedRuntimeAgents") },
+            $terminalRuntimes.sink { _ in RenderCounter.note("store.terminalRuntimes") },
+            $paneRuntimes.sink { _ in RenderCounter.note("store.paneRuntimes") },
+            $paneSSH.sink { _ in RenderCounter.note("store.paneSSH") },
+            $scannedRuntimePaneIDs.sink { _ in RenderCounter.note("store.scannedRuntimePaneIDs") },
+            $focusedProcessPaneId.sink { _ in RenderCounter.note("store.focusedProcessPaneId") },
+            $isConnected.sink { _ in RenderCounter.note("store.isConnected") },
+            $lastError.sink { _ in RenderCounter.note("store.lastError") },
+            $pendingFocusedTabId.sink { _ in RenderCounter.note("store.pendingFocusedTabId") },
+            $pendingFocusedWorkspaceId.sink { _ in RenderCounter.note("store.pendingFocusedWorkspaceId") },
+            $pendingClosedTabIds.sink { _ in RenderCounter.note("store.pendingClosedTabIds") },
+            $currentTip.sink { _ in RenderCounter.note("store.currentTip") },
+            $tipPosition.sink { _ in RenderCounter.note("store.tipPosition") },
+            $hasOctetEngine.sink { _ in RenderCounter.note("store.hasOctetEngine") },
+        ]
+    }
+}
+#endif

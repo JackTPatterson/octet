@@ -35,7 +35,6 @@ struct SettingDefault {
 enum SettingsDefaults {
     static let all: [SettingDefault] = [
         // General
-        .init("Show tips", \.showTips),
         .init("Confirm before quitting", \.confirmQuit),
         .init("Hotkey from any app", \.globalHotkey),
         .init("Drop down from the top", \.hotkeyDropDown),
@@ -44,6 +43,7 @@ enum SettingsDefaults {
         .init("Shell", \.defaultShell),
         .init("Shell startup mode", \.shellMode),
         .init("Sleep idle workspaces after", \.sleepIdleAfterDays),
+        .init("Show tips", \.showTips),
         // Appearance
         .init("Theme", [
             .init("", \.matchSystemAppearance), .init("", \.themeName), .init("", \.lightThemeName),

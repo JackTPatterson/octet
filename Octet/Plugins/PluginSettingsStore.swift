@@ -25,9 +25,30 @@ final class PluginSettingsStore: ObservableObject {
     static func install(_ plugins: [OctetPlugin]) {
         let snapshot = Snapshot()
         OctetPlugins.settingsEnvironment = { plugin in snapshot.environment(plugin) }
-        // Read now, on the main actor, so a command built on another thread
-        // never waits on it.
-        for plugin in plugins { _ = shared.commandEnvironment(for: plugin) }
+        // Keychain reads are slow enough to hold up launch, so they're done
+        // on another thread. A command built off the main actor meanwhile
+        // waits for them; one on the main actor reads its own, as before.
+        let secrets = plugins.flatMap { plugin in
+            (plugin.manifest.settings ?? []).filter(\.isSecret).map { (plugin: plugin.id, key: $0.id) }
+        }
+        guard !secrets.isEmpty else {
+            for plugin in plugins { _ = shared.commandEnvironment(for: plugin) }
+            return
+        }
+        Snapshot.loading.enter()
+        DispatchQueue.global(qos: .userInitiated).async {
+            let read = secrets.map { ($0.plugin, $0.key, readSecret($0.key, of: $0.plugin)) }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    // Unless one was read or saved here since.
+                    for (pluginId, key, value) in read where shared.secrets[pluginId]?[key] == nil {
+                        shared.secrets[pluginId, default: [:]][key] = value
+                    }
+                    for plugin in plugins { _ = shared.commandEnvironment(for: plugin) }
+                    Snapshot.loading.leave()
+                }
+            }
+        }
     }
 
     func value(_ setting: OctetPluginManifest.Setting, of plugin: OctetPlugin) -> String {
@@ -71,22 +92,27 @@ final class PluginSettingsStore: ObservableObject {
 
     // MARK: - Keychain
 
-    private static func service(_ pluginId: String) -> String { "Octet plugin \(pluginId)" }
+    private nonisolated static func service(_ pluginId: String) -> String { "Octet plugin \(pluginId)" }
 
     private func secret(_ key: String, of pluginId: String) -> String? {
         if let known = secrets[pluginId]?[key] { return known.isEmpty ? nil : known }
+        let value = Self.readSecret(key, of: pluginId)
+        secrets[pluginId, default: [:]][key] = value
+        return value.isEmpty ? nil : value
+    }
+
+    /// The Keychain's value, empty if there's none. Safe on any thread.
+    private nonisolated static func readSecret(_ key: String, of pluginId: String) -> String {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.service(pluginId),
+            kSecAttrService as String: service(pluginId),
             kSecAttrAccount as String: key,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]
         var item: CFTypeRef?
-        let value = SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess
+        return SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess
             ? (item as? Data).map { String(decoding: $0, as: UTF8.self) } ?? "" : ""
-        secrets[pluginId, default: [:]][key] = value
-        return value.isEmpty ? nil : value
     }
 
     private func setSecret(_ value: String, _ key: String, of pluginId: String) {
@@ -110,6 +136,8 @@ final class PluginSettingsStore: ObservableObject {
     private final class Snapshot: @unchecked Sendable {
         private static let lock = NSLock()
         private static var byPlugin: [String: [String: String]] = [:]
+        /// Held while launch's Keychain reads are under way.
+        static let loading = DispatchGroup()
 
         static func update(_ pluginId: String, _ environment: [String: String]) {
             lock.lock()
@@ -119,6 +147,9 @@ final class PluginSettingsStore: ObservableObject {
 
         func environment(_ plugin: OctetPlugin) -> [String: String] {
             guard plugin.manifest.settings?.isEmpty == false else { return [:] }
+            // Off the main actor, launch's reads are worth the wait; capped,
+            // so nothing hangs on them.
+            if !Thread.isMainThread { _ = Self.loading.wait(timeout: .now() + 2) }
             Self.lock.lock()
             let known = Self.byPlugin[plugin.id]
             Self.lock.unlock()

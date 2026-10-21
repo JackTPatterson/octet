@@ -227,6 +227,9 @@ struct OctetSettings: Codable, Equatable {
     /// Where the engine used to put worktrees; kept when it holds any.
     static let legacyWorktreesDirectory = EngineProtocol.legacyWorktreesDirectory
     static let doubleDingMigrationKey = "octet.subagentSound.movedToDoubleDing"
+    /// No longer used: the engine updates with the app (see `[update]` in
+    /// `sessionConfig`). Kept, and still read and saved, for compatibility
+    /// with settings older versions stored.
     var checkForEngineUpdates = true
     var updateChannel: UpdateChannel = .stable
     var allowNestedSessions = false
@@ -338,8 +341,29 @@ struct OctetSettings: Codable, Equatable {
         self.init()
         let defaults = OctetSettings()
         let container = try decoder.container(keyedBy: DynamicKey.self)
+        // Tells the store what loading changed, so it saves only when needed.
+        let report = decoder.userInfo[LoadReport.key] as? LoadReport
         func value<T: Decodable>(_ key: String, _ fallback: T) -> T {
-            (try? container.decodeIfPresent(T.self, forKey: DynamicKey(key))) ?? fallback
+            do {
+                return try container.decodeIfPresent(T.self, forKey: DynamicKey(key)) ?? fallback
+            } catch {
+                report?.unreadableKeys.append(key)
+                return fallback
+            }
+        }
+        /// A list keeps the entries it can read; one bad one doesn't lose the rest.
+        func list<T: Decodable>(_ key: String, _ fallback: [T]) -> [T] {
+            do {
+                guard let lossy = try container.decodeIfPresent(LossyList<T>.self, forKey: DynamicKey(key)) else { return fallback }
+                if lossy.dropped > 0 { report?.unreadableKeys.append(key) }
+                return lossy.elements
+            } catch {
+                report?.unreadableKeys.append(key)
+                return fallback
+            }
+        }
+        for legacy in [Self.legacyUpdateCheckKey, Self.legacyNestedKey] where container.contains(DynamicKey(legacy)) {
+            report?.migrated = true
         }
         confirmQuit = value("confirmQuit", defaults.confirmQuit)
         globalHotkey = value("globalHotkey", defaults.globalHotkey)
@@ -388,14 +412,18 @@ struct OctetSettings: Codable, Equatable {
         previewTerminalLinks = value("previewTerminalLinks", defaults.previewTerminalLinks)
         previewLinksOnPlainClick = value("previewLinksOnPlainClick", defaults.previewLinksOnPlainClick)
         offerServerPreviews = value("offerServerPreviews", defaults.offerServerPreviews)
-        notifications = NotificationDelivery(stored: value("notifications", ""))
-            ?? defaults.notifications
+        let storedNotifications = value("notifications", "")
+        notifications = NotificationDelivery(stored: storedNotifications) ?? defaults.notifications
+        if !storedNotifications.isEmpty, NotificationDelivery(stored: storedNotifications) == nil {
+            report?.unreadableKeys.append("notifications")
+        }
         version = value("version", 1)
         if version < 2 {
             // "system" used to be the default, before Octet drew its own
-            // agent banners; move that default on, keep a deliberate "off".
-            if notifications == .system { notifications = .banner }
+            // agent banners. Every key was saved, so a stored "system" can't
+            // be told apart from a deliberate pick: keep it as chosen.
             version = Self.currentVersion
+            report?.migrated = true
         }
         notificationDelaySeconds = value("notificationDelaySeconds", defaults.notificationDelaySeconds)
         agentSounds = value("agentSounds", defaults.agentSounds)
@@ -435,8 +463,8 @@ struct OctetSettings: Codable, Equatable {
         confirmCloseRunning = value("confirmCloseRunning", defaults.confirmCloseRunning)
         keepAwake = value("keepAwake", defaults.keepAwake)
         checkpointTurns = value("checkpointTurns", defaults.checkpointTurns)
-        accountProfiles = value("accountProfiles", defaults.accountProfiles)
-        accountAssignments = value("accountAssignments", defaults.accountAssignments)
+        accountProfiles = list("accountProfiles", defaults.accountProfiles)
+        accountAssignments = list("accountAssignments", defaults.accountAssignments)
         claudeRemoteControl = value("claudeRemoteControl", defaults.claudeRemoteControl)
         agentOpening = value("agentOpening", defaults.agentOpening)
         subagentTabClosing = value("subagentTabClosing", defaults.subagentTabClosing)
@@ -445,7 +473,10 @@ struct OctetSettings: Codable, Equatable {
         // it once, and leave it be if chosen again afterwards.
         if !UserDefaults.standard.bool(forKey: Self.doubleDingMigrationKey) {
             UserDefaults.standard.set(true, forKey: Self.doubleDingMigrationKey)
-            if subagentFinishedSound == "Glass" { subagentFinishedSound = defaults.subagentFinishedSound }
+            if subagentFinishedSound == "Glass" {
+                subagentFinishedSound = defaults.subagentFinishedSound
+                report?.migrated = true
+            }
         }
         enabledPlugins = value("enabledPlugins", defaults.enabledPlugins)
         autoUpdatePlugins = value("autoUpdatePlugins", defaults.autoUpdatePlugins)
@@ -470,6 +501,7 @@ struct OctetSettings: Codable, Equatable {
         if worktreesDirectory == Self.legacyWorktreesDirectory,
            !FileManager.default.fileExists(atPath: NSString(string: Self.legacyWorktreesDirectory).expandingTildeInPath) {
             worktreesDirectory = defaults.worktreesDirectory
+            report?.migrated = true
         }
         checkForEngineUpdates = value("checkForEngineUpdates", value(Self.legacyUpdateCheckKey, defaults.checkForEngineUpdates))
         updateChannel = value("updateChannel", defaults.updateChannel)
@@ -480,6 +512,38 @@ struct OctetSettings: Codable, Equatable {
     /// saved choices survive, then written back under the new names.
     private static let legacyUpdateCheckKey = "checkForHerdrUpdates"
     private static let legacyNestedKey = "allowNestedHerdr"
+
+    /// What decoding had to do: settings it couldn't read (left at their
+    /// defaults) and older values it rewrote. Passed in through `userInfo`.
+    final class LoadReport {
+        static let key = CodingUserInfoKey(rawValue: "octet.settings.loadReport")!
+        var unreadableKeys: [String] = []
+        var migrated = false
+    }
+
+    /// An array decoded entry by entry, skipping the ones that don't decode.
+    private struct LossyList<Element: Decodable>: Decodable {
+        var elements: [Element] = []
+        var dropped = 0
+
+        private struct Skip: Decodable {
+            init(from decoder: Decoder) {}
+        }
+
+        init(from decoder: Decoder) throws {
+            var container = try decoder.unkeyedContainer()
+            while !container.isAtEnd {
+                if let element = try? container.decode(Element.self) {
+                    elements.append(element)
+                } else {
+                    // Step past the bad entry; a failed decode doesn't move on.
+                    guard (try? container.decode(Skip.self)) != nil else { throw DecodingError.dataCorruptedError(
+                        in: container, debugDescription: "Couldn't step past a bad entry") }
+                    dropped += 1
+                }
+            }
+        }
+    }
 
     private struct DynamicKey: CodingKey {
         let stringValue: String
@@ -632,9 +696,10 @@ final class SettingsStore: ObservableObject {
             guard values != oldValue else { return }
             // Match system: the showing theme follows the light/dark picks.
             let resolved = values.resolvedThemeName(systemIsDark: SystemDisplay.isDark)
+            // Set here, this doesn't come back through didSet: carry on to
+            // save and apply it in this pass.
             if values.themeName != resolved {
                 values.themeName = resolved
-                return
             }
             save()
             apply(from: oldValue)
@@ -670,11 +735,13 @@ final class SettingsStore: ObservableObject {
             UserDefaults.standard.set(true, forKey: seededKey)
         }
         #endif
-        if let data = UserDefaults.standard.data(forKey: Self.key),
-           let decoded = try? JSONDecoder().decode(OctetSettings.self, from: data) {
-            values = decoded
-        } else {
-            values = OctetSettings()
+        let stored = UserDefaults.standard.data(forKey: Self.key)
+        let loaded = Self.load(stored)
+        values = loaded.values
+        // Something didn't read (a newer build's value, a damaged entry):
+        // keep the original aside once, since the next change saves over it.
+        if loaded.unreadable, let stored, UserDefaults.standard.data(forKey: Self.unreadableBackupKey) == nil {
+            UserDefaults.standard.set(stored, forKey: Self.unreadableBackupKey)
         }
         AccountProfiles.configure(profiles: values.accountProfiles, assignments: values.accountAssignments)
         // Before the app builds its menus and terminal config from them.
@@ -704,8 +771,26 @@ final class SettingsStore: ObservableObject {
         themeKey = Self.makeThemeKey(values.themeName)
         observeSystem()
         // Rewrites settings read under older key names with the current ones.
-        if debugThemeOverride == nil { save() }
+        if debugThemeOverride == nil, loaded.shouldSave { save() }
         mirrorForSubagentTabs()
+    }
+
+    private static let unreadableBackupKey = "octet.settings.v1.unreadable"
+
+    /// Decodes stored settings. Saving is only worth it when loading
+    /// rewrote something (older key names, a migrated value), and never
+    /// when part of it couldn't be read: that would replace what's stored
+    /// with defaults for good.
+    nonisolated static func load(_ data: Data?) -> (values: OctetSettings, shouldSave: Bool, unreadable: Bool) {
+        guard let data else { return (OctetSettings(), false, false) }
+        let report = OctetSettings.LoadReport()
+        let decoder = JSONDecoder()
+        decoder.userInfo[OctetSettings.LoadReport.key] = report
+        guard let decoded = try? decoder.decode(OctetSettings.self, from: data) else {
+            return (OctetSettings(), false, true)
+        }
+        let unreadable = !report.unreadableKeys.isEmpty
+        return (decoded, report.migrated && !unreadable, unreadable)
     }
 
     private static func makeThemeKey(_ themeName: String) -> String {
@@ -762,8 +847,10 @@ final class SettingsStore: ObservableObject {
         OctetTerminalRuntime.setColorScheme(dark: !TerminalTheme.named(values.themeName).isLight)
     }
 
+    /// Advanced › Reset: the same reset as General's Restore Defaults, so
+    /// accounts, plugins, paired Macs and the like survive it.
     func resetToDefaults() {
-        values = OctetSettings()
+        values = SettingsDefaults.restored(values)
     }
 
     /// The range the Font size stepper and the View menu share.
@@ -788,7 +875,11 @@ final class SettingsStore: ObservableObject {
             writeAccountTable()
         }
         do {
-            try values.sessionConfig.write(toFile: sessionConfigPath, atomically: true, encoding: .utf8)
+            // Unchanged, as it is most launches: left alone.
+            let config = values.sessionConfig
+            if (try? String(contentsOfFile: sessionConfigPath, encoding: .utf8)) != config {
+                try config.write(toFile: sessionConfigPath, atomically: true, encoding: .utf8)
+            }
             sessionConfigWriteProblem = nil
         } catch {
             sessionConfigWriteProblem = "Couldn't write \(sessionConfigPath): \(error.localizedDescription)"

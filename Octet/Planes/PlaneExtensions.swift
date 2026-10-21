@@ -97,6 +97,9 @@ struct PlaneDeck<Content: View>: View {
     /// The sizes while a divider is dragged, saved once it's let go rather
     /// than on every move.
     @State private var liveWeights: [String: CGFloat]?
+    /// Planes that have been in view. One never shown isn't built; once
+    /// shown it stays built, as before.
+    @State private var shownPlaneIds: Set<String> = []
 
     var body: some View {
         GeometryReader { geometry in
@@ -116,7 +119,11 @@ struct PlaneDeck<Content: View>: View {
                             let length = index.map { lengths[$0] } ?? (horizontal ? size.width : size.height)
                             VStack(spacing: 0) {
                                 header(plane).frame(height: split ? 28 : 0).clipped().accessibilityHidden(!split)
-                                content(plane)
+                                if index != nil || shownPlaneIds.contains(plane.id) {
+                                    content(plane)
+                                } else {
+                                    Color.clear
+                                }
                             }
                             .frame(width: split && horizontal ? length : size.width, height: split && !horizontal ? length : size.height)
                             .clipped()
@@ -166,6 +173,9 @@ struct PlaneDeck<Content: View>: View {
             if dragLengths != nil { ResizeCancel.shared.end() }
             dragLengths = nil
             liveWeights = nil
+        }
+        .onChange(of: ui.visiblePlaneIds, initial: true) { _, ids in
+            shownPlaneIds.formUnion(ids)
         }
         .onChange(of: ui.visiblePlaneIds) { _, _ in
             dragLengths = nil

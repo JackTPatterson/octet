@@ -66,7 +66,8 @@ enum Tips {
             applies: { $0.idleCount > 0 }),
         Tip(id: "worktree", title: "A branch in its own workspace",
             body: "New Worktree in the palette creates the worktree and opens it, so two branches run side by side.",
-            applies: { $0.workspaceCount > 1 }),
+            // Only for someone who hasn't made one yet.
+            applies: { !$0.hasWorktree && $0.workspaceCount > 1 }),
         Tip(id: "subagents", title: "Watch subagents as they run",
             body: "Install the subagent tabs hook and each subagent an agent spawns opens in its own named tab.",
             applies: { $0.agentCount > 0 }),
@@ -84,11 +85,15 @@ enum Tips {
             applies: { $0.hasPlugins }),
     ]
 
-    /// The next tip to show: the first that applies and hasn't been seen,
-    /// starting over once they have all been seen.
-    static func next(seen: Set<String>, context: TipContext, deck: [Tip] = all) -> Tip? {
+    /// The next tip to show: the first that applies and hasn't been seen.
+    /// Once all have been seen, the one that applies after `last` (the one
+    /// shown last time), so it rotates rather than always opening on the first.
+    static func next(seen: Set<String>, context: TipContext, after last: String? = nil, deck: [Tip] = all) -> Tip? {
         let relevant = deck.filter { $0.applies(context) }
-        return relevant.first { !seen.contains($0.id) } ?? relevant.first
+        if let unseen = relevant.first(where: { !seen.contains($0.id) }) { return unseen }
+        guard let last, let index = deck.firstIndex(where: { $0.id == last }) else { return relevant.first }
+        // Deck order, so it still moves on when the last one no longer applies.
+        return (deck[(index + 1)...] + deck[...index]).first { $0.applies(context) }
     }
 
     /// Advances past `current`, so tapping through never repeats immediately.

@@ -10,6 +10,8 @@ import SwiftUI
 struct GitPanel: View {
     @ObservedObject var model: GitPanelModel
     @ObservedObject var ui: UIState
+    /// The tab in front, which decides what the panel reads.
+    var focusedTab: String?
     @ObservedObject private var motion = MotionPreferences.shared
 
     /// Whether the Git page is in front, which is when the model reads.
@@ -20,6 +22,8 @@ struct GitPanel: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .animation(motion.animation(.sidebar, .smooth(duration: 0.2)), value: model.groups)
             .onChange(of: showing, initial: true) { _, visible in if visible { model.refresh() } }
+            // Another tab's checkouts now, not in up to four seconds.
+            .onChange(of: focusedTab) { _, _ in if showing { model.refresh() } }
     }
 
     @ViewBuilder
@@ -32,11 +36,12 @@ struct GitPanel: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(12)
-        } else if model.groups.count == 1, let group = model.groups.first {
+        } else if model.groups.count == 1, model.failures.isEmpty, let group = model.groups.first {
             pinned(group)
         } else {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
+                    failures
                     if model.groups.isEmpty {
                         empty
                     } else {
@@ -90,13 +95,24 @@ struct GitPanel: View {
         }
     }
 
+    /// Checkouts git couldn't read: what it said, and Retry.
+    @ViewBuilder
+    private var failures: some View {
+        ForEach(model.failures.keys.sorted(), id: \.self) { top in
+            OctetErrorState(title: "Couldn't read \((top as NSString).lastPathComponent)",
+                            reason: GitRemote.explain(model.failures[top] ?? ""),
+                            actionTitle: "Retry", action: { model.refresh() },
+                            details: model.failures[top], fills: false)
+        }
+    }
+
     @ViewBuilder
     private var empty: some View {
         if model.loading {
             LoadingLine(width: 18)
             if !model.loaded { GitPanelSkeleton() }
         }
-        if !model.loading || model.loaded {
+        if (!model.loading || model.loaded) && model.failures.isEmpty {
             Text("Not in a repository. When the agent in this tab, or a subagent it started, works in a git repository, its changes, commits and worktrees show here.")
                 .font(Theme.captionFont)
                 .foregroundStyle(Theme.textTertiary)

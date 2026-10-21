@@ -35,14 +35,16 @@ struct PaletteItem: Identifiable {
 @MainActor
 enum PaletteCatalog {
     /// Everything the palette offers, acting on the window it opened in.
-    static func items(window: WindowContext) -> [PaletteItem] {
+    /// `projectPaths` is the folder list read once as the palette opens;
+    /// nil reads it now.
+    static func items(window: WindowContext, projectPaths: [String]? = nil) -> [PaletteItem] {
         actions(window: window)
             + ProjectSearchPalette.items(window: window) + PromptLinks.paletteItems(window: window)
             + discoveredAgents(window: window)
             + workspaces(window: window)
             + tabs(window: window)
             + agents(window: window)
-            + projects(window: window)
+            + projects(window: window, paths: projectPaths ?? ProjectDirectories.list())
             + plugins(window: window)
     }
 
@@ -536,9 +538,9 @@ enum PaletteCatalog {
         }
     }
 
-    static func projects(window: WindowContext) -> [PaletteItem] {
+    static func projects(window: WindowContext, paths: [String]) -> [PaletteItem] {
         let store = window.store
-        return ProjectDirectories.list().map { path in
+        return paths.map { path in
             let open = store.groups.contains { $0.id == path }
             return PaletteItem(
                 id: "project.\(path)", kind: .project, title: URL(fileURLWithPath: path).lastPathComponent,

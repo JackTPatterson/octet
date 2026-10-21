@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Foundation
 
 /// The Idle dock's work: what each idle workspace still holds (read now and
@@ -19,10 +20,19 @@ final class IdleCenter: ObservableObject {
 
     private weak var store: SessionStore?
     private var timer: Timer?
+    private var sleepTimer: Timer?
     private var reading = false
     private var loaded = false
     /// Workspaces being put to sleep, left alone meanwhile.
     private var sleepingNow: Set<String> = []
+    /// Sleeping workspaces being woken, so a second click doesn't open them twice.
+    private var wakingNow: Set<String> = []
+    /// Idle docks on screen with a shelf open: only then is what idle
+    /// workspaces hold worth reading every few minutes.
+    private var openDocks: Set<UUID> = []
+    /// Sleeps waiting for a fresh look at what panes run, by request.
+    private var scanWaits: [UUID: AnyCancellable] = [:]
+    private var activeObserver: NSObjectProtocol?
 
     private var url: URL { EngineSession.supportDirectory.appendingPathComponent("sleeping-workspaces.json") }
 
@@ -32,17 +42,42 @@ final class IdleCenter: ObservableObject {
             loaded = true
             sleeping = SleepingWorkspacesFile.load(from: url).workspaces
         }
+        // Reading runs git in every idle workspace, so only while someone
+        // can see it; deciding what's due to sleep is cheap and always runs.
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 180, repeats: true) { _ in
-            MainActor.assumeIsolated {
-                IdleCenter.shared.refresh()
-                IdleCenter.shared.sleepWhatsDue()
+            MainActor.assumeIsolated { IdleCenter.shared.refreshIfShown() }
+        }
+        sleepTimer?.invalidate()
+        sleepTimer = Timer.scheduledTimer(withTimeInterval: 180, repeats: true) { _ in
+            MainActor.assumeIsolated { IdleCenter.shared.sleepWhatsDue() }
+        }
+        if activeObserver == nil {
+            activeObserver = NotificationCenter.default.addObserver(
+                forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+            ) { _ in
+                MainActor.assumeIsolated { IdleCenter.shared.refreshIfShown() }
             }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
-            self?.refresh()
+            self?.refreshIfShown()
             self?.sleepWhatsDue()
         }
+    }
+
+    /// An Idle dock appeared, opened or folded a shelf, or went away. One
+    /// newly open reads at once.
+    func dock(_ token: UUID, open: Bool) {
+        if open {
+            if openDocks.insert(token).inserted { refreshIfShown() }
+        } else {
+            openDocks.remove(token)
+        }
+    }
+
+    private func refreshIfShown() {
+        guard NSApp?.isActive == true, !openDocks.isEmpty else { return }
+        refresh()
     }
 
     private func save() {
@@ -131,11 +166,16 @@ final class IdleCenter: ObservableObject {
     /// or asking (a workspace moved to Idle by hand can be busy), then work
     /// only in its folder and servers.
     private func risks(of workspace: EngineWorkspace, in snapshot: EngineSnapshot) -> String? {
-        let agents = snapshot.agents(inWorkspace: workspace.workspaceId)
+        let id = workspace.workspaceId
+        let agents = snapshot.agents(inWorkspace: id)
+        // Octet's own conversations end with the workspace too.
+        let conversations = AgentCenter.shared.idleActivity
         var parts: [String] = []
-        if agents.contains(where: { $0.agentStatus == .working }) || workspace.agentStatus == .working {
+        if agents.contains(where: { $0.agentStatus == .working }) || workspace.agentStatus == .working
+            || conversations.working.contains(id) {
             parts.append("an agent is working")
-        } else if agents.contains(where: { $0.agentStatus == .blocked }) || workspace.agentStatus == .blocked {
+        } else if agents.contains(where: { $0.agentStatus == .blocked }) || workspace.agentStatus == .blocked
+            || conversations.blocked.contains(id) {
             parts.append("an agent is waiting on you")
         }
         if let held = work[workspace.workspaceId]?.risks { parts.append(held) }
@@ -161,21 +201,71 @@ final class IdleCenter: ObservableObject {
                 (try? client.call("pane.process_info", ["pane_id": pane])).flatMap(ShellRecovery.job(in:)) != nil
             })
             DispatchQueue.main.async {
-                MainActor.assumeIsolated { IdleCenter.shared.sleep(targets, busy: busy, automatic: automatic) }
+                MainActor.assumeIsolated {
+                    IdleCenter.shared.afterPaneScan { IdleCenter.shared.sleep(targets, busy: busy, automatic: automatic) }
+                }
             }
         }
+    }
+
+    /// Runs `then` once every pane's processes and agents' session logs
+    /// have been read again, so what an agent left running behind it is
+    /// known; or after a few seconds, if no scan comes back.
+    private func afterPaneScan(_ then: @escaping @MainActor () -> Void) {
+        guard let store else { return }
+        let token = UUID()
+        let finish: @MainActor () -> Void = {
+            guard IdleCenter.shared.scanWaits.removeValue(forKey: token) != nil else { return }
+            then()
+        }
+        scanWaits[token] = store.paneScanEnded.first().sink { _ in MainActor.assumeIsolated { finish() } }
+        // The same conversations the runtime panel passes, so this scan
+        // doesn't drop what it shows of them.
+        var roots: [String: Int] = [:]
+        for session in AgentCenter.shared.sessions where session.conversation.isRunning {
+            if let pid = session.runtimePID { roots[session.id] = pid }
+        }
+        store.refreshPaneProcesses(in: nil, nativeRoots: roots)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { MainActor.assumeIsolated { finish() } }
+    }
+
+    /// Agent panes with something running behind the agent: a background
+    /// command, monitor or subagent its session log lists, or a shell or
+    /// model CLI it started. (Its MCP servers, also children, don't count.)
+    private func agentJobs(in panes: [String]) -> Set<String> {
+        guard let store else { return [] }
+        return Set(panes.filter { pane in
+            if store.terminalRuntimes[pane]?.isEmpty == false { return true }
+            if store.spawnedRuntimeAgents.contains(where: { $0.paneId == pane }) { return true }
+            return store.paneProcesses[pane]?.background.contains { process in
+                let name = (process.name as NSString).lastPathComponent.lowercased()
+                return ShellPrompt.shells.contains(name) || ShellPrompt.shells.contains("-" + name)
+            } == true
+        })
+    }
+
+    /// The agents Octet has journaled in a workspace, with their session ids, by terminal.
+    private func journal(in workspaceId: String, snapshot: EngineSnapshot) -> [String: AgentSessionRecord] {
+        guard let store else { return [:] }
+        return Dictionary(snapshot.agents(inWorkspace: workspaceId).compactMap { agent -> (String, AgentSessionRecord)? in
+            guard let terminal = agent.terminalId, let record = store.recovery.record(forTerminal: terminal) else { return nil }
+            return (terminal, record)
+        }, uniquingKeysWith: { first, _ in first })
     }
 
     private func sleep(_ workspaces: [EngineWorkspace], busy: Set<String>, automatic: Bool) {
         guard let store else { return }
         let snapshot = store.snapshot
         let shown = WindowRegistry.shared.shownWorkspaceIds()
+        let conversations = AgentCenter.shared.idleActivity
         var ready: [EngineWorkspace] = []
         var held: [(EngineWorkspace, String)] = []
         for workspace in workspaces {
             let id = workspace.workspaceId
+            let panes = snapshot.panes.filter { $0.workspaceId == id }.map(\.paneId)
             let reason = WorkspaceSleep.reasonToStayAwake(
-                workspace, snapshot: snapshot, busyPanes: busy,
+                workspace, snapshot: snapshot, busyPanes: busy, agentJobs: agentJobs(in: panes),
+                records: journal(in: id, snapshot: snapshot), conversations: conversations,
                 ports: PortsWatcher.shared.ports(inWorkspace: id, snapshot: snapshot),
                 pinned: automatic && store.isPinned(id), shown: automatic && shown.contains(id))
             if let reason { held.append((workspace, reason)) } else { ready.append(workspace) }
@@ -185,7 +275,7 @@ final class IdleCenter: ObservableObject {
         guard !automatic, !held.isEmpty else { return }
         ConfirmCenter.shared.ask(
             title: held.count == 1 ? "Sleep \(held[0].0.label) anyway?" : "Sleep \(held.count) workspaces anyway?",
-            message: "Sleeping closes their terminals, so this ends what's running. Agents are resumed when they wake.",
+            message: "Sleeping closes their terminals, so this ends what's running. Agents that can be resumed are, when they wake.",
             items: held.map { "\($0.0.label) — \($0.1)" }, confirmTitle: "Sleep", destructive: true
         ) { _ in self.putToSleep(held.map(\.0), quietly: false) }
     }
@@ -193,22 +283,22 @@ final class IdleCenter: ObservableObject {
     private func putToSleep(_ workspaces: [EngineWorkspace], quietly: Bool) {
         guard let store else { return }
         let snapshot = store.snapshot
+        let days = SettingsStore.shared.values.sleepIdleAfterDays
         var records: [SleepingWorkspace] = []
         for workspace in workspaces {
             let id = workspace.workspaceId
-            let journal = Dictionary(snapshot.agents(inWorkspace: id).compactMap { agent -> (String, AgentSessionRecord)? in
-                guard let terminal = agent.terminalId, let record = store.recovery.record(forTerminal: terminal) else { return nil }
-                return (terminal, record)
-            }, uniquingKeysWith: { first, _ in first })
+            let journal = journal(in: id, snapshot: snapshot)
             let sessions = AgentCenter.shared.sessions(in: id)
             let conversations = sessions.compactMap { session -> SleepingWorkspace.Conversation? in
                 guard session.hasTurns, let sessionId = session.engine == .claude ? session.sessionId : session.threadId else { return nil }
                 return .init(engine: session.engine.rawValue, sessionId: sessionId, title: session.title, cwd: session.cwd)
             }
-            records.append(WorkspaceSleep.capture(
+            var record = WorkspaceSleep.capture(
                 workspace, snapshot: snapshot, records: journal, conversations: conversations,
                 branch: store.branches[id], project: store.projectName(of: id),
-                lastActive: store.activity.lastActive(id), work: work[id]))
+                lastActive: store.activity.lastActive(id), work: work[id])
+            record.cause = quietly ? .automatic(afterDays: days) : .manual
+            records.append(record)
             for session in sessions { AgentCenter.shared.close(session) }
             WaitCenter.shared.cancelSnooze(of: id)
         }
@@ -217,7 +307,7 @@ final class IdleCenter: ObservableObject {
         store.closeWorkspaces(workspaces, quietly: true)
         selection.subtract(workspaces.map(\.workspaceId))
         let title = workspaces.count == 1 ? "\(workspaces[0].label) is asleep" : "\(workspaces.count) workspaces are asleep"
-        let detail = quietly ? "Unused for \(SettingsStore.shared.values.sleepIdleAfterDays) days. Wake them from Idle." : "Wake from Idle to bring it back as it was."
+        let detail = quietly ? "Unused for \(days) days. Wake them from Idle." : "Wake from Idle to bring it back as it was."
         if let first = records.first, records.count == 1 {
             ToastCenter.shared.info(title, detail: detail, after: 8, action: .init(title: "Wake") { IdleCenter.shared.wake(first.id) })
         } else {
@@ -226,11 +316,10 @@ final class IdleCenter: ObservableObject {
     }
 
     /// Opens a sleeping workspace again: a workspace on its folder, each tab
-    /// again (agents resumed in theirs), and its conversations.
+    /// again (agents resumed in theirs), and its conversations. The note is
+    /// kept until it's done; tabs that don't come back stay asleep in it.
     func wake(_ id: String, in window: WindowContext? = nil) {
-        guard let store, let record = sleeping.first(where: { $0.id == id }) else { return }
-        sleeping.removeAll { $0.id == id }
-        save()
+        guard let store, let record = sleeping.first(where: { $0.id == id }), wakingNow.insert(id).inserted else { return }
         let client = store.client
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
         let folder = FileManager.default.fileExists(atPath: record.cwd) ? record.cwd : NSHomeDirectory()
@@ -238,19 +327,26 @@ final class IdleCenter: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async {
             var workspaceId: String?
             var failure: String?
+            var missed: [SleepingWorkspace.Tab] = []
             do {
                 let created = try client.call("workspace.create", ["cwd": folder, "label": record.label, "focus": false])
                 workspaceId = (created["workspace"] as? [String: Any])?["workspace_id"] as? String
                 let firstTab = (created["tab"] as? [String: Any])?["tab_id"] as? String
-                for (index, tab) in record.tabs.enumerated() {
+                // Tab by tab: one that fails doesn't cost the rest.
+                for (index, tab) in record.tabs.enumerated() where workspaceId != nil {
                     let cwd = FileManager.default.fileExists(atPath: tab.cwd) ? tab.cwd : folder
-                    if let agent = tab.agent {
-                        _ = try client.call("layout.apply", AgentRecovery.resumeRequest(
-                            agent, shell: shell, workspaceId: workspaceId, tabId: index == 0 ? firstTab : nil))
-                    } else if index == 0, let firstTab {
-                        _ = try? client.call("tab.rename", ["tab_id": firstTab, "label": tab.label])
-                    } else if let workspaceId {
-                        _ = try client.call("tab.create", ["workspace_id": workspaceId, "cwd": cwd, "label": tab.label, "focus": false])
+                    do {
+                        if let agent = tab.agent {
+                            _ = try client.call("layout.apply", AgentRecovery.resumeRequest(
+                                agent, shell: shell, workspaceId: workspaceId, tabId: index == 0 ? firstTab : nil))
+                        } else if index == 0, let firstTab {
+                            _ = try? client.call("tab.rename", ["tab_id": firstTab, "label": tab.label])
+                        } else if let workspaceId {
+                            _ = try client.call("tab.create", ["workspace_id": workspaceId, "cwd": cwd, "label": tab.label, "focus": false])
+                        }
+                    } catch {
+                        missed.append(tab)
+                        failure = failure ?? String(describing: error)
                     }
                 }
             } catch {
@@ -259,18 +355,29 @@ final class IdleCenter: ObservableObject {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     let center = IdleCenter.shared
+                    center.wakingNow.remove(record.id)
+                    // Nothing opened: the note stays as it was, to try again.
                     guard let workspaceId else {
-                        center.sleeping.insert(record, at: 0)
-                        center.save()
                         return ToastCenter.shared.fail(toast, "Couldn't wake \(record.label)", detail: failure)
+                    }
+                    if let index = center.sleeping.firstIndex(where: { $0.id == record.id }) {
+                        if missed.isEmpty {
+                            center.sleeping.remove(at: index)
+                        } else {
+                            // Only what didn't come back; the conversations do, below.
+                            center.sleeping[index].tabs = missed
+                            center.sleeping[index].conversations = []
+                        }
+                        center.save()
                     }
                     for conversation in record.conversations {
                         guard let engine = AgentSession.Engine(rawValue: conversation.engine) else { continue }
                         AgentCenter.shared.resume(engine: engine, sessionId: conversation.sessionId, cwd: conversation.cwd,
                                                   workspaceId: workspaceId, title: conversation.title, start: false)
                     }
-                    if let failure {
-                        ToastCenter.shared.fail(toast, "Woke \(record.label), but not every tab", detail: failure)
+                    if !missed.isEmpty {
+                        ToastCenter.shared.fail(toast, "Woke \(record.label), but not every tab",
+                                                detail: "\(Recap.count(missed.count, "tab")) still asleep in Idle. " + (failure ?? ""))
                     } else {
                         ToastCenter.shared.succeed(toast, "\(record.label) is awake")
                     }
@@ -362,5 +469,28 @@ final class IdleCenter: ObservableObject {
                 }
             }
         }
+    }
+}
+
+extension AgentCenter {
+    /// Octet's conversations as idling and sleeping see them, by workspace.
+    /// Only a turn starting or ending, or a question, counts as use: a
+    /// conversation restored at launch, or its transcript loading, isn't.
+    var idleActivity: ConversationActivity {
+        var activity = ConversationActivity()
+        for session in sessions {
+            let id = session.workspaceId
+            let asking = session.pendingPermission != nil || session.pendingQuestion != nil
+            let running = session.conversation.isRunning
+            if asking {
+                activity.blocked.insert(id)
+            } else if running {
+                activity.working.insert(id)
+            }
+            guard asking || running else { continue }
+            let turn = session.turnStartedAt.map { String($0.timeIntervalSince1970) } ?? ""
+            activity.signatures[id, default: ""] += "\(session.id)=\(turn):\(running):\(asking)|"
+        }
+        return activity
     }
 }

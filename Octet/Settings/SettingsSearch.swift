@@ -42,14 +42,14 @@ enum SettingsSearchIndex {
     ]
 
     private static let general: [SettingsSearchEntry] = [
-        .init(.general, "Show tips", ["tip", "card", "sidebar", "hint"]),
         .init(.general, "Confirm before quitting", ["quit", "exit", "close", "background", "prompt"]),
-        .init(.general, "Start new tabs and workspaces in", ["folder", "directory", "cwd", "working", "new pane", "home"]),
+        .init(.general, "Start new tabs and workspaces in", ["folder", "directory", "cwd", "working", "new pane", "home", "session"]),
         .init(.general, "Shell", ["zsh", "bash", "fish", "login shell", "default shell", "path"]),
         .init(.general, "Shell startup mode", ["shell", "login", "non-login", "profile", "zprofile", "rc"]),
         .init(.general, "Move to Idle after", ["idle", "dock", "inactive", "unused", "workspace", "timeout"]),
         .init(.general, "Sleep idle workspaces after", ["idle", "sleep", "hibernate", "close", "unused", "wake", "workspace"]),
         .init(.general, "Pinned workspaces", ["pin", "unpin", "workspace"]),
+        .init(.general, "Show tips", ["tip", "card", "sidebar", "hint", "help"]),
     ]
 
     private static let notch: [SettingsSearchEntry] = [

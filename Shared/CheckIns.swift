@@ -233,6 +233,14 @@ struct CheckInLogEntry: Codable, Equatable, Identifiable {
         case simulated
     }
 
+    /// The prompt reached the agent, one way or another.
+    var sent: Bool {
+        switch outcome {
+        case .sentToConversation, .sentToTerminal, .resumedSession, .newConversation: true
+        default: false
+        }
+    }
+
     var id = UUID().uuidString
     /// When Octet acted.
     var at: Date
@@ -326,6 +334,25 @@ struct CheckInInfo: Codable, Equatable {
         }
         if next == nil { finishedAt = now }
         return (next, missed)
+    }
+
+    /// Takes an edited schedule. A new one (another rule, or another next
+    /// time), or any for a finished check-in, starts counting again: kept,
+    /// the old count would finish it after one run, and an old reminder
+    /// would stand for an occurrence that no longer exists.
+    mutating func reschedule(_ new: CheckInRecurrence?, nextDue: Date, previousDue: Date) {
+        // `start` is where counting begins, which the sheet sets to the next
+        // time whatever was changed, so it's compared as the next due time.
+        func rule(_ recurrence: CheckInRecurrence?) -> CheckInRecurrence? {
+            recurrence.map { var rule = $0; rule.start = .distantPast; return rule }
+        }
+        let changed = isFinished || rule(new) != rule(recurrence) || nextDue != previousDue
+        recurrence = new
+        finishedAt = nil
+        guard changed else { return }
+        fired = 0
+        dueSince = nil
+        dueMissed = 0
     }
 
     /// "Next in 2d", "Due now", "Paused", "Done".
@@ -828,5 +855,54 @@ enum CheckInNotificationPlan {
                         title: "Check-in: " + entry.wait.title,
                         body: (mode.wakesAgent ? "Open Octet to wake the agent. " : "") + prompt)
         }
+    }
+}
+
+// Fields with a default may be missing (written by an older build), so
+// adding one doesn't drop the check-in, or the wait holding it, from disk.
+
+extension CheckInRecurrence {
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try container.decode(Kind.self, forKey: .kind)
+        every = try container.decodeIfPresent(Int.self, forKey: .every) ?? 1
+        unit = try container.decodeIfPresent(Unit.self, forKey: .unit) ?? .days
+        hour = try container.decodeIfPresent(Int.self, forKey: .hour) ?? 9
+        minute = try container.decodeIfPresent(Int.self, forKey: .minute) ?? 0
+        weekday = try container.decodeIfPresent(Int.self, forKey: .weekday) ?? 2
+        start = try container.decode(Date.self, forKey: .start)
+        until = try container.decodeIfPresent(Date.self, forKey: .until)
+        count = try container.decodeIfPresent(Int.self, forKey: .count)
+    }
+}
+
+extension CheckInLogEntry {
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        at = try container.decode(Date.self, forKey: .at)
+        due = try container.decode(Date.self, forKey: .due)
+        sessionAlive = try container.decodeIfPresent(Bool.self, forKey: .sessionAlive)
+        // An outcome this build doesn't know is still a line of the record.
+        outcome = (try? container.decodeIfPresent(Outcome.self, forKey: .outcome)) ?? .skipped
+        missed = try container.decodeIfPresent(Int.self, forKey: .missed) ?? 0
+        note = try container.decodeIfPresent(String.self, forKey: .note)
+        manual = try container.decodeIfPresent(Bool.self, forKey: .manual) ?? false
+    }
+}
+
+extension CheckInInfo {
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        mode = try container.decode(CheckInMode.self, forKey: .mode)
+        recurrence = try container.decodeIfPresent(CheckInRecurrence.self, forKey: .recurrence)
+        paused = try container.decodeIfPresent(Bool.self, forKey: .paused) ?? false
+        fired = try container.decodeIfPresent(Int.self, forKey: .fired) ?? 0
+        dueSince = try container.decodeIfPresent(Date.self, forKey: .dueSince)
+        dueMissed = try container.decodeIfPresent(Int.self, forKey: .dueMissed) ?? 0
+        wakeQueued = try container.decodeIfPresent(Bool.self, forKey: .wakeQueued) ?? false
+        queuedReason = try container.decodeIfPresent(String.self, forKey: .queuedReason)
+        finishedAt = try container.decodeIfPresent(Date.self, forKey: .finishedAt)
+        log = try container.decodeIfPresent([CheckInLogEntry].self, forKey: .log) ?? []
     }
 }

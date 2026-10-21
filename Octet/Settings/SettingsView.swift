@@ -485,14 +485,6 @@ private struct GeneralSettings: View {
 
     var body: some View {
         SettingsGroup(title: "Startup & quitting") {
-            SettingsRow(
-                title: "Show tips",
-                detail: "A card at the foot of the sidebar with one thing Octet does that is easy to miss. Click it for another.",
-                setting: \.showTips
-            ) {
-                Toggle("Show tips", isOn: $settings.values.showTips).labelsHidden().toggleStyle(OctetSwitchStyle())
-            }
-            SettingsDivider()
             SettingsRow(title: "Confirm before quitting", detail: "Quitting Octet leaves terminals and agents running in the background.", setting: \.confirmQuit) {
                 Toggle("Confirm before quitting", isOn: $settings.values.confirmQuit).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
@@ -516,8 +508,8 @@ private struct GeneralSettings: View {
             }
         }
         SettingsGroup(title: "New panes & shells") {
-            SettingsRow(title: "Start new tabs and workspaces in", detail: "Follow uses the focused pane's folder.", setting: \.newPaneDirectory) {
-                OctetSelect(selection: $settings.values.newPaneDirectory, options: [(OctetSettings.NewPaneDirectory.follow, "Focused pane's folder"), (OctetSettings.NewPaneDirectory.home, "Home folder"), (OctetSettings.NewPaneDirectory.current, "The terminal's folder")], width: 190)
+            SettingsRow(title: "Start new tabs and workspaces in", detail: "Session's start folder is the one Octet's terminal session was launched from, the same for every new tab.", setting: \.newPaneDirectory) {
+                OctetSelect(selection: $settings.values.newPaneDirectory, options: [(OctetSettings.NewPaneDirectory.follow, "Focused pane's folder"), (OctetSettings.NewPaneDirectory.home, "Home folder"), (OctetSettings.NewPaneDirectory.current, "Session's start folder")], width: 190)
             }
             SettingsDivider()
             SettingsRow(title: "Shell", detail: "Leave empty to use your login shell. Applies to new panes.", setting: \.defaultShell) {
@@ -525,7 +517,7 @@ private struct GeneralSettings: View {
                                    validate: SettingsValidation.shell)
             }
             SettingsDivider()
-            SettingsRow(title: "Shell startup mode", detail: "Login shells read your profile files.", setting: \.shellMode) {
+            SettingsRow(title: "Shell startup mode", detail: "Login shells read your profile files. Applies to new panes.", setting: \.shellMode) {
                 OctetSelect(selection: $settings.values.shellMode, options: [(OctetSettings.ShellMode.auto, "Automatic"), (OctetSettings.ShellMode.login, "Login"), (OctetSettings.ShellMode.nonLogin, "Non-login")], width: 190)
             }
         }
@@ -578,6 +570,15 @@ private struct GeneralSettings: View {
                 Toggle("Name workspaces after their work", isOn: $settings.values.autoNameWorkspaces).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
         }
+        SettingsGroup(title: "Help & tips") {
+            SettingsRow(
+                title: "Show tips",
+                detail: "A card at the foot of the sidebar with one thing Octet does that is easy to miss. Click it for another.",
+                setting: \.showTips
+            ) {
+                Toggle("Show tips", isOn: $settings.values.showTips).labelsHidden().toggleStyle(OctetSwitchStyle())
+            }
+        }
     }
 }
 
@@ -587,6 +588,10 @@ private struct AppearanceSettings: View {
     /// pickers read the installed fonts again.
     @State private var addedFamilies: [String] = []
     @State private var fontsRevision = 0
+    /// The installed fonts, read once and again when `fontsRevision` moves:
+    /// asking AppKit for every font on each redraw was slow.
+    @State private var installedMonospaced: [String] = []
+    @State private var installedFamilies: [String] = []
 
     /// With Match system on, a swatch fills the light or dark slot it fits.
     /// What Octet found to follow, or how to point it at a file.
@@ -643,15 +648,18 @@ private struct AppearanceSettings: View {
     /// Fixed-width fonts, plus any added here and the one chosen, so a font
     /// macOS doesn't mark fixed-width can still be used.
     private var terminalFamilies: [String] {
-        _ = fontsRevision
         let extra = addedFamilies + [settings.values.fontFamily].filter { !$0.isEmpty }
-        return Array(Set(CustomFonts.monospacedFamilies + extra)).sorted()
+        return Array(Set(installedMonospaced + extra)).sorted()
     }
 
     private var interfaceFamilies: [String] {
-        _ = fontsRevision
         let extra = [settings.values.interfaceFontFamily].filter { !$0.isEmpty }
-        return Array(Set(CustomFonts.allFamilies + extra)).sorted()
+        return Array(Set(installedFamilies + extra)).sorted()
+    }
+
+    private func readInstalledFonts() {
+        installedMonospaced = CustomFonts.monospacedFamilies
+        installedFamilies = CustomFonts.allFamilies
     }
 
     private func addFonts() {
@@ -733,6 +741,8 @@ private struct AppearanceSettings: View {
                 Toggle("Thicken text", isOn: $settings.values.fontThicken).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
         }
+        .onAppear(perform: readInstalledFonts)
+        .onChange(of: fontsRevision) { readInstalledFonts() }
         SettingsGroup(title: "Cursor") {
             SettingsRow(title: "Shape", setting: \.cursorStyle) {
                 OctetSegmented(selection: $settings.values.cursorStyle, items: [(OctetSettings.CursorStyle.block, "Block"), (OctetSettings.CursorStyle.bar, "Bar"), (OctetSettings.CursorStyle.underline, "Underline")])
@@ -1470,11 +1480,18 @@ private struct AdvancedSettings: View {
             }
         }
         SettingsGroup(title: "Reset") {
-            SettingsRow(title: "Restore default settings", detail: "Motion, pins, and the idle threshold are kept.") {
+            SettingsRow(title: "Restore default settings", detail: "Accounts, plugins, other Macs, and the phone topic are kept.") {
                 OctetButton(title: "Reset…", compact: true) {
+                    // Same reset as General's Restore Defaults, so say exactly
+                    // what it will put back.
+                    let changed = SettingsDefaults.changed(in: settings.values)
+                    guard !changed.isEmpty else {
+                        ToastCenter.shared.info("Every setting is already at its default")
+                        return
+                    }
                     ConfirmCenter.shared.ask(
                         title: "Restore default settings?",
-                        message: "Appearance, terminal, agent, keyboard, and advanced settings go back to their defaults.",
+                        message: "This will reset: \(changed.joined(separator: ", ")). Accounts, plugins, other Macs, and the phone topic are kept.",
                         confirmTitle: "Reset",
                         destructive: true
                     ) { _ in
@@ -1723,9 +1740,12 @@ struct CommittedTextField: View {
     let validate: (String) -> String?
 
     @State private var draft = ""
+    /// What's wrong with `draft`, checked when it changes rather than on
+    /// every redraw: validating can mean asking the file system.
+    @State private var problem: String?
 
-    private var problem: String? {
-        let trimmed = draft.trimmingCharacters(in: .whitespaces)
+    private func check(_ text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
         return trimmed.isEmpty ? nil : validate(trimmed)
     }
 
@@ -1735,8 +1755,9 @@ struct CommittedTextField: View {
                            invalid: problem != nil, onSubmit: commit,
                            onFocusChange: { focused in if !focused { commit() } })
                 .frame(width: width)
-                .onAppear { draft = value }
+                .onAppear { draft = value; problem = check(value) }
                 .onChange(of: value) { _, new in if new != draft { draft = new } }
+                .onChange(of: draft) { _, new in problem = check(new) }
                 .accessibilityValue(problem.map { "\(draft), \($0)" } ?? draft)
             if let problem {
                 Text(problem)

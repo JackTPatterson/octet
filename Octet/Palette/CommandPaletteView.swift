@@ -3,44 +3,78 @@ import SwiftUI
 /// State for one palette session.
 @MainActor
 final class PaletteModel: ObservableObject {
-    @Published var query = "" { didSet { selection = 0 } }
-    @Published var chip: PaletteKind? { didSet { selection = 0 } }
+    @Published var query = "" { didSet { if query != oldValue { recompute() }; selection = 0 } }
+    @Published var chip: PaletteKind? { didSet { if chip != oldValue { recompute() }; selection = 0 } }
     @Published var selection = 0
     /// A text field replacing the list; `detail` is the chosen row's
     /// subtitle, which says what the text is for.
     @Published var prompt: (title: String, placeholder: String, detail: String, submit: (String) -> Void)?
     @Published var promptText = ""
     /// A nested list replacing the main results (e.g. plugin logs).
-    @Published var subList: (title: String, items: [PaletteItem]?)?
+    @Published var subList: (title: String, items: [PaletteItem]?)? { didSet { recompute() } }
+
+    /// The rows shown, ranked once per change of what they depend on, not
+    /// on every redraw or arrow press.
+    @Published private(set) var results: [(item: PaletteItem, indices: [Int])] = []
+    /// How many of the first results are there for being recent, for the
+    /// "Recent" header.
+    private(set) var recentCount = 0
+    /// The project folders, listed once per opening: reading the disk on
+    /// every reload would stall the main thread while agents work.
+    var projectPaths: [String] = []
 
     private(set) var items: [PaletteItem] = []
     private var itemsById: [String: PaletteItem] = [:]
     private static let recentsKey = "octet.palette.recents"
+    private var recentsCache: [String]?
+    private var pendingReload: DispatchWorkItem?
 
     var recents: [String] {
-        get { UserDefaults.standard.stringArray(forKey: Self.recentsKey) ?? [] }
-        set { UserDefaults.standard.set(newValue, forKey: Self.recentsKey) }
+        get {
+            if let recentsCache { return recentsCache }
+            let stored = UserDefaults.standard.stringArray(forKey: Self.recentsKey) ?? []
+            recentsCache = stored
+            return stored
+        }
+        set {
+            recentsCache = newValue
+            UserDefaults.standard.set(newValue, forKey: Self.recentsKey)
+        }
     }
 
     /// Reloads while open (agent state changes do this), keeping the
     /// highlight on the same item so Return runs what you see.
     func reload(items: [PaletteItem]) {
-        let before = results
-        let selectedId = before.indices.contains(selection) ? before[selection].item.id : nil
-        objectWillChange.send()
-        self.items = items
+        pendingReload?.cancel()
+        pendingReload = nil
+        let selectedId = results.indices.contains(selection) ? results[selection].item.id : nil
         #if DEBUG
         // A second row with an id is never shown: the first one wins.
         let duplicates = PaletteModel.duplicateIds(items.map(\.id))
         if !duplicates.isEmpty { NSLog("Octet palette: duplicate ids %@", duplicates.joined(separator: ", ")) }
         #endif
-        itemsById = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let after = results
-        if let selectedId, let index = after.firstIndex(where: { $0.item.id == selectedId }) {
+        self.items = PaletteRanking.firstById(items, id: \.id)
+        itemsById = Dictionary(self.items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        recompute()
+        if let selectedId, let index = results.firstIndex(where: { $0.item.id == selectedId }) {
             selection = index
         } else {
-            selection = min(selection, max(0, after.count - 1))
+            selection = min(selection, max(0, results.count - 1))
         }
+    }
+
+    /// A reload soon, for state that changes in bursts (every snapshot):
+    /// one rebuild per quarter second at most. `build` runs then, and
+    /// returns nil when the palette shouldn't reload after all.
+    func reloadSoon(_ build: @escaping () -> [PaletteItem]?) {
+        guard pendingReload == nil else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.pendingReload = nil
+            if let items = build() { self.reload(items: items) }
+        }
+        pendingReload = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
     }
 
     /// Ids that more than one row uses, in the order first seen.
@@ -73,25 +107,30 @@ final class PaletteModel: ObservableObject {
     }
 
     func reset() {
+        pendingReload?.cancel()
+        pendingReload = nil
         query = ""
         chip = nil
         selection = 0
         prompt = nil
         promptText = ""
-        subList = nil
+        if subList != nil { subList = nil }
     }
 
-    var results: [(item: PaletteItem, indices: [Int])] {
+    private func recompute() {
         if let subList {
-            let subItems = subList.items ?? []
+            let subItems = PaletteRanking.firstById(subList.items ?? [], id: \.id)
             let byId = Dictionary(subItems.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
             let ranked = query.isEmpty
                 ? subItems.map { PaletteRankedResult(id: $0.id, score: 0, titleIndices: []) }
                 : PaletteRanking.rank(subItems.map(\.searchable), query: query, filter: nil, recentIds: [])
-            return ranked.compactMap { r in byId[r.id].map { ($0, r.titleIndices) } }
+            recentCount = 0
+            results = ranked.compactMap { r in byId[r.id].map { ($0, r.titleIndices) } }
+            return
         }
-        return PaletteRanking.rank(items.map(\.searchable), query: query, filter: chip, recentIds: recents)
-            .compactMap { ranked in itemsById[ranked.id].map { ($0, ranked.titleIndices) } }
+        let ranked = PaletteRanking.rankCountingRecents(items.map(\.searchable), query: query, filter: chip, recentIds: recents)
+        recentCount = ranked.recentCount
+        results = ranked.results.compactMap { ranked in itemsById[ranked.id].map { ($0, ranked.titleIndices) } }
     }
 
     /// Filter implied by a typed prefix, shown as the active chip.
@@ -298,18 +337,13 @@ struct CommandPaletteView: View {
         guard model.subList == nil else { return false }
         guard model.query.isEmpty || PaletteKind.parse(model.query).query.isEmpty else { return false }
         if index == 0 { return true }
-        let recentCount = recentPrefixCount(results)
+        let recentCount = model.recentCount
         if index == recentCount { return true }
         return index > recentCount && results[index - 1].item.kind != results[index].item.kind
     }
 
-    private func recentPrefixCount(_ results: [(item: PaletteItem, indices: [Int])]) -> Int {
-        let recents = Set(model.recents)
-        return results.prefix { recents.contains($0.item.id) }.count
-    }
-
     private func sectionHeader(for index: Int, in results: [(item: PaletteItem, indices: [Int])]) -> some View {
-        let title = index < recentPrefixCount(results) ? "Recent" : results[index].item.kind.title
+        let title = index < model.recentCount ? "Recent" : results[index].item.kind.title
         return Text(title.uppercased())
             .font(Theme.headerFont)
             .kerning(0.4)

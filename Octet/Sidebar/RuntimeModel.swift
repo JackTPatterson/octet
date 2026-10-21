@@ -59,6 +59,7 @@ final class RuntimeModel: ObservableObject {
         store.$terminalRuntimes.map { _ in () }.sink(receiveValue: rebuild).store(in: &subscriptions)
         store.$nativeRuntimeProcesses.map { _ in () }.sink(receiveValue: rebuild).store(in: &subscriptions)
         store.$spawnedRuntimeAgents.map { _ in () }.sink(receiveValue: rebuild).store(in: &subscriptions)
+        store.paneScanEnded.sink(receiveValue: rebuild).store(in: &subscriptions)
         // AgentCenter passes on its conversations' changes.
         AgentCenter.shared.objectWillChange.sink(receiveValue: rebuild).store(in: &subscriptions)
         AgentsStore.shared.$agents.map { _ in () }.sink(receiveValue: rebuild).store(in: &subscriptions)
