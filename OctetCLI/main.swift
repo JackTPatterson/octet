@@ -44,6 +44,8 @@ import Foundation
 //   octet-cli wait list                 the waits set, with where each stands
 //   octet-cli wait cancel <id>          remove one
 //   octet-cli wait-mcp                  the same, as MCP tools for any agent (stdio)
+//   octet-cli browser-mcp               Browser Control: chrome-devtools MCP's tools,
+//                                      driving the Browser plane (stdio MCP)
 //   octet-cli mcp-permission --socket <path>
 //                                      permission prompt tool for conversations
 //                                      Octet drives headless (stdio MCP server)
@@ -353,6 +355,19 @@ case "wait-mcp":
             fflush(stdout)
         }
     }
+case "browser-mcp":
+    // Browser Control, for agents in Octet (stdio MCP).
+    let socket = BrowserControl.resolveSocket(environment: environment)
+    let origin = BrowserControl.Origin.current(environment)
+    let cwd = FileManager.default.currentDirectoryPath
+    while let line = readLine(strippingNewline: true) {
+        if let reply = BrowserMCP.respond(to: line, origin: origin, cwd: cwd, call: { tool, arguments in
+            try BrowserControl.call(socketPath: socket, tool: tool, arguments: arguments, origin: origin!)
+        }) {
+            print(reply)
+            fflush(stdout)
+        }
+    }
 case "wait":
     // For an agent that can run a command but takes no MCP tools.
     let rest = Array(arguments.dropFirst())
@@ -402,5 +417,5 @@ case "mcp-permission":
     }
 
 default:
-    fail("usage: octet-cli <issues connections|containers|list|read --tracker github|linear|jira|open [folder]|run <agent> [--in <folder>] [--prompt <text>]|send <text>|panes|read [--pane <id>] [--lines <n>]|issues-mcp|peer …|peer-mcp|delegate-mcp|terminal read|terminal suggest|terminal-mcp|wait add|wait checkin|wait list|wait cancel|wait-mcp|hook <agent>|agent-watch|install-subagent-hook [agent]|uninstall-subagent-hook [agent]|mcp-permission --socket <path>>")
+    fail("usage: octet-cli <issues connections|containers|list|read --tracker github|linear|jira|open [folder]|run <agent> [--in <folder>] [--prompt <text>]|send <text>|panes|read [--pane <id>] [--lines <n>]|issues-mcp|peer …|peer-mcp|delegate-mcp|terminal read|terminal suggest|terminal-mcp|wait add|wait checkin|wait list|wait cancel|wait-mcp|browser-mcp|hook <agent>|agent-watch|install-subagent-hook [agent]|uninstall-subagent-hook [agent]|mcp-permission --socket <path>>")
 }

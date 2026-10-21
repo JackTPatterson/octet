@@ -1,0 +1,10 @@
+{
+  "id": "browser-control",
+  "name": "Browser Control",
+  "version": "1.0.0",
+  "description": "Lets agents drive the Browser plane beside the terminal with chrome-devtools MCP's tools: snapshots with element uids, click, fill, type and keys, screenshots, scripts, console and network, dialogs, emulation, performance recordings and audits. It acts on the plane's own page, so localhost works and you see what the agent does, with the plane's sign-ins. Turning this on adds the octet-browser tools to Claude Code, Codex, Gemini, Qwen, OpenCode, Cursor and Copilot; turning it off removes them.",
+  "author": "Octet",
+  "octet": 1,
+  "feature": "browser",
+  "enabledByDefault": false
+}

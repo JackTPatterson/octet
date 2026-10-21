@@ -2120,6 +2120,8 @@ final class AgentSession: ObservableObject, Identifiable {
             .merging(TerminalControl.environment(session: EngineSession.name)) { _, ours in ours }
             // And where a wait is set, for the waits tool.
             .merging(WaitControl.environment(session: EngineSession.name)) { _, ours in ours }
+            // And where the Browser plane is driven, for its tools.
+            .merging(BrowserControl.environment(session: EngineSession.name)) { _, ours in ours }
     }
 
     private func stopProcess() {

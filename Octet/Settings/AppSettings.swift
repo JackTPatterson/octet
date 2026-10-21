@@ -123,6 +123,9 @@ struct OctetSettings: Codable, Equatable {
     var peersEnabled = false
     /// Agent Delegation: agents here can ask each other to review or work.
     var delegationEnabled = false
+    /// Browser Control: agents drive the Browser plane with chrome-devtools
+    /// MCP's tools. Off by default: the plane holds the person's sign-ins.
+    var browserControlEnabled = false
     /// Agents can read the sidebar terminal (read only): a socket the app
     /// listens on and an MCP server in each agent's settings, both only
     /// while this is on. Off by default: a terminal can hold secrets.
@@ -410,6 +413,7 @@ struct OctetSettings: Codable, Equatable {
         readClaudeAccountUsage = value("readClaudeAccountUsage", defaults.readClaudeAccountUsage)
         peersEnabled = value("peersEnabled", defaults.peersEnabled)
         delegationEnabled = value("delegationEnabled", defaults.delegationEnabled)
+        browserControlEnabled = value("browserControlEnabled", defaults.browserControlEnabled)
         agentsReadIssues = value("agentsReadIssues", defaults.agentsReadIssues)
         agentsReadSidebarTerminal = value("agentsReadSidebarTerminal", defaults.agentsReadSidebarTerminal)
         agentsSuggestSidebarCommands = value("agentsSuggestSidebarCommands", defaults.agentsSuggestSidebarCommands)
@@ -838,6 +842,10 @@ final class SettingsStore: ObservableObject {
         if values.delegationEnabled != old.delegationEnabled {
             DelegationCenter.shared.apply()
             AgentMCPInstaller.shared.sync(server: DelegationMCP.serverName)
+        }
+        if values.browserControlEnabled != old.browserControlEnabled {
+            BrowserAgentCenter.shared.apply()
+            AgentMCPInstaller.shared.sync(server: BrowserMCP.serverName)
         }
         if values.agentsSetWaits != old.agentsSetWaits {
             WaitCenter.shared.applyServer()

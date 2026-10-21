@@ -27,6 +27,9 @@ final class AgentMCPInstaller {
         Feature(server: DelegationMCP.serverName, subcommand: "delegate-mcp", title: "the delegation tools") {
             SettingsStore.shared.values.delegationEnabled
         },
+        Feature(server: BrowserMCP.serverName, subcommand: "browser-mcp", title: "the Browser plane tools") {
+            SettingsStore.shared.values.browserControlEnabled
+        },
         Feature(server: WaitMCP.serverName, subcommand: "wait-mcp", title: "the waits tool") {
             SettingsStore.shared.values.agentsSetWaits
         },

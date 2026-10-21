@@ -136,6 +136,7 @@ final class OctetPluginHost: ObservableObject {
         switch feature {
         case "peers": SettingsStore.shared.values.peersEnabled
         case "delegation": SettingsStore.shared.values.delegationEnabled
+        case "browser": SettingsStore.shared.values.browserControlEnabled
         default: false
         }
     }
@@ -144,6 +145,7 @@ final class OctetPluginHost: ObservableObject {
         switch feature {
         case "peers": values.peersEnabled = on
         case "delegation": values.delegationEnabled = on
+        case "browser": values.browserControlEnabled = on
         default: break
         }
     }

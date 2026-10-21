@@ -224,6 +224,7 @@ final class SessionStore: ObservableObject {
         PeerCenter.shared.apply(store: self)
         DelegationCenter.shared.apply(store: self)
         TerminalAccessCenter.shared.apply(store: self)
+        BrowserAgentCenter.shared.apply(store: self)
         WaitCenter.shared.start(store: self)
         IdleCenter.shared.start(store: self)
         let client = self.client

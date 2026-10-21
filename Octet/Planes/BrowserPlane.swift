@@ -169,7 +169,11 @@ struct BrowserPlane: View {
         ]
         items.append(.header("Viewport size (CSS pixels)"))
         for preset in BrowserViewport.allCases {
-            items.append(.action(preset.title, icon: preset == page.viewport ? "checkmark" : "rectangle", help: "Responsive layout size; does not emulate a mobile device") { page.viewport = preset })
+            items.append(.action(preset.title, icon: preset == page.viewport && page.customViewport == nil ? "checkmark" : "rectangle",
+                                 help: "Responsive layout size; does not emulate a mobile device") {
+                page.customViewport = nil
+                page.viewport = preset
+            })
         }
         items.append(.divider)
         if BrowserPage.inspectorAvailable {
@@ -256,7 +260,11 @@ final class BrowserPage: NSObject, ObservableObject, WKNavigationDelegate {
     }
 
     let annotations: BrowserAnnotations
+    /// Browser Control's side of the page: console, network, dialogs.
+    let agent = BrowserAgent()
     @Published var viewport: BrowserViewport = .desktop
+    /// A size an agent set (resize_page, emulate), over the preset.
+    @Published var customViewport: CGSize?
     let view: WKWebView
     let isPrivate: Bool
     @Published private(set) var url: URL?
@@ -307,6 +315,7 @@ final class BrowserPage: NSObject, ObservableObject, WKNavigationDelegate {
         super.init()
         view.navigationDelegate = self
         annotations.attach(view)
+        agent.attach(view, enabled: SettingsStore.shared.values.browserControlEnabled)
         // Pages often name themselves after loading: Recent takes the title then.
         titleWatch = view.observe(\.title, options: [.new]) { [weak self] webView, _ in
             DispatchQueue.main.async {
@@ -469,6 +478,7 @@ final class BrowserPage: NSObject, ObservableObject, WKNavigationDelegate {
     nonisolated func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         MainActor.assumeIsolated {
             annotations.navigationChanged()
+            agent.committed()
             failure = nil
             hasContent = true
             stopWaiting()
@@ -491,6 +501,33 @@ final class BrowserPage: NSObject, ObservableObject, WKNavigationDelegate {
         }
     }
 
+    nonisolated func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                             decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
+        MainActor.assumeIsolated {
+            guard navigationAction.targetFrame?.isMainFrame == true else { return decisionHandler(.allow) }
+            // Headers an agent asked for go on top-level loads: the load is
+            // made again with them.
+            var request = navigationAction.request
+            let missing = agent.extraHeaders.filter { request.value(forHTTPHeaderField: $0.key) != $0.value }
+            if !missing.isEmpty, request.url?.scheme?.hasPrefix("http") == true, request.httpMethod ?? "GET" == "GET" {
+                for (key, value) in missing { request.setValue(value, forHTTPHeaderField: key) }
+                decisionHandler(.cancel)
+                webView.load(request)
+                return
+            }
+            agent.documentRequest(request)
+            decisionHandler(.allow)
+        }
+    }
+
+    nonisolated func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse,
+                             decisionHandler: @escaping @MainActor (WKNavigationResponsePolicy) -> Void) {
+        MainActor.assumeIsolated {
+            if navigationResponse.isForMainFrame { agent.documentResponse(navigationResponse.response) }
+            decisionHandler(.allow)
+        }
+    }
+
     nonisolated func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         MainActor.assumeIsolated { update() }
     }
@@ -506,6 +543,7 @@ final class BrowserPage: NSObject, ObservableObject, WKNavigationDelegate {
                 ?? (error.userInfo[NSURLErrorFailingURLStringErrorKey] as? String).flatMap(URL.init(string:))
                 ?? requested
             guard let failing else { return }
+            agent.documentFailed(url: failing, message: error.localizedDescription)
             let failed = Failure(url: failing, code: error.code, message: error.localizedDescription)
             if failure != failed { failure = failed }
             if !waiting { startWaiting() }
@@ -526,8 +564,8 @@ struct BrowserViewportView: View {
         GeometryReader { geometry in
             ScrollView([.horizontal, .vertical]) {
                 BrowserWebView(page: page)
-                    .frame(width: page.viewport.size?.width ?? geometry.size.width,
-                           height: page.viewport.size?.height ?? geometry.size.height)
+                    .frame(width: (page.customViewport ?? page.viewport.size)?.width ?? geometry.size.width,
+                           height: (page.customViewport ?? page.viewport.size)?.height ?? geometry.size.height)
             }
         }
     }
