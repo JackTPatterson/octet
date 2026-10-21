@@ -39,6 +39,8 @@ final class DelegationCenter: ObservableObject {
         let directory: String
         let started = Date()
         var paneId: String?
+        var agentID: String?
+        var workspaceID: String?
         var status = "running"
         var result: String?
         var waiters: [([String: Any]) -> Void] = []
@@ -217,10 +219,16 @@ final class DelegationCenter: ObservableObject {
             let pane = PeerProtocol.paneId(inLayoutResult: result)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
+                    guard let pane else {
+                        reply(["error": "Couldn't open the delegate's terminal."])
+                        return
+                    }
                     var delegation = Delegation(id: id, agent: agent.displayName, mode: mode, caller: caller,
                                                 summary: String(task.prefix(120)), folder: folder, worktree: worktree,
                                                 directory: directory)
                     delegation.paneId = pane
+                    delegation.agentID = agent.id
+                    delegation.workspaceID = workspace
                     self.delegations[id] = delegation
                     reply(["result": ["task": id, "agent": agent.displayName, "mode": mode.rawValue, "status": "running"]
                         .merging(worktree.map { ["worktree": $0] } ?? [:]) { $1 }])

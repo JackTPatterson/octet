@@ -74,7 +74,8 @@ struct OctetIcon: View {
         "tool.mcp": .init("share"),
         "tool.notebook": .init("note-2"),
         "tool.other": .init("hierarchy-3"),
-        "eye": .init("eye"),
+        // No iconsax eye in the catalog yet: it drew nothing.
+        "eye": .symbol("eye"),
         "tool.todo.done": .init("tick-square"),
         "tool.todo.open": .init("stop"),
         "tool.todo.active": .init("timer-start"),
@@ -90,9 +91,10 @@ struct OctetIcon: View {
         "rectangle.stack.badge.plus": .init("add-square"),
         "minus": .init("minus"),
         "magnifyingglass": .init("search-normal"),
+        "search": .init("search-normal"),
         "doc.text.magnifyingglass": .init("search-status"),
         "sparkle.magnifyingglass": .init("search-status"),
-        "terminal": .init("code-1"),
+        "terminal": .init("terminal-square"),
         "sidebar.left": .symbol("rectangle.leftthird.inset.filled"),
         "chevron.down": .init("arrow-down-02"),
         "chevron.left": .init("arrow-left-02"),
@@ -139,11 +141,14 @@ struct OctetIcon: View {
         "paintpalette": .init("brush"),
         "keyboard": .init("keyboard"),
         "lightbulb": .init("lamp-charge"),
+        "lightbulb.fill": .symbol("lightbulb.fill"),
         "sparkle": .init("magic-star"),
         "sparkles": .init("magic-star"),
-        "pin": .init("bookmark"),
-        "pin.fill": .init("bookmark"),
-        "pin.slash": .init("bookmark-2"),
+        // A pushpin of Octet's own: the set has none, and a bookmark read
+        // as "saved", not "kept in view".
+        "pin": .glyph(.pin),
+        "pin.fill": .glyph(.pin),
+        "pin.slash": .glyph(.pinSlash),
         "pause.circle": .init("pause-circle"),
         "play.circle": .init("play-circle"),
         "pencil.line": .init("edit-2"),
@@ -171,6 +176,7 @@ struct OctetIcon: View {
         "commit": .glyph(.commit),
         "tag": .symbol("tag"),
         "person.badge.plus": .symbol("person.badge.plus"),
+        "face.smiling": .symbol("face.smiling"),
         "person.2": .init("profile-2user"),
         "arrow.up.right": .symbol("arrow.up.right"),
         // Allowance pace, after T3 Code's trending and gauge marks.
@@ -211,6 +217,11 @@ struct OctetIcon: View {
         "device.location": .symbol("location"),
         "device.textsize": .symbol("textformat.size"),
         "device.tools": .symbol("wrench.and.screwdriver"),
+        // Project actions' marks.
+        "play": .symbol("play.fill"),
+        "hammer": .symbol("hammer"),
+        "flask": .symbol("testtube.2"),
+        "bolt": .symbol("bolt"),
         "device.power": .symbol("power"),
         "device.back": .symbol("arrow.uturn.backward"),
         "device.recents": .symbol("square.on.square"),
@@ -237,7 +248,7 @@ struct OctetIcon: View {
                     .frame(width: size, height: size)
             } else {
                 Image("Icons/" + art.assetName)
-                    .renderingMode(.template)
+                    .renderingMode(art.asset == "terminal-square" ? .original : .template)
                     .resizable()
                     .interpolation(.high)
                     .frame(width: size, height: size)
@@ -252,7 +263,7 @@ struct OctetIcon: View {
 /// Git marks the bundled set lacks, drawn on a 24-point grid in the set's
 /// line style: two rings joined by the path a change takes.
 struct OctetGlyph: Shape {
-    enum Kind { case pullRequest, merge, commit }
+    enum Kind { case pullRequest, merge, commit, pin, pinSlash }
     let kind: Kind
 
     func path(in rect: CGRect) -> Path {
@@ -284,6 +295,20 @@ struct OctetGlyph: Shape {
             ring(&path, 12, 12)
             path.move(to: point(2.5, 12)); path.addLine(to: point(9.4, 12))
             path.move(to: point(14.6, 12)); path.addLine(to: point(21.5, 12))
+        case .pin, .pinSlash:
+            // The cap, the body flaring to its rim, and the point below.
+            path.addRoundedRect(in: CGRect(x: rect.minX + 8.3 * scale, y: rect.minY + 2.5 * scale,
+                                           width: 7.4 * scale, height: 2.6 * scale),
+                                cornerSize: CGSize(width: 1.3 * scale, height: 1.3 * scale))
+            path.move(to: point(9.7, 5.1)); path.addLine(to: point(9.7, 9.4))
+            path.addQuadCurve(to: point(6.2, 13.8), control: point(6.4, 11.2))
+            path.addLine(to: point(17.8, 13.8))
+            path.addQuadCurve(to: point(14.3, 9.4), control: point(17.6, 11.2))
+            path.addLine(to: point(14.3, 5.1))
+            path.move(to: point(12, 13.8)); path.addLine(to: point(12, 21.5))
+            if kind == .pinSlash {
+                path.move(to: point(3.5, 3.5)); path.addLine(to: point(20.5, 20.5))
+            }
         }
         return path
     }

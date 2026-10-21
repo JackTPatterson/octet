@@ -261,21 +261,46 @@ struct ReviewDiff: Equatable {
 
     // MARK: - Reading a working tree
 
-    /// The diff for the tree `directory` is in, or nil outside a repository.
+    /// The diff for the tree `directory` is in, or nil outside a repository
+    /// or when git fails.
     static func read(in directory: String, base: Base, ignoreWhitespace: Bool = false, git: Git = Git()) -> ReviewDiff? {
-        guard let top = git.topLevel(directory), let tree = try? Checkpoints.snapshotTree(top: top, git: git) else { return nil }
-        if case .turn(let from, let to?, let name) = base {
-            let text = (try? git.run(diffArguments(from, to, ignoreWhitespace: ignoreWhitespace), in: top)) ?? ""
-            return ReviewDiff(files: parse(text), baseCommit: from, baseName: name)
+        try? readResult(in: directory, base: base, ignoreWhitespace: ignoreWhitespace, git: git).get()
+    }
+
+    /// Why a diff couldn't be read: outside a repository, which is a fact
+    /// about the folder, or git failing, which a retry may get past.
+    enum ReadFailure: Error, Equatable {
+        case notARepository
+        case git(String)
+    }
+
+    /// The diff for the tree `directory` is in, or why there isn't one, so
+    /// a failing git shows as an error with Retry rather than "No changes".
+    static func readResult(in directory: String, base: Base, ignoreWhitespace: Bool = false,
+                           git: Git = Git()) -> Result<ReviewDiff, ReadFailure> {
+        guard let top = git.topLevel(directory) else { return .failure(.notARepository) }
+        func run(_ arguments: [String]) throws -> String {
+            do { return try git.run(arguments, in: top) } catch { throw ReadFailure.git(String(describing: error)) }
         }
-        guard let (commit, name) = resolveBase(base, top: top, git: git) else {
-            // No commits yet: everything is new.
-            let empty = (try? git.run(["hash-object", "-t", "tree", "/dev/null"], in: top)) ?? "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
-            let text = (try? git.run(diffArguments(empty, tree, ignoreWhitespace: ignoreWhitespace), in: top)) ?? ""
-            return ReviewDiff(files: parse(text), baseCommit: empty, baseName: "nothing")
+        do {
+            let tree = try Checkpoints.snapshotTree(top: top, git: git)
+            if case .turn(let from, let to?, let name) = base {
+                let text = try run(diffArguments(from, to, ignoreWhitespace: ignoreWhitespace))
+                return .success(ReviewDiff(files: parse(text), baseCommit: from, baseName: name))
+            }
+            guard let (commit, name) = resolveBase(base, top: top, git: git) else {
+                // No commits yet: everything is new.
+                let empty = (try? git.run(["hash-object", "-t", "tree", "/dev/null"], in: top)) ?? "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+                let text = try run(diffArguments(empty, tree, ignoreWhitespace: ignoreWhitespace))
+                return .success(ReviewDiff(files: parse(text), baseCommit: empty, baseName: "nothing"))
+            }
+            let text = try run(diffArguments(commit, tree, ignoreWhitespace: ignoreWhitespace))
+            return .success(ReviewDiff(files: parse(text), baseCommit: commit, baseName: name))
+        } catch let failure as ReadFailure {
+            return .failure(failure)
+        } catch {
+            return .failure(.git(String(describing: error)))
         }
-        let text = (try? git.run(diffArguments(commit, tree, ignoreWhitespace: ignoreWhitespace), in: top)) ?? ""
-        return ReviewDiff(files: parse(text), baseCommit: commit, baseName: name)
     }
 
     /// `ignoreWhitespace` leaves out lines that changed only in spacing, as
@@ -313,14 +338,47 @@ struct ReviewDiff: Equatable {
 struct ReviewComment: Equatable, Identifiable {
     let id: UUID
     let path: String
+    /// The line the note is on, or the first of the lines it covers.
     let line: ReviewDiff.Line
+    /// The last line of a note on several, shift-clicked; nil for one line.
+    var through: ReviewDiff.Line?
     var text: String
 
-    init(path: String, line: ReviewDiff.Line, text: String, id: UUID = UUID()) {
+    init(path: String, line: ReviewDiff.Line, through: ReviewDiff.Line? = nil, text: String, id: UUID = UUID()) {
         self.id = id
         self.path = path
         self.line = line
+        self.through = through == line ? nil : through
         self.text = text
+    }
+
+    /// "12" or "12-15", as the prompt and the tray say where a note is.
+    var location: String {
+        guard let through, through.number != line.number else { return "\(line.number)" }
+        return "\(min(line.number, through.number))-\(max(line.number, through.number))"
+    }
+
+    /// Whether the code the note is about has gone from `files`: the agent
+    /// rewrote it since, so the note may no longer apply. A line still there
+    /// with the same text counts as present wherever it moved to.
+    func isOutdated(in files: [ReviewDiff.File]) -> Bool {
+        guard let file = files.first(where: { $0.path == path }) else { return true }
+        // A file too big to draw has no lines to look for; say nothing.
+        if file.tooLarge { return false }
+        let lines = file.hunks.flatMap(\.lines)
+        func present(_ wanted: ReviewDiff.Line) -> Bool {
+            lines.contains { $0.kind == wanted.kind && $0.text == wanted.text }
+        }
+        return !present(line) || !(through.map(present) ?? true)
+    }
+
+    /// The user's own message with the notes after it, for notes that
+    /// ride along with the next prompt rather than going on their own.
+    static func attaching(_ comments: [ReviewComment], to message: String) -> String {
+        let notes = prompt(comments)
+        guard !notes.isEmpty else { return message }
+        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? notes : trimmed + "\n\n" + notes
     }
 
     /// One message for the agent: each note with where it is and the line
@@ -334,7 +392,7 @@ struct ReviewComment: Equatable, Identifiable {
         for note in notes {
             let side = note.line.kind == .removed ? " (removed line)" : ""
             let code = note.line.text.trimmingCharacters(in: .whitespaces)
-            text += "\n- \(note.path):\(note.line.number)\(side)"
+            text += "\n- \(note.path):\(note.location)\(side)"
             if !code.isEmpty { text += " `\(code.count > 120 ? String(code.prefix(119)) + "…" : code)`" }
             text += "\n  " + note.text.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "\n", with: "\n  ")
         }

@@ -37,10 +37,7 @@ struct DiffPlane: View {
         .onChange(of: ui.diffRequest) { _, request in
             if let request { follow(request.directory) }
         }
-        .onChange(of: visible, initial: true) { _, visible in
-            if visible { model?.start() } else { model?.stop() }
-        }
-        .onDisappear { model?.stop() }
+        .pollWhileSeen(visible, start: { model?.start() }, stop: { model?.stop() })
     }
 
     /// A model for the project in front; the same project keeps its model,
@@ -61,6 +58,7 @@ private struct DiffPlaneBody: View {
     @ObservedObject var model: DiffReviewModel
     @ObservedObject var store: SessionStore
     @ObservedObject var ui: UIState
+    @ObservedObject private var outbox = ReviewNotesOutbox.shared
     /// Files folded to their header, by path.
     @State private var folded: Set<String> = []
     /// Paths seen, so a file that turns up later starts folded or not by the
@@ -68,6 +66,10 @@ private struct DiffPlaneBody: View {
     @State private var seen: Set<String> = []
     /// Kept across launches, as T3 Code keeps it.
     @AppStorage("octet.diff.hideWhitespace") private var hideWhitespace = false
+    /// Old and new side by side; the review keeps its own choice.
+    @AppStorage("octet.diff.split") private var split = false
+    /// Folded-by-rule files (lockfiles, generated, huge) opened anyway.
+    @State private var shown: Set<String> = []
     /// The agent's turns here, newest first.
     @State private var turns: [(base: ReviewDiff.Base, title: String, date: Date)] = []
     /// A file a conversation asked to see: the plane opens on it once the
@@ -98,9 +100,12 @@ private struct DiffPlaneBody: View {
             header
             Rectangle().fill(Theme.divider).frame(height: 1)
             content
-            if !model.comments.isEmpty {
+            if !model.comments.isEmpty || !outbox.notes(for: model.directory).isEmpty {
                 Rectangle().fill(Theme.divider).frame(height: 1)
-                notesFooter
+                ReviewNotesTray(model: model, store: store, compact: true) { note in
+                    folded.remove(note.path)
+                    focusTarget = note.path
+                }
             }
         }
         .onAppear {
@@ -194,7 +199,7 @@ private struct DiffPlaneBody: View {
                 }
                 .padding(.horizontal, 8)
                 .frame(height: 24)
-                .background(RoundedRectangle(cornerRadius: 6).fill(Theme.card))
+                .background(RoundedRectangle(cornerRadius: Theme.Radius.md).fill(Theme.card))
                 .contentShape(Rectangle())
             }
             .menuStyle(.button)
@@ -215,6 +220,10 @@ private struct DiffPlaneBody: View {
                             active: model.ignoreWhitespace) {
                 model.ignoreWhitespace.toggle()
                 hideWhitespace = model.ignoreWhitespace
+            }
+            OctetIconButton(icon: split ? "rectangle.split.2x1" : "rectangle.split.1x2",
+                            help: split ? "Show in one column" : "Show old and new side by side", active: split) {
+                split.toggle()
             }
             OctetIconButton(icon: "arrow.clockwise", help: "Refresh diff") { model.refresh() }
             let allFolded = model.diff.map { $0.files.allSatisfy { folded.contains($0.path) } } ?? false
@@ -244,6 +253,8 @@ private struct DiffPlaneBody: View {
         } else if model.notARepository {
             PlaneMessage(icon: "doc.diff", title: "Not a Git repository",
                          detail: "Diffs need a Git repository. This folder isn't in one.")
+        } else if let failure = model.failure, model.diff == nil {
+            DiffReadFailure(detail: failure) { model.refresh() }
         } else if let diff = model.diff {
             if diff.files.isEmpty {
                 PlaneMessage(icon: "doc.diff", title: "No changes",
@@ -261,7 +272,8 @@ private struct DiffPlaneBody: View {
                                     if !folded.contains(file.path) { fileBody(file) }
                                 } header: {
                                     DiffPlaneFileHeader(file: file, folded: folded.contains(file.path),
-                                                        notes: model.comments.filter { $0.path == file.path }.count) {
+                                                        notes: model.comments.filter { $0.path == file.path }.count,
+                                                        reason: shown.contains(file.path) ? nil : DiffCollapse.reason(for: file)) {
                                         MotionPreferences.shared.perform(.sidebar) {
                                             if folded.contains(file.path) { folded.remove(file.path) } else { folded.insert(file.path) }
                                         }
@@ -295,8 +307,12 @@ private struct DiffPlaneBody: View {
             fileNote("Binary file; there's no text to show.")
         } else if file.tooLarge {
             fileNote("Too large to show here: +\(file.added) −\(file.removed).")
+        } else if let reason = DiffCollapse.reason(for: file), !shown.contains(file.path) {
+            DiffCollapsedNote(reason: reason) {
+                MotionPreferences.shared.perform(.sidebar) { _ = shown.insert(file.path) }
+            }
         } else {
-            let colored = DiffReviewView.colors(file)
+            let colors = DiffFileColors.of(file)
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(file.hunks.enumerated()), id: \.offset) { _, hunk in
                     Text(hunk.header)
@@ -307,12 +323,9 @@ private struct DiffPlaneBody: View {
                         .padding(.vertical, 4)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(Theme.card.opacity(0.6))
-                    let kinds = hunk.lineKinds
-                    ForEach(Array(hunk.lines.enumerated()), id: \.element.id) { index, line in
-                        DiffReviewLine(line: line, path: file.path, text: colored[line.index], model: model,
-                                       wraps: true, gutter: file.gutterWidth, edges: DiffStyle.edges(kinds, at: index))
-                    }
-                    .padding(.horizontal, 6)
+                    DiffHunkRows(hunk: hunk, path: file.path, colors: colors, gutter: file.gutterWidth,
+                                 split: split, wraps: true, model: model)
+                        .padding(.horizontal, 6)
                 }
             }
             .padding(.bottom, 6)
@@ -326,83 +339,39 @@ private struct DiffPlaneBody: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
     }
-
-    // MARK: - Notes
-
-    private var notesFooter: some View {
-        let agents = DiffReviewView.agents(in: store, directory: model.directory)
-        let target = agents.first
-        let count = model.comments.count
-        return HStack(spacing: 8) {
-            Text("\(count) \(count == 1 ? "note" : "notes")")
-                .font(Theme.captionFont)
-                .foregroundStyle(Theme.textSecondary)
-            OctetButton(title: "Clear", kind: .ghost, compact: true) { model.comments = [] }
-            Spacer(minLength: 4)
-            OctetButton(title: target.map { "Send to \(DiffReviewView.name($0, in: store))" } ?? "No Agent Here",
-                        icon: "arrow.up", kind: target == nil ? .secondary : .primary, compact: true) {
-                guard let target else { return }
-                let prompt = ReviewComment.prompt(model.comments)
-                guard !prompt.isEmpty else { return }
-                store.broadcast(prompt, to: [Broadcast.Target(paneId: target.paneId,
-                                                              name: DiffReviewView.name(target, in: store),
-                                                              isAgent: true)])
-                model.comments = []
-            }
-            .disabled(target == nil)
-            .help("Send the notes to the agent working here as one message")
-        }
-        .padding(.horizontal, 10)
-        .frame(height: 40)
-    }
 }
 
-/// A file's row: fold chevron, status, name and folder, notes and +/−.
-/// Pinned while its lines scroll by.
+/// A file's row: fold chevron, then the shared changed-file row with its
+/// notes, why it's folded if it is, and +/−. Pinned while its lines
+/// scroll by.
 private struct DiffPlaneFileHeader: View {
     let file: ReviewDiff.File
     let folded: Bool
     let notes: Int
+    /// Why its lines start hidden, when they do.
+    var reason: DiffCollapse?
     let toggle: () -> Void
     @State private var hovered = false
 
     var body: some View {
         Button(action: toggle) {
-            HStack(spacing: 6) {
+            DiffFileRow(path: file.path, mark: ChangeMark(file.status), added: file.added, removed: file.removed,
+                           binary: file.binary) {
                 OctetIcon("chevron.right", size: 10)
                     .foregroundStyle(Theme.textTertiary)
                     .rotationEffect(.degrees(folded ? 0 : 90))
-                Text(mark)
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundStyle(color)
-                    .frame(width: 10)
-                Text((file.path as NSString).lastPathComponent)
-                    .font(Theme.uiFontMedium)
-                    .foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1)
-                let folder = (file.path as NSString).deletingLastPathComponent
-                if !folder.isEmpty {
-                    Text(folder)
-                        .font(Theme.captionFont)
+            } trailing: {
+                if notes > 0 { DiffNoteCount(count: notes) }
+                if let reason {
+                    Text(reason.title())
+                        .font(Theme.Text.micro.weight(.medium))
                         .foregroundStyle(Theme.textTertiary)
-                        .lineLimit(1)
-                        .truncationMode(.head)
-                }
-                Spacer(minLength: 6)
-                if notes > 0 {
-                    Text("\(notes)")
-                        .font(Theme.captionFont.monospacedDigit())
-                        .foregroundStyle(Theme.accent)
                         .padding(.horizontal, 5)
-                        .frame(minWidth: 18, minHeight: 16)
-                        .background(Capsule().fill(Theme.accent.opacity(0.15)))
-                        .help("\(notes) \(notes == 1 ? "note" : "notes") on this file")
+                        .frame(height: 15)
+                        .background(Capsule().fill(Theme.card))
+                        .lineLimit(1)
                 }
-                if file.binary {
-                    Text("bin").font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
-                } else {
-                    DiffStatLabel(added: file.added, removed: file.removed)
-                }
+                DiffFileCounts(added: file.added, removed: file.removed, binary: file.binary)
             }
             .padding(.horizontal, 10)
             .frame(height: 30)
@@ -421,42 +390,17 @@ private struct DiffPlaneFileHeader: View {
         }
         .accessibilityValue(folded ? "Collapsed" : "Expanded")
     }
-
-    private var mark: String {
-        switch file.status {
-        case .added: "A"
-        case .deleted: "D"
-        case .modified: "M"
-        }
-    }
-
-    private var color: Color {
-        switch file.status {
-        case .added: DiffReviewView.addedColor
-        case .deleted: Theme.danger
-        case .modified: Theme.accent
-        }
-    }
 }
 
-/// A plane's centred message: a mark, a title and what to do.
+/// A plane's centred message: a mark, a title and what to do. The shared
+/// empty state in its compact form, kept under this name for the planes
+/// that use it.
 struct PlaneMessage: View {
     let icon: String
     let title: String
     var detail: String?
 
     var body: some View {
-        VStack(spacing: 6) {
-            OctetIcon(icon, size: 20).foregroundStyle(Theme.textTertiary).padding(.bottom, 2)
-            Text(title).font(Theme.uiFontMedium).foregroundStyle(Theme.textSecondary)
-            if let detail {
-                Text(detail)
-                    .font(Theme.captionFont)
-                    .foregroundStyle(Theme.textTertiary)
-                    .multilineTextAlignment(.center)
-            }
-        }
-        .padding(24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        OctetEmptyState(icon: icon, title: title, message: detail, compact: true)
     }
 }

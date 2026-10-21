@@ -65,7 +65,7 @@ struct DelegationApprovalDialog: View {
     var body: some View {
         ZStack {
             if let request = center.request, host.owns(request.window) {
-                Color.black.opacity(0.35).ignoresSafeArea().onTapGesture { center.deny() }
+                Theme.scrim.ignoresSafeArea().onTapGesture { center.deny() }
                 card(request)
                     .transition(motion.animates(.palette) ? .opacity.combined(with: .scale(scale: 0.96)) : .identity)
             }

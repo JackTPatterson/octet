@@ -136,7 +136,7 @@ struct IdleDock: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .foregroundStyle(Theme.textTertiary)
-        .opacity(hovered || !idle.selection.isEmpty ? 1 : 0)
+        .hoverReveal(hovered || !idle.selection.isEmpty)
         .help("Close, sleep or stop idle workspaces")
         .accessibilityLabel("Idle actions")
     }
@@ -246,7 +246,7 @@ private struct IdleMark: View {
         Group {
             if let image {
                 Image(nsImage: image).resizable().interpolation(.high).aspectRatio(contentMode: .fit)
-                    .clipShape(RoundedRectangle(cornerRadius: 3))
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.xs))
             } else if let brand {
                 AgentLogo(brand: brand, size: 12)
             } else {
@@ -275,7 +275,7 @@ private struct RowTextButton: View {
                 .foregroundStyle(hovered ? Theme.textPrimary : Theme.textSecondary)
                 .padding(.horizontal, 6)
                 .frame(height: 22)
-                .background(RoundedRectangle(cornerRadius: 6).fill(hovered ? Theme.cardSelected : .clear))
+                .background(RoundedRectangle(cornerRadius: Theme.Radius.md).fill(hovered ? Theme.cardSelected : .clear))
                 .contentShape(Rectangle())
         }
         .buttonStyle(OctetPressStyle())
@@ -337,13 +337,13 @@ private struct IdleRow: View {
             } else {
                 HStack(spacing: 6) {
                     Text(workspace.label)
-                        .font(.system(size: 13))
+                        .font(Theme.Text.transcript)
                         .foregroundStyle(lit ? Theme.textPrimary : Theme.textSecondary)
                         .lineLimit(1)
                     if let project = store.projectName(of: id),
                        project.caseInsensitiveCompare(workspace.label) != .orderedSame {
                         Text(project)
-                            .font(.system(size: 11.5))
+                            .font(Theme.interfaceFont(11.5))
                             .foregroundStyle(Theme.textTertiary)
                             .lineLimit(1)
                             .layoutPriority(-1)
@@ -391,10 +391,11 @@ private struct IdleRow: View {
             }
         }
         .simultaneousGesture(TapGesture(count: 2).onEnded { renaming = true })
-        .onDrag {
+        .octetDragSource(.workspace, enabled: !renaming, began: {
+            peek.close()
             TabDrag.shared.begin(workspace: id, from: window)
-            return NSItemProvider(object: id as NSString)
-        }
+            return true
+        }, moved: { TabDrag.shared.moved(to: $0) }, ended: { TabDrag.shared.ended($0) })
         .popover(isPresented: $peek.isShown, arrowEdge: .trailing) {
             IdleHoverCard(store: store, workspace: workspace) { peek.close() }
                 .onHover { peek.card($0) }
@@ -402,6 +403,7 @@ private struct IdleRow: View {
         .octetContextMenu { WorkspaceMenu.items(store: store, workspace: workspace, window: window) { renaming = true } }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(accessibilityText)
+        .accessibilityAction(named: "Show Details") { peek.show() }
     }
 
     /// At rest: what it still holds, then the time.
@@ -410,17 +412,17 @@ private struct IdleRow: View {
         let work = idle.work[id]
         HStack(spacing: 6) {
             if work?.mergedWorktree == true {
-                Text("merged").font(.system(size: 9.5, weight: .medium)).foregroundStyle(Theme.textTertiary)
+                Text("merged").font(Theme.interfaceFont(9.5, weight: .medium)).foregroundStyle(Theme.textTertiary)
                     .padding(.horizontal, 4).frame(height: 14)
                     .background(Capsule().fill(Theme.cardSelected))
                     .help("A worktree whose branch is merged; its menu can remove it")
             }
             if let port = work?.ports.first {
-                Text(":\(String(port))").font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Theme.textTertiary)
+                Text(":\(String(port))").font(Theme.Text.mono(10.5)).foregroundStyle(Theme.textTertiary)
                     .help("A server is still listening here")
             }
             if let work, work.uncommitted > 0 || work.unpushed > 0 {
-                Circle().fill(Color.orange.opacity(0.85)).frame(width: 6, height: 6)
+                Circle().fill(Theme.warning.opacity(0.85)).frame(width: 6, height: 6)
                     .help(work.risks.map { "Not saved anywhere else: " + $0 } ?? "")
             }
             // Ticks over by the minute, not only when something else changes.
@@ -513,7 +515,7 @@ private struct IdleHoverCard: View {
                     meta("terminal", "\(AgentBrand.forAgent(agent.agent)?.displayName ?? "Agent") · \(agent.agentStatus.rawValue)")
                 }
                 if let risks = work?.risks {
-                    meta("exclamationmark.triangle.fill", "Not saved anywhere else: " + risks, tint: .orange)
+                    meta("exclamationmark.triangle.fill", "Not saved anywhere else: " + risks, tint: Theme.warning)
                 } else if work != nil {
                     meta("checkmark.circle", "Nothing unsaved")
                 }
@@ -528,7 +530,7 @@ private struct IdleHoverCard: View {
                         Text("Changed " + Recap.count(files.count, "file")).font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
                     }
                     if let check = Verification.assess(latest.conversation.items).message {
-                        Text(check).font(Theme.captionFont).foregroundStyle(Color.orange)
+                        Text(check).font(Theme.captionFont).foregroundStyle(Theme.warning)
                     }
                 }
             }
@@ -569,7 +571,7 @@ private struct SleepingRow: View {
             IdleMark(icon: "moon.zzz", lit: hovered || pulse, restOpacity: 0.6)
                 .scaleEffect(pulse ? 1.2 : 1)
             Text(record.label)
-                .font(.system(size: 13))
+                .font(Theme.Text.transcript)
                 .foregroundStyle(hovered ? Theme.textPrimary : Theme.textTertiary)
                 .lineLimit(1)
             Spacer(minLength: 4)

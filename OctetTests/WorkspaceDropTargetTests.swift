@@ -12,34 +12,22 @@ final class WorkspaceDropTargetTests: XCTestCase {
         XCTAssertNil(WorkspaceDropTarget.at(.zero, in: .zero))
     }
 
-    func testSplittingAWindowFrame() {
-        // Screen coordinates: y grows upward, so "top" is the higher half.
-        let frame = CGRect(x: 100, y: 50, width: 1200, height: 800)
-        let left = WorkspaceDropTarget.split(frame, at: .left)
-        XCTAssertEqual(left.new, CGRect(x: 100, y: 50, width: 600, height: 800))
-        XCTAssertEqual(left.kept, CGRect(x: 700, y: 50, width: 600, height: 800))
-        let top = WorkspaceDropTarget.split(frame, at: .top)
-        XCTAssertEqual(top.new, CGRect(x: 100, y: 450, width: 1200, height: 400))
-        XCTAssertEqual(top.kept, CGRect(x: 100, y: 50, width: 1200, height: 400))
-    }
-
-    func testEdgeZonesSplitTheScreenAndSayWhere() {
-        XCTAssertEqual(WorkspaceDropTarget.beside(.right).title, "Split Right Here")
-        XCTAssertEqual(WorkspaceDropTarget.beside(.top).title(workspace: "octet"), "Split Up in \u{201C}octet\u{201D}")
-        XCTAssertEqual(WorkspaceDropTarget.beside(.left).title(workspace: ""), "Split Left Here")
+    func testEdgeZonesSayWhatMovesAndWhere() {
+        XCTAssertEqual(WorkspaceDropTarget.beside(.right).title, "Move Its Terminal Right")
+        XCTAssertEqual(WorkspaceDropTarget.beside(.top).title(workspace: "octet"), "Move \u{201C}octet\u{201D} Up")
+        XCTAssertEqual(WorkspaceDropTarget.beside(.left).title(workspace: "octet", ownTab: true), "New Shell Left")
         XCTAssertEqual(WorkspaceDropTarget.here.title(workspace: "octet"), "Show Here")
     }
 
-    func testAFreshPaneLandsOnTheSideThatIsntKept() {
-        // The engine puts a new pane right or below. Keeping the existing
-        // pane on the right means the new one goes left: split, then swap.
-        XCTAssertTrue(SplitEdge.right.swapsToKeep)
-        XCTAssertTrue(SplitEdge.bottom.swapsToKeep)
-        XCTAssertFalse(SplitEdge.left.swapsToKeep)
-        XCTAssertFalse(SplitEdge.top.swapsToKeep)
-        // A new pane taking the dropped side swaps the other way round.
+    func testEdgesNameTheirDirections() {
+        // An engine that splits on every side is asked for the side itself.
+        XCTAssertEqual(SplitEdge.left.rawDirection, "left")
+        XCTAssertEqual(SplitEdge.top.rawDirection, "up")
+        // Stock Herdr splits right and down; left and up swap after.
+        XCTAssertEqual(SplitEdge.left.split, "right")
         XCTAssertTrue(SplitEdge.left.swaps)
         XCTAssertFalse(SplitEdge.right.swaps)
+        XCTAssertEqual(SplitEdge.top.opposite, .bottom)
     }
 
     func testHighlightIsTheHalfTaken() {

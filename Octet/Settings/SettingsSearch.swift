@@ -9,7 +9,8 @@ struct SettingsSearchEntry: Identifiable, Hashable {
     var anchor: String
     var keywords: [String] = []
 
-    var id: String { "\(section.rawValue)|\(anchor)" }
+    /// The title too: several entries can jump to one group's anchor.
+    var id: String { "\(section.rawValue)|\(anchor)|\(title)" }
 
     init(_ section: SettingsView.Section, _ title: String, anchor: String? = nil, _ keywords: [String] = []) {
         self.section = section
@@ -32,7 +33,8 @@ enum SettingsSearchIndex {
         return entries.filter { $0.matches(words) }
     }
 
-    static let entries: [SettingsSearchEntry] = general + appearance + terminal + statusBar + notch + agents + plugins + motion + keyboard + advanced
+    static let entries: [SettingsSearchEntry] = general + appearance + terminal + statusBar + notch + notifications + agents + agentsMore
+        + integrations + plugins + motion + keyboard + advanced
 
     private static let plugins: [SettingsSearchEntry] = [
         .init(.plugins, "Installed plugins", anchor: "Installed", ["plugin", "extension", "enable", "disable", "github", "clone", "repositories"]),
@@ -83,9 +85,6 @@ enum SettingsSearchIndex {
         .init(.appearance, "Terminal opacity", ["opacity", "transparency", "transparent", "alpha", "see-through", "window"]),
         .init(.appearance, "Blur behind terminal", ["blur", "vibrancy", "transparency", "opacity", "window"]),
         .init(.appearance, "Window padding", anchor: "Padding", ["padding", "margin", "spacing", "compact", "roomy", "window"]),
-        .init(.appearance, "Split pane borders", anchor: "Borders", ["border", "split", "pane", "outline"]),
-        .init(.appearance, "Gaps between panes", ["gap", "split", "pane", "spacing"]),
-        .init(.appearance, "Pane scrollbars", ["scrollbar", "scroll bar", "pane"]),
     ]
 
     private static let terminal: [SettingsSearchEntry] = [
@@ -113,56 +112,83 @@ enum SettingsSearchIndex {
               ["agent", "claude", "codex", "mcp", "command", "run", "paste", "suggest", "right panel", "octet-terminal"]),
     ]
 
+    private static let notifications: [SettingsSearchEntry] = [
+        .init(.notifications, "Agent needs input", ["notification", "notify", "question", "permission", "approve", "waiting"]),
+        .init(.notifications, "Agent finished", ["notification", "notify", "done", "finished", "complete"]),
+        .init(.notifications, "Agent failed", ["notification", "notify", "error", "failed", "crash"]),
+        .init(.notifications, "Suppress while the agent is on screen", ["notification", "quiet", "visible", "looking", "focus", "suppress"]),
+        .init(.notifications, "Terminal bell", ["bell", "beep", "bel", "sound", "bounce", "dock"]),
+        .init(.notifications, "Notifications from Octet", ["permission", "allow", "denied", "system settings", "macos", "notification center"]),
+        .init(.notifications, "Send a test notification", ["test", "try", "notification", "check", "permission"]),
+        .init(.notifications, "Notices on your phone", ["phone", "ntfy", "push", "mobile", "topic"]),
+        .init(.notifications, "ntfy server", ["phone", "ntfy", "server", "self-hosted"]),
+    ]
+
+    private static let integrations: [SettingsSearchEntry] = [
+        .init(.integrations, "Let agents read issues", ["issue", "github", "linear", "jira", "tracker", "mcp", "tickets"]),
+        .init(.integrations, "Issue trackers", ["issue", "github", "linear", "jira", "tracker", "tickets"]),
+        .init(.integrations, "Hand work to other agents", anchor: "Delegation", ["delegate", "delegation", "review", "codex", "second opinion"]),
+    ]
+
+    private static let agentsMore: [SettingsSearchEntry] = [
+        .init(.agents, "Default agent", ["default", "agent", "claude", "codex", "opencode", "new conversation", "engine"]),
+        .init(.agents, "Hold Space to talk", ["voice", "speech", "dictation", "talk", "microphone"]),
+        .init(.agents, "Running agents", ["agent", "terminal", "conversation", "twin"]),
+        .init(.terminal, "Octet's Tab completions", ["tab", "completion", "complete", "shell"]),
+        .init(.general, "Name workspaces after their work", ["workspace", "title", "rename", "name", "auto"]),
+    ]
+
     private static let agents: [SettingsSearchEntry] = [
-        .init(.agents, "Quick answers", ["question", "prompt", "permission", "corner", "choice", "reply"]),
+        .init(.notifications, "Quick answers", ["question", "prompt", "permission", "corner", "choice", "reply"]),
         .init(.agents, "Visual twin", ["terminal", "conversation", "transcript"]),
         .init(.agents, "Open the twin for new agents", ["automatic", "terminal", "conversation"]),
-        .init(.agents, "Let agents set waits", anchor: "Waits",
+        .init(.waits, "Let agents set waits", anchor: "Waits",
               ["wait", "waiting", "blocked", "pull request", "merged", "release", "later", "remind", "follow up", "octet-waits", "mcp"]),
-        .init(.agents, "Offer a wait from a reply", anchor: "Waits", ["wait", "suggest", "once", "after", "banner"]),
-        .init(.agents, "Pause all check-ins", anchor: "Check-ins",
+        .init(.waits, "Offer a wait from a reply", anchor: "Waits", ["wait", "suggest", "once", "after", "banner"]),
+        .init(.waits, "Pause all check-ins", anchor: "Check-ins",
               ["check-in", "checkin", "check in", "pause", "remind", "long", "days", "weeks", "wake", "schedule"]),
-        .init(.agents, "New check-ins", anchor: "Check-ins", ["check-in", "mode", "wake", "remind", "default", "both"]),
-        .init(.agents, "Say when a session looks stalled", anchor: "Check-ins",
+        .init(.waits, "New check-ins", anchor: "Check-ins", ["check-in", "mode", "wake", "remind", "default", "both"]),
+        .init(.waits, "Say when a session looks stalled", anchor: "Check-ins",
               ["stall", "stalled", "stuck", "hung", "idle", "working", "hours", "threshold", "check-in"]),
-        .init(.agents, "Quiet hours", anchor: "Check-ins", ["quiet", "night", "sleep", "do not disturb", "wake", "check-in", "hours"]),
-        .init(.agents, "Remind me when Octet is closed", anchor: "Check-ins",
+        .init(.waits, "Quiet hours", anchor: "Check-ins", ["quiet", "night", "sleep", "do not disturb", "wake", "check-in", "hours"]),
+        .init(.waits, "Remind me when Octet is closed", anchor: "Check-ins",
               ["notification", "notify", "closed", "quit", "macos", "remind", "check-in", "local"]),
-        .init(.agents, "Recap when you come back", ["recap", "away", "catch up", "summary", "while you were away", "back", "digest"]),
-        .init(.agents, "Recap: away for at least", anchor: "Away for at least", ["recap", "away", "minutes", "threshold"]),
-        .init(.agents, "Agent notifications", anchor: "When an agent finishes or needs you",
+        .init(.notifications, "Recap when you come back", ["recap", "away", "catch up", "summary", "while you were away", "back", "digest"]),
+        .init(.notifications, "Recap: away for at least", anchor: "Away for at least", ["recap", "away", "minutes", "threshold"]),
+        .init(.notifications, "Agent notifications", anchor: "When an agent finishes or needs you",
               ["notification", "notify", "alert", "banner", "done", "finished"]),
-        .init(.agents, "Wait before notifying", ["notification", "delay", "wait", "seconds"]),
-        .init(.agents, "Play sounds", ["sound", "audio", "chime", "beep"]),
-        .init(.agents, "Read live usage from your Claude account",
+        .init(.notifications, "Wait before notifying", ["notification", "delay", "wait", "seconds"]),
+        .init(.notifications, "Play sounds", ["sound", "audio", "chime", "beep"]),
+        .init(.accounts, "Read live usage from your Claude account",
               ["usage", "allowance", "limit", "quota", "keychain", "claude", "account", "rate"]),
         .init(.agents, "Agents on this machine", anchor: "Agents on this machine",
               ["installed", "discover", "scan", "opencode", "gemini", "cursor", "deepseek", "version", "path"]),
         .init(.agents, "Prompt for agent updates", ["update", "upgrade", "version", "claude", "codex", "pi"]),
-        .init(.agents, "Resume agents after a restart", ["resume", "restart", "recover", "reboot", "session"]),
+        .init(.recovery, "Resume agents after a restart", ["resume", "restart", "recover", "reboot", "session"]),
         .init(.agents, "Move agents to the project they work in", ["cd", "directory", "folder", "project", "repository", "wrong", "move", "relocate", "cwd"]),
-        .init(.agents, "Offer to recover lost sessions", ["recover", "recovery", "crash", "lost", "session", "terminal", "shell"]),
+        .init(.recovery, "Offer to recover lost sessions", ["recover", "recovery", "crash", "lost", "session", "terminal", "shell"]),
         .init(.agents, "Remote Control for Claude conversations", ["remote", "control", "phone", "mobile", "claude.ai", "app"]),
         .init(.general, "Hotkey from any app", ["hotkey", "quake", "global", "shortcut", "summon", "dropdown"]),
         .init(.general, "Drop down from the top", ["hotkey", "quake", "dropdown", "drop-down", "full screen", "visor", "guake"]),
-        .init(.agents, "Agent accounts", ["account", "login", "profile", "work", "personal", "switch", "sign in", "claude_config_dir", "codex_home"]),
+        .init(.accounts, "Agent accounts", ["account", "login", "profile", "work", "personal", "switch", "sign in", "claude_config_dir", "codex_home"]),
         .init(.agents, "Keep the Mac awake while agents work", ["sleep", "caffeinate", "awake", "battery", "power", "amphetamine"]),
-        .init(.agents, "Checkpoint before each agent turn", ["undo", "rewind", "restore", "snapshot", "checkpoint", "revert", "git"]),
-        .init(.agents, "Keep closed tabs running", ["reopen", "closed", "undo", "accident", "tab", "recover"]),
+        .init(.recovery, "Checkpoint before each agent turn", ["undo", "rewind", "restore", "snapshot", "checkpoint", "revert", "git"]),
+        .init(.recovery, "Keep closed tabs running", ["reopen", "closed", "undo", "accident", "tab", "recover"]),
+        .init(.recovery, "Ask before stopping running terminals", ["confirm", "close", "stop", "agent", "command", "warn", "pane"]),
         .init(.agents, "When you run an agent in a terminal",
               ["claude", "codex", "opencode", "open", "native", "conversation", "chat", "terminal", "interface", "launch"]),
         .init(.agents, "Offer Octet's view over a running agent",
               ["banner", "offer", "dismiss", "conversation", "chat", "claude", "codex", "opencode"]),
-        .init(.agents, "Octet's command line", ["prompt", "editor", "command line", "history", "suggestion", "highlight", "autosuggest"]),
-        .init(.agents, "Accept a suggestion with", ["suggestion", "autosuggest", "accept", "tab", "arrow", "right", "key"]),
-        .init(.agents, "Talk to other Macs", ["other macs", "peer", "pair", "network", "remote", "delegate", "machine", "lan", "bonjour"]),
-        .init(.agents, "Paste images as files", ["paste", "image", "screenshot", "clipboard", "file"]),
-        .init(.agents, "Command specs", ["completion", "autocomplete", "fig", "spec", "install"]),
-        .init(.agents, "Name tabs after their work", ["tab", "title", "rename", "name", "auto"]),
-        .init(.agents, "Restore recent terminal output", ["restore", "history", "output", "scrollback", "secrets"]),
+        .init(.terminal, "Octet's command line", ["prompt", "editor", "command line", "history", "suggestion", "highlight", "autosuggest"]),
+        .init(.terminal, "Accept a suggestion with", ["suggestion", "autosuggest", "accept", "tab", "arrow", "right", "key"]),
+        .init(.integrations, "Talk to other Macs", ["other macs", "peer", "pair", "network", "remote", "delegate", "machine", "lan", "bonjour"]),
+        .init(.terminal, "Paste images as files", ["paste", "image", "screenshot", "clipboard", "file"]),
+        .init(.terminal, "Command specs", ["completion", "autocomplete", "fig", "spec", "install"]),
+        .init(.general, "Name tabs after their work", ["tab", "title", "rename", "name", "auto"]),
+        .init(.recovery, "Restore recent terminal output", ["restore", "history", "output", "scrollback", "secrets"]),
         .init(.agents, "Agent integrations", ["integration", "claude", "codex", "install", "hook"]),
         .init(.agents, "Subagent tabs", ["subagent", "hook", "background tab", "transcript", "auto close", "close tab", "finished"]),
-        .init(.agents, "Subagent finished sound", ["subagent", "sound", "audio", "chime", "finished", "done"]),
+        .init(.notifications, "Subagent finished sound", ["subagent", "sound", "audio", "chime", "finished", "done"]),
     ]
 
     private static let motion: [SettingsSearchEntry] = [
@@ -242,18 +268,5 @@ enum OctetHelp {
 
     static func openReadme() {
         NSWorkspace.shared.open(readmeURL)
-    }
-}
-
-/// Help › Keyboard Shortcuts: opens Settings on the Keyboard page.
-struct KeyboardShortcutsMenuItem: View {
-    @Environment(\.openSettings) private var openSettings
-    @AppStorage(SettingsView.sectionKey) private var section: SettingsView.Section = .general
-
-    var body: some View {
-        Button("Keyboard Shortcuts") {
-            section = .keyboard
-            SettingsOpener.open(.keyboard)
-        }
     }
 }

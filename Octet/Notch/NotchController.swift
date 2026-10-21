@@ -507,8 +507,25 @@ final class NotchController: NSObject {
         }
     }
 
-    /// An agent finished or needs you (called by the banner centre before it
-    /// decides whether to show its own banner).
+    /// The notch is on and showing on some display: its agents page reads
+    /// every workspace's runtimes, so the process scan covers them all.
+    var isShowing: Bool {
+        running && !model.isSample && instances.values.contains { $0.panel.isVisible }
+    }
+
+    /// Whether an agent event would peek on some display now: the notch on,
+    /// set to peek, showing and not open. `AttentionRouter` asks so the peek
+    /// can stand in for a notification rather than doubling it.
+    var peeksOnAgentEvents: Bool {
+        guard running, !model.isSample else { return false }
+        return instances.values.contains { instance in
+            NotchPeekRules.shouldPeek(enabled: settings.peekOnEvents, octetActive: NSApp.isActive,
+                                      visible: instance.panel.isVisible, phase: instance.machine.phase)
+        }
+    }
+
+    /// An agent finished or needs you, and `AttentionRouter` chose the peek
+    /// as the way to say so.
     func agentEvents(_ events: [AgentEvent]) {
         guard running, !model.isSample else { return }
         for instance in instances.values {

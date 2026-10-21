@@ -23,6 +23,8 @@ final class NewTabSplashModel: ObservableObject {
     }
 
     private func evaluate() {
+        recheck?.cancel()
+        recheck = nil
         guard let latest else { return }
         var shown: String?
         if latest.eligible, let tab = latest.tab, let grid = latest.grid {
@@ -73,6 +75,8 @@ struct NewTabSplash: View {
     var hostWindow: NSWindow?
     let runAgent: (DiscoveredAgent) -> Void
     let openFolder: (String) -> Void
+    /// Runs a command line in this tab's shell: an agent's installer.
+    var runCommand: ((String) -> Void)?
     let shortcuts: [Shortcut]
     @ObservedObject private var discovery = AgentDiscoveryStore.shared
     @State private var folders: [RecentFolder] = RecentFolders.cached
@@ -135,6 +139,12 @@ struct NewTabSplash: View {
                     }
                 }
             }
+            // None found on this Mac yet: say how to get one, once the scan is in.
+            if agents.isEmpty, discovery.scannedAt != nil {
+                section("Install an agent") {
+                    InstallAgentCard(scanning: discovery.scanning, run: runCommand) { discovery.scan() }
+                }
+            }
             if level >= 2, !recent.isEmpty {
                 section("Recent folders") {
                     SplashCard {
@@ -169,7 +179,7 @@ struct NewTabSplash: View {
                 .foregroundStyle(Theme.textPrimary)
             Group {
                 if let currentDirectory {
-                    Text("Start something in ") + Text(abbreviateHome(currentDirectory)).font(.system(size: 12, design: .monospaced))
+                    Text("Start something in ") + Text(abbreviateHome(currentDirectory)).font(Theme.Text.mono(12))
                 } else {
                     Text("Start an agent, open a folder, or run a command.")
                 }
@@ -306,8 +316,83 @@ private struct SplashCard<Content: View>: View {
             .background(shape.fill(Theme.card.opacity(0.45)))
             .overlay(shape.strokeBorder(Theme.border.opacity(0.7), lineWidth: 1))
             .overlay(alignment: .top) {
-                Rectangle().fill(Color.white.opacity(0.04)).frame(height: 1).padding(.horizontal, Theme.controlRadius)
+                Rectangle().fill(Theme.divider).frame(height: 1).padding(.horizontal, Theme.controlRadius)
             }
+    }
+}
+
+/// What to do on a Mac with no coding agent yet: the installers for the
+/// two Octet knows best, each run in this tab on click, and a scan to pick
+/// up one installed some other way.
+private struct InstallAgentCard: View {
+    let scanning: Bool
+    let run: ((String) -> Void)?
+    let rescan: () -> Void
+
+    private static let installers: [(agent: String, name: String, command: String)] = [
+        ("claude", "Claude Code", "npm install -g @anthropic-ai/claude-code"),
+        ("codex", "Codex", "npm install -g @openai/codex"),
+    ]
+
+    var body: some View {
+        SplashCard {
+            VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                Text("No coding agents found on this Mac. Install one and it shows up here, ready to start in any tab.")
+                    .font(Theme.Text.body)
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                ForEach(Self.installers, id: \.agent) { installer in
+                    InstallerRow(agent: installer.agent, name: installer.name, command: installer.command, run: run)
+                }
+                HStack(spacing: Theme.Space.sm) {
+                    Spacer()
+                    if scanning { LoadingLine(width: 20) }
+                    OctetButton(title: scanning ? "Looking…" : "Look Again", kind: .ghost, compact: true, action: rescan)
+                        .disabled(scanning)
+                }
+            }
+            .padding(Theme.Space.md)
+        }
+    }
+
+    private struct InstallerRow: View {
+        let agent: String
+        let name: String
+        let command: String
+        let run: ((String) -> Void)?
+        @State private var hovered = false
+
+        var body: some View {
+            Button {
+                if let run { run(command) } else { copy() }
+            } label: {
+                HStack(spacing: Theme.Space.md) {
+                    if let brand = AgentBrand.forAgent(agent) { AgentLogo(brand: brand, size: 16) }
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Install \(name)").font(Theme.Text.bodyMedium).foregroundStyle(Theme.textPrimary)
+                        Text(command).font(Theme.Text.mono(10.5)).foregroundStyle(Theme.textTertiary)
+                            .lineLimit(1).truncationMode(.middle)
+                    }
+                    Spacer(minLength: Theme.Space.md)
+                }
+                .padding(.horizontal, Theme.Space.sm)
+                .frame(height: 38)
+                .background(RoundedRectangle(cornerRadius: Theme.controlRadius).fill(hovered ? Theme.hover : Color.clear))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(OctetPressStyle())
+            .onHover { hovered = $0 }
+            .contextMenu { Button("Copy Command", action: copy) }
+            .help(run == nil ? "Copy \(command)" : "Run \(command) in this tab")
+            .accessibilityLabel("Install \(name)")
+            .accessibilityHint(run == nil ? "Copies the install command" : "Runs \(command) in this tab")
+        }
+
+        private func copy() {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(command, forType: .string)
+            ToastCenter.shared.info("Copied the \(name) install command")
+        }
     }
 }
 
@@ -341,7 +426,7 @@ private struct AgentTile: View {
                         .foregroundStyle(Theme.textPrimary)
                         .lineLimit(1)
                     Text(agent.command)
-                        .font(.system(size: 10.5, design: .monospaced))
+                        .font(Theme.Text.mono(10.5))
                         .foregroundStyle(Theme.textTertiary)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -353,7 +438,7 @@ private struct AgentTile: View {
             .background(shape.fill(selected ? Theme.cardSelected : hovered ? Theme.hover : Theme.card.opacity(0.45)))
             .overlay(shape.strokeBorder(selected ? Theme.accent.opacity(0.7) : Theme.border.opacity(0.7), lineWidth: 1))
             .overlay(alignment: .top) {
-                Rectangle().fill(Color.white.opacity(0.04)).frame(height: 1).padding(.horizontal, Theme.controlRadius)
+                Rectangle().fill(Theme.divider).frame(height: 1).padding(.horizontal, Theme.controlRadius)
             }
             .contentShape(Rectangle())
         }
@@ -379,14 +464,14 @@ private struct FolderRow: View {
                 OctetIcon("folder", size: 13)
                     .foregroundStyle(Theme.textSecondary)
                     .frame(width: 24, height: 24)
-                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.card))
+                    .background(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous).fill(Theme.card))
                 VStack(alignment: .leading, spacing: 1) {
                     Text((path as NSString).lastPathComponent)
                         .font(Theme.uiFontMedium)
                         .foregroundStyle(Theme.textPrimary)
                         .lineLimit(1)
                     Text(abbreviateHome((path as NSString).deletingLastPathComponent))
-                        .font(.system(size: 10.5, design: .monospaced))
+                        .font(Theme.Text.mono(10.5))
                         .foregroundStyle(Theme.textTertiary)
                         .lineLimit(1)
                         .truncationMode(.middle)

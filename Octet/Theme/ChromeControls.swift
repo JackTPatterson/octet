@@ -22,7 +22,7 @@ struct InlineRenameField: View {
             .padding(.horizontal, 4)
             .padding(.vertical, 2)
             .background(Theme.terminalBackground)
-            .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(Theme.accent, lineWidth: 1))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.xs).strokeBorder(Theme.accent, lineWidth: 1))
             .focused($focused)
             .onAppear {
                 text = initial

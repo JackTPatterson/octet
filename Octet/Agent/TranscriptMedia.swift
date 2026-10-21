@@ -50,8 +50,8 @@ private struct TranscriptMediaCard: View {
             case .video:
                 MediaVideoPlayer(url: link.url)
                     .frame(width: 400, height: 225)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.border, lineWidth: 1))
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
+                    .overlay(RoundedRectangle(cornerRadius: Theme.Radius.md).strokeBorder(Theme.border, lineWidth: 1))
             }
             HStack(spacing: 2) {
                 OctetIcon(link.kind == .video ? "play.circle" : "photo", size: 12)
@@ -83,7 +83,7 @@ private struct TranscriptMediaCard: View {
 
     private func placeholder(_ message: String?) -> some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 6).fill(Theme.card)
+            RoundedRectangle(cornerRadius: Theme.Radius.md).fill(Theme.card)
             if let message {
                 Text(message).font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
             } else {
@@ -91,7 +91,7 @@ private struct TranscriptMediaCard: View {
             }
         }
         .frame(width: 240, height: 140)
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.border, lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.md).strokeBorder(Theme.border, lineWidth: 1))
     }
 
     private func load() async {

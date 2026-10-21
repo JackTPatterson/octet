@@ -14,6 +14,11 @@ struct ShellSessionRecord: Codable, Equatable, Identifiable {
     var command: String
     var firstSeen: Date
     var lastSeen: Date
+    /// The pane it was in. The session server brings its panes back after a
+    /// restart under the same ids, splits and all, though each with a new
+    /// terminal: found again, the terminal reopens in its own pane rather
+    /// than in a tab of its own beside the one already restored.
+    var paneId: String? = nil
 
     var id: String { terminalId }
 }
@@ -43,6 +48,13 @@ enum ShellRecovery {
         return ShellJob(command: command, name: name)
     }
 
+    /// Whether `pane.process_info` shows a shell and nothing but it: what a
+    /// pane the server restored, waiting at its prompt, looks like.
+    static func isAtPrompt(_ result: [String: Any]) -> Bool {
+        guard let info = result["process_info"] as? [String: Any], info["shell_pid"] is Int else { return false }
+        return job(in: result) == nil
+    }
+
     /// The journal after one look at every terminal: busy ones recorded (a
     /// record keeps its first sighting), the rest dropped, since a job that
     /// finished or a terminal closed on purpose has nothing to recover.
@@ -60,7 +72,8 @@ enum ShellRecovery {
                 cwd: pane.effectiveCwd ?? NSHomeDirectory(),
                 command: job.command,
                 firstSeen: earlier?.firstSeen ?? now,
-                lastSeen: now
+                lastSeen: now,
+                paneId: pane.paneId
             )
         }
     }
@@ -95,6 +108,19 @@ enum ShellRecovery {
         if let tabId { params["tab_id"] = tabId } else { params["tab_label"] = label }
         if let workspaceId { params["workspace_id"] = workspaceId }
         return params
+    }
+
+    /// The line typed into the pane the server restored in place (a fresh
+    /// shell at a prompt): it clears itself away, prints what the terminal
+    /// last showed and says what it was running, as `reopenRequest`'s pane does.
+    static func inPlaceLine(_ record: ShellSessionRecord, dump: URL?) -> String {
+        let stamp = DateFormatter.localizedString(from: record.lastSeen, dateStyle: .none, timeStyle: .short)
+        // A leading space keeps it out of the shell's history where it can.
+        var line = " clear; "
+        if let dump { line += "cat \(quote(dump.path)) 2>/dev/null; " }
+        line += "printf '\\n\\033[2m── Recovered by Octet · was running at %s:\\033[0m\\n\\033[2m   %s\\033[0m\\n\\n' "
+        line += "\(quote(stamp)) \(quote(record.command))"
+        return line
     }
 
     /// A command line short enough for a toast or a row: the program's

@@ -21,12 +21,13 @@ enum PasteHandler {
 
     /// The same for anything that carries an image: ⌘V, or a drop onto the
     /// terminal (a screenshot dragged from a browser has no file of its own).
-    static func handle(_ pasteboard: NSPasteboard, store: SessionStore) -> Bool {
+    /// `pane`: where it goes, when not the focused pane (a drop on another).
+    static func handle(_ pasteboard: NSPasteboard, store: SessionStore, pane: String? = nil) -> Bool {
         guard SettingsStore.shared.values.pasteImagesAsFiles else { return false }
         // A file the user copied in Finder already has a path: paste that.
         if let files = pasteboard.readObjects(forClasses: [NSURL.self]) as? [URL],
            let file = files.first, file.isFileURL, isImage(file) {
-            return send(path: file.path, store: store, copied: false)
+            return send(path: file.path, store: store, pane: pane, copied: false)
         }
         // A copied link comes with a preview picture; paste the link.
         if ImagePaste.isCopiedLink(text: pasteboard.string(forType: .string),
@@ -35,7 +36,7 @@ enum PasteHandler {
         do {
             let path = try ImagePaste.save(data, extension: ext)
             ImagePaste.prune()
-            return send(path: path, store: store, copied: true)
+            return send(path: path, store: store, pane: pane, copied: true)
         } catch {
             ToastCenter.shared.fail(nil, "Couldn't save the pasted image", detail: String(describing: error))
             return true
@@ -60,8 +61,8 @@ enum PasteHandler {
     }
 
     /// Types the path into the focused pane.
-    private static func send(path: String, store: SessionStore, copied: Bool) -> Bool {
-        guard let paneId = store.keyPaneId else { return false }
+    private static func send(path: String, store: SessionStore, pane: String? = nil, copied: Bool) -> Bool {
+        guard let paneId = pane ?? store.keyPaneId else { return false }
         let client = store.client
         let text = ImagePaste.insertion(for: path) + " "
         if OctetKeyHook.prompt?.insertPastedText(text) != true {

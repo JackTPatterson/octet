@@ -300,8 +300,8 @@ private struct StashMenuRow: View {
                         if let image = NSImage(data: data) {
                             Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
                                 .frame(width: 16, height: 16)
-                                .clipShape(RoundedRectangle(cornerRadius: 3))
-                                .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(Theme.border, lineWidth: 1))
+                                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.xs))
+                                .overlay(RoundedRectangle(cornerRadius: Theme.Radius.xs).strokeBorder(Theme.border, lineWidth: 1))
                         }
                     }
                 }

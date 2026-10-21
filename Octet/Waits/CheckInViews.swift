@@ -203,7 +203,7 @@ struct CheckInEditorSheet: View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(draft.editingId == nil ? "Check back later" : "Change check-in")
-                    .font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.textPrimary)
+                    .font(Theme.interfaceFont(15, weight: .semibold)).foregroundStyle(Theme.textPrimary)
                 Text("For work that takes days or weeks to give a result. Octet brings it back at the right time, even if the session has ended or Octet was closed.")
                     .font(Theme.uiFont).foregroundStyle(Theme.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -442,10 +442,10 @@ private struct StallRow: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 OctetIcon("exclamationmark.triangle.fill", size: 12).foregroundStyle(Theme.accent).frame(width: 12)
-                Text(notice.label).font(.system(size: 11.5)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                Text(notice.label).font(Theme.interfaceFont(11.5)).foregroundStyle(Theme.textPrimary).lineLimit(1)
                 Spacer(minLength: 4)
                 Text(WaitSchedule.span(notice.quietFor))
-                    .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Theme.textTertiary)
+                    .font(Theme.Text.mono(10.5)).foregroundStyle(Theme.textTertiary)
             }
             Text("Looks stalled: marked working, nothing for \(WaitSchedule.span(notice.quietFor))")
                 .font(Theme.captionFont).foregroundStyle(Theme.textTertiary).lineLimit(1).padding(.leading, 18)
@@ -482,10 +482,10 @@ private struct CheckInRow: View {
             HStack(spacing: 6) {
                 OctetIcon(info.mode.icon, size: 12)
                     .foregroundStyle(isDue ? Theme.accent : Theme.textTertiary).frame(width: 12)
-                Text(wait.title).font(.system(size: 11.5))
+                Text(wait.title).font(Theme.interfaceFont(11.5))
                     .foregroundStyle(hovered || isDue ? Theme.textPrimary : Theme.textSecondary).lineLimit(1)
                 Spacer(minLength: 4)
-                Text(whenLabel).font(.system(size: 10.5, design: .monospaced))
+                Text(whenLabel).font(Theme.Text.mono(10.5))
                     .foregroundStyle(isDue ? Theme.accent : Theme.textTertiary)
             }
             Text(subtitle).font(Theme.captionFont).foregroundStyle(Theme.textTertiary).lineLimit(1).padding(.leading, 18)
@@ -621,7 +621,7 @@ struct CheckInSuggestionBanner: View {
                     }
                     Spacer(minLength: 4)
                     Button { dismissed.insert(suggestion.key) } label: { OctetIcon("xmark", size: 12) }
-                        .buttonStyle(.plain).foregroundStyle(Theme.textTertiary).help("Not now")
+                        .buttonStyle(.plain).foregroundStyle(Theme.textTertiary).help("Not now").accessibilityLabel("Not now")
                 }
                 HStack(spacing: 6) {
                     ForEach(CheckInSuggestion.presets(), id: \.id) { preset in
@@ -640,8 +640,8 @@ struct CheckInSuggestionBanner: View {
                 }
             }
             .padding(.horizontal, 12).padding(.vertical, 8)
-            .background(RoundedRectangle(cornerRadius: 8).fill(Theme.card))
-            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.border, lineWidth: 1))
+            .background(RoundedRectangle(cornerRadius: Theme.Radius.lg).fill(Theme.card))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.lg).strokeBorder(Theme.border, lineWidth: 1))
             .padding(.horizontal, 16).padding(.bottom, 6)
         }
     }

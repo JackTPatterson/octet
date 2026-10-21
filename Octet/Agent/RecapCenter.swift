@@ -352,9 +352,9 @@ struct RecapStrip: View {
 
     static func color(_ outcome: Recap.Outcome) -> Color {
         switch outcome {
-        case .needsYou: Color.orange
+        case .needsYou: Theme.warning
         case .stuck: Theme.danger
-        case .finished: Color.green
+        case .finished: Theme.success
         case .working: Theme.accent
         }
     }
@@ -401,8 +401,8 @@ private struct RecapRow: View {
         }
         .padding(10)
         .background(hovered ? Theme.hover : Theme.card.opacity(0.6))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .contentShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.lg))
+        .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.lg))
         .onTapGesture(perform: open)
         .onHover { hovered = $0 }
         .accessibilityElement(children: .combine)
@@ -449,9 +449,9 @@ struct VerificationBadge: View {
 
     private var color: Color {
         switch verification {
-        case .tested(let passed): passed ? Color.green : Theme.danger
-        case .checked(let passed): passed ? Color.orange : Theme.danger
-        case .unchecked: Color.orange
+        case .tested(let passed): passed ? Theme.success : Theme.danger
+        case .checked(let passed): passed ? Theme.warning : Theme.danger
+        case .unchecked: Theme.warning
         case .noEdits: Theme.textTertiary
         }
     }

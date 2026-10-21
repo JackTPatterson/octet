@@ -8,72 +8,97 @@ struct DockerPlane: View {
     @StateObject private var model = DockerPanelModel()
     @State private var query = ""
     @State private var state = "all"
-    @State private var project = ""
+    /// "__auto__" shows only this project's containers when it has any, "__all__" shows everything.
+    @State private var project = "__auto__"
     @State private var automatic = true
 
+    private var projectRoot: String? { directory.map { AccountProfiles.projectRoot(of: $0) ?? $0 } }
+    /// The project's own containers, when it has any; a project with none sees them all.
+    private var relevant: [DockerContainer] {
+        guard let root = projectRoot else { return [] }
+        return model.containers.filter { $0.belongs(to: root) }
+    }
+    private var narrowed: Bool { project == "__auto__" && !relevant.isEmpty }
     private var rows: [DockerContainer] {
-        let root = directory.map { AccountProfiles.projectRoot(of: $0) ?? $0 }
-        return model.containers.filter { row in
+        let base = narrowed ? relevant : model.containers
+        return base.filter { row in
             (query.isEmpty || row.searchText.localizedCaseInsensitiveContains(query)) &&
             (state == "all" || (state == "running" ? row.running : !row.running)) &&
-            (project.isEmpty || (project == "__current__" ? root.map { row.belongs(to: $0) } ?? false : row.project == project))
+            (project == "__auto__" || project == "__all__" || row.project == project)
         }
     }
     private var projectOptions: [(value: String, title: String)] {
-        [("", "All projects")] + (directory == nil ? [] : [("__current__", "This project")]) + model.projects.map { ($0, $0) }
+        [("__auto__", relevant.isEmpty ? "All projects" : "This project"), ("__all__", "All projects")]
+            .filter { $0.0 == "__auto__" || !relevant.isEmpty } + model.projects.map { ($0, $0) }
+    }
+
+    private var grouped: [(project: String, rows: [DockerContainer])] {
+        Dictionary(grouping: rows, by: \.project).map { (project: $0.key, rows: $0.value) }
+            .sorted { ($0.project.isEmpty ? 1 : 0, $0.project) < ($1.project.isEmpty ? 1 : 0, $1.project) }
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 6) {
-                Text("Containers").font(Theme.uiFontMedium)
-                Text("\(model.containers.filter(\.running).count) running · \(model.containers.count) total")
-                    .font(Theme.captionFont).foregroundStyle(Theme.textTertiary).lineLimit(1)
-                Spacer(minLength: 0)
-                if model.loading { ProgressView().controlSize(.small) }
-                OctetIconButton(icon: automatic ? "pause.circle" : "play.circle", help: automatic ? "Pause automatic refresh" : "Refresh automatically", active: automatic) { automatic.toggle() }
+            ServiceHeader(title: "Containers",
+                          count: model.containers.isEmpty ? nil
+                              : narrowed ? "\(rows.filter(\.running).count) running · \(relevant.count) of \(model.containers.count)"
+                              : "\(model.containers.filter(\.running).count) running · \(model.containers.count) total",
+                          loading: model.loading) {
+                OctetIconButton(icon: automatic ? "pause.circle" : "play.circle",
+                                help: automatic ? "Pause automatic refresh" : "Refresh automatically", active: automatic) { automatic.toggle() }
                 OctetIconButton(icon: "arrow.clockwise", help: "Refresh containers and Docker contexts") {
                     Task { await model.discover(); await model.refresh(); await model.loadDetails() }
                 }.disabled(model.loading)
-            }.padding(.horizontal, 12).frame(height: 36)
-            VStack(spacing: 8) {
-                HStack {
-                    Text("Context").font(Theme.captionFont).foregroundStyle(Theme.textSecondary)
-                    OctetSelect(selection: Binding(get: { model.context }, set: { model.changeContext($0); project = "" }),
-                                options: model.contexts.map { (value: $0.Name, title: $0.Name) })
+            }
+            ServiceFilterBar(placeholder: "Filter name, image, project or port…", query: $query, scope: $state,
+                             scopes: [("all", "All"), ("running", "Running"), ("stopped", "Stopped")])
+            if model.contexts.count > 1 || !model.projects.isEmpty {
+                HStack(spacing: 6) {
+                    if model.contexts.count > 1 {
+                        OctetSelect(selection: Binding(get: { model.context }, set: { model.changeContext($0); project = "__auto__" }),
+                                    options: model.contexts.map { (value: $0.Name, title: $0.Name) })
+                            .accessibilityLabel("Docker context")
+                    }
+                    if !model.projects.isEmpty {
+                        OctetSelect(selection: $project, options: projectOptions).accessibilityLabel("Compose project")
+                    }
                     Spacer(minLength: 0)
-                }
-                OctetTextField(placeholder: "Filter name, image, project or port…", text: $query)
-                HStack {
-                    OctetSelect(selection: $state, options: [("all", "All states"), ("running", "Running"), ("stopped", "Not running")], width: 120)
-                    OctetSelect(selection: $project, options: projectOptions)
-                    Spacer(minLength: 0)
-                }
-            }.padding(.horizontal, 12).padding(.bottom, 10)
-            Divider()
-            if let failure = model.failure { error(failure) }
-            if let failure = model.actionFailure { error(failure) }
-            if model.loading && model.containers.isEmpty {
-                ProgressView("Loading containers…").frame(maxWidth: .infinity, maxHeight: .infinity)
+                }.padding(.horizontal, PullRequestStyle.horizontalPadding).padding(.bottom, 8)
+            }
+            if let failure = model.actionFailure { ServiceBanner(text: failure) }
+            if model.failure != nil && !model.containers.isEmpty, let failure = model.failure { ServiceBanner(text: failure) }
+            if model.updated == nil && model.failure == nil {
+                ServiceListSkeleton()
+            } else if rows.isEmpty, let failure = model.failure {
+                OctetErrorState(title: "Docker unavailable",
+                                reason: "Octet couldn't reach Docker. Check that it's running, or try another context.",
+                                actionTitle: "Try Again", action: { Task { await model.refresh() } }, details: failure)
             } else if rows.isEmpty {
-                PlaneMessage(icon: "containers", title: model.failure == nil ? "No containers to show" : "Docker unavailable",
-                             detail: model.failure == nil ? "Try another filter, project or Docker context." : "Check the selected Docker context, then refresh.")
+                PlaneMessage(icon: "containers", title: "No containers to show",
+                             detail: "Try another filter, project or Docker context.")
             } else {
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(rows) { container in
-                            OctetCollapsible(title: container.Names, open: Binding(
-                                get: { model.selected == container.id },
-                                set: { model.select($0 ? container.id : nil) }
-                            ), trailing: {
-                                Text(container.State).font(Theme.captionFont)
-                                    .foregroundStyle(container.running ? Theme.accent : Theme.textSecondary)
-                            }) {
-                                detail(container)
-                            }.padding(.horizontal, 12)
-                            Divider()
+                    LazyVStack(alignment: .leading, spacing: 1) {
+                        ForEach(grouped, id: \.project) { group in
+                            if grouped.count > 1 || !group.project.isEmpty {
+                                OctetShelfHeader(icon: "containers", title: group.project.isEmpty ? "Standalone" : group.project, count: group.rows.count)
+                                    .padding(.horizontal, 8).padding(.top, 10).padding(.bottom, 4)
+                            }
+                            ForEach(group.rows) { container in
+                                ServiceRow(icon: container.icon, tone: container.tone, title: container.Names,
+                                           subtitle: container.rowSubtitle,
+                                           open: Binding(get: { model.selected == container.id },
+                                                         set: { model.select($0 ? container.id : nil) }),
+                                           trailing: {
+                                    HStack(spacing: 6) {
+                                        if let port = container.primaryPort { Text(port).font(Theme.captionFont.monospacedDigit()).foregroundStyle(Theme.textTertiary) }
+                                        ServiceStatusLabel(text: container.State.capitalized, tone: container.tone)
+                                    }
+                                }) { detail(container) }
+                            }
                         }
                     }
+                    .padding(.horizontal, 8).padding(.bottom, 12)
                 }.octetScrollIndicators()
             }
             if let updated = model.updated {
@@ -81,11 +106,17 @@ struct DockerPlane: View {
                     Text("Updated \(updated.formatted(date: .omitted, time: .standard))")
                     Spacer()
                     Text(automatic ? "Auto refresh · 5s" : "Refresh paused")
-                }.font(Theme.captionFont).foregroundStyle(Theme.textTertiary).padding(.horizontal, 12).frame(height: 26)
+                }
+                .font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
+                .padding(.horizontal, PullRequestStyle.horizontalPadding).frame(height: 26)
             }
         }
         .background(Theme.sidebar).frame(maxWidth: .infinity, maxHeight: .infinity)
-        .task { await model.discover() }
+        .task {
+            if ServiceSample.shows("containers") {
+                model.loadSample(ServiceSample.containers)
+            } else { await model.discover() }
+        }
         .task(id: "\(visible):\(model.context):\(automatic)") {
             guard visible, !model.context.isEmpty else { return }
             repeat {
@@ -106,11 +137,8 @@ struct DockerPlane: View {
 
     @ViewBuilder private func detail(_ container: DockerContainer) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(container.Image).font(Theme.captionFont).foregroundStyle(Theme.textSecondary).textSelection(.enabled)
-            Text(container.Status).font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
-            if !container.project.isEmpty {
-                Text("\(container.project) · \(container.service)").font(Theme.captionFont).foregroundStyle(Theme.textSecondary)
-            }
+            ServiceFacts(rows: [("Image", container.Image), ("Status", container.Status)]
+                + (container.project.isEmpty ? [] : [("Compose", "\(container.project) · \(container.service)")]))
             actions(container)
             HStack {
                 OctetButton(title: "View Logs", icon: "tool.read", kind: .secondary, compact: true) { window.openContainerLogs(context: model.context, container: container) }
@@ -122,11 +150,8 @@ struct DockerPlane: View {
             }
             if let stats = model.stats {
                 OctetShelfHeader(icon: "containers", title: "Resources", count: 5)
-                info("CPU", stats.CPUPerc)
-                info("Memory", "\(stats.MemUsage) (\(stats.MemPerc))")
-                info("Network I/O", stats.NetIO)
-                info("Disk I/O", stats.BlockIO)
-                info("Processes", stats.PIDs)
+                ServiceFacts(rows: [("CPU", stats.CPUPerc), ("Memory", "\(stats.MemUsage) (\(stats.MemPerc))"),
+                                    ("Network I/O", stats.NetIO), ("Disk I/O", stats.BlockIO), ("Processes", stats.PIDs)])
             }
             if let failure = model.statsFailure { error("Resource usage: " + failure) }
             if model.detailLoading && model.inspection == nil { ProgressView().controlSize(.small) }
@@ -140,7 +165,7 @@ struct DockerPlane: View {
                                    busy: model.busy.contains(model.context + ":" + container.id)) { model.perform(.remove, on: container) }
                     .disabled(model.busy.contains(model.context + ":" + container.id))
             }
-        }.padding(.bottom, 12)
+        }
     }
 
     private func actions(_ container: DockerContainer) -> some View {
@@ -163,10 +188,7 @@ struct DockerPlane: View {
         }.disabled(model.busy.contains(model.context + ":" + container.id))
     }
 
-    private func error(_ text: String) -> some View {
-        Text(text).font(Theme.captionFont).foregroundStyle(Theme.danger).textSelection(.enabled)
-            .frame(maxWidth: .infinity, alignment: .leading).padding(10)
-    }
+    private func error(_ text: String) -> some View { ServiceBanner(text: text).padding(.horizontal, -8) }
 
     private func info(_ title: String, _ value: String) -> some View {
         HStack(alignment: .top) {

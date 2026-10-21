@@ -168,6 +168,24 @@ final class ShellRecoveryController: ObservableObject {
         created: inout [String: String], used: inout Set<String>
     ) throws {
         guard FileManager.default.fileExists(atPath: record.cwd) else { throw RecoveryError.folderGone }
+        let dump = ShellRecovery.dumpURL(for: record.terminalId, in: dumps)
+        let kept = FileManager.default.fileExists(atPath: dump.path) ? dump : nil
+        // Its own pane, which the server brought back in place, in its split,
+        // with a fresh shell at a prompt: the terminal reopens right there.
+        // Only when that's surely what it is: the same folder, a terminal
+        // that isn't the one lost, and the engine saying a shell is at its
+        // prompt; a check that fails, or anything running, is a new tab.
+        if let paneId = record.paneId,
+           let pane = snapshot.panes.first(where: { $0.paneId == paneId }),
+           pane.effectiveCwd == record.cwd, pane.terminalId != record.terminalId,
+           let info = try? client.call("pane.process_info", ["pane_id": paneId]),
+           ShellRecovery.isAtPrompt(info) {
+            try client.call("pane.send_text", ["pane_id": paneId, "text": ShellRecovery.inPlaceLine(record, dump: kept) + "\r"])
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) {
+                _ = try? client.call("pane.send_text", ["pane_id": paneId, "text": record.command])
+            }
+            return
+        }
         let key = record.workspaceLabel + "\u{0}" + record.cwd
         var tabId: String?
         // By name and folder: a name alone took the first workspace of that
@@ -190,10 +208,8 @@ final class ShellRecoveryController: ObservableObject {
                 }?.tab.tabId
         }
         if let tabId { used.insert(tabId) }
-        let dump = ShellRecovery.dumpURL(for: record.terminalId, in: dumps)
         let result = try client.call("layout.apply", ShellRecovery.reopenRequest(
-            record, dump: FileManager.default.fileExists(atPath: dump.path) ? dump : nil,
-            shell: shell, workspaceId: workspaceId, tabId: tabId
+            record, dump: kept, shell: shell, workspaceId: workspaceId, tabId: tabId
         ))
         // The command goes back on the prompt, unsent: running it again is
         // your call. Typed once the shell is up, so it isn't echoed twice.

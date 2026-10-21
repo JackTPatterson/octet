@@ -8,6 +8,9 @@ struct OctetWindowSpec: Codable, Hashable {
     /// The workspace the window was opened for; nil shows whatever the
     /// engine has in front.
     var workspaceId: String?
+    var splitWorkspaceId: String?
+    var splitEdge: SplitEdge?
+    var splitTabIDs: [String]?
     /// Where the window goes, in screen coordinates, when a tab was dropped
     /// there to make it.
     var origin: CGPoint?
@@ -15,19 +18,20 @@ struct OctetWindowSpec: Codable, Hashable {
     var frame: CGRect?
 }
 
-/// One Octet window: its own engine client, and what that client shows.
+/// One Octet window, and the workspace and tab it shows.
 ///
 /// With one window, every member here forwards to `SessionStore` exactly as
 /// Octet has always worked: the engine's focus is the window's. With more,
-/// each window keeps its own workspace and tab and is moved by its own keys
-/// (`EngineNavigation`), because the engine's API focus calls move every
-/// client at once. Members are named after the store's, so the chrome reads
-/// `window.focusedWorkspace` where it read `store.focusedWorkspace`.
+/// each window keeps its own workspace and tab, and draws that tab's panes
+/// from the engine itself (`NativePaneGrid`). Members are named after the
+/// store's, so the chrome reads `window.focusedWorkspace` where it read
+/// `store.focusedWorkspace`.
 @MainActor
 final class WindowContext: ObservableObject, Identifiable {
     let id: UUID
     let store: SessionStore
     let ui = UIState()
+    let chromeDropdowns = OctetDropdownState()
     /// The plan of the agent in front, for the todo panel and its button.
     let todos = TodoModel()
     /// The project's instructions files and allow rules, for the right panel.
@@ -37,39 +41,57 @@ final class WindowContext: ObservableObject, Identifiable {
     /// Plugins' panels for the folder in front, for their tab bar buttons.
     let pluginPanels = PluginPanelModel()
     let terminalQuestions = TerminalQuestionWatcher()
-    let editor = EditorWorkspace()
+    /// Open files belong to a workspace, so each keeps its own tabs.
+    private var editors: [String: (workspace: EditorWorkspace, watch: AnyCancellable)] = [:]
+    var editor: EditorWorkspace {
+        let key = focusedWorkspace?.workspaceId ?? ""
+        if let found = editors[key] { return found.workspace }
+        let workspace = EditorWorkspace()
+        let watch = workspace.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
+        editors[key] = (workspace, watch)
+        return workspace
+    }
+    /// Every workspace's editor, for what must cover them all (unsaved files).
+    var allEditors: [EditorWorkspace] { editors.values.map(\.workspace) }
+    /// A second workspace rendered in this window with its own engine client
+    /// and tab strip. The two workspaces keep their engine tab lists separate.
+    @Published private(set) var splitContext: WindowContext?
+    @Published private(set) var splitEdge: SplitEdge = .right
+    /// Tabs assigned to this surface when it shares its parent's workspace.
+    /// The parent owns the remaining tabs in that workspace.
+    @Published private(set) var splitGroupTabIDs: Set<String>?
+    @Published private var focusedSplitContextID: UUID?
+    weak var splitParent: WindowContext?
+    var isEmbeddedSplit = false
     let containerLogs: ContainerLogWorkspace
     private(set) lazy var twin = TwinSession(window: self)
     weak var nsWindow: NSWindow?
-    /// This window's terminal, the only way to move this window's client.
-    weak var surface: TerminalEngine.SurfaceView?
-    private var outputSearch: OutputSearch?
-    #if DEBUG
-    var search: OutputSearch? { outputSearch }
-    #endif
+    /// A popup pane floating over this window's terminal (`PopupTerminal`).
+    @Published var popupPaneId: String?
+    /// Find in the focused pane's output, drawn over the terminal.
+    private(set) lazy var outputFind = OutputFindState(
+        client: store.client, serverHasOptions: { [weak self] in self?.store.hasOctetEngine ?? false }
+    ) { OctetTerminalRuntime.focusTerminal() }
 
     func findOutput(_ action: NSTextFinder.Action = .showFindInterface) {
-        if let outputSearch, outputSearch.window?.parent != nil {
-            if action != .showFindInterface || outputSearch.paneId == focusedPaneId {
-                outputSearch.find(action)
-                return
-            }
-            outputSearch.dismiss()
+        // A conversation in front searches its own transcript, not terminal output.
+        if let session = AgentCenter.shared.active(in: focusedWorkspace?.workspaceId) {
+            session.find.perform(action)
+            return
         }
-        guard action == .showFindInterface, let nsWindow, nsWindow.attachedSheet == nil,
-              let paneId = focusedPaneId,
-              AgentCenter.shared.active(in: focusedWorkspace?.workspaceId) == nil else { return }
-        let search = OutputSearch(client: store.client, paneId: paneId)
-        outputSearch = search
-        search.present(on: nsWindow)
+        guard nsWindow?.attachedSheet == nil else { return }
+        outputFind.perform(action, pane: focusedPaneId)
     }
-    /// Set as the window closes. Its engine client exits then, and that must
-    /// not read as the engine going away, which quits the app.
+    /// Set as the window closes, so nothing gives it workspaces on the way out.
     var closing = false
+    /// Closing without its workspaces: merged into another window, or closed
+    /// by Octet itself (left with nothing of its own). They move to the window
+    /// in front rather than closing with it.
+    var mergingAway = false
 
-    /// With more than one window: the workspace and tab this client shows.
-    @Published private(set) var workspaceId: String?
-    @Published private(set) var tabId: String?
+    /// With more than one window: the workspace and tab this window shows.
+    @Published fileprivate(set) var workspaceId: String?
+    @Published fileprivate(set) var tabId: String?
     /// Covers the terminal while a native agent is stopped and its saved
     /// session is opened in Octet. Without this bridge, the replacement shell
     /// flashes between the two interfaces.
@@ -87,25 +109,97 @@ final class WindowContext: ObservableObject, Identifiable {
     /// "all terminals, then all conversations" on its first frame.
     private var visualTabOrders: [String: [String]] = [:]
 
+    /// `ids` with the terminal tabs in the engine's order: the strip, in
+    /// the places it last gave each tab.
     func orderedVisualTabs(_ ids: [String]) -> [String] {
         let workspace = focusedWorkspace?.workspaceId ?? ""
         let previous = visualTabOrders[workspace] ?? []
-        let order = previous.filter(ids.contains) + ids.filter { !previous.contains($0) }
+        // A drop holds its order until the engine's catches up with it, so
+        // the tab doesn't jump back for the moment the move takes.
+        if let held = heldStripOrders[workspace] {
+            let present = Set(ids)
+            let known = Set(held)
+            // Held until every tab it placed is here (one moving in from
+            // another window arrives a snapshot or two later) and the
+            // engine's order agrees with it.
+            let arrived = held.allSatisfy { !TabStripOrder.isTerminal($0) || present.contains($0) }
+            let engine = ids.filter { TabStripOrder.isTerminal($0) && known.contains($0) }
+            if !arrived || held.filter({ TabStripOrder.isTerminal($0) && present.contains($0) }) != engine {
+                let extra = ids.filter { !known.contains($0) }
+                // Kept whole, with what hasn't arrived, for when it does.
+                visualTabOrders[workspace] = held + extra
+                return held.filter(present.contains) + extra
+            }
+            heldStripOrders[workspace] = nil
+        }
+        let order = TabStripOrder.reconcile(previous: previous, current: ids)
         visualTabOrders[workspace] = order
         return order
+    }
+
+    /// Strip orders a drop made, until the engine's order matches them.
+    private var heldStripOrders: [String: [String]] = [:]
+
+    private func hold(_ order: [String], in workspace: String) {
+        heldStripOrders[workspace] = order
+        objectWillChange.send()
+        // A move the engine refused mustn't hold the strip for good.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            guard let self, self.heldStripOrders[workspace] == order else { return }
+            self.heldStripOrders[workspace] = nil
+            self.objectWillChange.send()
+        }
+    }
+
+    /// A tab of the strip dropped in the gap before position `gap`. Octet's
+    /// own tabs move here alone; a terminal tab also moves in the engine,
+    /// to the place that keeps it where it was dropped.
+    func moveVisualTab(_ id: String, toGap gap: Int) {
+        let workspace = focusedWorkspace?.workspaceId ?? ""
+        let order = TabStripOrder.moving(id, toGap: gap, in: visualTabOrders[workspace] ?? [])
+        objectWillChange.send()
+        visualTabOrders[workspace] = order
+        guard TabStripOrder.isTerminal(id) else { return }
+        let tabId = String(id.dropFirst(TabStripOrder.terminalPrefix.count))
+        let engine = store.snapshot.tabs(inWorkspace: workspace).map(\.tabId)
+        hold(order, in: workspace)
+        store.moveTab(tabId, toGap: TabStripOrder.engineGap(for: tabId, in: order, engine: engine))
+    }
+
+    /// A tab that just arrived (from another window) put at the strip's
+    /// `gap`, where it was dropped, rather than last. `done` runs once it's
+    /// there: focusing it before counts the wrong position.
+    func placeArrivedTab(_ tabId: String, atGap gap: Int, then done: @escaping () -> Void = {}) {
+        let workspace = focusedWorkspace?.workspaceId ?? ""
+        let id = TabStripOrder.terminalPrefix + tabId
+        var order = visualTabOrders[workspace] ?? []
+        if !order.contains(id) { order.append(id) }
+        order = TabStripOrder.moving(id, toGap: gap, in: order)
+        visualTabOrders[workspace] = order
+        hold(order, in: workspace)
+        // The snapshot may not have it yet: it arrived last.
+        var engine = store.snapshot.tabs(inWorkspace: workspace).map(\.tabId).filter { $0 != tabId }
+        engine.append(tabId)
+        let insert = TabStripOrder.engineGap(for: tabId, in: order, engine: engine)
+        guard insert < engine.count - 1 else { return done() }
+        store.call("tab.move", ["tab_id": tabId, "insert_index": insert], failure: "Couldn't move the tab") { _ in done() }
     }
     /// Empty terminal tabs retained only to keep a conversation's workspace
     /// alive. The tab bar hides them until the conversation closes or the
     /// person explicitly asks for a terminal.
     @Published private var conversationBackingTabs: [String: String] = [:]
-    /// A workspace to go to as soon as the client can be moved: a window made
-    /// for a tab, or restored, opens wherever the engine was and is then sent.
+    /// A workspace to go to once the engine's snapshot is in: a window made
+    /// for a tab, or restored, opens wherever the engine was and then goes.
     private var pendingWorkspace: String?
-    /// Where this window last sent its client, until the snapshot shows it
-    /// arrived: tells an arrival apart from a move made in the engine itself.
+    fileprivate var pendingSplitWorkspace: String?
+    fileprivate var pendingSplitEdge: SplitEdge = .right
+    fileprivate var pendingSplitTabIDs: [String]?
+    /// Where this window last went, until the snapshot shows the engine's
+    /// focus there: tells an arrival apart from a move made in the engine itself.
     fileprivate var expected: (workspace: String, tab: String?)?
+    /// Since when this window has listed no workspace of its own.
+    fileprivate var emptySince: Date?
     private var watch: AnyCancellable?
-    private var editorWatch: AnyCancellable?
     private var containerLogsWatch: AnyCancellable?
 
     init(spec: OctetWindowSpec, store: SessionStore) {
@@ -113,9 +207,11 @@ final class WindowContext: ObservableObject, Identifiable {
         self.store = store
         containerLogs = ContainerLogWorkspace(key: "octet.workspaceContainerLogs.\(spec.id.uuidString)")
         pendingWorkspace = spec.workspaceId
+        pendingSplitWorkspace = spec.splitWorkspaceId
+        pendingSplitEdge = spec.splitEdge ?? .right
+        pendingSplitTabIDs = spec.splitTabIDs
         // The chrome reads through here, so a store change is a change here.
         watch = store.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
-        editorWatch = editor.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
         containerLogsWatch = containerLogs.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
     }
 
@@ -133,7 +229,13 @@ final class WindowContext: ObservableObject, Identifiable {
     var focusedWorkspaceTabs: [EngineTab] {
         guard steers else { return store.focusedWorkspaceTabs }
         guard let workspaceId else { return [] }
-        return store.snapshot.tabs(inWorkspace: workspaceId)
+        let tabs = store.snapshot.tabs(inWorkspace: workspaceId)
+        if let splitGroupTabIDs { return tabs.filter { splitGroupTabIDs.contains($0.tabId) } }
+        if let child = splitContext, child.workspaceId == workspaceId,
+           let assigned = child.splitGroupTabIDs {
+            return tabs.filter { !assigned.contains($0.tabId) }
+        }
+        return tabs
     }
 
     var displayedTabs: [EngineTab] {
@@ -173,7 +275,10 @@ final class WindowContext: ObservableObject, Identifiable {
 
     /// With several windows, each has workspaces of its own, the way each
     /// browser window has its own tabs: its sidebar lists only those.
-    func owns(_ workspaceId: String) -> Bool { registry.belongs(workspaceId, to: self) }
+    func owns(_ workspaceId: String) -> Bool {
+        registry.belongs(workspaceId, to: self)
+            || (splitContext.map { registry.belongs(workspaceId, to: $0) } ?? false)
+    }
 
     /// The sidebar's groups, with only this window's workspaces.
     var activeGroups: [ProjectGroup] {
@@ -194,6 +299,79 @@ final class WindowContext: ObservableObject, Identifiable {
         activeGroups.flatMap(\.workspaces) + idleWorkspaces
     }
 
+    // MARK: - Beside the terminal
+
+    /// One of Octet's own tabs shown beside the terminal rather than over
+    /// it: a conversation, the editor or container logs, on `edge`, taking
+    /// `share` of the space. It stays there as tabs change, until it's
+    /// closed, dragged elsewhere, or put back over the terminal.
+    struct Companion: Equatable {
+        let stripId: String
+        var edge: SplitEdge
+        var share: CGFloat = 0.5
+    }
+
+    /// Each workspace's, since its conversations and logs are its own.
+    @Published private var companions: [String: Companion] = [:]
+    /// The share each tab last had beside the terminal, so it comes back at
+    /// that size: the editor's split, too, which isn't dragged there.
+    @Published private var companionShares: [String: CGFloat] = [:]
+
+    /// The tab beside the terminal in the workspace showing, while it's open.
+    var companion: Companion? {
+        let workspace = focusedWorkspace?.workspaceId ?? ""
+        guard var companion = companions[workspace] else { return nil }
+        guard isOpen(companion.stripId) else {
+            // Closed: it mustn't come back beside the terminal when one of
+            // its kind opens again.
+            DispatchQueue.main.async { [weak self] in
+                if self?.companions[workspace]?.stripId == companion.stripId { self?.companions[workspace] = nil }
+            }
+            return nil
+        }
+        companion.share = share(of: companion.stripId)
+        return companion
+    }
+
+    func share(of stripId: String) -> CGFloat { companionShares[stripId] ?? 0.5 }
+
+    /// The divider beside `stripId` was dragged, or reset.
+    func setShare(_ share: CGFloat, of stripId: String) {
+        companionShares[stripId] = min(0.85, max(0.15, share))
+    }
+
+    /// Whether one of Octet's own tabs is still open in the workspace showing.
+    private func isOpen(_ stripId: String) -> Bool {
+        if stripId.hasPrefix("conversation:") {
+            return AgentCenter.shared.sessions(in: focusedWorkspace?.workspaceId).contains { "conversation:" + $0.id == stripId }
+        }
+        if stripId.hasPrefix("editor:") { return !editor.documents.isEmpty }
+        return workspaceContainerLogs.contains { $0.visualID == stripId }
+    }
+
+    func isBeside(_ stripId: String) -> Bool { companion?.stripId == stripId }
+
+    /// Shows `stripId` beside the terminal on `edge`, taking it out from over
+    /// the terminal if it was in front there.
+    func showBeside(_ stripId: String, edge: SplitEdge) {
+        let workspace = focusedWorkspace?.workspaceId
+        if stripId.hasPrefix("conversation:"), AgentCenter.shared.active(in: workspace).map({ "conversation:" + $0.id }) == stripId {
+            AgentCenter.shared.setActive(nil, in: workspace)
+        }
+        if stripId.hasPrefix("editor:") {
+            editor.dismiss()
+            editor.presentation = .split
+        }
+        if let log = activeContainerLog, log.visualID == stripId { containerLogs.activeID = nil }
+        companions[workspace ?? ""] = Companion(stripId: stripId, edge: edge)
+    }
+
+    /// The tab beside the terminal goes back to being a tab of the strip.
+    func stopShowingBeside() {
+        companions[focusedWorkspace?.workspaceId ?? ""] = nil
+    }
+
+
     // MARK: - Moving this window
 
     func focusTab(_ id: String) {
@@ -213,22 +391,44 @@ final class WindowContext: ObservableObject, Identifiable {
     /// this window goes there.
     func focusWorkspace(_ id: String) {
         guard steers else { return store.focusWorkspace(id) }
-        if let other = registry.window(showing: id), other !== self { return other.bringForward() }
+        if let other = registry.window(showing: id), other !== self {
+            other.bringForward()
+            other.activateSplitSurface()
+            return
+        }
         // Another window's workspace is shown there, in that window.
         if let home = registry.home(of: id), home !== self {
             home.bringForward()
+            home.activateSplitSurface()
             return home.steer(toWorkspace: id, tab: nil)
         }
+        activateSplitSurface()
         steer(toWorkspace: id, tab: nil)
     }
 
     func focusTabAnywhere(_ tab: EngineTab) {
         containerLogs.activeID = nil
         guard steers else { return store.focusTabAnywhere(tab) }
+        if let child = splitContext, child.workspaceId == tab.workspaceId,
+           child.splitGroupTabIDs?.contains(tab.tabId) == true {
+            child.activateSplitSurface()
+            return child.steer(toWorkspace: tab.workspaceId, tab: tab.tabId)
+        }
+        if splitGroupTabIDs?.contains(tab.tabId) == true {
+            activateSplitSurface()
+            return steer(toWorkspace: tab.workspaceId, tab: tab.tabId)
+        }
+        if let parent = splitParent, parent.workspaceId == tab.workspaceId,
+           splitGroupTabIDs?.contains(tab.tabId) == false {
+            parent.activateSplitSurface()
+            return parent.steer(toWorkspace: tab.workspaceId, tab: tab.tabId)
+        }
         if let other = registry.window(showing: tab.workspaceId) ?? registry.home(of: tab.workspaceId), other !== self {
             other.bringForward()
+            other.activateSplitSurface()
             return other.steer(toWorkspace: tab.workspaceId, tab: tab.tabId)
         }
+        activateSplitSurface()
         steer(toWorkspace: tab.workspaceId, tab: tab.tabId)
     }
 
@@ -296,6 +496,9 @@ final class WindowContext: ObservableObject, Identifiable {
         params["focus"] = false
         store.call(method, params, failure: failure, result: result) { [weak self] created in
             guard let self, let workspace = created.workspaceId ?? self.workspaceId else { return }
+            if let tab = created.tabId, self.splitGroupTabIDs != nil {
+                self.splitGroupTabIDs?.insert(tab)
+            }
             self.steer(toWorkspace: workspace, tab: created.tabId)
         }
     }
@@ -382,18 +585,71 @@ final class WindowContext: ObservableObject, Identifiable {
     func splitPane(_ direction: SessionStore.SplitDirection) {
         guard steers else { return store.splitPane(direction) }
         guard let pane = focusedPaneId else { return }
-        var params: [String: Any] = ["direction": direction.rawValue, "target_pane_id": pane, "focus": false]
+        // The engine's focus moves no other window's panes: the new pane can
+        // take it directly.
+        var params: [String: Any] = ["direction": direction.rawValue, "target_pane_id": pane, "focus": true]
         if let workspaceId, let cwd = store.snapshot.directory(ofWorkspace: workspaceId) { params["cwd"] = cwd }
-        // Then into the new pane, by this window's own pane keys.
-        store.call("pane.split", params, failure: "Couldn't split pane") { [weak self] _ in
-            self?.send([EngineNavigation.prefix, EngineNavigation.Stroke(key: direction == .right ? "l" : "j")])
-        }
+        store.call("pane.split", params, failure: "Couldn't split pane") { _ in }
+    }
+
+    /// A fresh shell on `edge`'s side of the focused pane, in the
+    /// workspace's folder as ⌘D's: the way to split left or up, which
+    /// have no key of their own.
+    func splitPane(beside edge: SplitEdge) {
+        guard let pane = focusedPaneId, let tab = store.snapshot.panes.first(where: { $0.paneId == pane })?.tabId else { return }
+        store.splitNewPane(beside: pane, inTab: tab, edge: edge,
+                           cwd: workspaceId.flatMap { store.snapshot.directory(ofWorkspace: $0) })
+    }
+
+    /// Every split in the tab showing back to equal shares.
+    func equalizePanes() {
+        guard store.hasOctetEngine else { return Self.needsOctetEngine("Making panes equal") }
+        guard let pane = focusedPaneId else { return }
+        store.call("pane.equalize", ["pane_id": pane], failure: "Couldn't make the panes equal") { _ in }
+    }
+
+    /// The focused pane's divider on that side, moved a couple of cells, as
+    /// a keyboard resize moves it.
+    func moveDivider(_ direction: SessionStore.PaneDirection) {
+        guard store.hasOctetEngine else { return Self.needsOctetEngine("Moving a divider") }
+        guard let pane = focusedPaneId else { return }
+        store.call("pane.resize_cells", ["pane_id": pane, "direction": direction.rawValue, "cells": 2],
+                   failure: "Couldn't move the divider") { _ in }
+    }
+
+    /// The focused pane out of its split into a window of its own.
+    func moveFocusedPaneToNewWindow() {
+        guard let pane = focusedPaneId else { return }
+        WindowActions.tearOff(paneId: pane, store: store, frame: WindowActions.cascaded(from: self))
+    }
+
+    private static func needsOctetEngine(_ what: String) {
+        ToastCenter.shared.info("\(what) needs Octet's own terminal engine",
+                                detail: "This session runs a stock Herdr; Octet's build adds it (scripts/build-engine.sh).")
     }
 
     func focusPane(_ direction: SessionStore.PaneDirection) {
-        guard steers else { return store.focusPane(direction) }
-        let key = ["left": "h", "down": "j", "up": "k", "right": "l"][direction.rawValue] ?? "l"
-        send([EngineNavigation.prefix, EngineNavigation.Stroke(key: key)])
+        guard steers, let pane = focusedPaneId else { return store.focusPane(direction) }
+        // From this window's own pane, not wherever the engine's focus is.
+        store.call("pane.focus_direction", ["pane_id": pane, "direction": direction.rawValue],
+                   failure: "Couldn't move to the pane") { _ in }
+    }
+
+    /// Copy mode in the focused pane: its scrollback by the keys.
+    func toggleCopyMode() {
+        guard let pane = focusedPaneId, let view = PaneMirrorView.view(of: pane) else { return }
+        if view.inCopyMode { view.leaveCopyMode() } else { view.enterCopyMode() }
+    }
+
+    /// The next pane of the tab, or the one before, in the order the layout
+    /// lists them, round to the start.
+    func cyclePane(by offset: Int) {
+        guard let tab = displayedFocusedTabId,
+              let panes = store.snapshot.layouts.first(where: { $0.tabId == tab })?.panes.map(\.paneId),
+              panes.count > 1 else { return }
+        let index = focusedPaneId.flatMap(panes.firstIndex(of:)) ?? 0
+        let next = panes[((index + offset) % panes.count + panes.count) % panes.count]
+        store.call("pane.focus", ["pane_id": next], failure: "Couldn't move to the pane") { _ in }
     }
 
     func toggleZoom() {
@@ -450,15 +706,32 @@ final class WindowContext: ObservableObject, Identifiable {
 
     /// The engine picks the neighbour for a client whose tab closed; this
     /// window shows that neighbour at once rather than waiting to hear.
-    func closeTab(_ id: String) {
+    func closeTab(_ id: String, confirmed: Bool = false) {
         guard steers else { return store.closeTab(id) }
+        guard confirmed else {
+            return store.confirmClosing(store.snapshot.panes.filter { $0.tabId == id }, place: "tab") { [weak self] in
+                self?.closeTab(id, confirmed: true)
+            }
+        }
+        if displayedTabs.count == 1, displayedTabs.first?.tabId == id {
+            if let splitParent {
+                splitParent.closeWorkspaceSplit()
+            } else if let child = splitContext, child.workspaceId == workspaceId,
+                      child.splitGroupTabIDs != nil, let survivor = child.displayedFocusedTabId {
+                closeWorkspaceSplit()
+                tabId = survivor
+            } else if let survivor = splitContext?.focusedWorkspace?.workspaceId {
+                closeWorkspaceSplit()
+                focusWorkspace(survivor)
+            }
+        }
         if id == tabId {
             let tabs = displayedTabs
             if let index = tabs.firstIndex(where: { $0.tabId == id }), tabs.count > 1 {
                 tabId = tabs[index > 0 ? index - 1 : 1].tabId
             }
         }
-        store.closeTab(id)
+        store.closeTab(id, confirmed: true)
     }
 
     /// ⌘⇧R: the changes in the focused pane's project, or closes the review.
@@ -510,8 +783,10 @@ final class WindowContext: ObservableObject, Identifiable {
         create("pane.move", ["pane_id": pane, "destination": ["type": "new_tab"]], failure: "Couldn't move the pane to a new tab")
     }
 
-    func newConversation(engine: AgentSession.Engine = .claude, cwd: String? = nil,
+    /// With no engine named, the default agent from Settings › Agents.
+    func newConversation(engine: AgentSession.Engine? = nil, cwd: String? = nil,
                          replacingStarterTab starterTabId: String? = nil) {
+        let engine = engine ?? .preferred
         containerLogs.activeID = nil
         editor.dismiss()
         guard let workspace = focusedWorkspace else { return }
@@ -554,8 +829,157 @@ final class WindowContext: ObservableObject, Identifiable {
         AgentCenter.shared.setActive(nil, in: focusedWorkspace?.workspaceId)
         AgentCenter.shared.setBoard(nil, in: focusedWorkspace?.workspaceId)
         twin.hide()
+        if presentation == .split {
+            editor.fileTreeVisible = false
+            panelUI.showPlane(.files)
+        }
         editor.open(url, presentation: presentation)
         DebugSnapshot.overlay("editor", editor.isPresented)
+    }
+
+    var editorFilesVisible: Bool {
+        editor.presentation == .split ? panelUI.showing(.files) : editor.fileTreeVisible
+    }
+
+    func toggleEditorFiles() {
+        if editor.presentation == .split {
+            if panelUI.showing(.files) { panelUI.sidePanelVisible = false }
+            else { panelUI.showPlane(.files) }
+        } else {
+            editor.fileTreeVisible.toggle()
+        }
+    }
+
+    func toggleEditorPresentation() {
+        editor.togglePresentation()
+        if editor.presentation == .split {
+            editor.fileTreeVisible = false
+            panelUI.showPlane(.files)
+        }
+    }
+
+    func splitWorkspace(_ workspaceId: String, at edge: SplitEdge) {
+        guard focusedWorkspace?.workspaceId != workspaceId else { return }
+        if let splitContext {
+            if splitContext.focusedWorkspace?.workspaceId == workspaceId {
+                splitEdge = edge
+                WindowRegistry.shared.save()
+                return
+            }
+            closeWorkspaceSplit()
+        }
+        let child = WindowContext(spec: OctetWindowSpec(workspaceId: workspaceId), store: store)
+        child.isEmbeddedSplit = true
+        child.splitParent = self
+        child.nsWindow = nsWindow
+        splitEdge = edge
+        splitContext = child
+        WindowRegistry.shared.add(child)
+        // Registry.add initializes a new client from the engine's global
+        // focus. Claim the dragged workspace before the split is drawn, or
+        // its first frame (and tab strip) copies the destination workspace.
+        child.steer(toWorkspace: workspaceId, tab: nil)
+        activateSplitSurface(child)
+        WindowRegistry.shared.save()
+    }
+
+    /// Put an existing engine tab in an independent tab group in this window.
+    /// Both surfaces still show the same workspace; the tab and its panes are
+    /// never recreated or moved by the session engine.
+    func splitTabGroup(_ tabId: String, at edge: SplitEdge) {
+        guard let workspaceId = focusedWorkspace?.workspaceId,
+              store.snapshot.tabs.first(where: { $0.tabId == tabId })?.workspaceId == workspaceId else { return }
+        if let child = splitContext, child.workspaceId == workspaceId,
+           child.splitGroupTabIDs != nil {
+            child.splitGroupTabIDs?.insert(tabId)
+            if self.tabId == tabId { self.tabId = focusedWorkspaceTabs.first?.tabId }
+            child.steer(toWorkspace: workspaceId, tab: tabId)
+            activateSplitSurface(child)
+            WindowRegistry.shared.save()
+            return
+        }
+        if splitContext != nil { closeWorkspaceSplit() }
+        let child = WindowContext(spec: OctetWindowSpec(workspaceId: workspaceId), store: store)
+        child.isEmbeddedSplit = true
+        child.splitParent = self
+        child.nsWindow = nsWindow
+        child.splitGroupTabIDs = [tabId]
+        child.pendingWorkspace = nil
+        child.askedToRestore = true
+        splitEdge = edge
+        splitContext = child
+        WindowRegistry.shared.add(child)
+        if self.tabId == tabId { self.tabId = focusedWorkspaceTabs.first?.tabId }
+        child.steer(toWorkspace: workspaceId, tab: tabId)
+        activateSplitSurface(child)
+        WindowRegistry.shared.save()
+    }
+
+    func acceptTabIntoGroup(_ tabId: String) {
+        guard let workspaceId,
+              store.snapshot.tabs.first(where: { $0.tabId == tabId })?.workspaceId == workspaceId else { return }
+        if splitGroupTabIDs != nil {
+            if let parent = splitParent, parent.focusedWorkspaceTabs.count == 1,
+               parent.focusedWorkspaceTabs.first?.tabId == tabId {
+                parent.closeWorkspaceSplit()
+                parent.focusTab(tabId)
+                return
+            }
+            splitGroupTabIDs?.insert(tabId)
+            if splitParent?.tabId == tabId { splitParent?.tabId = splitParent?.focusedWorkspaceTabs.first?.tabId }
+        } else if let child = splitContext, child.workspaceId == workspaceId {
+            child.splitGroupTabIDs?.remove(tabId)
+            if child.tabId == tabId { child.tabId = child.focusedWorkspaceTabs.first?.tabId }
+            if child.splitGroupTabIDs?.isEmpty == true { closeWorkspaceSplit() }
+        }
+        focusTab(tabId)
+        WindowRegistry.shared.save()
+    }
+
+    var panelContext: WindowContext {
+        if focusedSplitContextID == splitContext?.id, let splitContext { return splitContext }
+        return self
+    }
+
+    var panelUI: UIState { splitParent?.ui ?? ui }
+
+    /// Drawers in two tab groups of the same workspace need distinct shell
+    /// identities, even though their terminal tabs share the workspace.
+    var drawerKey: String {
+        let workspace = SidebarTerminals.key(focusedWorkspace?.workspaceId)
+        if splitParent?.focusedWorkspace?.workspaceId == focusedWorkspace?.workspaceId {
+            return "\(workspace)::split:\(id.uuidString)"
+        }
+        return workspace
+    }
+
+    func activateSplitSurface(_ surface: WindowContext? = nil) {
+        let owner = splitParent ?? self
+        let target = surface ?? self
+        guard target === owner || target === owner.splitContext else { return }
+        owner.focusedSplitContextID = target === owner ? nil : target.id
+        owner.ui.activateWorkspacePanel(target.focusedWorkspace?.workspaceId,
+                                        preserveWindowState: owner.splitContext != nil)
+        WindowRegistry.shared.becameKey(target)
+    }
+
+    func closeWorkspaceSplit() {
+        guard let child = splitContext else { return }
+        if focusedSplitContextID == child.id, child.workspaceId == workspaceId,
+           child.splitGroupTabIDs != nil { tabId = child.tabId }
+        child.closing = true
+        WindowRegistry.shared.remove(child)
+        splitContext = nil
+        focusedSplitContextID = nil
+        ui.activateWorkspacePanel(focusedWorkspace?.workspaceId, preserveWindowState: true)
+        if !closing { WindowRegistry.shared.save() }
+    }
+
+    func detachWorkspaceSplit() {
+        guard let child = splitContext, let workspaceId = child.focusedWorkspace?.workspaceId else { return }
+        WindowOpener.open?(OctetWindowSpec(workspaceId: workspaceId,
+                                           frame: WindowActions.cascaded(from: self)))
+        closeWorkspaceSplit()
     }
 
     func showFilePicker() {
@@ -800,36 +1224,16 @@ final class WindowContext: ObservableObject, Identifiable {
 
     // MARK: - Steering
 
-    /// Sends this window's client the keys to `workspace`, and to `tab` in it
-    /// when given (else the tab the engine last showed there). Positions are
-    /// what the engine's keys count: the order of the snapshot's lists.
+    /// Shows `workspace` here, and `tab` in it when given (else the tab the
+    /// engine last showed there). The panes are drawn from the engine
+    /// whatever its focus, so nothing has to be moved to get there.
     func steer(toWorkspace workspace: String, tab: String?) {
-        let workspaces = store.snapshot.workspaces
-        guard let workspaceIndex = workspaces.firstIndex(where: { $0.workspaceId == workspace }) else { return }
-        // Jumps are absolute, so a stale idea of where the client is can't
-        // send it wrong.
-        var strokes = EngineNavigation.toWorkspace(from: nil, to: workspaceIndex)
-        if let tab, let tabIndex = store.snapshot.tabs(inWorkspace: workspace).firstIndex(where: { $0.tabId == tab }) {
-            strokes += EngineNavigation.toTab(from: nil, to: tabIndex)
-        }
+        guard let shown = store.snapshot.workspaces.first(where: { $0.workspaceId == workspace }) else { return }
         workspaceId = workspace
-        tabId = tab ?? store.snapshot.workspaces[workspaceIndex].activeTabId
+        tabId = tab ?? shown.activeTabId
         expected = (workspace, tab)
         // What a window shows is its own.
-        if steers { registry.claim(workspace, for: self) }
-        send(strokes)
-    }
-
-    fileprivate func send(_ strokes: [EngineNavigation.Stroke]) {
-        guard let model = surface?.surfaceModel else { return }
-        for stroke in strokes {
-            guard let key = TerminalEngine.Input.Key(rawValue: stroke.key) else { continue }
-            var mods: TerminalEngine.Input.Mods = []
-            if stroke.ctrl { mods.insert(.ctrl) }
-            if stroke.alt { mods.insert(.alt) }
-            model.sendKeyEvent(.init(key: key, action: .press, text: stroke.text, mods: mods, unshiftedCodepoint: stroke.codepoint))
-            model.sendKeyEvent(.init(key: key, action: .release, mods: mods, unshiftedCodepoint: stroke.codepoint))
-        }
+        if steers, splitGroupTabIDs == nil { registry.claim(workspace, for: self) }
     }
 
     func bringForward() {
@@ -840,25 +1244,26 @@ final class WindowContext: ObservableObject, Identifiable {
     // MARK: - Keeping up with the engine
 
     /// Starts this window on what the engine shows, or on the workspace it
-    /// was opened for once its client is up.
+    /// was opened for once its terminal is up.
     fileprivate func adoptEngineFocus() {
         workspaceId = store.focusedWorkspace?.workspaceId
         tabId = store.displayedFocusedTabId
     }
 
-    /// The client has drawn its first frame: it can take keys now.
-    func clientReady() {
-        clientIsReady = true
+    /// The terminal area is up: the window can go where it was opened for.
+    func terminalReady() {
+        terminalIsReady = true
         goToPendingWorkspace()
     }
 
-    private var clientIsReady = false
+    private var terminalIsReady = false
+    fileprivate var awaitingWorkspace: Bool { pendingWorkspace != nil }
     fileprivate private(set) var askedToRestore = false
 
-    /// Goes where the window was opened for once both its client and the
-    /// engine's snapshot are up; at launch the client can draw first.
+    /// Goes where the window was opened for once both its terminal and the
+    /// engine's snapshot are up; at launch the terminal can come first.
     fileprivate func goToPendingWorkspace() {
-        guard clientIsReady else { return }
+        guard terminalIsReady else { return }
         if !askedToRestore {
             askedToRestore = true
             if pendingWorkspace == nil { pendingWorkspace = registry.restoredWorkspace(for: self) }
@@ -866,14 +1271,39 @@ final class WindowContext: ObservableObject, Identifiable {
         guard let workspace = pendingWorkspace else { return }
         let workspaces = store.snapshot.workspaces
         guard !workspaces.isEmpty else { return }
-        pendingWorkspace = nil
         // A restored window's workspace may be gone: it keeps what it shows.
         guard workspaces.contains(where: { $0.workspaceId == workspace }) else { return }
+        pendingWorkspace = nil
         guard steers else { return store.focusWorkspace(workspace) }
         steer(toWorkspace: workspace, tab: nil)
+        if let split = pendingSplitWorkspace,
+           workspaces.contains(where: { $0.workspaceId == split }) {
+            pendingSplitWorkspace = nil
+            if split == workspace, let ids = pendingSplitTabIDs, !ids.isEmpty {
+                let tabs = store.snapshot.tabs(inWorkspace: workspace)
+                let live = Set(tabs.map(\.tabId))
+                let assigned = Set(ids).intersection(live)
+                if !assigned.isEmpty, tabs.contains(where: { !assigned.contains($0.tabId) }),
+                   let first = ids.first(where: assigned.contains) {
+                    splitTabGroup(first, at: pendingSplitEdge)
+                    splitContext?.splitGroupTabIDs = assigned
+                }
+            } else if split != workspace {
+                splitWorkspace(split, at: pendingSplitEdge)
+            }
+        }
         registry.claimRestoredMembers(of: workspace, for: self)
         // A workspace moved into this window leaves the one that showed it.
         registry.windows.filter { $0 !== self }.forEach { $0.yield(workspace) }
+    }
+
+    /// Closes this window, keeping its workspaces, once the update under way
+    /// is done: closed from inside one, the window can be dropped from the
+    /// registry yet stay on screen.
+    fileprivate func closeWindowLater() {
+        mergingAway = true
+        closing = true
+        DispatchQueue.main.async { [weak self] in self?.nsWindow?.close() }
     }
 
     /// Another window took `workspace`: if this one shows it, it moves to the
@@ -890,9 +1320,49 @@ final class WindowContext: ObservableObject, Identifiable {
     /// Checks this window against a new snapshot: a tab or workspace it shows
     /// that closed is replaced by a neighbour, and the engine is told.
     fileprivate func reconcile() {
+        // A window that's gone (a check scheduled before it closed) has
+        // nothing to reconcile, and would take workspaces as its own.
+        guard !closing, registry.windows.contains(where: { $0 === self }) else { return }
         let snapshot = store.snapshot
         guard !snapshot.workspaces.isEmpty else { return }
+        // A window with no workspace of its own and others open has nothing to
+        // show. It gets a moment, in case it's still settling, then closes.
+        // Not while it's still on its way to the workspace it was opened for:
+        // until it claims it, it owns nothing, by design.
+        if !isEmbeddedSplit, steers, !awaitingWorkspace, ownWorkspaces.isEmpty,
+           registry.windows.contains(where: { $0 !== self && !$0.closing && !$0.isEmbeddedSplit }) {
+            let since = emptySince ?? Date()
+            emptySince = since
+            if Date().timeIntervalSince(since) > 2 {
+                closeWindowLater()
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { [weak self] in self?.reconcile() }
+        } else {
+            emptySince = nil
+        }
         if let workspaceId, !snapshot.workspaces.contains(where: { $0.workspaceId == workspaceId }) {
+            // A split's workspace went (its last tab was dragged out, or it
+            // closed): the split closes, and its window keeps its own workspace.
+            // Picking another here would take a workspace off whoever owns it,
+            // leaving a window that shows tabs and lists no workspaces.
+            if isEmbeddedSplit, let parent = splitParent { return parent.closeWorkspaceSplit() }
+            // The window's own went but its split's is alive: that one stays,
+            // full size.
+            if let survivor = splitContext?.focusedWorkspace?.workspaceId,
+               snapshot.workspaces.contains(where: { $0.workspaceId == survivor }) {
+                closeWorkspaceSplit()
+                return steer(toWorkspace: survivor, tab: nil)
+            }
+            // Its last workspace went (its only tab was dragged out to a window
+            // of its own, say) and other windows are open: this one has nothing
+            // left to show, so it closes rather than staying open on an
+            // arbitrary workspace, or on none.
+            if !isEmbeddedSplit, ownWorkspaces.isEmpty,
+               registry.windows.contains(where: { $0 !== self && !$0.closing && !$0.isEmbeddedSplit }) {
+                closeWindowLater()
+                return
+            }
             // Its own next, else one no window shows, else any.
             let shown = registry.shownWorkspaceIds(except: self)
             let next = ownWorkspaces.first { $0.workspaceId != workspaceId }
@@ -900,15 +1370,15 @@ final class WindowContext: ObservableObject, Identifiable {
             return steer(toWorkspace: next.workspaceId, tab: nil)
         }
         guard let workspaceId else { return adoptEngineFocus() }
-        let tabs = snapshot.tabs(inWorkspace: workspaceId)
+        let tabs = focusedWorkspaceTabs
         if tabId == nil || !tabs.contains(where: { $0.tabId == tabId }), let first = tabs.first {
             let active = snapshot.workspaces.first { $0.workspaceId == workspaceId }?.activeTabId
             tabId = tabs.first { $0.tabId == active }?.tabId ?? first.tabId
         }
     }
 
-    /// The engine's focus moved to `workspace`/`tab`. If this window sent
-    /// its client there, that's the arrival; the registry decides otherwise.
+    /// The engine's focus moved to `workspace`/`tab`. If this window went
+    /// there, that's the arrival; the registry decides otherwise.
     fileprivate func arrived(workspace: String, tab: String?) -> Bool {
         guard let expected, expected.workspace == workspace, expected.tab == nil || expected.tab == tab else { return false }
         self.expected = nil
@@ -916,11 +1386,6 @@ final class WindowContext: ObservableObject, Identifiable {
         return true
     }
 
-    /// A move made inside this window's client, with the engine's own keys.
-    fileprivate func followEngine(workspace: String, tab: String?) {
-        workspaceId = workspace
-        if let tab { tabId = tab }
-    }
 }
 
 /// Every Octet window, and which one is in front.
@@ -946,7 +1411,8 @@ final class WindowRegistry: ObservableObject {
 
     /// The window in front among those open, never one that's closing.
     private var front: WindowContext? {
-        windows.first { $0.isKey && !$0.closing } ?? windows.first { !$0.closing }
+        (lastKey?.isKey == true && lastKey?.closing == false ? lastKey : nil)
+            ?? windows.first { $0.isKey && !$0.closing } ?? windows.first { !$0.closing }
     }
 
     func home(of workspaceId: String) -> WindowContext? {
@@ -956,10 +1422,13 @@ final class WindowRegistry: ObservableObject {
 
     func belongs(_ workspaceId: String, to window: WindowContext) -> Bool {
         guard isMulti else { return true }
-        return (home(of: workspaceId) ?? front) === window
+        if let home = home(of: workspaceId) { return home === window }
+        // One a window is opening for is that window's, not the front one's.
+        return !reservations.contains(workspaceId) && front === window
     }
 
     fileprivate func claim(_ workspaceId: String, for window: WindowContext) {
+        reserved[workspaceId] = nil
         guard homes[workspaceId] != window.id else { return }
         homes[workspaceId] = window.id
         save()
@@ -973,7 +1442,7 @@ final class WindowRegistry: ObservableObject {
         let ids = Set(store.snapshot.workspaces.map(\.workspaceId))
         var next = homes.filter { ids.contains($0.key) }
         if let front {
-            for id in ids where next[id].map(live.contains) != true { next[id] = front.id }
+            for id in ids where next[id].map(live.contains) != true && !reservations.contains(id) { next[id] = front.id }
         }
         if next != homes { homes = next }
     }
@@ -1002,12 +1471,15 @@ final class WindowRegistry: ObservableObject {
     // window's workspace is kept here with its frame, and a restored window
     // takes the one saved nearest where it reopened.
 
-    private static let savedKey = "octet.windows"
-    private var restoring: [(workspace: String, frame: CGRect)] = {
+    private static let savedKey = "octet.windows" + (EngineSession.name == "octet" ? "" : ".\(EngineSession.name)")
+    private var restoring: [(workspace: String, split: String?, edge: SplitEdge, tabs: [String]?, frame: CGRect)] = {
         let saved = UserDefaults.standard.array(forKey: WindowRegistry.savedKey) as? [[String: Any]] ?? []
         return saved.compactMap { entry in
             guard let workspace = entry["workspace"] as? String, let frame = entry["frame"] as? String else { return nil }
-            return (workspace, NSRectFromString(frame))
+            return (workspace, entry["splitWorkspace"] as? String,
+                    SplitEdge(rawValue: entry["splitEdge"] as? String ?? "") ?? .right,
+                    entry["splitTabIDs"] as? [String],
+                    NSRectFromString(frame))
         }
     }()
     /// Restoring is for the windows opening at launch; after that it's off.
@@ -1020,7 +1492,11 @@ final class WindowRegistry: ObservableObject {
             hypot(restoring[a].frame.minX - origin.x, restoring[a].frame.minY - origin.y)
                 < hypot(restoring[b].frame.minX - origin.x, restoring[b].frame.minY - origin.y)
         }!
-        return restoring.remove(at: index).workspace
+        let saved = restoring.remove(at: index)
+        window.pendingSplitWorkspace = saved.split
+        window.pendingSplitEdge = saved.edge
+        window.pendingSplitTabIDs = saved.tabs
+        return saved.workspace
     }
 
     /// Set as the app quits: windows closing then are kept for next launch.
@@ -1045,7 +1521,10 @@ final class WindowRegistry: ObservableObject {
         for entry in rest where !shown.contains(entry.workspace)
             && store.snapshot.workspaces.contains(where: { $0.workspaceId == entry.workspace }) {
             shown.insert(entry.workspace)
-            WindowOpener.open?(OctetWindowSpec(workspaceId: entry.workspace, frame: entry.frame))
+            WindowOpener.open?(OctetWindowSpec(workspaceId: entry.workspace,
+                                               splitWorkspaceId: entry.split,
+                                               splitEdge: entry.edge,
+                                               splitTabIDs: entry.tabs, frame: entry.frame))
         }
     }
 
@@ -1055,10 +1534,19 @@ final class WindowRegistry: ObservableObject {
         // While windows are still reopening, what they show isn't settled.
         guard Date() >= restoreUntil || restoring.isEmpty else { return }
         let entries: [[String: Any]] = windows.compactMap { window in
-            guard !window.closing, let workspace = window.focusedWorkspace?.workspaceId,
+            guard !window.closing, !window.isEmbeddedSplit,
+                  let workspace = window.focusedWorkspace?.workspaceId,
                   let frame = window.nsWindow?.frame else { return nil }
             let members = homes.filter { $0.value == window.id }.map(\.key).sorted()
-            return ["workspace": workspace, "frame": NSStringFromRect(frame), "members": members]
+            var entry: [String: Any] = ["workspace": workspace, "frame": NSStringFromRect(frame), "members": members]
+            if let split = window.splitContext?.focusedWorkspace?.workspaceId {
+                entry["splitWorkspace"] = split
+                entry["splitEdge"] = window.splitEdge.rawValue
+                if let tabs = window.splitContext?.splitGroupTabIDs {
+                    entry["splitTabIDs"] = Array(tabs).sorted()
+                }
+            }
+            return entry
         }
         guard !entries.isEmpty else { return }
         UserDefaults.standard.set(entries, forKey: Self.savedKey)
@@ -1066,7 +1554,9 @@ final class WindowRegistry: ObservableObject {
 
     /// The window acting now: the key one, else the last that was.
     var key: WindowContext? {
-        windows.first(where: \.isKey) ?? lastKey ?? windows.first
+        (lastKey?.isKey == true && lastKey?.closing == false ? lastKey : nil)
+            ?? windows.first(where: { $0.isKey && !$0.closing })
+            ?? windows.first(where: { !$0.closing })
     }
 
     func add(_ window: WindowContext) {
@@ -1079,15 +1569,37 @@ final class WindowRegistry: ObservableObject {
         // engine shows, which from now on is its own to keep, and every
         // workspace so far is its own; the new window takes only what it's
         // opened for.
+        // A workspace the new window is being opened for is never the first's:
+        // a tab moved out to a window of its own takes the engine's focus with
+        // it, and the first window adopting that would show the same tab as the
+        // new one, the two typing into each other.
+        var firstKeeps: String?
+        var firstEmpty: WindowContext?
         if windows.count == 1 {
-            windows[0].adoptEngineFocus()
             let first = windows[0]
-            for workspace in first.store.snapshot.workspaces where homes[workspace.workspaceId] == nil {
+            let reserved = reservations
+            if let focus = first.store.focusedWorkspace?.workspaceId, reserved.contains(focus) {
+                // Something of its own, else nothing left: it closes.
+                if let other = first.store.snapshot.workspaces.first(where: { !reserved.contains($0.workspaceId) }) {
+                    firstKeeps = other.workspaceId
+                } else {
+                    firstEmpty = first
+                }
+            } else {
+                first.adoptEngineFocus()
+            }
+            for workspace in first.store.snapshot.workspaces
+            where homes[workspace.workspaceId] == nil && !reserved.contains(workspace.workspaceId) {
                 homes[workspace.workspaceId] = first.id
             }
         }
         windows.append(window)
         if windows.count > 1 { window.adoptEngineFocus() }
+        if let keep = firstKeeps { windows[0].steer(toWorkspace: keep, tab: nil) }
+        if let empty = firstEmpty {
+            // Once the new window is up, so the app always has one open.
+            empty.closeWindowLater()
+        }
         if watch == nil {
             observe(window.store)
             window.store.processPane = { [weak self] in
@@ -1099,15 +1611,32 @@ final class WindowRegistry: ObservableObject {
     }
 
     func remove(_ window: WindowContext) {
+        // Closed by hand, with other windows open: what it showed closes with
+        // it, as a browser window's tabs do, rather than turning up again in
+        // the window it was torn off from. Running work is asked about first;
+        // kept, it goes to the window in front below.
+        let owned = homes.filter { $0.value == window.id }.map(\.key)
+        let closesItsWorkspaces = window.closing && !window.mergingAway && !terminating
+            && !window.isEmbeddedSplit && windows.contains(where: { $0 !== window && !$0.closing })
         windows.removeAll { $0 === window }
+        if closesItsWorkspaces, !owned.isEmpty, let store = windows.first?.store {
+            let live = Set(store.snapshot.workspaces.map(\.workspaceId))
+            let closing = owned.filter(live.contains)
+            let panes = store.snapshot.panes.filter { closing.contains($0.workspaceId) }
+            if !closing.isEmpty {
+                store.confirmClosing(panes, place: closing.count == 1 ? "workspace" : "window") {
+                    closing.forEach { store.closeWorkspaceOnly($0) }
+                }
+            }
+        }
+        if lastKey === window { lastKey = window.splitParent ?? windows.first(where: { !$0.closing }) }
         // Its workspaces go to the window in front, where they're listed.
         if let front {
             for (workspace, id) in homes where id == window.id { homes[workspace] = front.id }
         }
         // A window closed by hand is gone next launch too; quitting keeps all.
         if window.closing { save() }
-        // Back to one: its view becomes the engine's focus again, and the
-        // API is safe to use, with only one client to move.
+        // Back to one: its view becomes the engine's focus again.
         if windows.count == 1, let last = windows.first, let workspace = last.workspaceId {
             if let tab = last.tabId, let found = last.store.snapshot.tabs.first(where: { $0.tabId == tab }) {
                 last.store.focusTabAnywhere(found)
@@ -1121,7 +1650,7 @@ final class WindowRegistry: ObservableObject {
     func becameKey(_ window: WindowContext) {
         let changed = lastKey !== window
         lastKey = window
-        save()
+        if changed { save() }
         // What the new key window's pane runs decides how its keys are read.
         if changed, isMulti { window.store.refresh() }
     }
@@ -1132,7 +1661,21 @@ final class WindowRegistry: ObservableObject {
     }
 
     func shownWorkspaceIds(except window: WindowContext? = nil) -> Set<String> {
-        Set(windows.filter { $0 !== window }.compactMap(\.workspaceId))
+        Set(windows.filter { $0 !== window }.compactMap(\.workspaceId)).union(reservations)
+    }
+
+    /// Workspaces a window is being opened for, from when it's asked for
+    /// until it claims one (or a few seconds pass). Until then they count
+    /// as shown: the window in front mustn't follow the engine's focus into
+    /// one, or both windows would show it, typing into each other.
+    private var reserved: [String: Date] = [:]
+
+    private var reservations: Set<String> {
+        Set(reserved.filter { Date().timeIntervalSince($0.value) < 5 }.keys)
+    }
+
+    func reserve(_ workspaceId: String) {
+        reserved[workspaceId] = Date()
     }
 
     /// Tabs on screen in any window: agents there aren't news.
@@ -1151,6 +1694,36 @@ final class WindowRegistry: ObservableObject {
     /// for was made in the engine itself, in the window in front.
     private func snapshotChanged() {
         windows.forEach { $0.goToPendingWorkspace() }
+        // A workspace can also disappear through a sidebar action or another
+        // client. Repair the physical split before either surface reconciles
+        // onto its sibling's workspace.
+        if let store = windows.first?.store {
+            let live = Set(store.snapshot.workspaces.map(\.workspaceId))
+            for root in windows.filter({ !$0.isEmbeddedSplit }) {
+                guard let child = root.splitContext else { continue }
+                if let group = child.splitGroupTabIDs, child.workspaceId == root.workspaceId,
+                   let workspaceId = root.workspaceId {
+                    let tabs = store.snapshot.tabs(inWorkspace: workspaceId)
+                    let childTabs = tabs.filter { group.contains($0.tabId) }
+                    if childTabs.isEmpty {
+                        root.closeWorkspaceSplit()
+                    } else if !tabs.contains(where: { !group.contains($0.tabId) }) {
+                        let survivor = child.tabId.flatMap { id in childTabs.first { $0.tabId == id }?.tabId }
+                            ?? childTabs[0].tabId
+                        root.closeWorkspaceSplit()
+                        root.steer(toWorkspace: workspaceId, tab: survivor)
+                    }
+                    continue
+                }
+                if let id = child.workspaceId, !live.contains(id), !child.awaitingWorkspace {
+                    root.closeWorkspaceSplit()
+                } else if let id = root.workspaceId, !live.contains(id), !root.awaitingWorkspace,
+                          let survivor = child.workspaceId, live.contains(survivor) {
+                    root.closeWorkspaceSplit()
+                    root.focusWorkspace(survivor)
+                }
+            }
+        }
         settleHomes()
         guard isMulti, let store = windows.first?.store else { return }
         windows.forEach { $0.reconcile() }
@@ -1159,6 +1732,7 @@ final class WindowRegistry: ObservableObject {
         guard focus.0 != lastFocus.workspace || focus.1 != lastFocus.tab, let workspace = focus.0 else { return }
         if windows.contains(where: { $0.arrived(workspace: workspace, tab: focus.1) }) { return }
         guard let key, key.workspaceId == workspace || !shownWorkspaceIds(except: key).contains(workspace) else { return }
-        key.followEngine(workspace: workspace, tab: focus.1)
+        key.workspaceId = workspace
+        if let tab = focus.1 { key.tabId = tab }
     }
 }

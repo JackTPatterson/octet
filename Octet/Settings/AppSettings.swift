@@ -43,9 +43,8 @@ struct OctetSettings: Codable, Equatable {
     /// A new tab's empty rows offer agents, recent folders and shortcuts
     /// until something runs in it.
     var newTabSplash = true
-    var paneBorders: PaneBorders = .auto
-    var paneGaps = true
-    var paneScrollbars = true
+    /// Off: the split's rounded cards draw its separation, and the engine's
+    /// own border lines would show through them as the terminal resizes.
     /// A strip under the terminal with the focused pane's runtime version,
     /// branch and changes while it's inside a git repo.
     var repoContextBar = true
@@ -95,6 +94,19 @@ struct OctetSettings: Codable, Equatable {
     var recap = true
     var recapAfterMinutes: Double = 5
     var agentSounds = true
+    /// Which agent notices to raise: one that finished, one waiting on
+    /// you, one whose turn failed (see AgentNoticeFilter).
+    var notifyFinished = true
+    var notifyNeedsInput = true
+    var notifyFailed = true
+    /// No notice for an agent whose tab is on screen while Octet is in
+    /// front; off, every one is announced.
+    var notifySuppressWhileVisible = true
+    /// The terminal bell (BEL): a sound, or a bounce when Octet is behind.
+    var terminalBell = true
+    /// The agent a new conversation starts with when none is named
+    /// (AgentSession.Engine's raw value).
+    var defaultAgent = "claude"
     var resumeAgentsOnRestore = true
     /// Restart an agent in the repository its commands keep `cd`ing into,
     /// with its conversation resumed. Off by default: it restarts agents.
@@ -114,6 +126,7 @@ struct OctetSettings: Codable, Equatable {
     /// Agents can read the sidebar terminal (read only): a socket the app
     /// listens on and an MCP server in each agent's settings, both only
     /// while this is on. Off by default: a terminal can hold secrets.
+    var agentsReadIssues = false
     var agentsReadSidebarTerminal = false
     var agentsSuggestSidebarCommands = false
     /// Waits: agents can set one (an MCP tool and `octet-cli wait`) when work
@@ -148,6 +161,9 @@ struct OctetSettings: Codable, Equatable {
     /// How long a tab closed with something running in it keeps running,
     /// out of sight, so it can be reopened. Zero closes at once.
     var keepClosedTabsMinutes: Double = 30
+    /// Ask before closing a tab, pane or drawer terminal when that would
+    /// stop an agent or a running command.
+    var confirmCloseRunning = true
     /// Keep the Mac from idle-sleeping while an agent is working.
     var keepAwake: KeepAwake.Mode = .pluggedIn
     /// Snapshot an agent's working tree as it starts each turn, to undo it.
@@ -221,7 +237,6 @@ struct OctetSettings: Codable, Equatable {
         case top, bottom
         var title: String { self == .top ? "Top" : "Bottom" }
     }
-    enum PaneBorders: String, Codable, CaseIterable { case auto, always, off }
     enum OptionAsAlt: String, Codable, CaseIterable { case off, left, right, both }
     enum ClipboardAccess: String, Codable, CaseIterable { case ask, allow, deny }
     enum NotificationDelivery: String, Codable, CaseIterable {
@@ -348,9 +363,6 @@ struct OctetSettings: Codable, Equatable {
         windowPadding = value("windowPadding", defaults.windowPadding)
         textPosition = value("textPosition", defaults.textPosition)
         newTabSplash = value("newTabSplash", defaults.newTabSplash)
-        paneBorders = value("paneBorders", defaults.paneBorders)
-        paneGaps = value("paneGaps", defaults.paneGaps)
-        paneScrollbars = value("paneScrollbars", defaults.paneScrollbars)
         repoContextBar = value("repoContextBar", defaults.repoContextBar)
         statusBarChips = value("statusBarChips", defaults.statusBarChips)
         statusBarCustomized = value("statusBarCustomized", defaults.statusBarCustomized)
@@ -384,6 +396,12 @@ struct OctetSettings: Codable, Equatable {
         }
         notificationDelaySeconds = value("notificationDelaySeconds", defaults.notificationDelaySeconds)
         agentSounds = value("agentSounds", defaults.agentSounds)
+        notifyFinished = value("notifyFinished", defaults.notifyFinished)
+        notifyNeedsInput = value("notifyNeedsInput", defaults.notifyNeedsInput)
+        notifyFailed = value("notifyFailed", defaults.notifyFailed)
+        notifySuppressWhileVisible = value("notifySuppressWhileVisible", defaults.notifySuppressWhileVisible)
+        terminalBell = value("terminalBell", defaults.terminalBell)
+        defaultAgent = value("defaultAgent", defaults.defaultAgent)
         recap = value("recap", defaults.recap)
         recapAfterMinutes = value("recapAfterMinutes", defaults.recapAfterMinutes)
         resumeAgentsOnRestore = value("resumeAgentsOnRestore", defaults.resumeAgentsOnRestore)
@@ -392,6 +410,7 @@ struct OctetSettings: Codable, Equatable {
         readClaudeAccountUsage = value("readClaudeAccountUsage", defaults.readClaudeAccountUsage)
         peersEnabled = value("peersEnabled", defaults.peersEnabled)
         delegationEnabled = value("delegationEnabled", defaults.delegationEnabled)
+        agentsReadIssues = value("agentsReadIssues", defaults.agentsReadIssues)
         agentsReadSidebarTerminal = value("agentsReadSidebarTerminal", defaults.agentsReadSidebarTerminal)
         agentsSuggestSidebarCommands = value("agentsSuggestSidebarCommands", defaults.agentsSuggestSidebarCommands)
         agentsSetWaits = value("agentsSetWaits", defaults.agentsSetWaits)
@@ -409,6 +428,7 @@ struct OctetSettings: Codable, Equatable {
         peerName = value("peerName", defaults.peerName)
         offerRecovery = value("offerRecovery", defaults.offerRecovery)
         keepClosedTabsMinutes = value("keepClosedTabsMinutes", defaults.keepClosedTabsMinutes)
+        confirmCloseRunning = value("confirmCloseRunning", defaults.confirmCloseRunning)
         keepAwake = value("keepAwake", defaults.keepAwake)
         checkpointTurns = value("checkpointTurns", defaults.checkpointTurns)
         accountProfiles = value("accountProfiles", defaults.accountProfiles)
@@ -490,10 +510,9 @@ struct OctetSettings: Codable, Equatable {
         case .roomy: (18, 12)
         }
         var lines = [
-            // One wheel notch is one report to the session server, which
-            // scrolls "Mouse scroll lines" per report; the renderer's own
-            // default of 3 made that 3 x 3 = 9 lines a notch.
-            "mouse-scroll-multiplier = discrete:1",
+            // Each pane's terminal scrolls its own scrollback now.
+            "mouse-scroll-multiplier = discrete:\(Int(mouseScrollLines))",
+            "copy-on-select = \(copyOnSelect ? "clipboard" : "false")",
             "background = \(theme.background)",
             "foreground = \(terminalForeground)",
             // Fractional sizes (13.5) are sizes too.
@@ -505,8 +524,7 @@ struct OctetSettings: Codable, Equatable {
             "background-opacity = \(String(format: "%.2f", effectiveBackgroundOpacity))",
             "background-blur = \(effectiveBackgroundBlur)",
             "window-padding-x = \(padding.0)",
-            // Top padding stays 0: Octet clips the session server's tab row from the top edge.
-            "window-padding-y = 0,\(padding.1)",
+            "window-padding-y = \(padding.1)",
             "macos-option-as-alt = \(optionAsAlt == .off ? "false" : optionAsAlt.rawValue == "both" ? "true" : optionAsAlt.rawValue)",
             "mouse-hide-while-typing = \(hideMouseWhileTyping)",
             // Ghostty recognizes ordinary URLs and opens them with the system
@@ -536,25 +554,15 @@ struct OctetSettings: Codable, Equatable {
             : defaultShell
     }
 
-    /// Session server config for Octet's session. Octet's chrome replaces the
-    /// server's own sidebar and tab row, so those stay fixed.
+    /// Session server config for Octet's session: what the engine itself
+    /// does with panes. Octet draws them and all the chrome around them.
     var sessionConfig: String {
         let scrollbackBytes = Int(scrollbackMegabytes * 1_000_000)
-        let theme = TerminalTheme.named(themeName)
         return """
         # Managed by Octet from Settings. Rewritten on launch and on every change.
-        onboarding = false
 
         [theme]
         name = "terminal"
-
-        # Split borders and dividers: quiet mixes of the background toward
-        # the text, like Octet's own hairlines, not the palette's near-white.
-        [theme.custom]
-        surface0 = "#\(TerminalTheme.mix(theme.background, theme.foreground, 0.08))"
-        surface1 = "#\(TerminalTheme.mix(theme.background, theme.foreground, 0.12))"
-        overlay0 = "#\(TerminalTheme.mix(theme.background, theme.foreground, 0.18))"
-        overlay1 = "#\(TerminalTheme.mix(theme.background, theme.foreground, 0.26))"
 
         [terminal]
         default_shell = \(tomlString(paneShell))
@@ -562,25 +570,20 @@ struct OctetSettings: Codable, Equatable {
         new_cwd = "\(newPaneDirectory.rawValue)"
         kitty_graphics = \(kittyGraphics)
 
+        # Octet ships its own patched engine and updates it with the app: the
+        # engine's own check (curl to herdr.dev) would only ever offer a stock
+        # build without Octet's patches.
         [update]
-        channel = "\(updateChannel.rawValue)"
-        version_check = \(checkForEngineUpdates)
+        channel = "stable"
+        version_check = false
 
         [ui]
-        sidebar_start_collapsed = true
-        sidebar_collapsed_mode = "hidden"
-        hide_tab_bar_when_single_tab = false
-        tab_bar_position = "top"
-        prompt_new_tab_name = false
-        prompt_new_workspace_name = false
         confirm_close = false
-        copy_on_select = \(copyOnSelect)
-        mouse_scroll_lines = \(Int(mouseScrollLines))
-        pane_borders = "\(paneBorders.rawValue)"
-        pane_gaps = \(paneGaps)
-        pane_scrollbars = \(paneScrollbars)
-        pane_outer_borders = false
-        accent = "#\(theme.accent)"
+        # Octet draws each pane's card, gutters and scrollbar: the engine
+        # keeps no cells back for its own, so a pane is sized as Octet's grid.
+        pane_borders = false
+        pane_gaps = false
+        pane_scrollbars = false
 
         [ui.toast]
         # Octet draws agent notices itself unless the system is doing it.
@@ -606,8 +609,6 @@ struct OctetSettings: Codable, Equatable {
         [experimental]
         pane_history = \(paneHistory)
         allow_nested = \(allowNestedSessions)
-
-        \(EngineNavigation.keysConfig)
         """
     }
 
@@ -844,6 +845,9 @@ final class SettingsStore: ObservableObject {
         }
         if values.checkInsPaused != old.checkInsPaused || values.checkInsNotifyWhenClosed != old.checkInsNotifyWhenClosed {
             CheckInCenter.shared.syncNotifications()
+        }
+        if values.agentsReadIssues != old.agentsReadIssues {
+            AgentMCPInstaller.shared.sync(server: IssueMCP.serverName)
         }
         if values.agentsReadSidebarTerminal != old.agentsReadSidebarTerminal
             || values.agentsSuggestSidebarCommands != old.agentsSuggestSidebarCommands {

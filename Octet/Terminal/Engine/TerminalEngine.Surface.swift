@@ -1,3 +1,4 @@
+import Foundation
 import GhosttyKit
 
 extension TerminalEngine {
@@ -21,6 +22,15 @@ extension TerminalEngine {
         /// Initialize from the C structure.
         init(cSurface: ghostty_surface_t) {
             self.surface = cSurface
+        }
+
+        /// Draws program output on a mirror surface, as if its process wrote it.
+        @MainActor
+        func processOutput(_ bytes: Data) {
+            bytes.withUnsafeBytes { raw in
+                guard let base = raw.baseAddress else { return }
+                ghostty_surface_process_output(surface, base.assumingMemoryBound(to: CChar.self), UInt(raw.count))
+            }
         }
 
         deinit {

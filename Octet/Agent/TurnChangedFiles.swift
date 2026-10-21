@@ -36,8 +36,8 @@ struct TurnChangedFilesCard: View {
             }
         }
         .background(Theme.card.opacity(0.55))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.border, lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.lg).strokeBorder(Theme.border, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.lg))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Files changed in turn \(changes.number)")
     }
@@ -80,7 +80,7 @@ struct TurnChangedFilesCard: View {
         switch node {
         case .folder(let name, let path, _):
             let collapsed = collapsedFolders.contains(path)
-            ChangedFileRow(depth: depth, added: node.added, removed: node.removed, action: {
+            TurnFileRow(depth: depth, added: node.added, removed: node.removed, action: {
                 if collapsed { collapsedFolders.remove(path) } else { collapsedFolders.insert(path) }
             }) {
                 OctetIcon("chevron.right", size: 10)
@@ -94,7 +94,7 @@ struct TurnChangedFilesCard: View {
             .accessibilityValue(collapsed ? "Collapsed" : "Expanded")
         case .file(let name, let file):
             let shown = previewing.contains(file.path)
-            ChangedFileRow(depth: depth, added: file.added, removed: file.removed, action: {
+            TurnFileRow(depth: depth, added: file.added, removed: file.removed, action: {
                 actions.openTurnDiff(changes, file.path)
             }) {
                 OctetIconButton(icon: "chevron.right", help: shown ? "Hide this turn's edits" : "Show this turn's edits",
@@ -143,7 +143,7 @@ struct TurnChangedFilesCard: View {
 
 /// One row of the changed-files tree: indented, a fill under the pointer,
 /// the line counts at the end, extra buttons showing on hover.
-private struct ChangedFileRow<Label: View, Trailing: View>: View {
+private struct TurnFileRow<Label: View, Trailing: View>: View {
     let depth: Int
     let added: Int
     let removed: Int

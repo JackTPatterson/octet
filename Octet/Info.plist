@@ -77,5 +77,80 @@
 	<string>https://raw.githubusercontent.com/JackTPatterson/octet/master/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>oa4GGKMpx8/w4xd8MLNXAgTLv98THvshPLjL5ikVZJ8=</string>
+	<!-- Octet's own drags (tabs, panes, workspaces…), never public text, so
+	     a terminal or another app can't take an id as typed input. -->
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Octet drag (tab)</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.jpxsoftware.octet.drag.tab</string>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Octet drag (workspace)</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.jpxsoftware.octet.drag.workspace</string>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Octet drag (pane)</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.jpxsoftware.octet.drag.pane</string>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Octet drag (stripTab)</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.jpxsoftware.octet.drag.stripTab</string>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Octet drag (plane)</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.jpxsoftware.octet.drag.plane</string>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Octet drag (ticket)</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.jpxsoftware.octet.drag.ticket</string>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Octet drag (statusChip)</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.jpxsoftware.octet.drag.statusChip</string>
+		</dict>
+	</array>
 </dict>
 </plist>

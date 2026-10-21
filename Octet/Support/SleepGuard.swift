@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import IOKit.ps
 import IOKit.pwr_mgt
@@ -7,8 +8,11 @@ import IOKit.pwr_mgt
 /// the work carries on. Closed tabs still running count too: they're
 /// working, just out of sight.
 @MainActor
-final class SleepGuard {
+final class SleepGuard: ObservableObject {
     static let shared = SleepGuard()
+
+    /// Whether the Mac is being kept awake now, for the footer's awake chip.
+    @Published private(set) var isHolding = false
 
     private var assertion: IOPMAssertionID = 0
     private var heldReason: String?
@@ -51,15 +55,14 @@ final class SleepGuard {
         guard result == kIOReturnSuccess else { return }
         assertion = id
         heldReason = reason
+        isHolding = true
     }
-
-    /// Whether the Mac is being kept awake right now.
-    var isHolding: Bool { heldReason != nil }
 
     private func release() {
         if heldReason != nil { IOPMAssertionRelease(assertion) }
         assertion = 0
         heldReason = nil
+        isHolding = false
     }
 
     private static func onBattery() -> Bool {

@@ -18,6 +18,18 @@ struct DockerContainer: Decodable, Identifiable {
     }
     var running: Bool { State == "running" }
     var paused: Bool { State == "paused" }
+    var icon: String { running ? "circle.check" : State == "restarting" || paused ? "circle.dot" : "circle.x" }
+    var tone: ServiceTone {
+        if running { return .good }
+        if State == "restarting" || paused { return .pending }
+        return State == "dead" ? .bad : .idle
+    }
+    var rowSubtitle: String { [Image, service.isEmpty ? nil : service].compactMap { $0 }.joined(separator: " · ") }
+    /// The first published host port, e.g. ":3000".
+    var primaryPort: String? {
+        guard let ports = Ports, let range = ports.range(of: #":(\d+)->"#, options: .regularExpression) else { return nil }
+        return ports[range].dropLast(2).description
+    }
     var removable: Bool { ["exited", "created", "dead"].contains(State) }
     var project: String { label("com.docker.compose.project") }
     var service: String { label("com.docker.compose.service") }
@@ -134,6 +146,17 @@ final class DockerPanelModel: ObservableObject {
 
     var local: Bool { contexts.first(where: { $0.Name == context })?.isLocal == true }
     var projects: [String] { Array(Set(containers.map(\.project).filter { !$0.isEmpty })).sorted() }
+
+    #if DEBUG
+    /// Made-up containers for the demo hook; context stays empty so nothing polls docker.
+    func loadSample(_ lines: String) {
+        containers = (try? DockerJSON.lines(lines, as: DockerContainer.self)) ?? []
+        selected = containers.first(where: { $0.Names == "shop-web-1" })?.id
+        updated = Date()
+    }
+    #else
+    func loadSample(_ lines: String) {}
+    #endif
 
     func discover() async {
         let result = await DockerCommand.run(["context", "ls", "--format", "{{json .}}"])

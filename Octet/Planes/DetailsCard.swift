@@ -63,7 +63,7 @@ struct DetailsCard: View {
                 let waiting = agents.filter { $0.agentStatus == .blocked }.count
                 DetailsRow(icon: "tool.agent",
                            title: waiting > 0 ? "\(waiting) waiting on you" : working > 0 ? "\(working) working" : "\(agents.count) idle",
-                           tint: waiting > 0 ? Color(hex: AgentStateColor.blocked) : nil,
+                           tint: waiting > 0 ? Theme.warning : nil,
                            help: "Show agents") { window.toggleAgentsBoard() }
             }
         }
@@ -162,7 +162,7 @@ private struct DetailsRowLabel<Trailing: View>: View {
                 .foregroundStyle(tint ?? Theme.textTertiary)
                 .frame(width: 18)
             Text(title)
-                .font(.system(size: 13, weight: .medium))
+                .font(Theme.Text.transcriptMedium)
                 .foregroundStyle(muted ? Theme.textTertiary : Theme.textPrimary.opacity(0.85))
                 .lineLimit(1)
                 .truncationMode(.tail)

@@ -89,7 +89,7 @@ struct OpenCodeStream: Equatable {
             applyError(properties["error"] as? [String: Any], to: &conversation)
         case "session.compacted":
             guard session == sessionId else { return }
-            conversation.items.append(AgentItem(id: UUID().uuidString, kind: .notice("The conversation was compacted to fit the model's context.")))
+            conversation.finishCompaction()
         default:
             break
         }
@@ -283,8 +283,9 @@ struct OpenCodeStream: Equatable {
         conversation.isRunning = false
         guard let error else { return }
         let text = Self.describe(error)
-        if error["name"] as? String != "MessageAbortedError" { conversation.lastError = text }
-        conversation.items.append(AgentItem(id: UUID().uuidString, kind: .notice(text)))
+        let aborted = error["name"] as? String == "MessageAbortedError"
+        if !aborted { conversation.lastError = text }
+        conversation.appendNotice(text, style: aborted ? .plain : .error)
     }
 
     /// An OpenCode error in words, with what to do about it where that's known.

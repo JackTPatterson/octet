@@ -6,6 +6,10 @@ enum OctetTerminalMenu {
     static func menu(for surface: TerminalEngine.SurfaceView) -> NSMenu? {
         guard let window = WindowRegistry.shared.windows.first(where: { $0.nsWindow === surface.window })
                 ?? WindowRegistry.shared.key else { return nil }
+        // The menu is about the pane it was opened on: it takes focus, as a
+        // click would, so what the menu does lands there.
+        let clickedPane = (surface.superview as? PaneMirrorView)?.paneId
+        if clickedPane != nil, surface.window?.firstResponder !== surface { surface.window?.makeFirstResponder(surface) }
         let menu = NSMenu()
         if let text = surface.accessibilitySelectedText(), !text.isEmpty {
             menu.addItem(item("Copy", key: "c") { surface.copy(nil) })
@@ -31,7 +35,7 @@ enum OctetTerminalMenu {
         menu.addItem(.separator())
         // ⌃L: the shell (or program) redraws a clear screen; scrollback stays.
         menu.addItem(item("Clear Screen") {
-            guard let pane = window.store.keyPaneId else { return }
+            guard let pane = clickedPane ?? window.store.keyPaneId else { return }
             let client = window.store.client
             EngineClient.inputQueue.async { _ = try? client.call("pane.send_text", ["pane_id": pane, "text": "\u{0c}"]) }
         })

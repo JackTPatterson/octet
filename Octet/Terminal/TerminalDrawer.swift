@@ -42,8 +42,8 @@ struct TerminalDrawer: View {
             if !current.showsSidebar {
                 DrawerTerminalActions(terminals: terminals, workspace: currentWorkspace)
                     .padding(2)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(Theme.chrome))
-                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.border))
+                    .background(RoundedRectangle(cornerRadius: Theme.Radius.md).fill(Theme.chrome))
+                    .overlay(RoundedRectangle(cornerRadius: Theme.Radius.md).strokeBorder(Theme.border))
                     .padding(8)
             }
         }
@@ -143,21 +143,21 @@ private struct DrawerTerminalActions: View {
         HStack(spacing: 0) {
             // Left enabled while full and dimmed instead, so the tooltip still
             // says why; pressing it beeps.
-            OctetIconButton(icon: "rectangle.split.2x1", help: "Split Terminal Horizontally (⌘D)" + full, compact: compact) {
+            OctetIconButton(icon: "rectangle.split.2x1", help: OctetShortcut.drawerSplitRight.help(OctetShortcut.drawerSplitRight.title) + full, compact: compact) {
                 terminals.perform(.splitHorizontally, workspace: workspace)
             }
             .opacity(layout.canSplit ? 1 : 0.45)
             divider
-            OctetIconButton(icon: "rectangle.split.1x2", help: "Split Terminal Vertically (⌘⇧D)" + full, compact: compact) {
+            OctetIconButton(icon: "rectangle.split.1x2", help: OctetShortcut.drawerSplitDown.help(OctetShortcut.drawerSplitDown.title) + full, compact: compact) {
                 terminals.perform(.splitVertically, workspace: workspace)
             }
             .opacity(layout.canSplit ? 1 : 0.45)
             divider
-            OctetIconButton(icon: "plus", help: "New Terminal (⌘N)", compact: compact) {
+            OctetIconButton(icon: "plus", help: OctetShortcut.drawerNewTerminal.keys.map { "New Terminal (\($0) in the drawer)" } ?? "New Terminal", compact: compact) {
                 terminals.perform(.newTerminal, workspace: workspace)
             }
             divider
-            OctetIconButton(icon: "trash", help: "Close Terminal (⌘W)", compact: compact) {
+            OctetIconButton(icon: "xmark", help: OctetShortcut.drawerClose.help(OctetShortcut.drawerClose.title), compact: compact) {
                 terminals.perform(.close, workspace: workspace)
             }
         }
@@ -259,7 +259,7 @@ private struct DrawerTerminalRow: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("Close Terminal (⌘W)")
+            .help(OctetShortcut.drawerClose.help(OctetShortcut.drawerClose.title))
             .accessibilityLabel("Close \(label)")
             Text(label)
                 .font(Theme.uiFont)
@@ -414,19 +414,17 @@ final class DrawerTerminals: ObservableObject {
     /// Asks first when a program other than the shell is running in it,
     /// since closing stops it; an idle prompt just closes.
     private func requestClose(_ id: Int, workspace: String) {
-        guard let view = surfaces[Self.key(workspace, id)]?.view, let running = Self.runningProgram(in: view) else {
+        guard SettingsStore.shared.values.confirmCloseRunning,
+              let view = surfaces[Self.key(workspace, id)]?.view, let running = Self.runningProgram(in: view) else {
             close(id, workspace: workspace)
             return
         }
-        let alert = NSAlert()
-        alert.messageText = "Close \(layout(workspace).label(of: id, title: title(of: id, workspace: workspace)))?"
-        alert.informativeText = "\(running) is still running in it. Closing the terminal stops it."
-        alert.addButton(withTitle: "Close")
-        alert.addButton(withTitle: "Cancel")
-        let finish: (NSApplication.ModalResponse) -> Void = { [weak self] response in
-            if response == .alertFirstButtonReturn { self?.close(id, workspace: workspace) }
+        // The drawer's terminals aren't kept after closing, so this always stops it.
+        let work = AgentBrand.forAgent(running).map { ClosingWork(agent: $0.displayName, agentWorking: true) }
+            ?? ClosingWork(command: running)
+        SessionStore.ask(ClosePrompt.question(for: [work], place: "terminal")) { [weak self] in
+            self?.close(id, workspace: workspace)
         }
-        if let window = view.window { alert.beginSheetModal(for: window, completionHandler: finish) } else { finish(alert.runModal()) }
     }
 
     private func close(_ id: Int, workspace: String) {
@@ -663,12 +661,22 @@ private struct TerminalDrawerResizeHandle: View {
                 DragGesture(minimumDistance: 1, coordinateSpace: .global)
                     .onChanged { drag in
                         let start = startHeight ?? ui.terminalDrawerHeight
+                        if startHeight == nil { ResizeCancel.shared.begin { ui.terminalDrawerHeight = start } }
                         startHeight = start
+                        guard ResizeCancel.shared.isLive else { return }
+                        NSCursor.resizeUpDown.set()
                         ui.terminalDrawerHeight = min(Self.maxHeight,
                             max(UIState.terminalDrawerMinHeight, (start - drag.translation.height).rounded()))
                     }
-                    .onEnded { _ in startHeight = nil }
+                    .onEnded { _ in
+                        startHeight = nil
+                        ResizeCancel.shared.end()
+                    }
             )
+            .onDisappear {
+                if startHeight != nil { ResizeCancel.shared.end() }
+                startHeight = nil
+            }
             .onTapGesture(count: 2) { ui.terminalDrawerHeight = UIState.terminalDrawerDefaultHeight }
             .help("Drag to resize the terminal drawer. Double-click to reset.")
             .accessibilityLabel("Terminal drawer height")
@@ -698,7 +706,6 @@ private struct DrawerTerminal: View {
     /// Room kept at the right of the bars above the shell for the floating
     /// strip, which would otherwise cover Run, Clear and Turn Off.
     var stripInset: CGFloat = 0
-    @StateObject private var anchor = TerminalAnchor()
     @ObservedObject private var settings = SettingsStore.shared
     @ObservedObject private var suggestions = SidebarSuggestions.shared
     @State private var generation = 0
@@ -725,7 +732,7 @@ private struct DrawerTerminal: View {
         HStack(spacing: 8) {
             Image(systemName: "sparkles").font(.system(size: 10)).foregroundStyle(Theme.accent)
             Text(command)
-                .font(.system(size: 11, design: .monospaced))
+                .font(Theme.Text.mono(11))
                 .foregroundStyle(Theme.textPrimary)
                 .lineLimit(2).truncationMode(.middle)
                 .textSelection(.enabled)
@@ -748,7 +755,7 @@ private struct DrawerTerminal: View {
     /// Said over the terminal for as long as agents can read it.
     private var readableNote: some View {
         HStack(spacing: 6) {
-            Circle().fill(Color.orange).frame(width: 6, height: 6)
+            Circle().fill(Theme.warning).frame(width: 6, height: 6)
             Text("Agents can read this terminal").font(Theme.captionFont).foregroundStyle(Theme.textSecondary)
             Spacer(minLength: 4)
             Button("Turn Off") { settings.values.agentsReadSidebarTerminal = false }
@@ -767,7 +774,6 @@ private struct DrawerTerminal: View {
                 command: Self.shellCommand,
                 environment: Self.environment,
                 workingDirectory: folder,
-                anchor: anchor,
                 onTitleChange: { terminals.titleChanged($0, workspace: workspace, id: id) },
                 onExit: {
                     exited = true
@@ -786,7 +792,7 @@ private struct DrawerTerminal: View {
                     }
                 }
                 .padding(16)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Theme.chrome))
+                .background(RoundedRectangle(cornerRadius: Theme.Radius.lg).fill(Theme.chrome))
             }
         }
     }

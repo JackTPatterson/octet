@@ -21,6 +21,12 @@ final class PromptEditor: ObservableObject {
     /// ⌃R: the menu is searching history rather than completing a word.
     @Published private(set) var isSearchingHistory = false
     var completionsOpen: Bool { !completions.isEmpty }
+    /// A row in place of the menu while Tab's values are on their way, or
+    /// once they came back with nothing.
+    enum CompletionNotice: Equatable { case loading, empty }
+    @Published private(set) var completionNotice: CompletionNotice?
+    /// Whether the menu shows: its entries, or a notice in their place.
+    var menuShown: Bool { completionsOpen || completionNotice != nil }
 
     private unowned let store: SessionStore
     private var history = CommandHistory()
@@ -248,7 +254,7 @@ final class PromptEditor: ObservableObject {
         case 53: // Escape
             guard isActive else { return false }
             // The menu closes first; a second escape hands the line back.
-            if completionsOpen {
+            if menuShown {
                 closeCompletions()
                 return true
             }
@@ -327,6 +333,7 @@ final class PromptEditor: ObservableObject {
                 // Values are on their way; the menu opens when they land.
                 if awaitingValues {
                     menuRequested = true
+                    completionNotice = .loading
                     return true
                 }
                 // Nothing of Octet's to offer: let the shell try its own.
@@ -422,15 +429,8 @@ final class PromptEditor: ObservableObject {
         if current != anchor { anchor = current }
     }
 
-    /// The column just past the focused pane's right edge, so the line
-    /// stops where the pane does instead of painting over its neighbour.
-    private func paneRightEdge() -> Int? {
-        guard let paneId else { return nil }
-        for layout in store.snapshot.layouts {
-            if let pane = layout.panes.first(where: { $0.paneId == paneId }) { return pane.rect.x + pane.rect.width }
-        }
-        return nil
-    }
+    /// Each pane is a terminal of its own: the line stops at its edge anyway.
+    private func paneRightEdge() -> Int? { nil }
 
     /// PATH and branches are disk work; read them off the main thread.
     private func loadCompletionSources() {
@@ -507,8 +507,14 @@ final class PromptEditor: ObservableObject {
     /// asks for it.
     private func followMenu() {
         if completionsOpen || menuRequested {
+            let requested = menuRequested
             menuRequested = false
             openCompletions()
+            // Asked for with Tab: still on the way, keep waiting; nothing
+            // came, say so rather than vanish.
+            if requested, !completionsOpen {
+                if awaitingValues { menuRequested = true } else { showNoCompletions() }
+            }
         } else if opensByItself {
             openCompletions(automatic: true)
         }
@@ -559,6 +565,15 @@ final class PromptEditor: ObservableObject {
         completionIndex = 0
         completionColumn = context.range.lowerBound
         isSearchingHistory = false
+        if !results.isEmpty || !awaitingValues { completionNotice = nil }
+    }
+
+    /// "No completions" for a moment where the menu would have been.
+    private func showNoCompletions() {
+        completionNotice = .empty
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            if self?.completionNotice == .empty { self?.completionNotice = nil }
+        }
     }
 
     /// ⌃R: the same menu, searching everything you have run.
@@ -577,6 +592,8 @@ final class PromptEditor: ObservableObject {
     }
 
     private func closeCompletions() {
+        completionNotice = nil
+        menuRequested = false
         completions = []
         completionIndex = 0
         isSearchingHistory = false

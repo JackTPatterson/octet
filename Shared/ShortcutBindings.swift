@@ -197,6 +197,19 @@ struct ShortcutTable {
         let id: String
         let title: String
         let defaultBinding: ShortcutBinding?
+        /// Where the key applies, for one that only works while something
+        /// has focus (the browser page, a conversation); nil for the menus,
+        /// which apply everywhere. A scoped key may share a menu's key on
+        /// purpose, as the browser's ⌘R does, so only keys in the same scope
+        /// conflict, and the terminal is never told to let a scoped one go.
+        var scope: String? = nil
+
+        init(id: String, title: String, defaultBinding: ShortcutBinding?, scope: String? = nil) {
+            self.id = id
+            self.title = title
+            self.defaultBinding = defaultBinding
+            self.scope = scope
+        }
     }
 
     /// A key someone else holds: Quit and Settings (the system's), Copy and
@@ -241,7 +254,7 @@ struct ShortcutTable {
         var result: [String: String] = [:]
         for (binding, list) in holders {
             for entry in list {
-                if let other = list.first(where: { $0.id != entry.id }) {
+                if let other = list.first(where: { $0.id != entry.id && $0.scope == entry.scope }) {
                     result[entry.id] = other.title
                 } else if let held = reserved.first(where: { $0.binding == binding }) {
                     result[entry.id] = held.title
@@ -269,7 +282,9 @@ struct ShortcutTable {
         if let binding {
             guard binding.isAllowed else { return .notAllowed }
             if let held = reserved.first(where: { $0.binding == binding }) { return .reserved(held.title) }
-            for other in entries where other.id != id && effective(other.id, overrides: overrides) == binding {
+            let scope = entry(id)?.scope
+            for other in entries where other.id != id && other.scope == scope
+                && effective(other.id, overrides: overrides) == binding {
                 result[other.id] = ""
                 displaced.append(other.title)
             }
@@ -292,7 +307,7 @@ struct ShortcutTable {
     func terminalPassThrough(overrides: [String: String], extra: [String] = []) -> String {
         var triggers: [String] = []
         var seen = Set<String>()
-        let bindings = entries.compactMap { effective($0.id, overrides: overrides) }
+        let bindings = entries.filter { $0.scope == nil }.compactMap { effective($0.id, overrides: overrides) }
             + reserved.filter(\.menu).map(\.binding)
         for trigger in bindings.flatMap(\.terminalTriggers) + extra where seen.insert(trigger).inserted {
             triggers.append(trigger)

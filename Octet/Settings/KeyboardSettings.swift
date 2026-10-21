@@ -17,6 +17,8 @@ struct KeyboardSettings: View {
         let conflicts = OctetShortcut.table.conflicts(overrides: overrides)
         let groups = filteredGroups
         toolbar
+        let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
+        if needle.isEmpty || "hotkey from any app global".contains(needle) { fromAnyApp }
         if groups.isEmpty {
             Text("No shortcuts match your search.")
                 .font(Theme.uiFont)
@@ -44,6 +46,21 @@ struct KeyboardSettings: View {
         }
     }
 
+    /// The one key that works outside Octet. Also under General, beside
+    /// the drop-down that goes with it; here so a search for keys finds it.
+    private var fromAnyApp: some View {
+        SettingsGroup(title: "From any app") {
+            SettingsRow(
+                title: "Hotkey from any app",
+                detail: "Brings Octet to the front from whatever you're in, and hides it again when it's already there.",
+                setting: \.globalHotkey
+            ) {
+                OctetSelect(selection: $settings.values.globalHotkey,
+                            options: GlobalHotkey.Choice.allCases.map { ($0, $0.title) }, width: 190)
+            }
+        }
+    }
+
     private var toolbar: some View {
         HStack(spacing: 10) {
             OctetTextField(placeholder: "Search shortcuts", text: $query)
@@ -64,18 +81,8 @@ struct KeyboardSettings: View {
         }
     }
 
-    /// Matches a shortcut's title, its group, or its keys ("⌘⇧" finds
-    /// every ⌘⇧ shortcut; "cmd" isn't spelled out anywhere, so symbols it is).
     private var filteredGroups: [(title: String, shortcuts: [OctetShortcut])] {
-        let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !needle.isEmpty else { return OctetShortcut.groups }
-        return OctetShortcut.groups.compactMap { group in
-            if group.title.lowercased().contains(needle) { return group }
-            let matches = group.shortcuts.filter {
-                $0.title.lowercased().contains(needle) || $0.display.lowercased().contains(needle)
-            }
-            return matches.isEmpty ? nil : (group.title, matches)
-        }
+        OctetShortcut.groups(matching: query)
     }
 
     /// The most recent binding wins: whatever held the key before is
@@ -111,7 +118,7 @@ private struct ShortcutRow: View {
     @State private var hovered = false
 
     var body: some View {
-        SettingsRow(title: shortcut.title, badge: isCustom ? "Custom" : nil) {
+        SettingsRow(title: shortcut.title, detail: shortcut.scope?.whereText, badge: isCustom ? "Custom" : nil) {
             HStack(spacing: 8) {
                 if let conflict {
                     OctetIcon("exclamationmark.triangle.fill", size: 13)
@@ -150,7 +157,7 @@ private struct ShortcutRow: View {
             .menuIndicator(.hidden)
             .fixedSize()
             .foregroundStyle(Theme.textTertiary)
-            .opacity(hovered ? 1 : 0)
+            .hoverReveal(hovered)
             .animation(.easeOut(duration: 0.12), value: hovered)
             .help("More for \(shortcut.title)")
             .accessibilityLabel("More for \(shortcut.title)")
@@ -173,9 +180,7 @@ private struct ShortcutKeycapPill: View {
         Button(action: startRecording) {
             HStack(spacing: 3) {
                 if let keys = shortcut.keys {
-                    ForEach(Array(Self.caps(keys).enumerated()), id: \.offset) { _, cap in
-                        Keycap(text: cap)
-                    }
+                    KeyCombo(keys: keys)
                 } else {
                     Text("Unassigned").font(Theme.uiFont).foregroundStyle(Theme.textTertiary)
                 }
@@ -193,20 +198,6 @@ private struct ShortcutKeycapPill: View {
         .help(shortcut.fixedReason ?? "Click to record a new shortcut")
         .accessibilityLabel(shortcut.keys.map { "\(shortcut.title), \($0)" } ?? "\(shortcut.title), unassigned")
         .accessibilityHint(shortcut.customizable ? "Records a new shortcut" : "")
-    }
-
-    /// "⌃⌘↓" as ⌃, ⌘, ↓; a range label ("⌘1…⌘8") stays one cap.
-    static func caps(_ keys: String) -> [String] {
-        guard !keys.contains("…") else { return [keys] }
-        let modifiers: Set<Character> = ["⌃", "⌥", "⇧", "⌘"]
-        var caps: [String] = []
-        var rest = Substring(keys)
-        while let first = rest.first, modifiers.contains(first) {
-            caps.append(String(first))
-            rest = rest.dropFirst()
-        }
-        if !rest.isEmpty { caps.append(String(rest)) }
-        return caps
     }
 }
 

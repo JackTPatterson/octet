@@ -34,7 +34,7 @@ runs:
       uses: actions/cache@v4
       with:
         path: Vendor/engine
-        key: engine-${{ runner.arch }}-${{ hashFiles('scripts/build-engine.sh', 'scripts/fetch-engine.sh', 'scripts/engine-*.patch') }}
+        key: engine-${{ runner.arch }}-${{ hashFiles('scripts/build-engine.sh', 'scripts/fetch-engine.sh') }}
 
     # The engine vendors libghostty-vt, which its build compiles with Zig.
     - name: Install Zig

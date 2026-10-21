@@ -1,8 +1,9 @@
 import SwiftUI
 
-/// The commit box, pinned under the changes: a message, Commit (⌘↩) and a
-/// menu for Commit & Push or asking the agent. Why Commit is unavailable is
-/// in its tooltip, not on screen.
+/// The commit box, pinned under the changes: a message, the primary git
+/// button (Commit, or Commit & Push when that's all it takes; ⌘↩) and a
+/// menu for the other way or asking the agent. Why it's unavailable is in
+/// its tooltip, not on screen.
 struct GitCommitBar: View {
     @ObservedObject var model: GitPanelModel
     let group: GitPanelModel.Group
@@ -10,21 +11,13 @@ struct GitCommitBar: View {
     private var checkout: AgentGit.Checkout { group.checkout }
 
     var body: some View {
-        let plan = GitRemote.commitPlan(files: checkout.files)
         let message = Binding(get: { model.drafts[checkout.top] ?? "" }, set: { model.drafts[checkout.top] = $0 })
         let block = GitCommitBlock.block(message: message.wrappedValue, busy: model.busy[checkout.top] != nil,
                                          conflicts: checkout.conflicted.count)
         VStack(alignment: .leading, spacing: 8) {
             OctetTextEditor(placeholder: "Commit message", text: message, minHeight: 44, maxHeight: 64)
             HStack(spacing: 4) {
-                OctetButton(title: plan.stageAll ? "Commit All" : "Commit", kind: .primary, compact: true) {
-                    model.commit(checkout)
-                }
-                .disabled(block != nil)
-                .keyboardShortcut(.return, modifiers: .command)
-                .help(block?.reason ?? (plan.stageAll
-                      ? "Nothing is staged, so this commits all \(Recap.count(plan.count, "change")). (⌘↩)"
-                      : "Commits the \(Recap.count(plan.count, "staged file")). (⌘↩)"))
+                GitPrimaryButton(model: model, group: group)
                 OctetIconButton(icon: "chevron.down", help: "More commit options", compact: true) { presentMenu(block) }
                 Spacer(minLength: 0)
             }
@@ -33,7 +26,11 @@ struct GitCommitBar: View {
 
     private func presentMenu(_ block: GitCommitBlock?) {
         var items: [OctetMenuItem] = []
-        if checkout.branch.name != nil {
+        let primary = GitPrimaryButton(model: model, group: group).action
+        if primary.kind == .commitAndPush {
+            items.append(.action("Commit Only", icon: "check", enabled: block == nil,
+                                 help: block?.reason ?? "Commit without pushing") { model.commit(checkout) })
+        } else if checkout.branch.name != nil {
             items.append(.action("Commit & Push", icon: "arrow.up", enabled: block == nil,
                                  help: block?.reason ?? "Commit, then push the branch") { model.commit(checkout, push: true) })
         }

@@ -11,10 +11,11 @@ enum WorktreeCleanup {
         var merged = false
         var dirty = false
         var bytes: Int64?
+        var blockers: [String] = []
 
         var id: String { path }
         /// Merged into the default branch with nothing uncommitted.
-        var removable: Bool { !isMain && merged && !dirty }
+        var removable: Bool { !isMain && merged && !dirty && blockers.isEmpty }
     }
 
     /// `git worktree list --porcelain`.

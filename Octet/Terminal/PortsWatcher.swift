@@ -7,6 +7,8 @@ final class PortsWatcher: ObservableObject {
     static let shared = PortsWatcher()
 
     @Published private(set) var byPane: [String: [Int]] = [:]
+    /// Each pane's shell, for what the footer counts as Octet's memory.
+    @Published private(set) var shellPIDs: [String: Int] = [:]
     /// What serves each port, as a `LanguageLogo` service slug.
     @Published private(set) var services: [Int: String] = [:]
     /// The processes listening on each port shown, for stopping them.
@@ -94,6 +96,7 @@ final class PortsWatcher: ObservableObject {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     self.reading = false
+                    if self.shellPIDs != shells { self.shellPIDs = shells }
                     self.pages = pages
                     self.unanswered = stillUnanswered
                     if found != self.byPane { self.byPane = found }
@@ -175,7 +178,16 @@ final class PortsWatcher: ObservableObject {
         let exited = DispatchSemaphore(value: 0)
         process.terminationHandler = { _ in exited.signal() }
         guard (try? process.run()) != nil else { return "" }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let data: Data
+        do {
+            data = try pipe.fileHandleForReading.readToEnd() ?? Data()
+        } catch {
+            // The legacy reader raises an Objective-C exception on an I/O
+            // failure, taking down the app during background discovery.
+            if process.isRunning { process.terminate() }
+            exited.wait()
+            return ""
+        }
         exited.wait()
         return String(decoding: data, as: UTF8.self)
     }

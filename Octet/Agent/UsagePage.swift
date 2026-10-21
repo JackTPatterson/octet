@@ -392,7 +392,7 @@ struct UsagePage: View {
                 let gaps = CGFloat(max(0, shown.count - 1)) * 2
                 HStack(spacing: 2) {
                     ForEach(shown) { slice in
-                        RoundedRectangle(cornerRadius: 3)
+                        RoundedRectangle(cornerRadius: Theme.Radius.xs)
                             .fill(slice.color)
                             .frame(width: max(2, (proxy.size.width - gaps) * slice.value / max(whole, .leastNonzeroMagnitude)))
                             .help("\(slice.id): \(UsageFormat.value(slice.value, measure)) (\(UsageFormat.percent(slice.value / whole)))")

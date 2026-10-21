@@ -60,11 +60,11 @@ struct PeersSettingsGroup: View {
                 PeerMachineIcon(name: center.machineName, size: 15)
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
-                        Text(center.machineName).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.textPrimary)
+                        Text(center.machineName).font(Theme.Text.transcriptMedium).foregroundStyle(Theme.textPrimary)
                         PeerChip(text: "This Mac")
                     }
                     Text("Octet \(PeerCenter.appVersion) · Listening\(center.port.map { " on port \($0)" } ?? "")")
-                        .font(.system(size: 11.5)).foregroundStyle(Theme.textTertiary)
+                        .font(Theme.interfaceFont(11.5)).foregroundStyle(Theme.textTertiary)
                 }
                 Spacer(minLength: 8)
                 PeerStatusDot(tone: .online, help: "Listening for your other Macs")
@@ -141,12 +141,12 @@ private struct PeerSettingsRow: View {
             PeerMachineIcon(name: peer.name, size: 14)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    Text(peer.name).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                    Text(peer.name).font(Theme.Text.transcriptMedium).foregroundStyle(Theme.textPrimary).lineLimit(1)
                     PeerStatusDot(tone: status.tone, size: 6)
                 }
                 TimelineView(.periodic(from: .now, by: 60)) { context in
                     Text(state.status(now: context.date).text)
-                        .font(.system(size: 11.5))
+                        .font(Theme.interfaceFont(11.5))
                         .foregroundStyle(status.tone.textColor)
                         .lineLimit(1)
                 }

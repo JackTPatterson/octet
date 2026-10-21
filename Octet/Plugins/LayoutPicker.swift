@@ -200,7 +200,7 @@ struct LayoutThumbnail: View {
             LayoutPicture(rects: rects ?? layout.layout.rects(), highlighted: hovered)
             .frame(width: 46, height: 32)
             .padding(3)
-            .background(RoundedRectangle(cornerRadius: 4).fill(hovered ? Theme.hover : .clear))
+            .background(RoundedRectangle(cornerRadius: Theme.Radius.sm).fill(hovered ? Theme.hover : .clear))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

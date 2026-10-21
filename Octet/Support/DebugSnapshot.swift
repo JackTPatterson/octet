@@ -22,15 +22,12 @@ enum DebugSnapshot {
     }
 
     static var overlayVisible: Bool { !overlays.isEmpty }
-    /// Set while a SwiftUI cover sits over part of the terminal.
-    static var coverActive = false
 
     /// Toasts draw over the terminal area, so the composited terminal image
     /// would erase them from the capture.
     @MainActor
     static var overlaysOnTop: Bool {
         overlayVisible || !ToastCenter.shared.visibleToasts.isEmpty || !AgentBannerCenter.shared.banners.isEmpty
-            || coverActive
     }
     static func start() {
         // Encoding window PNGs is main-thread heavy: debug builds only.
@@ -83,11 +80,11 @@ enum DebugSnapshot {
         let toasts = ToastCenter.shared.visibleToasts
         var info = "window=\(window.frame) key=\(window.isKeyWindow)\n"
         info += "toasts=\(toasts.map { "[\($0.style)] \($0.title)\($0.detail.map { " — \($0)" } ?? "")" })\n"
-        info += "overlays=\(overlays.sorted()) cover=\(coverActive)\n"
+        info += "overlays=\(overlays.sorted())\n"
         if let surfaceView = findSurface(in: content) {
             let frame = surfaceView.convert(surfaceView.bounds, to: content)
-            if let clip = surfaceView.superview as? TopRowClippingView {
-                let clipFrame = clip.convert(clip.bounds, to: content)
+            if let pane = surfaceView.superview as? PaneMirrorView {
+                let clipFrame = pane.convert(pane.bounds, to: content)
                 NSBezierPath(rect: content.isFlipped
                     ? NSRect(x: clipFrame.minX, y: content.bounds.height - clipFrame.maxY, width: clipFrame.width, height: clipFrame.height)
                     : clipFrame).setClip()

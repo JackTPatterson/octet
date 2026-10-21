@@ -140,28 +140,50 @@ enum ShellIntegration {
     /// finished, with its status. Hooks are added again on the first prompt,
     /// after the user's .zshrc, so frameworks that reset them can't drop them.
     static let zshIntegration = """
-    # Octet: OSC 133 prompt marks for zsh.
-    typeset -g _octet_running= _octet_status=0
+    # Octet: OSC 133 prompt marks for zsh, after Ghostty's. The prompt's own
+    # marks live in PS1 and PS2, so zsh prints them again whenever it redraws
+    # the prompt (after a resize, too): the terminal clears the old prompt
+    # first, instead of leaving it behind as a trail of half-drawn copies.
+    typeset -g _octet_running= _octet_status=0 _octet_saved_ps1 _octet_saved_ps2 _octet_marked_ps1
     # First in line, so it sees the command's status, not another hook's.
     _octet_capture() { _octet_status=$? }
+    # Puts the prompt back as it was, unless something changed it since.
+    _octet_unmark() {
+      if [[ -n ${_octet_saved_ps1+x} && $PS1 == $_octet_marked_ps1 ]]; then
+        PS1=$_octet_saved_ps1
+        PS2=$_octet_saved_ps2
+      fi
+    }
     _octet_precmd() {
-      if [[ -n $_octet_running ]]; then
+      builtin emulate -L zsh -o no_aliases
+      # Not when a plugin runs the hooks from zle (to refresh on cd).
+      if ! builtin zle && [[ -n $_octet_running ]]; then
         builtin printf '\\e]133;D;%s\\a' $_octet_status
         _octet_running=
       fi
-      builtin printf '\\e]133;A\\a'
-      [[ $PS1 == *'133;B'* ]] || PS1="$PS1%{$(builtin printf '\\e]133;B\\a')%}"
+      [[ -o prompt_percent ]] || { builtin zle || builtin printf '\\e]133;A\\a'; return }
+      local markA=$'%{\\e]133;A;cl=line\\a%}' markB=$'%{\\e]133;B\\a%}' markS=$'%{\\e]133;P;k=s\\a%}'
+      _octet_unmark
+      _octet_saved_ps1=$PS1 _octet_saved_ps2=$PS2
+      # A bare trailing % would swallow the mark's {.
+      [[ $PS1 == *[^%]% || $PS1 == % ]] && PS1=$PS1%
+      PS1=${markA}${PS1}${markB}
+      [[ $PS1 == *$'\\n'* ]] && PS1=${PS1//$'\\n'/$'\\n'${markS}}
+      [[ $PS2 == *[^%]% || $PS2 == % ]] && PS2=$PS2%
+      PS2=${markS}${PS2}${markB}
+      _octet_marked_ps1=$PS1
     }
     _octet_preexec() {
+      _octet_unmark
       builtin printf '\\e]133;C\\a'
       _octet_running=1
     }
     _octet_install() {
       autoload -Uz add-zsh-hook
       add-zsh-hook -d precmd _octet_install
-      add-zsh-hook precmd _octet_precmd
       add-zsh-hook preexec _octet_preexec
-      precmd_functions=(_octet_capture ${precmd_functions:#_octet_capture})
+      # The status first; the marks last, after any theme has set PS1.
+      precmd_functions=(_octet_capture ${precmd_functions:#(_octet_capture|_octet_precmd)} _octet_precmd)
       _octet_precmd
     }
     autoload -Uz add-zsh-hook

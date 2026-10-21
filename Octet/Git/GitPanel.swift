@@ -152,6 +152,8 @@ private struct CheckoutSection: View {
                 }
                 GitChangesList(model: model, group: group, files: shownFiles)
                 if inline { GitCommitBar(model: model, group: group) }
+            } else {
+                GitCleanState(checkout: checkout)
             }
             VStack(alignment: .leading, spacing: 0) {
                 if plan.showHandoff { handoff }
@@ -315,6 +317,9 @@ private struct TimelineRow: View {
         .onHover { hovered = $0 }
         .onTapGesture { if !isCheckpoint { open() } }
         .help(help)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction(named: isCheckpoint ? "Restore" : "Review") { isCheckpoint ? restore() : open() }
     }
 
     private var isCheckpoint: Bool {
@@ -395,7 +400,7 @@ private struct WorktreeRow: View {
                     .truncationMode(.middle)
                 Text(state)
                     .font(Theme.captionFont)
-                    .foregroundStyle(worktree.dirty ? Color(hex: "E0AF68") : Theme.textTertiary)
+                    .foregroundStyle(worktree.dirty ? Theme.warning : Theme.textTertiary)
                     .lineLimit(1)
             }
             Spacer(minLength: 4)
@@ -445,5 +450,38 @@ private struct WorktreeRow: View {
             .buttonStyle(.plain)
             .font(Theme.captionFont.weight(.medium))
             .foregroundStyle(Theme.accent)
+    }
+}
+
+/// Nothing to commit: says so, with the branch and the last commit, so a
+/// panel with no changes still reads as up to date rather than empty.
+private struct GitCleanState: View {
+    let checkout: AgentGit.Checkout
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            OctetIcon("checkmark", size: 14).foregroundStyle(Theme.success)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Working tree clean").font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary)
+                Text(checkout.branch.name.map { "On \($0)" + (checkout.branch.upstream.map { ", tracking \($0)" } ?? "") }
+                     ?? "HEAD is detached")
+                    .font(Theme.captionFont)
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if let commit = checkout.commits.first {
+                    Text("\(commit.shortSha) \(commit.subject) · \(UsageMeter.relative(commit.date))")
+                        .font(Theme.captionFont)
+                        .foregroundStyle(Theme.textTertiary)
+                        .lineLimit(2)
+                        .help("Last commit, by \(commit.author)")
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.md).fill(Theme.card))
+        .accessibilityElement(children: .combine)
     }
 }

@@ -5,12 +5,29 @@ import Foundation
 struct Tip: Identifiable, Equatable {
     let id: String
     let title: String
+    /// May name shortcuts as `{id}` (an `OctetShortcut` id), filled in with
+    /// the keys as they're bound now: see `text(keys:)`.
     let body: String
+    /// The shortcut id whose keys show beside the title; empty for none.
     var shortcut: String = ""
     /// Only shown when this holds for the current session.
     var applies: (TipContext) -> Bool = { _ in true }
 
     static func == (lhs: Tip, rhs: Tip) -> Bool { lhs.id == rhs.id }
+
+    /// The body with each `{id}` replaced by `keys(id)`, or by "its
+    /// shortcut" for one that's unassigned, so the sentence still reads.
+    func text(keys: (String) -> String?) -> String {
+        var result = ""
+        var rest = Substring(body)
+        while let open = rest.firstIndex(of: "{"), let close = rest[open...].firstIndex(of: "}") {
+            result += rest[..<open]
+            let id = String(rest[rest.index(after: open)..<close])
+            result += keys(id) ?? "its shortcut"
+            rest = rest[rest.index(after: close)...]
+        }
+        return result + rest
+    }
 }
 
 /// What the session looks like right now, for deciding which tips fit.
@@ -29,12 +46,12 @@ enum Tips {
     static let all: [Tip] = [
         Tip(id: "palette", title: "Everything from one box",
             body: "Search actions, workspaces, tabs, agents, projects and plugins. Prefixes narrow it: > % # @ / !",
-            shortcut: "⌘P"),
+            shortcut: "palette"),
         Tip(id: "slash", title: "Slash commands, natively",
             body: "Type / in an agent pane for Octet's own menu. Return runs the command; /mcp and /model open their arguments."),
         Tip(id: "marketplace", title: "One place for MCP, plugins, skills and prompts",
             body: "Install into every agent at once. Skills and prompts live once in ~/.agents and link into each of them.",
-            shortcut: "⌘⇧M"),
+            shortcut: "marketplace"),
         Tip(id: "hotswap", title: "Apply config without losing the thread",
             body: "After adding an MCP server or plugin, Reload Agents restarts each one with --resume, keeping the conversation.",
             applies: { $0.agentCount > 0 }),
@@ -54,11 +71,14 @@ enum Tips {
             body: "Install the subagent tabs hook and each subagent an agent spawns opens in its own named tab.",
             applies: { $0.agentCount > 0 }),
         Tip(id: "split", title: "Panes and zoom",
-            body: "⌘D and ⌘⇧D split a tab; ⌘⇧↩ zooms one pane. ⌘⌥ with the arrows moves between them.",
-            shortcut: "⌘D"),
+            body: "{splitRight} and {splitDown} split a tab; {toggleZoom} zooms one pane. {focusLeft} and the other arrows move between them.",
+            shortcut: "splitRight"),
         Tip(id: "themes", title: "Themes reach the whole window",
             body: "Settings → Appearance restyles the chrome as well as the terminal, and turns motion off if you prefer.",
-            shortcut: "⌘,"),
+            shortcut: "settings"),
+        Tip(id: "cheatsheet", title: "Every key on one page",
+            body: "Help › Keyboard Shortcuts lists them all. Hold ⌘ for a moment to see each tab's number.",
+            shortcut: "keyboardShortcuts"),
         Tip(id: "plugins", title: "Plugins without the terminal UI",
             body: "The palette's ! filter runs plugin actions, opens their panes, and reads their logs.",
             applies: { $0.hasPlugins }),

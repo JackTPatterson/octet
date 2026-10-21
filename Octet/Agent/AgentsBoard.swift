@@ -6,56 +6,31 @@ struct AgentDetail: View {
     @EnvironmentObject private var window: WindowContext
     let agent: BackgroundAgent
     @ObservedObject var store: SessionStore
-    @State private var conversation = AgentConversation()
-    /// Set when the conversation log is gone and the job's timeline stands in.
-    @State private var logMissing = false
-    @State private var timer: Timer?
+    @StateObject private var transcript: HubTranscriptModel
+
+    init(agent: BackgroundAgent, store: SessionStore) {
+        self.agent = agent
+        self.store = store
+        _transcript = StateObject(wrappedValue: HubTranscriptModel(source: .claude(agent)))
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             HubDetailHeader(vendor: "claude", title: agent.name, status: AgentsHubList.status(agent),
                             crumbs: ["Background", abbreviateHome(agent.cwd)]) { actions }
             Rectangle().fill(Theme.divider).frame(height: 1)
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 12) {
-                        HubTranscriptSummary(conversation: conversation, cwd: agent.cwd)
-                        if logMissing { missingLogNote }
-                        ForEach(conversation.items.filter { item in
-                            if case .thinking(let text) = item.kind { return !text.isEmpty }
-                            return true
-                        }) { item in
-                            ItemRow(item: item, running: false)
-                                .padding(.leading, item.parent == nil ? 0 : 18)
-                                .id(item.id)
-                        }
-                        Color.clear.frame(height: 1).id("end")
-                    }
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 20)
-                }
-                .octetScrollIndicators()
-                .onChange(of: conversation.items.count) { _, _ in proxy.scrollTo("end", anchor: .bottom) }
+            HubTranscript(model: transcript, cwd: agent.cwd, running: agent.state == .working) {
+                if transcript.logMissing { missingLogNote }
             }
         }
-        .onAppear { load(); startPolling() }
-        .onDisappear { timer?.invalidate() }
-    }
-
-    private var stateLabel: String {
-        switch (agent.kind, agent.state) {
-        case (.interactive, _): "open in a terminal"
-        case (_, .needsInput): "needs input"
-        case (_, .working): "working"
-        case (_, .done): "completed"
-        case (_, .idle): "idle"
-        }
+        .onAppear { transcript.start() }
+        .onDisappear { transcript.stop() }
     }
 
     @ViewBuilder private var actions: some View {
         if agent.kind == .background {
             // Resuming needs the conversation log.
-            if !logMissing {
+            if !transcript.logMissing {
                 OctetButton(title: "Bring Back Here", kind: .primary, compact: true) {
                     guard let workspace = workspaceId else { return }
                     AgentsStore.shared.bringBack(agent, workspaceId: workspace)
@@ -97,37 +72,5 @@ struct AgentDetail: View {
         HubCallout(icon: "info.circle.fill", title: "The full conversation is no longer on disk",
                    message: "Claude Code deletes conversation logs after its cleanup period (30 days unless cleanupPeriodDays in ~/.claude/settings.json says otherwise), so it can't be brought back. Below is what the job kept of each step.",
                    tint: Theme.textTertiary)
-    }
-
-    private func load() {
-        let agent = self.agent
-        DispatchQueue.global(qos: .userInitiated).async {
-            let path = AgentsStore.logPath(for: agent)
-            var replayed: AgentConversation
-            if let path {
-                let text = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
-                replayed = AgentConversation.replay(lines: text.components(separatedBy: "\n"))
-            } else {
-                // The log is gone; the job's own timeline is what's left.
-                replayed = AgentConversation()
-                replayed.items = BackgroundJob.timeline(id: agent.id).enumerated().map { index, entry in
-                    AgentItem(id: "timeline-\(index)", kind: .text(entry))
-                }
-            }
-            let missing = path == nil
-            DispatchQueue.main.async {
-                if logMissing != missing { logMissing = missing }
-                if replayed.items != conversation.items { conversation = replayed }
-            }
-        }
-    }
-
-    private func startPolling() {
-        timer?.invalidate()
-        let timer = Timer(timeInterval: 2, repeats: true) { _ in
-            MainActor.assumeIsolated { load() }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        self.timer = timer
     }
 }

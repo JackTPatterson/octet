@@ -10,6 +10,11 @@ struct TerminalSearchMatch: Codable, Equatable {
         ["start": ["row": start.row, "col": start.col],
          "end": ["row": end.row, "col": end.col]]
     }
+
+    /// The same match with its rows counted `rows` further down.
+    func shifted(by rows: Int) -> TerminalSearchMatch {
+        TerminalSearchMatch(start: Point(row: start.row + rows, col: start.col), end: Point(row: end.row + rows, col: end.col))
+    }
 }
 
 struct TerminalSearchResult {

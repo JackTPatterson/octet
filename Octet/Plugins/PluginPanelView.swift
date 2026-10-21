@@ -27,9 +27,10 @@ struct PluginPanelSections: View {
 enum PluginPanelTone {
     static func color(_ tone: PluginPanel.Tone?) -> Color? {
         switch tone {
-        case .warning: Color(hex: AgentStateColor.blocked)
+        // A warning is the theme's warning, not red: red is for danger.
+        case .warning: Theme.warning
         case .danger: Theme.danger
-        case .success: Color(hex: AgentStateColor.done)
+        case .success: Theme.success
         case .muted: Theme.textTertiary
         case .normal, nil: nil
         }
@@ -133,13 +134,14 @@ private struct PluginPanelRow: View {
             HStack(spacing: 0) {
                 if let link = row.link {
                     RowActionButton(title: "Open", symbol: "arrow.up.right.square") { NSWorkspace.shared.open(link) }
+                        .hoverReveal(hovered)
                 }
                 ForEach(row.actions) { action in
                     RowActionButton(title: action.title, symbol: action.symbol) { perform(action) }
                         .disabled(disabled)
+                        .hoverReveal(hovered)
                 }
             }
-            .opacity(hovered ? 1 : 0)
             .allowsHitTesting(hovered)
         }
         .padding(.horizontal, 6)

@@ -125,6 +125,9 @@ extension TerminalEngine {
         // We need to support being a first responder so that we can get input events
         override var acceptsFirstResponder: Bool { return true }
 
+        /// A mirror surface's input sink, kept for as long as the surface.
+        private var mirrorInput: MirrorInput?
+
         init(_ app: ghostty_app_t, baseConfig: SurfaceConfiguration? = nil, uuid: UUID? = nil) {
             self.markedText = NSMutableAttributedString()
             self.id = uuid ?? UUID()
@@ -171,6 +174,8 @@ extension TerminalEngine {
 
             // Setup our surface. This will also initialize all the terminal IO.
             let surface_cfg = baseConfig ?? SurfaceConfiguration()
+            // The surface points at it without keeping it.
+            mirrorInput = surface_cfg.mirror
             let surface = surface_cfg.withCValue(view: self) { surface_cfg_c in
                 ghostty_surface_new(app, &surface_cfg_c)
             }
@@ -226,7 +231,8 @@ extension TerminalEngine {
             // an animation (i.e. a fullscreen animation), the frame will not yet be updated.
             // The size represents our final size we're going for.
             let scaledSize = self.convertToBacking(size)
-            setSurfaceSize(width: UInt32(scaledSize.width), height: UInt32(scaledSize.height))
+            guard let pixels = TerminalPixelSize(scaledSize) else { return }
+            setSurfaceSize(width: pixels.width, height: pixels.height)
             // Store this size so we can reuse it when backing properties change
             contentSize = size
         }
@@ -235,16 +241,19 @@ extension TerminalEngine {
             guard let surface = self.surface else { return }
             guard width > 0, height > 0 else { return }
 
-            // Update our core surface
+            // Moving chrome and repeated AppKit layout passes can deliver the
+            // same framebuffer size repeatedly. Avoid redundant PTY resizes.
+            let current = ghostty_surface_size(surface)
+            guard current.width_px != width || current.height_px != height else { return }
             ghostty_surface_set_size(surface, width, height)
 
             // Update our cached size metrics
             let size = ghostty_surface_size(surface)
-            DispatchQueue.main.async {
+            DispatchQueue.main.async { [weak self] in
                 // DispatchQueue required since this may be called by SwiftUI off
                 // the main thread and Published changes need to be on the main
                 // thread. This caused a crash on macOS <= 14.
-                self.surfaceSize = size
+                self?.surfaceSize = size
             }
         }
 
@@ -537,7 +546,8 @@ extension TerminalEngine {
 
             // When our scale factor changes, so does our fb size so we send that too
             let scaledSize = self.convertToBacking(contentSize)
-            setSurfaceSize(width: UInt32(scaledSize.width), height: UInt32(scaledSize.height))
+            guard let pixels = TerminalPixelSize(scaledSize) else { return }
+            setSurfaceSize(width: pixels.width, height: pixels.height)
         }
 
         /// Where the left button went down, to tell a click from a drag.
@@ -701,7 +711,7 @@ extension TerminalEngine {
             // Bottom anchoring reads the visible grid. Suppress that polling
             // during a live wheel/trackpad gesture so scrolling never competes
             // with a synchronous terminal text scan on the main thread.
-            (superview?.superview as? TopRowClippingView)?.terminalDidScroll()
+            (superview as? PaneMirrorView)?.terminalDidScroll()
 
             var x = event.scrollingDeltaX
             var y = event.scrollingDeltaY
@@ -741,7 +751,11 @@ extension TerminalEngine {
             quickLook(with: event)
         }
 
+        /// Takes keys before the terminal does: a pane's copy mode.
+        var keyInterceptor: ((NSEvent) -> Bool)?
+
         override func keyDown(with event: NSEvent) {
+            if keyInterceptor?(event) == true { return }
             // Octet's own `/` menu gets first refusal on agent panes.
             if OctetKeyHook.handleKeyDown(event) { return }
             guard let surface = self.surface else {
@@ -942,6 +956,8 @@ extension TerminalEngine {
             // We only care about key down events. It might not even be possible
             // to receive any other event type here.
             guard event.type == .keyDown else { return false }
+            // ⌘C in copy mode copies what copy mode selected.
+            if window?.firstResponder === self, keyInterceptor?(event) == true { return true }
 
             // Only process events if we're focused. Some key events like C-/ macOS
             // appears to send to the first view in the hierarchy rather than the
@@ -1274,6 +1290,10 @@ extension TerminalEngine {
         /// Context for surface creation
         var context: ghostty_surface_context_e = GHOSTTY_SURFACE_CONTEXT_WINDOW
 
+        /// A surface with no process of its own: it draws what it's fed
+        /// (`Surface.processOutput`) and hands the input it encodes here.
+        var mirror: MirrorInput?
+
         init() {}
 
         /// Provides a C-compatible engine configuration within a closure. The configuration
@@ -1295,6 +1315,18 @@ extension TerminalEngine {
 
             // Set context
             config.context = context
+
+            // A mirror's terminal belongs to the engine, which answers
+            // programs' queries itself: this one only draws and encodes input.
+            if let mirror {
+                config.io_mode = GHOSTTY_SURFACE_IO_MANUAL_MIRROR
+                config.io_write_userdata = Unmanaged.passUnretained(mirror).toOpaque()
+                config.io_write_cb = { userdata, bytes, length in
+                    guard let userdata, let bytes, length > 0 else { return }
+                    let mirror = Unmanaged<MirrorInput>.fromOpaque(userdata).takeUnretainedValue()
+                    mirror.receive(Data(bytes: bytes, count: Int(length)))
+                }
+            }
 
             // Use withCString to ensure strings remain valid for the duration of the closure
             return try workingDirectory.withCString { cWorkingDir in
@@ -1696,8 +1728,11 @@ extension TerminalEngine.SurfaceView {
     override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
         let pb = sender.draggingPasteboard
 
-        // Octet: an image goes in as a file path, as a pasted one does.
-        if let store = OctetKeyHook.store, PasteHandler.handle(pb, store: store) { return true }
+        // Octet: what's dropped on a pane goes to that pane, which takes focus
+        // as a click would. An image goes in as a file path, as a pasted one does.
+        let pane = (superview as? PaneMirrorView)?.paneId
+        if pane != nil, window?.firstResponder !== self { window?.makeFirstResponder(self) }
+        if let store = OctetKeyHook.store, PasteHandler.handle(pb, store: store, pane: pane) { return true }
 
         let content = pb.getOpinionatedStringContents()
 
@@ -1769,9 +1804,8 @@ extension TerminalEngine.SurfaceView {
         return NSAttributedString(string: plain, attributes: attributes)
     }
 
-    /// The viewport's text, minus the rows Octet clips off the top (the session server's
-    /// own tab row), so a screen reader hears only what's on screen.
-    fileprivate func readVisibleText() -> String {
+    /// The viewport's text, as a screen reader hears it.
+    func readVisibleText() -> String {
         guard let surface = self.surface else { return "" }
         var text = ghostty_text_s()
         let sel = ghostty_selection_s(
@@ -1780,8 +1814,7 @@ extension TerminalEngine.SurfaceView {
             rectangle: false)
         guard ghostty_surface_read_text(surface, sel, &text) else { return "" }
         defer { ghostty_surface_free_text(surface, &text) }
-        let lines = String(cString: text.text).components(separatedBy: "\n")
-        return lines.dropFirst(min(EngineSession.hiddenTopRows, lines.count)).joined(separator: "\n")
+        return String(cString: text.text)
     }
 
     /// Returns the currently selected text as a string.
@@ -1837,5 +1870,17 @@ final class CachedValue<T> {
             } catch {}
         }
         return result
+    }
+}
+
+extension TerminalEngine {
+    /// Where a mirror surface's encoded input goes: keys, paste and mouse as
+    /// the bytes a program reads. The surface keeps it alive (`SurfaceView`).
+    final class MirrorInput: @unchecked Sendable {
+        private let deliver: (Data) -> Void
+
+        init(_ deliver: @escaping (Data) -> Void) { self.deliver = deliver }
+
+        fileprivate func receive(_ bytes: Data) { deliver(bytes) }
     }
 }

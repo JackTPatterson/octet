@@ -7,25 +7,13 @@ import SwiftUI
 /// progress in its row.
 struct AgentUpdateDialog: View {
     @ObservedObject var center: AgentUpdateCenter
-    @ObservedObject private var motion = MotionPreferences.shared
-    @StateObject private var host = HostWindow()
 
     var body: some View {
-        ZStack {
-            if center.presented, host.owns(center.window) {
-                Color.black.opacity(0.35)
-                    .ignoresSafeArea()
-                    .onTapGesture { if center.phase != .running { center.dismiss() } }
-                AgentUpdateCard(center: center)
-                    .transition(motion.animates(.palette)
-                        ? .opacity.combined(with: .scale(scale: 0.96))
-                        : .identity)
-                    .onAppear { DebugSnapshot.overlay("agent-updates", true) }
-                    .onDisappear { DebugSnapshot.overlay("agent-updates", false) }
-            }
+        OctetModalShell(isPresented: center.presented, window: center.window,
+                        dismissible: center.phase != .running, handlesEscape: false, overlayName: "agent-updates",
+                        onDismiss: { center.dismiss() }) {
+            AgentUpdateCard(center: center)
         }
-        .animation(motion.animation(.palette, .smooth(duration: 0.16)), value: center.presented)
-        .background(HostWindowReader(host: host))
     }
 }
 
@@ -39,10 +27,7 @@ private struct AgentUpdateCard: View {
             if center.phase == .choosing { commands }
             buttons
         }
-        .padding(20)
-        .frame(width: 540)
-        .octetGlass(cornerRadius: 16, fill: Theme.card)
-        .environment(\.colorScheme, Theme.colorScheme)
+        .octetModalCard(width: 540, padding: 20)
         .animation(MotionPreferences.shared.animation(.sidebar), value: center.rows)
         .animation(MotionPreferences.shared.animation(.sidebar), value: center.phase)
         .animation(MotionPreferences.shared.animation(.sidebar), value: center.expandedError)
@@ -87,7 +72,7 @@ private struct AgentUpdateCard: View {
             LogoTile(brands: center.rows.compactMap { AgentBrand.forAgent($0.update.id) })
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(Theme.interfaceFont(15, weight: .semibold))
                     .foregroundStyle(Theme.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
                 Text(subtitle)
@@ -108,9 +93,9 @@ private struct AgentUpdateCard: View {
                 AgentUpdateRow(center: center, row: row)
             }
         }
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.terminalBackground.opacity(0.6)))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.border, lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.xl, style: .continuous).fill(Theme.terminalBackground.opacity(0.6)))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.xl, style: .continuous).strokeBorder(Theme.border, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.xl, style: .continuous))
     }
 
     // MARK: Commands
@@ -210,7 +195,7 @@ private struct AgentUpdateRow: View {
                 .frame(width: 32, height: 32)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(row.update.displayName)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(Theme.Text.transcriptMedium)
                         .foregroundStyle(Theme.textPrimary)
                     status
                 }
@@ -253,7 +238,7 @@ private struct AgentUpdateRow: View {
         case .done:
             Text("Updated to \(row.update.latest)")
                 .font(Theme.captionFont)
-                .foregroundStyle(Color(hex: AgentStateColor.done))
+                .foregroundStyle(Theme.success)
         case .failed:
             Button {
                 MotionPreferences.shared.perform(.sidebar) {
@@ -297,7 +282,7 @@ private struct AgentUpdateRow: View {
             LoadingLine(width: 18)
         case .done:
             OctetIcon("checkmark.circle.fill", size: 16)
-                .foregroundStyle(Color(hex: AgentStateColor.done))
+                .foregroundStyle(Theme.success)
                 .accessibilityLabel("Updated")
         case .failed:
             OctetIcon("exclamationmark.triangle.fill", size: 16)
@@ -342,8 +327,8 @@ private struct LogoTile: View {
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.hover)
-            RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.border, lineWidth: 1)
+            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.hover)
+            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).strokeBorder(Theme.border, lineWidth: 1)
             if brands.count == 1, let brand = brands.first {
                 AgentLogo(brand: brand, size: 26)
             } else {

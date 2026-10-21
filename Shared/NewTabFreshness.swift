@@ -53,7 +53,9 @@ struct NewTabFreshness {
             promptColumn[tab] = start
             if cursorColumn > start { return false }
         }
-        return true
+        // A just-selected tab can still contain the previous tab's prompt.
+        // Keep the splash hidden until this tab's first reading settles.
+        return settled && rowsInUse > 0
     }
 
     /// When a reading of `tab` will be believed, if not yet: the caller looks

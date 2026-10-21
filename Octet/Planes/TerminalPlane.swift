@@ -8,7 +8,6 @@ struct TerminalPlane: View {
     @ObservedObject var ui: UIState
     let planeId: String
     let directory: String?
-    @StateObject private var anchor = TerminalAnchor()
     /// Where it started, so a later change of tab doesn't move it.
     @State private var folder: String?
     @State private var generation = 0
@@ -28,7 +27,6 @@ struct TerminalPlane: View {
                     command: Self.shellCommand,
                     environment: Self.environment,
                     workingDirectory: folder,
-                    anchor: anchor,
                     onTitleChange: { [weak ui, planeId] title in
                         guard let ui else { return }
                         let badge = PlaneBadge(title: title.isEmpty ? "Terminal" : title, help: title)
@@ -42,8 +40,8 @@ struct TerminalPlane: View {
                 )
                 .id(generation)
             }
-            if PlaneLoadingPreview.shows("terminal") || (warming && !exited && anchor.cellSize == .zero) {
-                TerminalPlaneSkeleton().allowsHitTesting(false)
+            if PlaneLoadingPreview.shows("terminal") || (warming && !exited) {
+                TerminalPlaneSkeleton().allowsHitTesting(false).accessibilityLabel("Starting the terminal")
             }
             if exited {
                 VStack(spacing: 8) {
@@ -58,6 +56,7 @@ struct TerminalPlane: View {
                 }
                 .padding(16)
                 .octetGlass(cornerRadius: Theme.popoverRadius, fill: Theme.chrome)
+                .accessibilityElement(children: .contain)
             }
         }
         .onAppear {

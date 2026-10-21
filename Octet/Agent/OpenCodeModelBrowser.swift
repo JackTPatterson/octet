@@ -34,7 +34,7 @@ struct OpenCodeModelBrowser: View {
         let total = store.everything?.providers.reduce(0) { $0 + $1.models.count } ?? 0
         return VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("All models").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.textPrimary)
+                Text("All models").font(Theme.interfaceFont(15, weight: .semibold)).foregroundStyle(Theme.textPrimary)
                 if total > 0 {
                     Text("\(total) from \(store.everything?.providers.count ?? 0) providers")
                         .font(Theme.uiFont).foregroundStyle(Theme.textTertiary)

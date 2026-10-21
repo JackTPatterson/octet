@@ -2,15 +2,19 @@ import SwiftUI
 
 /// The changed files as one list in up to three groups (Staged, Changes,
 /// Untracked), each under a header with a count. Only groups that have files
-/// are drawn. A group's bulk action appears when its header is hovered.
+/// are drawn. A group's bulk action appears when its header is hovered, and
+/// is always in its menu and context menu. A long group shows its first
+/// files and more on request.
 struct GitChangesList: View {
     @ObservedObject var model: GitPanelModel
     let group: GitPanelModel.Group
     /// The files to show, already narrowed by the editor filter.
     let files: [AgentGit.FileChange]
+    /// How many of each group show; "Show 200 more" raises it.
+    @State private var shown: [GitChangeGroups.Kind: Int] = [:]
 
     private var checkout: AgentGit.Checkout { group.checkout }
-    private let limit = 200
+    static let page = 200
 
     var body: some View {
         let groups = GitChangeGroups(files: files)
@@ -29,6 +33,7 @@ struct GitChangesList: View {
                         },
                         // The first header carries the totals and Review.
                         trailing: index == 0 ? AnyView(totals) : AnyView(EmptyView()))
+                    let limit = shown[section.kind] ?? Self.page
                     ForEach(section.files.prefix(limit)) { file in
                         GitFileRow(file: file, editors: group.editors[file.path] ?? [],
                                    open: { model.review(checkout.top, path: file.path) },
@@ -36,11 +41,16 @@ struct GitChangesList: View {
                                    discard: { model.discard(file, in: checkout.top) })
                     }
                     if section.files.count > limit {
-                        Text("and \(section.files.count - limit) more")
-                            .font(Theme.captionFont)
-                            .foregroundStyle(Theme.textTertiary)
-                            .padding(.horizontal, 6)
-                            .padding(.top, 2)
+                        let more = min(Self.page, section.files.count - limit)
+                        Button { shown[section.kind] = limit + Self.page } label: {
+                            Text("Show \(more) more · \(section.files.count - limit) not shown")
+                                .font(Theme.captionFont)
+                                .foregroundStyle(Theme.accent)
+                                .padding(.horizontal, 6)
+                                .padding(.top, 4)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -78,7 +88,7 @@ private struct GitChangeGroupHeader: View {
                 .frame(minWidth: 16, minHeight: 15)
                 .background(Capsule().fill(Theme.card))
             if hovered, let bulk {
-                Button(bulk == .stageAll ? "Stage All" : "Unstage All") { perform(bulk) }
+                Button(label(bulk)) { perform(bulk) }
                     .buttonStyle(.plain)
                     .font(Theme.captionFont)
                     .foregroundStyle(Theme.textSecondary)
@@ -86,13 +96,31 @@ private struct GitChangeGroupHeader: View {
             }
             Spacer(minLength: 4)
             trailing
+            if bulk != nil {
+                OctetIconButton(icon: "ellipsis", help: "\(title) actions", compact: true) { presentMenu() }
+                    .disabled(busy)
+            }
         }
         .padding(.horizontal, 6)
         .frame(height: 24)
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
+        .contextMenu {
+            if let bulk { Button(label(bulk)) { perform(bulk) }.disabled(busy) }
+        }
         .accessibilityElement(children: .contain)
         .accessibilityAddTraits(.isHeader)
+    }
+
+    private func label(_ bulk: GitChangeGroups.BulkAction) -> String {
+        bulk == .stageAll ? "Stage All" : "Unstage All"
+    }
+
+    private func presentMenu() {
+        guard let bulk else { return }
+        OctetContextMenu.present([
+            .action(label(bulk), icon: bulk == .stageAll ? "plus" : "minus", enabled: !busy) { perform(bulk) },
+        ])
     }
 }
 
@@ -109,25 +137,7 @@ struct GitFileRow: View {
     @State private var hovered = false
 
     var body: some View {
-        HStack(spacing: 6) {
-            Text(letter)
-                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                .foregroundStyle(color)
-                .frame(width: 10)
-            Text((file.path as NSString).lastPathComponent)
-                .font(Theme.uiFontMedium)
-                .foregroundStyle(Theme.textPrimary)
-                .lineLimit(1)
-                .layoutPriority(1)
-            let folder = (file.path as NSString).deletingLastPathComponent
-            if !folder.isEmpty {
-                Text(folder)
-                    .font(Theme.captionFont)
-                    .foregroundStyle(Theme.textTertiary)
-                    .lineLimit(1)
-                    .truncationMode(.head)
-            }
-            Spacer(minLength: 4)
+        DiffFileRow(path: file.path, mark: ChangeMark(file.kind), added: file.added, removed: file.removed) {
             if hovered {
                 rowButton("doc.text.magnifyingglass", help: "Open diff", action: open)
                 rowButton(file.staged ? "minus" : "plus", help: file.staged ? "Unstage" : "Stage", action: toggleStaged)
@@ -183,25 +193,6 @@ struct GitFileRow: View {
         case .renamed: "renamed"
         case .untracked: "untracked"
         case .conflicted: "conflicted"
-        }
-    }
-
-    private var letter: String {
-        switch file.kind {
-        case .modified: "M"
-        case .added: "A"
-        case .deleted: "D"
-        case .renamed: "R"
-        case .untracked: "U"
-        case .conflicted: "!"
-        }
-    }
-
-    private var color: Color {
-        switch file.kind {
-        case .added, .untracked: Color(hex: AgentStateColor.done)
-        case .deleted, .conflicted: Theme.danger
-        case .modified, .renamed: Color(hex: "E0AF68")
         }
     }
 }

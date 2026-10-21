@@ -57,6 +57,91 @@ enum WindowActions {
         }
     }
 
+    /// A pane, dragged out of its split by its handle, into a window of its
+    /// own: the same move as a tab torn off, one pane at a time.
+    static func tearOff(paneId: String, store: SessionStore, frame: CGRect?) {
+        guard let pane = store.snapshot.panes.first(where: { $0.paneId == paneId }) else { return }
+        let tab = store.snapshot.tabs.first { $0.tabId == pane.tabId }
+        var destination: [String: Any] = ["type": "new_workspace"]
+        if let tab {
+            let label = TabAutoName.display(label: tab.label, number: tab.number)
+            destination["label"] = label
+        }
+        store.call("pane.move", ["pane_id": paneId, "destination": destination, "focus": false],
+                   failure: "Couldn't move the pane to a new window") { created in
+            guard let workspace = created.workspaceId else { return }
+            WindowOpener.open?(OctetWindowSpec(workspaceId: workspace, frame: frame))
+        }
+    }
+
+    /// A pane dragged out of its split onto `window`'s strip: a tab of its
+    /// own in that window's workspace, in the gap it was dropped in.
+    static func movePane(_ paneId: String, toNewTabIn window: WindowContext, atStripGap gap: Int?) {
+        guard let target = window.focusedWorkspace?.workspaceId else { return }
+        window.store.call("pane.move", ["pane_id": paneId, "destination": ["type": "new_tab", "workspace_id": target], "focus": false],
+                          failure: "Couldn't move the pane to a new tab") { created in
+            guard let moved = created.tabId else { return }
+            guard let gap else { return window.focusTab(moved) }
+            window.placeArrivedTab(moved, atGap: gap) { window.focusTab(moved) }
+        }
+    }
+
+    /// Keep a dragged tab in Octet but give its running pane a workspace and
+    /// tab list of its own. The pane moves without restarting its process.
+    static func tabToWorkspace(_ tabId: String, in window: WindowContext) {
+        let store = window.store
+        guard let pane = store.onlyPane(ofTab: tabId) else {
+            ToastCenter.shared.info("A split tab can't move as one workspace yet",
+                                    detail: "Move its panes into separate tabs first.")
+            return
+        }
+        let tab = store.snapshot.tabs.first { $0.tabId == tabId }
+        let label = tab.map { TabAutoName.display(label: $0.label, number: $0.number) }
+        var destination: [String: Any] = ["type": "new_workspace"]
+        if let label { destination["label"] = label; destination["tab_label"] = label }
+        store.call("pane.move", ["pane_id": pane.paneId, "destination": destination, "focus": false],
+                   failure: "Couldn't move the tab to a workspace") { created in
+            guard let workspaceId = created.workspaceId else { return }
+            window.focusWorkspace(workspaceId)
+        }
+    }
+
+    /// A tab dropped on a split zone moves into another tab group in the same
+    /// workspace. Its engine tab and every pane keep their identity.
+    static func splitTab(_ tabId: String, beside window: WindowContext, at edge: SplitEdge) {
+        let store = window.store
+        guard let tab = store.snapshot.tabs.first(where: { $0.tabId == tabId }),
+              let targetWorkspace = window.focusedWorkspace?.workspaceId else { return }
+        let owner = window.splitParent ?? window
+        if tab.workspaceId == targetWorkspace {
+            // A group cannot be left without a tab. Make a replacement shell
+            // first, then move the original tab as a whole into the new group.
+            if owner.focusedWorkspaceTabs.count == 1,
+               owner.focusedWorkspaceTabs.first?.tabId == tabId {
+                let cwd = store.snapshot.directory(ofWorkspace: targetWorkspace) ?? NSHomeDirectory()
+                store.call("tab.create", ["workspace_id": targetWorkspace, "cwd": cwd, "focus": false],
+                           failure: "Couldn't create the split") { created in
+                    guard created.tabId != nil else { return }
+                    owner.splitTabGroup(tabId, at: edge)
+                }
+            } else {
+                owner.splitTabGroup(tabId, at: edge)
+            }
+            return
+        }
+        guard let pane = store.onlyPane(ofTab: tabId) else {
+            ToastCenter.shared.info("A tab with multiple panes can't move between workspaces yet",
+                                    detail: "Move its panes into separate tabs first.")
+            return
+        }
+        let destination: [String: Any] = ["type": "new_tab", "workspace_id": targetWorkspace]
+        store.call("pane.move", ["pane_id": pane.paneId, "destination": destination, "focus": false],
+                   failure: "Couldn't create the split") { created in
+            guard let movedTab = created.tabId else { return }
+            owner.splitTabGroup(movedTab, at: edge)
+        }
+    }
+
     /// A workspace into a window of its own, at `frame` when it was dropped
     /// somewhere, else cascaded from `window`. Nothing moves in the engine: the
     /// new window shows the workspace and it becomes that window's alone,
@@ -83,24 +168,6 @@ enum WindowActions {
         return true
     }
 
-    /// A workspace card dropped by an edge of `window`: the window splits in
-    /// two, the workspace in a window on that side, the way a tab dropped by
-    /// a pane's edge splits the pane.
-    static func openBeside(_ workspaceId: String, from window: WindowContext, edge: SplitEdge) {
-        guard let nsWindow = window.nsWindow else {
-            moveWorkspaceToNewWindow(workspaceId, from: window)
-            return
-        }
-        // A full-screen window can't share its space; the new one cascades.
-        if nsWindow.styleMask.contains(.fullScreen) {
-            moveWorkspaceToNewWindow(workspaceId, from: window)
-            return
-        }
-        let halves = WorkspaceDropTarget.split(nsWindow.frame, at: edge)
-        guard moveWorkspaceToNewWindow(workspaceId, from: window, frame: halves.new) else { return }
-        nsWindow.setFrame(halves.kept, display: true, animate: true)
-    }
-
     static func moveFocusedWorkspaceToNewWindow(from window: WindowContext) {
         guard let workspace = window.focusedWorkspace?.workspaceId else { return }
         moveWorkspaceToNewWindow(workspace, from: window)
@@ -121,33 +188,45 @@ enum WindowActions {
     static func mergeAllWindows() {
         let registry = WindowRegistry.shared
         guard let keep = registry.key else { return }
-        for window in registry.windows where window !== keep { window.nsWindow?.performClose(nil) }
+        // Closed outright, as the close button does: `performClose` from here
+        // can leave the window ordered out rather than closed, a hidden window
+        // the next one opened gets lost in.
+        for window in registry.windows where window !== keep && !window.isEmbeddedSplit {
+            window.mergingAway = true
+            window.closing = true
+            window.nsWindow?.close()
+        }
     }
 
     /// A tab dragged from one window's tab bar into another's: into that
-    /// window's workspace, at the gap it was dropped in.
-    static func moveTab(_ tabId: String, into window: WindowContext, at gap: Int) {
+    /// window's workspace, at the gap of its strip it was dropped in (the
+    /// end when nil).
+    static func moveTab(_ tabId: String, into window: WindowContext, atStripGap gap: Int?) {
         let store = window.store
         guard let target = window.focusedWorkspace?.workspaceId,
               let tab = store.snapshot.tabs.first(where: { $0.tabId == tabId }) else { return }
-        guard tab.workspaceId != target else { return store.moveTab(tabId, toGap: gap) }
+        guard tab.workspaceId != target else {
+            window.acceptTabIntoGroup(tabId)
+            guard let gap else { return store.moveTab(tabId, toGap: store.snapshot.tabs(inWorkspace: target).count) }
+            return window.moveVisualTab(TabStripOrder.terminalPrefix + tabId, toGap: gap)
+        }
         guard let pane = store.onlyPane(ofTab: tabId) else {
             ToastCenter.shared.info("A split tab can't move between windows yet",
                                     detail: "Move its panes out first (Pane › Move Pane to New Tab).")
             return
         }
         // The tab arrives last; from there it goes to the gap it was dropped in.
-        let arrivedAt = store.snapshot.tabs(inWorkspace: target).count
         store.call("pane.move", ["pane_id": pane.paneId, "destination": ["type": "new_tab", "workspace_id": target], "focus": false],
                    failure: "Couldn't move the tab") { created in
             guard let moved = created.tabId else { return }
-            // Steered only once the order is final: the keys count positions.
             let arrive = {
+                window.acceptTabIntoGroup(moved)
                 window.focusTab(moved)
                 window.bringForward()
             }
-            guard gap < arrivedAt else { return arrive() }
-            store.call("tab.move", ["tab_id": moved, "insert_index": gap], failure: "Couldn't move the tab") { _ in arrive() }
+            // Steered only once the order is final: the keys count positions.
+            guard let gap else { return arrive() }
+            window.placeArrivedTab(moved, atGap: gap, then: arrive)
         }
     }
 }

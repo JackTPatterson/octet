@@ -25,46 +25,6 @@ struct HubAgent: Identifiable {
         }
     }
 
-    enum Status: Int, Comparable, CaseIterable {
-        case needsInput, working, done
-        static func < (a: Status, b: Status) -> Bool { a.rawValue < b.rawValue }
-
-        /// The pill's word for it.
-        var title: String {
-            switch self {
-            case .needsInput: "Needs input"
-            case .working: "Working"
-            case .done: "Done"
-            }
-        }
-
-        /// The shelf's, after T3 Code's inbox: what needs you, what's
-        /// moving, and what has settled.
-        var shelf: String {
-            switch self {
-            case .needsInput: "Needs input"
-            case .working: "Working"
-            case .done: "Settled"
-            }
-        }
-
-        var icon: String {
-            switch self {
-            case .needsInput: "message"
-            case .working: "clock.arrow.circlepath"
-            case .done: "circle.check"
-            }
-        }
-
-        var color: Color {
-            switch self {
-            case .needsInput: HubStyle.waiting
-            case .working: Theme.accent
-            case .done: Color(hex: AgentStateColor.done)
-            }
-        }
-    }
-
     /// Where a click goes.
     enum Target {
         case chat(AgentSession)
@@ -80,7 +40,7 @@ struct HubAgent: Identifiable {
     /// What it last said or did, as one line.
     let detail: String?
     let place: Place
-    let status: Status
+    let status: AgentState
     let cwd: String?
     let date: Date?
     let target: Target
@@ -90,6 +50,13 @@ struct HubAgent: Identifiable {
     var tab: String? = nil
     /// The terminal it runs in, for its context usage.
     var terminalId: String? = nil
+    /// The workspace's branch, when it's a worktree.
+    var branch: String? = nil
+    /// Subagents it has running.
+    var subagents = 0
+    /// When this state began, when its source says (a turn's start, a
+    /// background run's); otherwise the hub's own clock keeps it.
+    var stateSince: Date? = nil
 
     var opensInPlace: Bool {
         switch target {
@@ -110,7 +77,7 @@ struct HubAgent: Identifiable {
     func matches(_ query: String) -> Bool {
         let query = query.trimmingCharacters(in: .whitespaces)
         guard !query.isEmpty else { return true }
-        return [title, detail, workspace, tab, cwd, brandName, place.title].compactMap { $0 }
+        return [title, detail, workspace, tab, cwd, branch, brandName, place.title, status.title].compactMap { $0 }
             .contains { $0.localizedCaseInsensitiveContains(query) }
     }
 }
@@ -134,6 +101,45 @@ extension HubAgent {
         case .terminal, .codexBackground: break
         }
     }
+
+    /// Whether a message can reach it from the hub. A Claude background
+    /// session takes none until it's brought back.
+    var canSend: Bool {
+        switch target {
+        case .chat, .terminal, .codexBackground: true
+        case .claudeBackground: false
+        }
+    }
+
+    /// Sends `text` as its next prompt, by the path each kind already uses:
+    /// a conversation's own send (queued mid-turn), the session server's
+    /// agent prompt for a terminal (as messages from another Mac arrive),
+    /// Codex's queued reply.
+    func send(_ text: String, store: SessionStore) {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        switch target {
+        case .chat(let session):
+            session.send(text)
+        case .terminal:
+            guard id.hasPrefix("pane:") else { return }
+            let paneId = String(id.dropFirst("pane:".count))
+            let name = title
+            let client = store.client
+            DispatchQueue.global(qos: .userInitiated).async {
+                let failed = Broadcast.deliver(text, to: [.init(paneId: paneId, name: name, isAgent: true)]) { method, params in
+                    _ = try client.call(method, params)
+                }
+                if !failed.isEmpty {
+                    DispatchQueue.main.async { MainActor.assumeIsolated { ToastCenter.shared.fail(nil, "Couldn't send to \(name)") } }
+                }
+            }
+        case .codexBackground(let agent):
+            CodexAgentsStore.shared.reply(agent, message: text)
+        case .claudeBackground:
+            break
+        }
+    }
 }
 
 /// Every agent from every source, for the hub and the Agents button.
@@ -145,18 +151,20 @@ enum AgentsHubList {
 
     /// How many are waiting on you, across all of them.
     static func waitingCount(store: SessionStore) -> Int {
-        agents(store: store).filter { $0.status == .needsInput }.count
+        agents(store: store).filter(\.status.needsYou).count
     }
 
     private static func chats(store: SessionStore) -> [HubAgent] {
         let workspaces = store.snapshot.workspaces
         return AgentCenter.shared.sessions.map { session in
-            let status: HubAgent.Status = session.pendingPermission != nil || session.pendingQuestion != nil ? .needsInput
-                : session.conversation.isRunning ? .working : .done
+            let status = session.agentState
+            let workspace = workspaces.first { $0.workspaceId == session.workspaceId }
             return HubAgent(id: "chat:" + session.id, vendor: session.engine.agent, title: session.title,
-                            detail: lastText(session.conversation), place: .chat, status: status,
-                            cwd: session.cwd, date: nil, target: .chat(session),
-                            workspace: workspaces.first { $0.workspaceId == session.workspaceId }?.label)
+                            detail: session.lastReplyPreview, place: .chat, status: status,
+                            cwd: session.cwd, date: session.conversation.items.last?.createdAt, target: .chat(session),
+                            workspace: workspace?.label, branch: workspace?.worktree?.branch,
+                            subagents: session.runningSubagents,
+                            stateSince: status == .working ? session.turnStartedAt : nil)
         }
     }
 
@@ -166,18 +174,17 @@ enum AgentsHubList {
         return snapshot.agents.compactMap { agent -> HubAgent? in
             guard agent.agent != nil, !agent.isSubagentViewer, let tabId = agent.tabId,
                   let tab = snapshot.tabs.first(where: { $0.tabId == tabId }) else { return nil }
-            let status: HubAgent.Status = switch agent.agentStatus {
-            case .blocked: .needsInput
-            case .working: .working
-            default: .done
-            }
             let label = TabAutoName.display(label: tab.label, number: tab.number)
-            let workspace = snapshot.workspaces.first { $0.workspaceId == tab.workspaceId }?.label
+            let workspace = snapshot.workspaces.first { $0.workspaceId == tab.workspaceId }
+            // Subagents: the viewers it opened, and the ones its log says run.
+            let viewers = snapshot.agents.filter { $0.parentPaneId == agent.paneId }.count
+            let logged = store.terminalRuntimes[agent.paneId]?.filter { $0.kind == .agent }.count ?? 0
             return HubAgent(id: "pane:" + agent.paneId, vendor: AgentBrand.forAgent(agent.agent)?.id ?? agent.agent,
                             title: label, detail: agent.terminalId.flatMap { activity[$0] },
-                            place: label.hasPrefix("☁") ? .cloud : .terminal, status: status,
+                            place: label.hasPrefix("☁") ? .cloud : .terminal, status: AgentState(agent.agentStatus),
                             cwd: agent.effectiveCwd, date: nil, target: .terminal(tab),
-                            workspace: workspace, terminalId: agent.terminalId)
+                            workspace: workspace?.label, terminalId: agent.terminalId,
+                            branch: workspace?.worktree?.branch, subagents: max(viewers, logged))
         }
     }
 
@@ -186,7 +193,8 @@ enum AgentsHubList {
         return store.agents.filter { $0.kind == .background }.map { agent in
             HubAgent(id: "claude-bg:" + agent.sessionId, vendor: "claude", title: agent.name,
                      detail: store.lastLines[agent.sessionId], place: .background, status: status(agent),
-                     cwd: agent.cwd, date: agent.startedAt, target: .claudeBackground(agent))
+                     cwd: agent.cwd, date: agent.startedAt, target: .claudeBackground(agent),
+                     stateSince: agent.state == .working ? agent.startedAt : nil)
         }
     }
 
@@ -197,30 +205,39 @@ enum AgentsHubList {
         return store.agents.filter { !chatThreads.contains($0.id) }.map { agent in
             HubAgent(id: "codex-bg:" + agent.id, vendor: "codex", title: agent.name,
                      detail: store.previews[agent.id].flatMap { $0.isEmpty ? nil : $0 }, place: .background,
-                     status: status(agent), cwd: agent.cwd, date: agent.startedAt, target: .codexBackground(agent))
+                     status: status(agent), cwd: agent.cwd, date: agent.startedAt, target: .codexBackground(agent),
+                     stateSince: agent.state == .working ? agent.startedAt : nil)
         }
     }
 
-    static func status(_ agent: BackgroundAgent) -> HubAgent.Status {
+    static func status(_ agent: BackgroundAgent) -> AgentState {
         switch agent.state {
         case .needsInput: .needsInput
         case .working: .working
-        case .done, .idle: .done
+        case .done: .done
+        case .idle: .idle
         }
     }
+}
 
-    /// The last thing the agent wrote, as one line.
-    private static func lastText(_ conversation: AgentConversation) -> String? {
-        for item in conversation.items.reversed() {
-            if case .text(let text) = item.kind, !text.isEmpty { return plainPreview(text) }
-        }
-        return nil
+/// When each hub agent was first seen in its present state, for sources
+/// that don't say: "Needs input 4m".
+@MainActor
+final class HubStateClock {
+    static let shared = HubStateClock()
+    private var seen: [String: (state: AgentState, at: Date)] = [:]
+
+    func since(_ agent: HubAgent, now: Date = Date()) -> Date {
+        if let known = agent.stateSince { return known }
+        if let entry = seen[agent.id], entry.state == agent.status { return entry.at }
+        seen[agent.id] = (agent.status, now)
+        return now
     }
 }
 
 enum HubStyle {
-    /// Amber, as on the Agents button's count.
-    static let waiting = Color(hex: "FFC107")
+    /// Needs you, in the shared vocabulary's colour.
+    static var waiting: Color { AgentState.needsInput.color }
     static let listDefaultWidth: CGFloat = 400
     static let listMinWidth: CGFloat = 360
 }
@@ -245,6 +262,7 @@ struct AgentsHub: View {
     @State private var vendorFilter: String?
     @State private var query = ""
     @State private var showsAllDone = false
+    @AppStorage("agentsHub.showsIdle") private var showsIdle = false
     @State private var task = ""
     @State private var taskVendor = "claude"
     @State private var taskPlace: HubAgent.Place = .background
@@ -289,6 +307,7 @@ struct AgentsHub: View {
             #endif
         }
         .onChange(of: query) { _, _ in keepSelectionVisible() }
+        .onChange(of: showsIdle) { _, _ in keepSelectionVisible() }
         .onChange(of: filter) { _, _ in keepSelectionVisible() }
         .onChange(of: vendorFilter) { _, _ in keepSelectionVisible() }
     }
@@ -300,12 +319,14 @@ struct AgentsHub: View {
 
     // MARK: - Shelves
 
+    /// One of the dashboard's buckets, after Orca's: what needs you, what's
+    /// working, what's idle (hidden until asked for), and what's done.
     private struct Shelf: Identifiable {
-        let status: HubAgent.Status
-        /// The rows shown; Settled may hold back its older ones.
+        let bucket: AgentState.Bucket
+        /// The rows shown; Done may hold back its older ones.
         let agents: [HubAgent]
         let total: Int
-        var id: Int { status.rawValue }
+        var id: Int { bucket.rawValue }
     }
 
     private func shown(_ all: [HubAgent]) -> [HubAgent] {
@@ -318,15 +339,40 @@ struct AgentsHub: View {
 
     private func shelves(of all: [HubAgent]) -> [Shelf] {
         let shown = shown(all)
-        return HubAgent.Status.allCases.compactMap { status in
-            var agents = shown.filter { $0.status == status }
+        return AgentState.Bucket.allCases.compactMap { bucket in
+            var agents = shown.filter { $0.status.bucket == bucket }
             guard !agents.isEmpty else { return nil }
             let total = agents.count
-            if status == .done {
+            switch bucket {
+            case .needsYou:
+                // The loudest first (approval before input before a failure).
+                agents.sort { $0.status.priority > $1.status.priority }
+            case .idle:
+                if !showsIdle { agents = [] }
+            case .done:
                 agents.sort { ($0.date ?? .distantFuture) > ($1.date ?? .distantFuture) }
                 if !showsAllDone { agents = Array(agents.prefix(Self.doneShown)) }
+            case .working:
+                break
             }
-            return Shelf(status: status, agents: agents, total: total)
+            return Shelf(bucket: bucket, agents: agents, total: total)
+        }
+    }
+
+    private static func icon(_ bucket: AgentState.Bucket) -> String {
+        switch bucket {
+        case .needsYou: AgentState.needsInput.icon
+        case .working: AgentState.working.icon
+        case .idle: AgentState.idle.icon
+        case .done: AgentState.done.icon
+        }
+    }
+
+    private static func tint(_ bucket: AgentState.Bucket) -> Color? {
+        switch bucket {
+        case .needsYou: AgentState.needsInput.color
+        case .working: AgentState.working.color
+        case .idle, .done: nil
         }
     }
 
@@ -420,8 +466,8 @@ struct AgentsHub: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 1) {
                         ForEach(shelves) { shelf in
-                            OctetShelfHeader(icon: shelf.status.icon, title: shelf.status.shelf, count: shelf.total,
-                                             tint: shelf.status == .done ? nil : shelf.status.color)
+                            OctetShelfHeader(icon: Self.icon(shelf.bucket), title: shelf.bucket.title, count: shelf.total,
+                                             tint: Self.tint(shelf.bucket))
                                 .padding(.horizontal, 8)
                                 .padding(.top, 12)
                                 .padding(.bottom, 4)
@@ -434,8 +480,18 @@ struct AgentsHub: View {
                                         // goes to it; the first just shows it.
                                         if (NSApp.currentEvent?.clickCount ?? 1) >= 2 { focus(agent) } else { select(agent) }
                                     }
+                                if selected == agent.id, agent.canSend {
+                                    sendField(agent)
+                                }
                             }
-                            if shelf.status == .done, shelf.total > Self.doneShown {
+                            if shelf.bucket == .idle {
+                                OctetButton(title: showsIdle ? "Hide idle" : "Show \(shelf.total) idle", kind: .ghost, compact: true) {
+                                    motion.perform(.sidebar) { showsIdle.toggle() }
+                                }
+                                .padding(.leading, 4)
+                                .padding(.top, 2)
+                            }
+                            if shelf.bucket == .done, shelf.total > Self.doneShown {
                                 OctetButton(title: showsAllDone ? "Show fewer" : "Show all \(shelf.total)", kind: .ghost, compact: true) {
                                     motion.perform(.sidebar) { showsAllDone.toggle() }
                                 }
@@ -465,6 +521,21 @@ struct AgentsHub: View {
                 }
             }
         }
+    }
+
+    /// "Send to this agent", under the chosen card: the message arrives as
+    /// its next prompt, by the path its kind already uses.
+    private func sendField(_ agent: HubAgent) -> some View {
+        AgentSendField(placeholder: agent.status.needsYou ? "Answer \(agent.title)" : "Send to this agent",
+                       label: "Message to \(agent.title)") { text in
+            agent.send(text, store: store)
+            ToastCenter.shared.info("Sent to \(agent.title)")
+        }
+        // A fresh field for each agent chosen.
+        .id(agent.id)
+        .padding(.leading, 36)
+        .padding(.trailing, 10)
+        .padding(.bottom, Theme.Space.md)
     }
 
     private func errorLine(_ error: String) -> some View {
@@ -645,14 +716,16 @@ private struct HubRow: View {
     let stop: () -> Void
     @State private var hovered = false
 
+    private var settled: Bool { agent.status.bucket == .done || agent.status.bucket == .idle }
+
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             mark.frame(width: 16, height: 18)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(agent.title)
-                        .font(Theme.interfaceFont(13, weight: agent.status == .done ? .regular : .medium))
-                        .foregroundStyle(agent.status == .done && !selected ? Theme.textSecondary : Theme.textPrimary)
+                        .font(settled ? Theme.Text.transcript : Theme.Text.transcriptMedium)
+                        .foregroundStyle(settled && !selected ? Theme.textSecondary : Theme.textPrimary)
                         .lineLimit(1)
                         .truncationMode(.tail)
                     Spacer(minLength: 6)
@@ -661,7 +734,7 @@ private struct HubRow: View {
                 // A session named after its task says it twice: skip the echo.
                 if let detail = agent.detail, !detail.isEmpty, !detail.hasPrefix(String(agent.title.prefix(24))) {
                     Text(detail)
-                        .font(Theme.interfaceFont(12))
+                        .font(Theme.Text.body)
                         .foregroundStyle(Theme.textTertiary)
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -673,8 +746,18 @@ private struct HubRow: View {
                         Text("·")
                         Text(location).lineLimit(1).truncationMode(.middle)
                     }
+                    if let branch = agent.branch, !branch.isEmpty {
+                        Text("·")
+                        OctetIcon("branch", size: 10)
+                        Text(branch).lineLimit(1).truncationMode(.middle)
+                    }
+                    if agent.subagents > 0 {
+                        Text("·")
+                        Text(agent.subagents == 1 ? "1 subagent" : "\(agent.subagents) subagents")
+                            .monospacedDigit()
+                    }
                 }
-                .font(Theme.captionFont)
+                .font(Theme.Text.caption)
                 .foregroundStyle(Theme.textMuted)
             }
         }
@@ -688,12 +771,19 @@ private struct HubRow: View {
         .animation(.easeOut(duration: 0.12), value: hovered)
         .help(agent.opensInPlace ? "Click to show, double-click to go to it" : "Show its conversation")
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(agent.title), \(agent.status.title), \(agent.place.title)")
+        .accessibilityLabel(accessibilityText)
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
         .accessibilityActions {
             if agent.opensInPlace { Button("Go to It", action: focus) }
             if agent.canStop { Button("Stop", action: stop) }
         }
+    }
+
+    private var accessibilityText: String {
+        var parts = [agent.title, agent.status.title, agent.place.title]
+        if let branch = agent.branch { parts.append("branch \(branch)") }
+        if agent.subagents > 0 { parts.append("\(agent.subagents) subagents") }
+        return parts.filter { !$0.isEmpty }.joined(separator: ", ")
     }
 
     /// The agent's mark, so a glance says whose it is.
@@ -715,37 +805,36 @@ private struct HubRow: View {
                 HStack(spacing: 2) {
                     if agent.canStop {
                         OctetIconButton(icon: "pause.circle", help: "Stop", compact: true, action: stop)
+                            .hoverReveal(hovered)
                     }
                     if agent.opensInPlace {
                         OctetIconButton(icon: "arrow.up.right", help: "Go to it (Return)", compact: true, action: focus)
+                            .hoverReveal(hovered)
                     }
                 }
-                .opacity(hovered ? 1 : 0)
                 .allowsHitTesting(hovered)
             }
         }
     }
 
+    /// The state and how long it has held, ticking; a settled agent shows
+    /// when it last did something instead.
     @ViewBuilder private var status: some View {
-        switch agent.status {
-        case .needsInput, .working:
-            HStack(spacing: 5) {
-                if agent.status == .working {
-                    LoadingLine(width: 12)
-                } else {
-                    Circle().fill(agent.status.color).frame(width: 7, height: 7)
-                }
-                Text(agent.status.title)
-            }
-            .font(Theme.interfaceFont(11.5, weight: .medium))
-            .foregroundStyle(agent.status.color)
-            .fixedSize()
-        case .done:
+        if settled {
             if let date = agent.date {
                 Text(UsageMeter.relative(date))
-                    .font(Theme.captionFont.monospacedDigit())
+                    .font(Theme.Text.caption.monospacedDigit())
                     .foregroundStyle(Theme.textTertiary)
                     .fixedSize()
+            } else if agent.status == .done {
+                AgentStatePill(state: agent.status, filled: false)
+            }
+        } else {
+            let since = HubStateClock.shared.since(agent)
+            TimelineView(.periodic(from: .now, by: 15)) { context in
+                AgentStatePill(state: agent.status,
+                               duration: AgentActivityWatcher.durationLabel(context.date.timeIntervalSince(since)),
+                               filled: false)
             }
         }
     }
@@ -774,15 +863,25 @@ private struct HubResizeHandle: View {
                 hovering = inside
                 if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
             }
-            .onDisappear { if hovering { NSCursor.pop() } }
+            .onDisappear {
+                if hovering { NSCursor.pop() }
+                if start != nil { ResizeCancel.shared.end() }
+                start = nil
+            }
             .gesture(
                 DragGesture(minimumDistance: 1, coordinateSpace: .global)
                     .onChanged { drag in
                         let from = start ?? min(range.upperBound, max(range.lowerBound, width))
+                        if start == nil { ResizeCancel.shared.begin { width = from } }
                         start = from
+                        guard ResizeCancel.shared.isLive else { return }
+                        NSCursor.resizeLeftRight.set()
                         width = min(range.upperBound, max(range.lowerBound, (from + drag.translation.width).rounded()))
                     }
-                    .onEnded { _ in start = nil }
+                    .onEnded { _ in
+                        start = nil
+                        ResizeCancel.shared.end()
+                    }
             )
             .onTapGesture(count: 2) { width = Double(HubStyle.listDefaultWidth) }
             .help("Drag to resize the list. Double-click to reset.")
@@ -823,7 +922,7 @@ struct AgentsHubButton: View {
                 .overlay(alignment: .topTrailing) {
                     if waiting > 0 {
                         Text("\(waiting)")
-                            .font(.system(size: 9, weight: .bold).monospacedDigit())
+                            .font(Theme.interfaceFont(9, weight: .bold).monospacedDigit())
                             .foregroundStyle(Theme.terminalBackground)
                             .padding(.horizontal, 3.5)
                             .frame(minWidth: 13, minHeight: 13)

@@ -32,6 +32,17 @@ enum Theme {
     /// T3 Code's info tone (blue-400; blue-600 on light, where 400 is too
     /// faint to read), for things set aside with a time, like Snoozed.
     static var info: Color { Color(hex: palette.isLight ? "2563EB" : "60A5FA") }
+    /// Something wants a look but isn't wrong: waiting, needs input, a
+    /// limit near. From the theme's own yellow, made readable.
+    static var warning: Color { palette.color(\.warning) }
+    /// Done, added, passing. From the theme's own green.
+    static var success: Color { palette.color(\.success) }
+    /// The selected tab's mark: the text colour, so it shows on light
+    /// themes as on dark (it was white, which a light theme lost).
+    static var selectionMark: Color { textPrimary.opacity(0.9) }
+    /// The dimming behind a modal: lighter on light themes, where black at
+    /// a third reads as a grey sheet.
+    static var scrim: Color { Color.black.opacity(palette.isLight ? 0.18 : 0.35) }
     static var isLight: Bool { palette.isLight }
     static var colorScheme: ColorScheme { palette.isLight ? .light : .dark }
 
@@ -62,6 +73,49 @@ enum Theme {
         interfaceFamily.isEmpty ? .system(size: size, weight: weight) : .custom(interfaceFamily, size: size).weight(weight)
     }
     static let monoFont = Font.system(size: 11.5, design: .monospaced)
+
+    /// The type scale: every size Octet's own text uses, in the interface
+    /// font, so a custom font reaches everything. Mono stays system.
+    enum Text {
+        static var micro: Font { interfaceFont(9.5) }
+        static var caption: Font { interfaceFont(10.5) }
+        static var captionMedium: Font { interfaceFont(10.5, weight: .medium) }
+        static var body: Font { interfaceFont(12) }
+        static var bodyMedium: Font { interfaceFont(12, weight: .medium) }
+        /// Conversation text: a size up from the chrome, for reading.
+        static var transcript: Font { interfaceFont(13) }
+        static var transcriptMedium: Font { interfaceFont(13, weight: .medium) }
+        static var title3: Font { interfaceFont(14, weight: .semibold) }
+        static var title2: Font { interfaceFont(17, weight: .semibold) }
+        static var title1: Font { interfaceFont(22, weight: .semibold) }
+        static func mono(_ size: CGFloat = 11.5, weight: Font.Weight = .regular) -> Font {
+            .system(size: size, weight: weight, design: .monospaced)
+        }
+    }
+
+    /// Corner radii, smallest to largest.
+    enum Radius {
+        static let xs: CGFloat = 3
+        static let sm: CGFloat = rowRadius
+        static let md: CGFloat = 6
+        static let lg: CGFloat = controlRadius
+        static let xl: CGFloat = popoverRadius
+        /// Cards and banners.
+        static let card: CGFloat = 12
+        /// Modal sheets and the palette.
+        static let sheet: CGFloat = 16
+    }
+
+    /// Spacing, on a 2pt grid.
+    enum Space {
+        static let xxs: CGFloat = 2
+        static let xs: CGFloat = 4
+        static let sm: CGFloat = 6
+        static let md: CGFloat = 8
+        static let lg: CGFloat = 12
+        static let xl: CGFloat = 16
+        static let xxl: CGFloat = 24
+    }
 
     /// Shortcuts Octet's menus own right now; unbound in the renderer so the
     /// surface lets them through. Derived from the effective shortcuts, so a
@@ -108,6 +162,8 @@ struct ThemePalette: Equatable {
     let accent: String
     let onAccent: String
     let danger: String
+    let warning: String
+    let success: String
     /// Command-line syntax colors, from the theme's ANSI palette.
     let syntaxBuiltin: String
     let syntaxFlag: String
@@ -151,6 +207,8 @@ struct ThemePalette: Equatable {
         onAccent = Self.contrast("ffffff", accent) >= Self.contrast("000000", accent) ? "ffffff" : "000000"
         let ansi = theme.ansi.count >= 8 ? theme.ansi : Array(repeating: fg, count: 8)
         danger = Self.readable(ansi[1], on: bg, toward: fg, minimum: targets.secondary)
+        warning = Self.readable(ansi[3], on: bg, toward: fg, minimum: targets.secondary)
+        success = Self.readable(ansi[2], on: bg, toward: fg, minimum: targets.secondary)
         // The prompt line is drawn on the terminal background.
         syntaxBuiltin = Self.readable(ansi[6], on: bg, toward: fg, minimum: targets.secondary)
         syntaxFlag = Self.readable(ansi[5], on: bg, toward: fg, minimum: targets.secondary)

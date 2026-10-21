@@ -113,6 +113,8 @@ final class SessionStore: ObservableObject {
     private(set) var sshScans = 0
     private var loadingPaneRuntimes = false
     @Published private(set) var loadingPaneProcesses = false
+    /// An empty or unavailable process response is still a completed first scan.
+    @Published private(set) var scannedRuntimePaneIDs: Set<String> = []
     /// True while the focused pane sits at its shell's own prompt.
     var focusedPaneAtPrompt: Bool { ShellPrompt.isAtPrompt(focusedProcess) }
     /// The pane `focusedProcess` describes.
@@ -232,6 +234,9 @@ final class SessionStore: ObservableObject {
                         Task { @MainActor [weak self] in
                             self?.isConnected = true
                             self?.scheduleRefresh()
+                            self?.probeEngineFeatures()
+                            self?.upgradeOutdatedEngine()
+                            self?.resendViewports()
                         }
                     }, onEvent: { _ in
                         Task { @MainActor [weak self] in self?.scheduleRefresh() }
@@ -296,13 +301,22 @@ final class SessionStore: ObservableObject {
         }
     }
 
-    func refreshPaneProcesses(in workspaceId: String?, nativeRoots: [String: Int] = [:]) {
+    func refreshPaneProcesses(in workspaceId: String?, nativeRoots: [String: Int] = [:], allPanes: Bool = true) {
         guard !loadingPaneProcesses else { return }
         // Inspect all panes so the global agent board includes model CLIs
         // spawned outside the workspace currently in front. RuntimePanel
-        // still filters what it draws to the selected tab/session.
-        let panes = snapshot.panes
+        // still filters what it draws to the selected tab/session, and asks
+        // for only its workspace (`allPanes: false`) unless the hub or the
+        // Notch is showing agents from everywhere; other panes keep their
+        // last scan.
+        let panes = allPanes || workspaceId == nil ? snapshot.panes : snapshot.panes.filter { $0.workspaceId == workspaceId }
+        let scanned = Set(panes.map(\.paneId))
+        let carried = Set(snapshot.panes.map(\.paneId)).subtracting(scanned)
+        let previousSpawned = spawnedRuntimeAgents.filter { $0.paneId.map(carried.contains) == true }
+        let previousScanned = scannedRuntimePaneIDs.intersection(carried)
         guard !panes.isEmpty || !nativeRoots.isEmpty else {
+            // Nothing to scan here; another workspace's last scan stays.
+            guard carried.isEmpty else { return }
             paneProcesses = [:]
             nativeRuntimeProcesses = [:]
             spawnedRuntimeAgents = []
@@ -311,6 +325,8 @@ final class SessionStore: ObservableObject {
         }
         loadingPaneProcesses = true
         let client = self.client
+        let previousProcesses = paneProcesses
+        let previousRuntimes = terminalRuntimes
         let runtimeLogs = self.runtimeLogs
         // The session each Claude Code pane is on, for reading its log.
         let claudeSessions: [String: (sessionId: String, cwds: [String])] = snapshot.agents.reduce(into: [:]) { found, agent in
@@ -321,9 +337,16 @@ final class SessionStore: ObservableObject {
         }
         DispatchQueue.global(qos: .utility).async { [weak self] in
             var found: [String: ShellPrompt.ProcessInfo] = [:]
+            var failedPanes = Set<String>()
             for pane in panes {
-                if let info = (try? client.call("pane.process_info", ["pane_id": pane.paneId])).flatMap(ShellPrompt.parse) {
-                    found[pane.paneId] = info
+                do {
+                    if let info = ShellPrompt.parse(try client.call("pane.process_info", ["pane_id": pane.paneId])) {
+                        found[pane.paneId] = info
+                    }
+                } catch {
+                    // A failed refresh must not erase the last successful scan.
+                    failedPanes.insert(pane.paneId)
+                    found[pane.paneId] = previousProcesses[pane.paneId]
                 }
             }
             let processTree = Self.processTree()
@@ -374,6 +397,7 @@ final class SessionStore: ObservableObject {
                                             processStart: AgentRuntimeHandoff.processStart(pid: claude.pid))
                 if !live.isEmpty { logRuntimes[paneId] = live }
             }
+            for paneID in failedPanes { logRuntimes[paneID] = previousRuntimes[paneID] }
             runtimeLogs.forget(except: Set(claudeSessions.values.map(\.sessionId)))
             var nativeFound: [String: [RuntimeChildProcess]] = [:]
             for (sessionId, pid) in nativeRoots {
@@ -406,13 +430,20 @@ final class SessionStore: ObservableObject {
                     )
                 }
             }
+            // Panes outside this scan keep what their last scan found.
+            for paneId in carried {
+                if let info = previousProcesses[paneId] { found[paneId] = info }
+                if let runtimes = previousRuntimes[paneId] { logRuntimes[paneId] = runtimes }
+            }
+            for agent in previousSpawned where spawned[agent.pid] == nil { spawned[agent.pid] = agent }
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.loadingPaneProcesses = false
+                self.scannedRuntimePaneIDs = scanned.union(previousScanned)
                 self.paneProcesses = found
                 self.nativeRuntimeProcesses = nativeFound
                 self.spawnedRuntimeAgents = spawned.values.sorted { $0.pid < $1.pid }
                 if logRuntimes != self.terminalRuntimes { self.terminalRuntimes = logRuntimes }
+                self.loadingPaneProcesses = false
             }
         }
     }
@@ -633,15 +664,15 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    /// Each workspace's branch. Workspaces in one folder share one read.
     private nonisolated static func readBranches(_ snapshot: EngineSnapshot) -> [String: String] {
-        var branches: [String: String] = [:]
-        for workspace in snapshot.workspaces {
-            if let directory = snapshot.directory(ofWorkspace: workspace.workspaceId),
-               let branch = GitBranch.current(in: directory) {
-                branches[workspace.workspaceId] = branch
-            }
+        var byDirectory: [String: String?] = [:]
+        return snapshot.workspaceDirectories.compactMapValues { directory in
+            if let known = byDirectory[directory] { return known }
+            let branch = GitBranch.current(in: directory)
+            byDirectory[directory] = branch
+            return branch
         }
-        return branches
     }
 
     /// Each subagent's reported folder, seen from where its tab opened.
@@ -666,55 +697,6 @@ final class SessionStore: ObservableObject {
         primaryAgent(in: snapshot.agents(inTab: tabId)).flatMap { agentLocations[$0.paneId] }
     }
 
-    // MARK: - Remote machines
-
-    /// Machines the engine has saved, refreshed when the palette opens.
-    @Published private(set) var remoteMachines: [RemoteMachine] = []
-
-    func refreshRemoteMachines() {
-        guard let herdr = EngineSession.locateEngine() else { return }
-        PluginCLI.runShell("\(PluginCLI.quote(herdr)) machine list --json", timeout: 30) { [weak self] result in
-            let machines = RemoteMachines.parse(Data(result.output.utf8))
-            guard let self, machines != self.remoteMachines else { return }
-            self.remoteMachines = machines
-        }
-    }
-
-    /// Opens a session on a machine in a new tab of the focused workspace.
-    func openRemote(_ machine: RemoteMachine, workspaceId: String? = nil) {
-        guard let herdr = EngineSession.locateEngine() else { return }
-        var params: [String: Any] = [
-            "focus": true,
-            "tab_label": machine.label,
-            "root": [
-                "type": "pane",
-                "label": machine.label,
-                "command": machine.command(herdrPath: herdr, session: RemoteMachines.sessionName(for: machine)),
-            ] as [String: Any],
-        ]
-        if let workspace = workspaceId ?? focusedWorkspace?.workspaceId { params["workspace_id"] = workspace }
-        perform("layout.apply", params, toast: ToastText(
-            progress: "Connecting to \(machine.label)…",
-            success: "Opened \(machine.label)",
-            failure: "Couldn't open \(machine.label)"
-        ))
-    }
-
-    /// Asks the engine to prepare a machine; it does the ssh work.
-    func addRemoteMachine(target: String) {
-        guard let herdr = EngineSession.locateEngine() else { return }
-        let handle = toasts.progress("Preparing \(target)…", detail: "Setting up the far side over ssh")
-        PluginCLI.runShell("\(PluginCLI.quote(herdr)) machine add \(PluginCLI.quote(target))", timeout: 300) { [weak self] result in
-            guard let self else { return }
-            if result.exitCode == 0 {
-                self.toasts.succeed(handle, "Added \(target)")
-            } else {
-                self.toasts.fail(handle, "Couldn't add \(target)", detail: PluginCLI.lastLines(result.output))
-            }
-            self.refreshRemoteMachines()
-        }
-    }
-
     // MARK: - Agent notices
 
     private var activityWatcher = AgentActivityWatcher()
@@ -726,8 +708,10 @@ final class SessionStore: ObservableObject {
         if shown.isEmpty, let tab = displayedFocusedTabId ?? snapshot.focusedTabId { shown.insert(tab) }
         let appActive = NSApp?.isActive == true
         RecapCenter.shared.observe(snapshot)
+        // Settings › Notifications can ask for notices even about what's on screen.
+        let suppressVisible = SettingsStore.shared.values.notifySuppressWhileVisible
         let events = activityWatcher.events(in: snapshot) { agent in
-            appActive && agent.tabId.map(shown.contains) == true
+            suppressVisible && appActive && agent.tabId.map(shown.contains) == true
         }
         guard !events.isEmpty else { return }
         AgentBannerCenter.shared.show(events)
@@ -1246,6 +1230,27 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    /// Tells the engine the size, in cells, a tab is shown at, so its layout
+    /// is worked out for it. Quiet: an engine without the call keeps its own.
+    func setViewport(tab: String, columns: Int, rows: Int) {
+        viewports[tab] = (columns, rows)
+        let client = self.client
+        DispatchQueue.global(qos: .utility).async {
+            _ = try? client.call("tab.set_viewport", ["tab_id": tab, "cols": columns, "rows": rows])
+        }
+    }
+
+    /// The last size sent for each tab. The engine doesn't keep them over a
+    /// restart, and the grid only reports a size that changed.
+    private var viewports: [String: (columns: Int, rows: Int)] = [:]
+
+    /// A new connection (a restarted engine, too): every tab's size again.
+    private func resendViewports() {
+        let live = Set(snapshot.tabs.map(\.tabId))
+        if !live.isEmpty { viewports = viewports.filter { live.contains($0.key) } }
+        for (tab, size) in viewports { setViewport(tab: tab, columns: size.columns, rows: size.rows) }
+    }
+
     private static func describe(_ error: Error) -> String {
         if case EngineSocketError.server(_, let message) = error, !message.isEmpty { return message }
         return String(describing: error)
@@ -1271,7 +1276,13 @@ final class SessionStore: ObservableObject {
         perform("tab.focus", ["tab_id": id], failure: "Couldn't switch tabs")
     }
 
-    func closeTab(_ id: String) {
+    /// `confirmed`: already asked about what's running in it, if anything.
+    func closeTab(_ id: String, confirmed: Bool = false) {
+        guard confirmed else {
+            return confirmClosing(snapshot.panes.filter { $0.tabId == id }, place: "tab") { [weak self] in
+                self?.closeTab(id, confirmed: true)
+            }
+        }
         let label = tabLabel(id)
         let tabs = displayedTabs
         if id == displayedFocusedTabId, let index = tabs.firstIndex(where: { $0.tabId == id }), tabs.count > 1 {
@@ -1289,6 +1300,12 @@ final class SessionStore: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             self?.pendingClosedTabIds.remove(id)
         }
+    }
+
+    /// Closes workspace `id` and nothing else: no window is moved on to
+    /// another, as when the window that showed it has closed.
+    func closeWorkspaceOnly(_ id: String) {
+        perform("workspace.close", ["workspace_id": id], failure: "Couldn't close workspace \(workspaceLabel(id))")
     }
 
     func closeWorkspace(_ id: String) {
@@ -1398,21 +1415,83 @@ final class SessionStore: ObservableObject {
         return panes.count == 1 ? panes.first : nil
     }
 
-    /// A fresh pane beside `targetPane`, in `cwd`. With `keepingSide` the
-    /// pane already there takes that side and the new one the other, as when
-    /// the tab in front is dropped on its own edge; without, the new pane
-    /// takes `edge`'s side, as when a workspace card is dropped there.
-    func splitNewPane(beside targetPane: String, edge: SplitEdge, cwd: String?, keepingSide: Bool) {
+    /// Whether the engine is Herdr as Octet builds it
+    /// (scripts/engine-pane-layout.patch): it splits beside a whole tab, puts
+    /// a pane left of or above another in one call, and equalizes and moves
+    /// dividers. Stock Herdr splits only right and down, beside a pane, so
+    /// left and up take a swap after, and the rest isn't offered.
+    @Published private(set) var hasOctetEngine = false
+
+    /// Asks the engine, each time it connects (it may have been swapped),
+    /// whether it's Octet's build: a stock Herdr doesn't know
+    /// `pane.equalize`, which Octet's answers for a tab that isn't there
+    /// with `layout_not_found`.
+    /// Handed to the bundled engine once per launch at most: a handoff that
+    /// failed isn't tried again on every reconnect.
+    private var engineUpgradeTried = false
+
+    /// A server from before this Octet (an update leaves it running) can't
+    /// stream panes. It's asked to hand its panes, shells and all, to the
+    /// engine in this app; the connection drops and comes back to the new
+    /// one. If it can't, a fresh server is offered instead.
+    private func upgradeOutdatedEngine() {
+        guard !engineUpgradeTried, let enginePath = EngineSession.locateEngine() else { return }
+        let client = self.client
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                _ = try client.call(EngineUpgrade.probeMethod, EngineUpgrade.probeParams)
+                return
+            } catch EngineSocketError.server(let code, let message) {
+                guard EngineUpgrade.isOutdated(code: code, message: message) else { return }
+            } catch {
+                return
+            }
+            DispatchQueue.main.async { self?.engineUpgradeTried = true }
+            let outcome = Result { try client.call("server.live_handoff", EngineUpgrade.handoffParams(enginePath: enginePath)) }
+            DispatchQueue.main.async {
+                switch outcome {
+                case .success:
+                    ToastCenter.shared.info("Updated the terminal engine", detail: "Your shells kept running.")
+                case .failure(let error):
+                    EngineSession.offerRestartAfterFailedUpgrade(enginePath: enginePath, reason: Self.describe(error))
+                }
+            }
+        }
+    }
+
+    private func probeEngineFeatures() {
+        let client = self.client
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let supported: Bool
+            do {
+                _ = try client.call("pane.equalize", ["tab_id": "octet-probe"])
+                supported = true
+            } catch EngineSocketError.server(let code, _) {
+                supported = code == "layout_not_found"
+            } catch {
+                return
+            }
+            DispatchQueue.main.async {
+                self?.hasOctetEngine = supported
+            }
+        }
+    }
+
+    /// A fresh shell in `cwd` on `edge`'s side of `targetPane`, or of the
+    /// whole of `tabId` when that's nil: the side a drop zone showed.
+    func splitNewPane(beside targetPane: String?, inTab tabId: String, edge: SplitEdge, cwd: String?) {
+        guard let anchor = targetPane ?? snapshot.panes.first(where: { $0.tabId == tabId })?.paneId else { return }
         let client = self.client
         let multi = WindowRegistry.shared.isMulti
-        var params: [String: Any] = ["target_pane_id": targetPane, "direction": edge.split, "focus": !multi]
+        let sides = hasOctetEngine
+        var params: [String: Any] = ["target_pane_id": anchor, "direction": sides ? edge.rawDirection : edge.split, "focus": !multi]
+        if targetPane == nil { params["root"] = true }
         if let cwd { params["cwd"] = cwd }
-        let swaps = keepingSide ? edge.swapsToKeep : edge.swaps
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let outcome = Result {
                 let created = EngineCreated(result: try client.call("pane.split", params))
-                if swaps, let pane = created.paneId {
-                    try client.call("pane.swap", ["source_pane_id": pane, "target_pane_id": targetPane])
+                if !sides, edge.swaps, let pane = created.paneId {
+                    try client.call("pane.swap", ["source_pane_id": pane, "target_pane_id": anchor])
                 }
             }
             DispatchQueue.main.async {
@@ -1432,29 +1511,61 @@ final class SessionStore: ObservableObject {
         movePane(moving.paneId, into: targetTab, beside: targetPane, edge: edge)
     }
 
+    /// Moves the divider beside `paneId` (a pane of the first side) by `cells`:
+    /// right or down when positive, left or up when negative. One request, as
+    /// the pointer lets go of the divider.
+    func moveDivider(beside paneId: String, sideBySide: Bool, by cells: Int) {
+        guard cells != 0 else { return }
+        let direction = sideBySide ? (cells > 0 ? "right" : "left") : (cells > 0 ? "down" : "up")
+        let client = self.client
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let outcome = Result { try client.call("pane.resize_cells", ["pane_id": paneId, "direction": direction, "cells": abs(cells)]) }
+            DispatchQueue.main.async {
+                if case .failure(let error) = outcome {
+                    ToastCenter.shared.fail(nil, "Couldn't move the divider", detail: String(describing: error))
+                }
+                self?.scheduleRefresh()
+            }
+        }
+    }
+
     /// Moves `paneId`, still running, into `targetTab`, beside `targetPane`
-    /// on `edge`. A tab it leaves empty is closed by the engine.
-    func movePane(_ paneId: String, into targetTab: String, beside targetPane: String, edge: SplitEdge) {
-        guard paneId != targetPane else { return }
+    /// on `edge`, or beside the whole tab when that's nil. A tab it leaves
+    /// empty is closed by the engine.
+    func movePane(_ paneId: String, into targetTab: String, beside targetPane: String?, edge: SplitEdge) {
+        guard paneId != targetPane,
+              let anchor = targetPane ?? snapshot.panes.first(where: { $0.tabId == targetTab && $0.paneId != paneId })?.paneId else { return }
         let client = self.client
         let multi = WindowRegistry.shared.isMulti
-        let destination: [String: Any] = ["type": "tab", "tab_id": targetTab, "target_pane_id": targetPane, "split": edge.split]
+        let sides = hasOctetEngine
+        var destination: [String: Any] = ["type": "tab", "tab_id": targetTab, "target_pane_id": anchor,
+                                          "split": sides ? edge.rawDirection : edge.split]
+        if targetPane == nil { destination["root"] = true }
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let outcome = Result {
                 // Several windows: `focus` would move every one of them.
                 try client.call("pane.move", ["pane_id": paneId, "destination": destination, "focus": !multi])
-                if edge.swaps {
-                    try client.call("pane.swap", ["source_pane_id": paneId, "target_pane_id": targetPane])
+                if !sides, edge.swaps {
+                    try client.call("pane.swap", ["source_pane_id": paneId, "target_pane_id": anchor])
                 }
             }
             DispatchQueue.main.async {
                 if case .failure(let error) = outcome {
-                    ToastCenter.shared.fail(nil, "Couldn't split the tab in", detail: String(describing: error))
+                    ToastCenter.shared.fail(nil, "Couldn't move the pane", detail: String(describing: error))
                 }
                 self?.scheduleRefresh()
                 OctetTerminalRuntime.focusTerminal()
             }
         }
+    }
+
+    /// `paneId` into `tabId`, on the right of its focused pane: a pane
+    /// dropped on a tab in the strip. Already there, it stays put.
+    func movePane(_ paneId: String, intoTab tabId: String) {
+        let panes = snapshot.panes.filter { $0.tabId == tabId }
+        guard !panes.contains(where: { $0.paneId == paneId }),
+              let target = panes.first(where: \.focused) ?? panes.first else { return }
+        movePane(paneId, into: tabId, beside: target.paneId, edge: .right)
     }
 
     /// The focused pane, out of its split and into a tab of its own: the way
@@ -1615,9 +1726,12 @@ final class SessionStore: ObservableObject {
     /// Closes a pane; one running something waits among the closed tabs.
     func closePane(_ paneId: String, close: @escaping @MainActor () -> Void) {
         guard let pane = snapshot.panes.first(where: { $0.paneId == paneId }) else { return close() }
-        let tab = snapshot.tabs.first { $0.tabId == pane.tabId }
-        closedTabs.close(panes: [pane], title: tab.map { TabAutoName.display(label: $0.label, number: $0.number) } ?? "Pane",
-                         workspace: snapshot.workspaces.first { $0.workspaceId == pane.workspaceId }, closeRest: close)
+        confirmClosing([pane], place: "pane") { [weak self] in
+            guard let self else { return }
+            let tab = self.snapshot.tabs.first { $0.tabId == pane.tabId }
+            self.closedTabs.close(panes: [pane], title: tab.map { TabAutoName.display(label: $0.label, number: $0.number) } ?? "Pane",
+                                  workspace: self.snapshot.workspaces.first { $0.workspaceId == pane.workspaceId }, closeRest: close)
+        }
     }
 
     func focusPane(_ direction: PaneDirection) {

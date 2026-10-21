@@ -184,7 +184,7 @@ struct TwinView: View {
                 .overlay(alignment: .leading) {
                     if twin.draft.isEmpty {
                         Text(placeholder)
-                            .font(.system(size: 12.5))
+                            .font(Theme.interfaceFont(12.5))
                             .foregroundStyle(Theme.textTertiary)
                             .padding(.leading, 4)
                             .allowsHitTesting(false)
@@ -199,8 +199,8 @@ struct TwinView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
         .background(Theme.card)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.border, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.lg))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.lg).strokeBorder(Theme.border, lineWidth: 1))
     }
 
     /// What each agent keeps at the foot of its own screen: which model, how
@@ -248,7 +248,7 @@ private struct TwinPendingRow: View {
             Rectangle().fill(Theme.accent.opacity(0.4)).frame(width: 2)
             VStack(alignment: .leading, spacing: 3) {
                 Text(text)
-                    .font(.system(size: 12.5))
+                    .font(Theme.interfaceFont(12.5))
                     .foregroundStyle(Theme.textSecondary)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
@@ -285,7 +285,7 @@ private struct TwinRowView: View {
                             .foregroundStyle(Theme.textTertiary)
                     }
                     .buttonStyle(.plain)
-                    .opacity(hovered ? 1 : 0)
+                    .hoverReveal(hovered)
                     .help("Restore the files to before this prompt")
                     .accessibilityLabel("Restore the files to before this prompt")
                 }
@@ -316,7 +316,7 @@ private struct TwinRowView: View {
         case .command(let command, let output, let isError):
             step(title: style.toolTitle(style.id == "claude" ? "Bash" : "exec") + "(",
                  mono: command, trailing: ")",
-                 tint: isError ? Color(hex: AgentStateColor.blocked) : Theme.textSecondary) {
+                 tint: isError ? Theme.danger : Theme.textSecondary) {
                 output
             }
         case .diff(let diff, let result):
@@ -344,7 +344,7 @@ private struct TwinRowView: View {
         case .tool(let name, let summary, let result, let isError):
             step(title: style.toolTitle(name) + (summary.isEmpty ? "" : "("),
                  mono: summary, trailing: summary.isEmpty ? "" : ")",
-                 tint: isError ? Color(hex: AgentStateColor.blocked) : Theme.textSecondary) {
+                 tint: isError ? Theme.danger : Theme.textSecondary) {
                 result
             }
         }
@@ -450,7 +450,7 @@ private struct TwinDiffView: View {
         }
         .padding(.vertical, 4)
         .background(Theme.card.opacity(0.5))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
     }
 
     private func marker(_ line: TwinDiff.Line) -> String {
@@ -469,16 +469,16 @@ private struct TwinDiffView: View {
 
     private func colour(_ line: TwinDiff.Line) -> Color {
         switch line {
-        case .added: Color(hex: AgentStateColor.done)
-        case .removed: Color(hex: AgentStateColor.blocked)
+        case .added: Theme.success
+        case .removed: Theme.danger
         case .context: Theme.textTertiary
         }
     }
 
     private func background(_ line: TwinDiff.Line) -> Color {
         switch line {
-        case .added: Color(hex: AgentStateColor.done).opacity(0.08)
-        case .removed: Color(hex: AgentStateColor.blocked).opacity(0.08)
+        case .added: Theme.success.opacity(0.08)
+        case .removed: Theme.danger.opacity(0.08)
         case .context: Color.clear
         }
     }
@@ -516,7 +516,7 @@ private struct TwinTodoList: View {
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.card.opacity(0.5))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
     }
 
     private func glyph(_ status: TwinTodo.Status) -> String {
@@ -529,7 +529,7 @@ private struct TwinTodoList: View {
 
     private func tint(_ status: TwinTodo.Status) -> Color {
         switch status {
-        case .completed: Color(hex: AgentStateColor.done)
+        case .completed: Theme.success
         case .inProgress: Theme.accent
         case .pending: Theme.textTertiary
         }
@@ -546,7 +546,7 @@ private struct TwinText: View {
                 switch segment {
                 case .prose(let prose):
                     Text(attributed(prose))
-                        .font(.system(size: 12.5))
+                        .font(Theme.interfaceFont(12.5))
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                 case .code(_, let code):
@@ -557,7 +557,7 @@ private struct TwinText: View {
                         .padding(8)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(Theme.card.opacity(0.5))
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
                 }
             }
         }
@@ -601,8 +601,8 @@ private struct TwinApprovalBar: View {
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.card.opacity(Theme.isLight ? 0.7 : 0.6))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.accent.opacity(0.35), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.lg))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.lg).strokeBorder(Theme.accent.opacity(0.35), lineWidth: 1))
     }
 }
 

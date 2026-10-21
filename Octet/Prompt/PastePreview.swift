@@ -46,7 +46,16 @@ final class PastePreviewCenter: ObservableObject {
         // (a newline would otherwise submit halfway through).
         let text = "\u{1b}[200~" + request.text + "\u{1b}[201~"
         EngineClient.inputQueue.async {
-            _ = try? client.call("pane.send_text", ["pane_id": request.paneId, "text": text])
+            do {
+                _ = try client.call("pane.send_text", ["pane_id": request.paneId, "text": text])
+            } catch {
+                DispatchQueue.main.async {
+                    ToastCenter.shared.fail(nil, "Couldn't paste into \(request.target)",
+                                            detail: SessionStore.isUnreachable(error)
+                                                ? "The terminal isn't connected right now."
+                                                : String(describing: error))
+                }
+            }
         }
         OctetTerminalRuntime.focusTerminal()
     }
@@ -67,7 +76,7 @@ struct PastePreviewDialog: View {
     var body: some View {
         ZStack {
             if let request = center.request, host.owns(request.window) {
-                Color.black.opacity(0.35).ignoresSafeArea().onTapGesture { center.cancel() }
+                Theme.scrim.ignoresSafeArea().onTapGesture { center.cancel() }
                 card(request)
                     .transition(motion.animates(.palette) ? .opacity.combined(with: .scale(scale: 0.97)) : .identity)
             }

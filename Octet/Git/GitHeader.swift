@@ -16,23 +16,16 @@ struct GitHeader: View {
                     WorkerMarks(workers: group.workers) { model.show($0) }
                         .help(Self.workersLabel(group))
                 }
-                OctetIcon("arrow.triangle.branch", size: 11).foregroundStyle(Theme.textTertiary)
-                Text(checkout.branch.name ?? "detached HEAD")
-                    .font(Theme.monoFont)
-                    .foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .help(abbreviateHome(checkout.top))
+                BranchPickerChip(top: checkout.top, branch: checkout.branch.name, changed: { model.refresh() })
                     .layoutPriority(1)
                 BaseStanding(checkout: checkout)
                 Spacer(minLength: 4)
-                if let busy {
-                    LoadingLine(width: 12)
+                // With changes, the primary button sits in the commit box.
+                if checkout.files.isEmpty {
+                    GitPrimaryButton(model: model, group: group)
+                } else if let busy {
+                    LoadingLine(width: 12).accessibilityHidden(true)
                     Text(busy).font(Theme.captionFont).foregroundStyle(Theme.textTertiary).lineLimit(1)
-                } else if let action = GitSyncAction.primary(for: checkout.branch) {
-                    OctetButton(title: action.title, icon: action.icon,
-                                kind: action == .publish ? .primary : .secondary, compact: true) { perform(action) }
-                        .help(help(for: action))
                 }
                 OctetIconButton(icon: "ellipsis", help: "More git actions", compact: true) { presentMenu() }
                     .disabled(busy != nil)
@@ -50,9 +43,11 @@ struct GitHeader: View {
                     if !checkout.operation.isEmpty {
                         HStack(spacing: 5) {
                             Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 9.5))
+                                .accessibilityHidden(true)
                             Text(checkout.operation.label).font(Theme.captionFont.weight(.medium))
                         }
                         .foregroundStyle(Theme.danger)
+                        .accessibilityElement(children: .combine)
                     }
                 }
             }
@@ -67,22 +62,6 @@ struct GitHeader: View {
         case 0: return leads.count > 1 ? "\(lead) + \(leads.count - 1)" : lead
         case 1: return "\(lead) · 1 subagent"
         default: return "\(lead) · \(subagents) subagents"
-        }
-    }
-
-    private func perform(_ action: GitSyncAction) {
-        switch action {
-        case .pull: model.pull(checkout)
-        case .push, .publish: model.push(checkout)
-        }
-    }
-
-    private func help(for action: GitSyncAction) -> String {
-        let upstream = checkout.branch.upstream ?? "upstream"
-        switch action {
-        case .pull: return "Pull from \(upstream), only when it fast-forwards"
-        case .push: return "Push to \(upstream)"
-        case .publish: return "Push this branch to the remote and track it"
         }
     }
 
@@ -103,6 +82,14 @@ struct GitHeader: View {
         if branch.name != nil, !checkout.onBase {
             items.append(.action("Open Pull Request", icon: "arrow.triangle.branch",
                                  help: "Open a pull request for this branch on its host") { model.openPullRequest(checkout) })
+        }
+        let groups = GitChangeGroups(files: checkout.files)
+        if !groups.changes.isEmpty || !groups.untracked.isEmpty || !groups.staged.isEmpty { items.append(.divider) }
+        if !groups.changes.isEmpty || !groups.untracked.isEmpty {
+            items.append(.action("Stage All", icon: "plus", help: "Stage every change, untracked files too") { model.stageAll(checkout) })
+        }
+        if !groups.staged.isEmpty {
+            items.append(.action("Unstage All", icon: "minus", help: "Keep the changes, staged none") { model.unstageAll(checkout) })
         }
         items.append(.divider)
         items.append(.action("Review Changes", icon: "doc.text.magnifyingglass", shortcut: "⇧⌘R") { model.review(checkout.top) })
@@ -132,12 +119,16 @@ struct BaseStanding: View {
                 }
             }
             .help("\(checkout.aheadOfBase) ahead of \(base), \(checkout.behindBase) behind")
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(checkout.aheadOfBase) ahead of \(base), \(checkout.behindBase) behind")
         } else if checkout.branch.ahead > 0 || checkout.branch.behind > 0 {
             HStack(spacing: 4) {
                 if checkout.branch.ahead > 0 { count("arrow.up", checkout.branch.ahead) }
                 if checkout.branch.behind > 0 { count("arrow.down", checkout.branch.behind) }
             }
             .help("Against \(checkout.branch.upstream ?? "its upstream")")
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(checkout.branch.ahead) ahead of \(checkout.branch.upstream ?? "its upstream"), \(checkout.branch.behind) behind")
         }
     }
 

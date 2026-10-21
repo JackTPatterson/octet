@@ -595,10 +595,12 @@ struct MarketplaceView: View {
             ) { store.agentFilter = nil })
         }
         if total == 0, let error = store.loadErrors[section] {
-            return AnyView(MarketplaceEmptyState(
-                symbol: "exclamationmark.triangle.fill", title: "Couldn't load \(section.title)", message: error,
-                actionTitle: "Retry"
-            ) { retry(section) })
+            // The first line says why; the whole output is behind Copy Details.
+            let reason = error.split(whereSeparator: \.isNewline).first.map(String.init) ?? error
+            return AnyView(OctetErrorState(title: "Couldn't load \(section.title)", reason: reason,
+                                           actionTitle: "Try Again", action: { retry(section) },
+                                           details: error, fills: false)
+                .padding(.top, 56))
         }
         if total == 0 {
             let (title, message): (String, String) = switch section {
@@ -625,7 +627,7 @@ struct MarketplaceView: View {
     @ViewBuilder private var editorOverlay: some View {
         if let editor {
             ZStack {
-                Color.black.opacity(0.35)
+                Theme.scrim
                     .contentShape(Rectangle())
                     .onTapGesture { self.editor = nil }
                     .accessibilityHidden(true)

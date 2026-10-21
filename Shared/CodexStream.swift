@@ -22,11 +22,16 @@ extension AgentConversation {
         case "turn/started":
             isRunning = true
             lastError = nil
+            limitHit = nil
         case "turn/plan/updated":
             // Codex's plan, for the todo panel.
             if let plan = AgentTodos.fromPlan(params) { self.plan = plan }
         case "item/started", "item/completed":
             guard let item = params["item"] as? [String: Any] else { return }
+            // Compaction is a lifecycle event, drawn as one, not a tool call.
+            if item["type"] as? String == "contextCompaction" {
+                return method == "item/started" ? beginCompaction() : finishCompaction()
+            }
             applyCodexItem(item)
         case "item/agentMessage/delta":
             guard let id = params["itemId"] as? String, let delta = params["delta"] as? String else { return }
@@ -63,14 +68,17 @@ extension AgentConversation {
             items.append(AgentItem(id: UUID().uuidString, kind: .notice(text)))
         case "turn/completed":
             isRunning = activateNextQueuedMessage()
+            settleCompaction()
             // How it ended is on the turn: a provider error or a full
             // context window ends it as `failed`, with nothing else said.
             let turn = params["turn"] as? [String: Any]
             switch turn?["status"] as? String {
             case "failed":
-                let message = ((turn?["error"] as? [String: Any])?["message"] as? String) ?? "The turn failed."
+                let error = turn?["error"] as? [String: Any]
+                let message = (error?["message"] as? String) ?? "The turn failed."
                 lastError = message
-                appendCodexNotice(message)
+                noteCodexLimit(error, message: message)
+                appendCodexNotice(message, style: .error)
             case "interrupted":
                 appendCodexNotice("Stopped")
             default:
@@ -83,7 +91,8 @@ extension AgentConversation {
                 appendCodexNotice("Retrying: \(message)")
             } else {
                 lastError = message
-                appendCodexNotice(message)
+                noteCodexLimit(error, message: message)
+                appendCodexNotice(message, style: .error)
             }
         case "warning":
             if let message = params["message"] as? String, !message.isEmpty { appendCodexNotice(message) }
@@ -99,7 +108,10 @@ extension AgentConversation {
             let message = ((params["error"] as? [String: Any])?["message"] as? String)
                 ?? (method == "turn/aborted" ? "Stopped" : "The turn failed.")
             if method != "turn/aborted" { lastError = message }
-            items.append(AgentItem(id: UUID().uuidString, kind: .notice(message)))
+            items.append(AgentItem(id: UUID().uuidString, kind: .notice(message),
+                                   noticeStyle: method == "turn/aborted" ? .plain : .error))
+        case "thread/compacted":
+            finishCompaction()
         default:
             break
         }
@@ -107,9 +119,18 @@ extension AgentConversation {
 
     /// A notice in the transcript, once: the `error` notification and the
     /// failed turn it ends carry the same message.
-    private mutating func appendCodexNotice(_ text: String) {
+    private mutating func appendCodexNotice(_ text: String, style: AgentNoticeStyle = .plain) {
         if case .notice(let last) = items.last?.kind, last == text { return }
-        items.append(AgentItem(id: UUID().uuidString, kind: .notice(text)))
+        items.append(AgentItem(id: UUID().uuidString, kind: .notice(text), noticeStyle: style))
+    }
+
+    /// Codex says which errors are its usage limit; the soonest spent
+    /// window it reported says when that ends.
+    private mutating func noteCodexLimit(_ error: [String: Any]?, message: String) {
+        guard AgentLimitText.isCodexUsageLimit(error) else { return }
+        let reset = usageWindows.filter { $0.used >= 1 }.compactMap(\.resetsAt).min()
+            ?? usageWindows.compactMap(\.resetsAt).min()
+        limitHit = AgentLimitHit(message: message, resetsAt: reset)
     }
 
     private mutating func applyCodexItem(_ item: [String: Any]) {

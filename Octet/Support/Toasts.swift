@@ -123,6 +123,10 @@ final class ToastCenter: ObservableObject {
         }
         trim()
         schedule(id, after: seconds)
+        // A toast is easy to miss without sight: say it to VoiceOver too.
+        if NSApp?.isActive == true {
+            AttentionRouter.announce([title, detail].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ". "))
+        }
     }
 
     private func trim() {
@@ -209,8 +213,8 @@ private struct ToastCard: View {
                         }
                     }
                     OctetIconButton(icon: "xmark", help: "Dismiss", compact: true, action: dismiss)
+                        .hoverReveal(hovered || toast.style == .failure)
                 }
-                .opacity(hovered || toast.style == .failure ? 1 : 0)
                 .animation(.easeOut(duration: 0.12), value: hovered)
                 .offset(x: 4, y: -3)
             }
@@ -231,8 +235,8 @@ private struct ToastCard: View {
     private var accent: Color {
         switch toast.style {
         case .progress, .info: return Theme.accent
-        case .success: return Color(hex: AgentStateColor.done)
-        case .failure: return Color(hex: AgentStateColor.blocked)
+        case .success: return Theme.success
+        case .failure: return Theme.danger
         }
     }
 

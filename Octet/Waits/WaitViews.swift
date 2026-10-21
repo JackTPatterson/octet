@@ -148,7 +148,7 @@ struct WaitEditorSheet: View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(draft.snooze ? "Keep in Idle until…" : "Wait for something")
-                    .font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.textPrimary)
+                    .font(Theme.interfaceFont(15, weight: .semibold)).foregroundStyle(Theme.textPrimary)
                 Text(draft.snooze
                      ? "The workspace stays in Idle and comes back when it happens."
                      : "Octet checks it with nothing running, and brings this work back with the next step when it happens.")
@@ -332,8 +332,8 @@ private struct ReadyCard: View {
             }
         }
         .padding(10)
-        .background(RoundedRectangle(cornerRadius: 6).fill(hovered ? Theme.cardSelected : Theme.card))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.accent.opacity(0.5), lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.md).fill(hovered ? Theme.cardSelected : Theme.card))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.md).strokeBorder(Theme.accent.opacity(0.5), lineWidth: 1))
         .padding(.horizontal, 8)
         .onHover { hovered = $0 }
         .contextMenu { WaitMenu(wait: wait) }
@@ -374,6 +374,7 @@ struct WaitsDock: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(Theme.textTertiary)
                 .help("Wait for something…")
+                .accessibilityLabel("Wait for something")
             }
             .padding(.horizontal, 12)
             .frame(height: 30)
@@ -402,10 +403,10 @@ private struct WaitRow: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 OctetIcon(wait.condition.kind.icon, size: 12).foregroundStyle(Theme.textTertiary).frame(width: 12)
-                Text(wait.title).font(.system(size: 11.5)).foregroundStyle(hovered ? Theme.textPrimary : Theme.textSecondary).lineLimit(1)
+                Text(wait.title).font(Theme.interfaceFont(11.5)).foregroundStyle(hovered ? Theme.textPrimary : Theme.textSecondary).lineLimit(1)
                 Spacer(minLength: 4)
                 Text(WorkspaceActivity.ageLabel(since: wait.createdAt))
-                    .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Theme.textTertiary)
+                    .font(Theme.Text.mono(10.5)).foregroundStyle(Theme.textTertiary)
             }
             Text(center.isChecking(wait.id) ? "Checking…" : wait.statusLine())
                 .font(Theme.captionFont).foregroundStyle(Theme.textTertiary).lineLimit(1)
@@ -493,11 +494,11 @@ struct WaitSuggestionBanner: View {
                     center.compose(workspaceId: session.workspaceId, session: session, prefill: suggestion.found)
                 }
                 Button { dismissed.insert(suggestion.itemId) } label: { OctetIcon("xmark", size: 12) }
-                    .buttonStyle(.plain).foregroundStyle(Theme.textTertiary).help("Not now")
+                    .buttonStyle(.plain).foregroundStyle(Theme.textTertiary).help("Not now").accessibilityLabel("Not now")
             }
             .padding(.horizontal, 12).padding(.vertical, 8)
-            .background(RoundedRectangle(cornerRadius: 8).fill(Theme.card))
-            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.border, lineWidth: 1))
+            .background(RoundedRectangle(cornerRadius: Theme.Radius.lg).fill(Theme.card))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.lg).strokeBorder(Theme.border, lineWidth: 1))
             .padding(.horizontal, 16).padding(.bottom, 6)
         }
     }

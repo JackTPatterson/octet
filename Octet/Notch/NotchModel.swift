@@ -278,10 +278,12 @@ final class NotchModel: ObservableObject {
     }
 
     private func row(for agent: HubAgent, now: Date) -> NotchAgentRow {
-        let status: NotchAgentRow.Status = switch agent.status {
-        case .needsInput: .needsInput
+        // The island has three rows' worth of state: what needs you (a
+        // failure or a plan to read too), what's moving, what has settled.
+        let status: NotchAgentRow.Status = switch agent.status.bucket {
+        case .needsYou: .needsInput
         case .working: .working
-        case .done: .done
+        case .idle, .done: .done
         }
         let known = statusSince[agent.id]
         if known?.status != status { statusSince[agent.id] = (status, now) }

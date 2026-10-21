@@ -59,13 +59,13 @@ struct OctetSlider: View {
     var body: some View {
         HStack(spacing: 12) {
             Text(format(value))
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .font(Theme.Text.mono(12, weight: .medium))
                 .monospacedDigit()
                 .foregroundStyle(Theme.textPrimary)
                 .lineLimit(1)
                 .padding(.horizontal, 8)
                 .frame(minWidth: 48, minHeight: 24)
-                .background(RoundedRectangle(cornerRadius: 6).fill(Theme.cardSelected))
+                .background(RoundedRectangle(cornerRadius: Theme.Radius.md).fill(Theme.cardSelected))
                 .accessibilityHidden(true)
             track
         }
@@ -264,7 +264,7 @@ private struct OctetCheckbox: View {
 
     var body: some View {
         let on = configuration.isOn
-        let shape = RoundedRectangle(cornerRadius: 4)
+        let shape = RoundedRectangle(cornerRadius: Theme.Radius.sm)
         Button {
             configuration.isOn.toggle()
         } label: {

@@ -122,7 +122,7 @@ struct WorkspacePeek: View {
                     }
                     if let directory, abbreviateHome(directory) != workspace.label {
                         Text(abbreviateHome(directory))
-                            .font(.system(size: 11, design: .monospaced))
+                            .font(Theme.Text.mono(11))
                             .foregroundStyle(Theme.textTertiary)
                             .lineLimit(1)
                             .truncationMode(.middle)
@@ -150,7 +150,7 @@ struct WorkspacePeek: View {
                     }
                     if let work = reading?.work {
                         if work.uncommitted > 0 {
-                            PeekChip(dot: .orange, text: Recap.count(work.uncommitted, "change"))
+                            PeekChip(dot: Theme.warning, text: Recap.count(work.uncommitted, "change"))
                                 .help(Recap.count(work.uncommitted, "uncommitted file"))
                         }
                         if work.unpushed > 0 {
@@ -178,7 +178,7 @@ struct WorkspacePeek: View {
                 .interpolation(.high)
                 .aspectRatio(contentMode: .fit)
                 .frame(width: 20, height: 20)
-                .clipShape(RoundedRectangle(cornerRadius: 4))
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.sm))
                 .frame(width: 32, height: 32)
                 .background(shape.fill(Theme.card))
                 .overlay(shape.strokeBorder(Theme.border.opacity(0.6), lineWidth: 1))
@@ -279,7 +279,7 @@ private struct TabPeekRow: View {
         let running = store.snapshot.agents(inTab: tab.tabId)
         let agent = store.primaryAgent(in: running)
         let brand = AgentBrand.forAgent(agent?.agent)
-        let status = agent?.agentStatus ?? tab.agentStatus
+        let status = AgentState(agent?.agentStatus ?? tab.agentStatus)
         PeekRow(status: status, action: action) {
             if let brand { AgentLogo(brand: brand, size: 14) } else {
                 OctetIcon("terminal", size: 13).foregroundStyle(Theme.textTertiary)
@@ -323,8 +323,7 @@ private struct ConversationPeekRow: View {
     let action: () -> Void
 
     var body: some View {
-        let status: EngineAgentStatus = session.pendingPermission != nil ? .blocked
-            : session.conversation.isRunning ? .working : .idle
+        let status = session.agentState
         PeekRow(status: status, action: action) {
             if let brand = AgentBrand.forAgent(session.engine.agent) { AgentLogo(brand: brand, size: 14) }
         } title: {
@@ -344,14 +343,14 @@ private struct ConversationPeekRow: View {
         }
     }
 
-    private func detail(_ status: EngineAgentStatus) -> String {
+    private func detail(_ status: AgentState) -> String {
         switch status {
-        case .blocked: return "Needs your approval"
+        case .needsApproval, .needsInput, .failed, .planReady: return status.title
         case .working:
             guard let started = session.turnStartedAt else { return "Working" }
             let seconds = Int(Date().timeIntervalSince(started))
             return seconds < 60 ? "Working \(seconds)s" : "Working \(seconds / 60)m \(seconds % 60)s"
-        default: return "\(session.engine.displayName) · idle"
+        default: return "\(session.engine.displayName) · \(status == .done ? status.label : AgentState.idle.label)"
         }
     }
 }
@@ -359,7 +358,7 @@ private struct ConversationPeekRow: View {
 /// The shared row: the agent's mark with its state on the corner, the
 /// title over a detail line, and something on the right.
 private struct PeekRow<Mark: View, Trailing: View>: View {
-    let status: EngineAgentStatus
+    let status: AgentState
     let action: () -> Void
     @ViewBuilder let mark: () -> Mark
     let title: () -> String
@@ -372,10 +371,10 @@ private struct PeekRow<Mark: View, Trailing: View>: View {
             HStack(spacing: 9) {
                 mark()
                     .frame(width: 26, height: 26)
-                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.card.opacity(0.7)))
+                    .background(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous).fill(Theme.card.opacity(0.7)))
                     .overlay(alignment: .bottomTrailing) {
                         if status != .unknown {
-                            AgentStateGlyph(status: status, size: 8)
+                            AgentStateGlyph(state: status, size: 8)
                                 .frame(width: 12, height: 12)
                                 .background(Circle().fill(Theme.chrome))
                                 .offset(x: 3, y: 3)
@@ -388,7 +387,7 @@ private struct PeekRow<Mark: View, Trailing: View>: View {
                         .lineLimit(1)
                     Text(detail())
                         .font(Theme.captionFont)
-                        .foregroundStyle(status == .blocked ? Color(hex: AgentStateColor.blocked) : Theme.textTertiary)
+                        .foregroundStyle(status.needsYou || status == .failed ? status.color : Theme.textTertiary)
                         .lineLimit(1)
                 }
                 Spacer(minLength: 4)
@@ -529,7 +528,8 @@ final class HoverIntent: ObservableObject {
         schedule(hovering ? 0 : 0.3)
     }
 
-    /// Opens it now, for the DEBUG verification hook.
+    /// Opens it now: VoiceOver's Show Details action, and the DEBUG
+    /// verification hook. It stays until dismissed, as with the pointer in it.
     func show() {
         pending?.cancel()
         overCard = true

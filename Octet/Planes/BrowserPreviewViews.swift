@@ -92,7 +92,7 @@ struct BrowserFaviconView: View {
             if let image = favicons.icon(for: url) {
                 Image(nsImage: image).resizable().interpolation(.high).aspectRatio(contentMode: .fit)
                     .frame(width: size, height: size)
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.sm))
             } else if let logo = LanguageLogo(service: service, size: size * 0.8) {
                 logo
             } else {
@@ -204,22 +204,10 @@ struct BrowserEmptyState: View {
     }
 
     private var nothingYet: some View {
-        VStack(spacing: 8) {
-            OctetIcon("safari", size: 20)
-                .foregroundStyle(Theme.textTertiary)
-                .frame(width: 36, height: 36)
-                .background(RoundedRectangle(cornerRadius: Theme.controlRadius).fill(Theme.card))
-            Text("No preview yet")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(Theme.textPrimary)
-            Text("Type an address above, or start a dev server. Local servers show up here as they start.")
-                .font(Theme.captionFont)
-                .foregroundStyle(Theme.textTertiary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 260)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.top, 60)
+        OctetEmptyState(icon: "safari", title: "No preview yet",
+                        message: "Type an address above, or start a dev server. Local servers show up here as they start.",
+                        fills: false)
+            .padding(.top, 36)
     }
 
     private func section<Content: View>(_ title: String, icon: String, @ViewBuilder content: () -> Content) -> some View {
@@ -320,7 +308,7 @@ struct BrowserUnreachable: View {
                     .foregroundStyle(Theme.textTertiary)
                     .padding(.bottom, 16)
                 Text("This site can't be reached")
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(Theme.Text.title2)
                     .foregroundStyle(Theme.textPrimary)
                     .padding(.bottom, 8)
                 (Text(host).foregroundColor(Theme.textPrimary).fontWeight(.semibold)
@@ -366,8 +354,9 @@ struct BrowserUnreachable: View {
                     OctetButton(title: details ? "Hide Details" : "Details", kind: .ghost, compact: true) { details.toggle() }
                     Spacer(minLength: 0)
                     OctetButton(title: "Open in Browser", compact: true, action: openOutside)
+                    // Retrying is reloading, so it takes Reload Page's key as bound now.
                     OctetButton(title: "Retry", kind: .primary, compact: true, action: retry)
-                        .keyboardShortcut("r", modifiers: .command)
+                        .keyboardShortcut(OctetShortcut.browserReload.keyboardShortcut)
                 }
                 .padding(.top, 24)
             }

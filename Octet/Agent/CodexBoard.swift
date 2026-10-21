@@ -5,9 +5,14 @@ struct CodexDetail: View {
     @EnvironmentObject private var window: WindowContext
     let agent: BackgroundAgent
     @ObservedObject var store: SessionStore
-    @State private var conversation = AgentConversation()
-    @State private var timer: Timer?
+    @StateObject private var transcript: HubTranscriptModel
     @State private var reply = ""
+
+    init(agent: BackgroundAgent, store: SessionStore) {
+        self.agent = agent
+        self.store = store
+        _transcript = StateObject(wrappedValue: HubTranscriptModel(source: .codex(agent)))
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -29,24 +34,11 @@ struct CodexDetail: View {
                 }
             }
             Rectangle().fill(Theme.divider).frame(height: 1)
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 12) {
-                        HubTranscriptSummary(conversation: conversation, cwd: agent.cwd)
-                        ForEach(conversation.items.filter { item in
-                            if case .thinking(let text) = item.kind { return !text.isEmpty }
-                            return true
-                        }) { item in
-                            ItemRow(item: item, running: false).id(item.id)
-                        }
-                        Color.clear.frame(height: 1).id("end")
-                    }
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 20)
-                }
-                .octetScrollIndicators()
-                .onChange(of: conversation.items.count) { _, _ in proxy.scrollTo("end", anchor: .bottom) }
-            }
+            // A quote goes into the reply, as it would into a composer.
+            HubTranscript(model: transcript, cwd: agent.cwd, running: agent.state == .working, quote: { passage in
+                let quoted = passage.split(separator: "\n", omittingEmptySubsequences: false).map { "> " + $0 }.joined(separator: "\n")
+                reply = reply.isEmpty ? quoted + "\n" : reply + "\n" + quoted + "\n"
+            })
             HStack(spacing: 6) {
                 OctetTextField(placeholder: "Reply to this session (queued until it takes input)", text: $reply) { send() }
                 OctetButton(title: "Queue", icon: "arrow.up", kind: .primary, compact: true) { send() }
@@ -55,16 +47,8 @@ struct CodexDetail: View {
             .padding(12)
             .overlay(alignment: .top) { Rectangle().fill(Theme.divider).frame(height: 1) }
         }
-        .onAppear { load(); startPolling() }
-        .onDisappear { timer?.invalidate() }
-    }
-
-    private var stateLabel: String {
-        switch agent.state {
-        case .needsInput: "needs input"
-        case .working: "working"
-        case .done, .idle: "done"
-        }
+        .onAppear { transcript.start() }
+        .onDisappear { transcript.stop() }
     }
 
     private var workspaceId: String? {
@@ -77,22 +61,5 @@ struct CodexDetail: View {
         guard !text.isEmpty else { return }
         CodexAgentsStore.shared.reply(agent, message: text)
         reply = ""
-    }
-
-    private func load() {
-        guard let path = CodexAgentsStore.shared.rolloutPaths[agent.id] else { return }
-        DispatchQueue.global(qos: .userInitiated).async {
-            let text = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
-            let twin = TwinTranscript.parse(agent: "codex", lines: text.components(separatedBy: "\n"))
-            let replayed = AgentConversation(twin: twin)
-            DispatchQueue.main.async { if replayed.items != conversation.items { conversation = replayed } }
-        }
-    }
-
-    private func startPolling() {
-        timer?.invalidate()
-        let timer = Timer(timeInterval: 2, repeats: true) { _ in MainActor.assumeIsolated { load() } }
-        RunLoop.main.add(timer, forMode: .common)
-        self.timer = timer
     }
 }

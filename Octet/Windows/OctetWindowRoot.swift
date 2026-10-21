@@ -24,18 +24,37 @@ struct OctetWindowRoot: View {
             .background(WindowAccessor(context: context, origin: spec.origin, frame: spec.frame))
             .onAppear {
                 WindowRegistry.shared.add(context)
-                WindowOpener.open = { openWindow(value: $0) }
+                WindowOpener.register(context.id) { openWindow(value: $0) }
             }
-            .onDisappear { WindowRegistry.shared.remove(context) }
+            .onDisappear {
+                WindowOpener.unregister(context.id)
+                context.closeWorkspaceSplit()
+                WindowRegistry.shared.remove(context)
+            }
             .onChange(of: context.focusedWorkspace?.workspaceId) { _, _ in WindowRegistry.shared.save() }
     }
 }
 
 /// Opens terminal windows from outside a view: SwiftUI's `openWindow` only
-/// exists inside one, so each window hands it over.
+/// exists inside one, so each window hands over its own. The front window's
+/// is used, else any open one's: one kept from a window since closed (after
+/// Merge All Windows, say) would open nothing.
 @MainActor
 enum WindowOpener {
-    static var open: ((OctetWindowSpec) -> Void)?
+    private static var openers: [UUID: (OctetWindowSpec) -> Void] = [:]
+
+    static func register(_ window: UUID, _ open: @escaping (OctetWindowSpec) -> Void) { openers[window] = open }
+    static func unregister(_ window: UUID) { openers[window] = nil }
+
+    static var open: ((OctetWindowSpec) -> Void)? {
+        let key = WindowRegistry.shared.key.map { $0.splitParent?.id ?? $0.id }
+        guard let opener = key.flatMap({ openers[$0] }) ?? openers.values.first else { return nil }
+        return { spec in
+            // A workspace a window is being opened for isn't anyone else's to take.
+            if let workspace = spec.workspaceId { WindowRegistry.shared.reserve(workspace) }
+            opener(spec)
+        }
+    }
 }
 
 /// Ties a window's context to its `NSWindow`: which window it is, where a
@@ -110,7 +129,7 @@ private struct WindowAccessor: NSViewRepresentable {
                 forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main
             ) { _ in
                 MainActor.assumeIsolated {
-                    WindowRegistry.shared.becameKey(context)
+                    WindowRegistry.shared.becameKey(context.panelContext)
                     MainWindow.window = window
                 }
             }
@@ -126,7 +145,7 @@ private struct WindowAccessor: NSViewRepresentable {
             }
             observers = [becameKey, willClose, moved]
             if window.isKeyWindow {
-                WindowRegistry.shared.becameKey(context)
+                WindowRegistry.shared.becameKey(context.panelContext)
                 MainWindow.window = window
             }
         }

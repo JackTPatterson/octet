@@ -31,13 +31,18 @@ struct ContainerLogsPlane: View {
                 Text(context.isEmpty ? "Current context" : context).font(Theme.captionFont).foregroundStyle(Theme.textSecondary).lineLimit(1)
                 Spacer()
                 OctetSelect(selection: $tail, options: [(100, "100 lines"), (200, "200 lines"), (500, "500 lines"), (1000, "1,000 lines")], width: 112)
+                    .accessibilityLabel("Lines to show")
             }.padding(.horizontal, 12).padding(.bottom, 8)
             Divider()
-            if let failure {
+            if let failure, !logs.isEmpty {
                 Text(failure).font(Theme.captionFont).foregroundStyle(Theme.danger).textSelection(.enabled).padding(12)
             }
-            if logs.isEmpty && !loading {
-                PlaneMessage(icon: "tool.read", title: failure == nil ? "No logs yet" : "Couldn't load logs", detail: failure == nil ? "Output written by this container will appear here." : "The container may have been removed or its log driver may not support reading.")
+            if logs.isEmpty && !loading, let failure {
+                OctetErrorState(title: "Couldn't load logs",
+                                reason: "The container may have been removed or its log driver may not support reading.",
+                                actionTitle: "Try Again", action: { Task { await load() } }, details: failure)
+            } else if logs.isEmpty && !loading {
+                PlaneMessage(icon: "tool.read", title: "No logs yet", detail: "Output written by this container will appear here.")
             } else {
                 ContainerLogTextView(logs: logs, follow: follow)
             }

@@ -1,127 +1,196 @@
 import AppKit
 import SwiftUI
 
-/// The tab being dragged, while it is. SwiftUI says when a drag starts
-/// (`onDrag`) but not when it ends somewhere that isn't a drop target, so
-/// this watches the mouse button and clears itself once it's let go.
+/// What's being dragged, while it is: a tab, a workspace card, a pane by
+/// its handle, or one of Octet's own tabs. `DragSource` says how the drag
+/// ended, so nothing here guesses from the mouse button.
 ///
-/// Dragged outside every Octet window, a preview of the window it would make
-/// follows the cursor; let go there and the tab gets that window: how a
-/// browser tab is torn off. A workspace card dragged out of the sidebar is
-/// torn off the same way, into a window showing that workspace.
+/// Let go outside every Octet window, a tab, a pane or a workspace gets a
+/// window of its own, the preview of which follows the cursor out there:
+/// how a browser tab is torn off. Escape, or ⌘Tab away, cancels instead.
 @MainActor
 final class TabDrag: ObservableObject {
     static let shared = TabDrag()
-    @Published private(set) var tabId: String?
-    /// A workspace being dragged instead of a tab. Kept apart from `tabId` so
-    /// the tab bars and split zones don't offer to take it.
-    @Published private(set) var workspaceId: String?
+
+    enum Item: Equatable {
+        case tab(String)
+        case workspace(String)
+        case pane(String)
+        /// A conversation, editor or container-log tab, by its strip id.
+        case stripTab(String)
+    }
+
+    @Published private(set) var item: Item?
     private weak var store: SessionStore?
     private weak var source: WindowContext?
-    /// A tab bar or a split zone took the drop.
-    private var didLand = false
-    private var watch: Timer?
+    /// The window the drag started in.
+    var sourceWindow: WindowContext? { source }
+    private var spring: (target: String, timer: Timer)?
+    /// Whether a release out of every window makes it a window of its own.
+    private var tearable = false
 
-    func begin(_ tabId: String, store: SessionStore) {
-        self.tabId = tabId
-        workspaceId = nil
-        self.store = store
-        didLand = false
+    var tabId: String? { if case .tab(let id) = item { id } else { nil } }
+    /// A workspace being dragged instead of a tab, which the tab bars and
+    /// split zones don't take.
+    var workspaceId: String? { if case .workspace(let id) = item { id } else { nil } }
+    var paneId: String? { if case .pane(let id) = item { id } else { nil } }
+    var stripTabId: String? { if case .stripTab(let id) = item { id } else { nil } }
+    /// What the strip calls the dragged tab, for the gap it's dropped in.
+    var stripId: String? {
+        switch item {
+        case .tab(let id): TabStripOrder.terminalPrefix + id
+        case .stripTab(let id): id
+        default: nil
+        }
+    }
+
+    /// A terminal tab dragged from `window`'s strip.
+    func begin(_ tabId: String, store: SessionStore, from window: WindowContext?) {
+        start(.tab(tabId), store: store, source: window)
         // Only a tab that can move whole gets a window of its own.
         tearable = store.onlyPane(ofTab: tabId) != nil
         if tearable, let tab = store.snapshot.tabs.first(where: { $0.tabId == tabId }) {
             let agent = store.primaryAgent(in: store.snapshot.agents(inTab: tabId))?.agent
-            let size = NSApp.keyWindow?.frame.size ?? CGSize(width: 1280, height: 820)
             TearOffPreview.shared.prepare(title: TabAutoName.display(label: tab.label, number: tab.number),
-                                          agent: agent, size: size)
+                                          agent: agent, size: windowSize)
         }
-        startWatching()
     }
 
     /// A workspace card dragged from `window`'s sidebar.
     func begin(workspace workspaceId: String, from window: WindowContext) {
         let store = window.store
-        tabId = nil
-        self.workspaceId = workspaceId
-        self.store = store
-        source = window
-        didLand = false
+        start(.workspace(workspaceId), store: store, source: window)
         tearable = store.snapshot.workspaces.contains { $0.workspaceId == workspaceId }
         if tearable, let workspace = store.snapshot.workspaces.first(where: { $0.workspaceId == workspaceId }) {
             let agent = store.primaryAgent(in: store.snapshot.agents(inWorkspace: workspaceId))?.agent
-            let size = window.nsWindow?.frame.size ?? CGSize(width: 1280, height: 820)
-            TearOffPreview.shared.prepare(title: workspace.label, agent: agent, size: size)
+            TearOffPreview.shared.prepare(title: workspace.label, agent: agent, size: windowSize)
         }
-        startWatching()
     }
 
-    private func startWatching() {
-        watch?.invalidate()
-        // Every frame, so the preview keeps up with the cursor.
-        let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { _ in
-            MainActor.assumeIsolated { TabDrag.shared.tick() }
+    /// A pane dragged by its handle, out of a split.
+    func begin(pane paneId: String, from window: WindowContext) {
+        let store = window.store
+        start(.pane(paneId), store: store, source: window)
+        tearable = store.snapshot.panes.contains { $0.paneId == paneId }
+        if tearable, let pane = store.snapshot.panes.first(where: { $0.paneId == paneId }) {
+            let agent = store.snapshot.agents.first { $0.paneId == paneId }?.agent
+            let tab = store.snapshot.tabs.first { $0.tabId == pane.tabId }
+            TearOffPreview.shared.prepare(title: tab.map { TabAutoName.display(label: $0.label, number: $0.number) } ?? "Terminal",
+                                          agent: agent, size: windowSize)
+        }
+    }
+
+    /// A conversation, editor or log tab: it moves along the strip and
+    /// beside the terminal, but stays in its window.
+    func begin(stripTab id: String, from window: WindowContext) {
+        start(.stripTab(id), store: window.store, source: window)
+        tearable = false
+    }
+
+    private func start(_ item: Item, store: SessionStore, source: WindowContext?) {
+        self.item = item
+        self.store = store
+        self.source = source
+    }
+
+    private var windowSize: CGSize {
+        source?.nsWindow?.frame.size ?? NSApp.keyWindow?.frame.size ?? CGSize(width: 1280, height: 820)
+    }
+
+    /// Held over `target` for `delay`, `action` runs once, as Finder's
+    /// spring-loaded folders open: how a dragged pane brings a tab forward
+    /// to be split into. Nil, or another target, starts over.
+    func springLoad(_ target: String?, after delay: TimeInterval = 0, action: @escaping () -> Void = {}) {
+        guard spring?.target != target else { return }
+        spring?.timer.invalidate()
+        spring = nil
+        guard let target else { return }
+        let timer = Timer(timeInterval: delay, repeats: false) { _ in
+            MainActor.assumeIsolated {
+                guard TabDrag.shared.item != nil else { return }
+                action()
+            }
         }
         // `.common` includes the event-tracking mode a drag runs the loop in.
         RunLoop.main.add(timer, forMode: .common)
-        watch = timer
+        spring = (target, timer)
     }
 
-    private var tearable = false
+    /// The pointer moved, on screen: the preview follows it outside Octet.
+    func moved(to point: CGPoint) {
+        if tearable, !overWindow(point) { TearOffPreview.shared.follow(point) } else { TearOffPreview.shared.hide() }
+    }
 
-    /// A drop target took the tab.
-    func landed() { didLand = true }
+    /// The drag is over: dropped on a target, cancelled, or let go somewhere
+    /// nothing took it, which tears it off when that's outside every window.
+    func ended(_ end: DragEnd) {
+        let item = self.item
+        let store = self.store, source = self.source
+        self.item = nil
+        self.source = nil
+        springLoad(nil)
+        guard case .released(let point) = end, let item, let store, tearable, !overWindow(point) else {
+            return TearOffPreview.shared.hide()
+        }
+        let landing = TearOffPreview.shared.target ?? WindowActions.tearOffFrame(at: point, size: windowSize)
+        switch item {
+        case .tab(let tabId):
+            TearOffPreview.shared.land(in: landing)
+            WindowActions.tearOff(tabId: tabId, store: store, frame: landing)
+        case .workspace(let workspaceId):
+            guard let source else { return TearOffPreview.shared.hide() }
+            TearOffPreview.shared.land(in: landing)
+            WindowActions.moveWorkspaceToNewWindow(workspaceId, from: source, frame: landing)
+        case .pane(let paneId):
+            TearOffPreview.shared.land(in: landing)
+            WindowActions.tearOff(paneId: paneId, store: store, frame: landing)
+        case .stripTab:
+            TearOffPreview.shared.hide()
+        }
+    }
+
+    /// The windows on screen, front to back, read at most ten times a
+    /// second however often the pointer moves.
+    private var windows: (at: Date, list: [[String: Any]])?
+
+    private func windowList() -> [[String: Any]] {
+        if let windows, Date().timeIntervalSince(windows.at) < 0.1 { return windows.list }
+        let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        windows = (Date(), list)
+        return list
+    }
 
     /// How far past a window's edge a release still counts as over it: a
     /// drop aimed at the edge zone that overshoots by a little keeps the tab
     /// in that window, rather than opening another.
     static let edgeGrace: CGFloat = 48
 
-    /// Whether `point` is over an Octet window, which takes the drop itself.
+    /// Whether `point` (screen, origin bottom left) is over one of Octet's
+    /// windows, which takes the drop itself. The window under the point is
+    /// the front one there, whichever app it's from: an Octet window behind
+    /// another app's, or on another Space, doesn't count, and nor do the
+    /// Notch, popovers and panels, which sit above the normal window level.
     private func overWindow(_ point: CGPoint) -> Bool {
-        NSApp.windows.contains {
-            $0.isVisible && $0 !== TearOffPreview.shared.window
-                && $0.frame.insetBy(dx: -Self.edgeGrace, dy: -Self.edgeGrace).contains(point)
+        let ours = WindowRegistry.shared.windows.compactMap(\.nsWindow).filter { $0.isVisible && $0.isOnActiveSpace }
+        let numbers = Set(ours.map(\.windowNumber))
+        let preview = TearOffPreview.shared.window?.windowNumber
+        // The common case, answered by the window server for this one point:
+        // the window under it, skipping the preview, is one of ours. The full
+        // list below is only for what that can't settle (a panel or another
+        // app's window there), and it is the costly part of every pointer move.
+        let top = NSWindow.windowNumber(at: point, belowWindowWithWindowNumber: preview ?? 0)
+        if numbers.contains(top) { return true }
+        // Window bounds come with the origin at the top left of the main display.
+        let flipped = CGPoint(x: point.x, y: (NSScreen.screens.first?.frame.maxY ?? 0) - point.y)
+        for info in windowList() {
+            guard (info[kCGWindowLayer as String] as? Int) == 0,
+                  let number = info[kCGWindowNumber as String] as? Int, number != preview,
+                  let bounds = (info[kCGWindowBounds as String] as? NSDictionary).flatMap({ CGRect(dictionaryRepresentation: $0 as CFDictionary) }),
+                  bounds.contains(flipped) else { continue }
+            return numbers.contains(number)
         }
-    }
-
-    private func tick() {
-        let point = NSEvent.mouseLocation
-        guard NSEvent.pressedMouseButtons & 1 == 0 else {
-            if tearable, !overWindow(point) { TearOffPreview.shared.follow(point) } else { TearOffPreview.shared.hide() }
-            return
-        }
-        watch?.invalidate()
-        watch = nil
-        let dragged = tabId
-        let frame = TearOffPreview.shared.target
-        if let workspace = workspaceId {
-            return DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                let drag = TabDrag.shared
-                defer {
-                    drag.workspaceId = nil
-                    drag.source = nil
-                }
-                guard !drag.didLand, drag.tearable, let source = drag.source, !drag.overWindow(point) else {
-                    return TearOffPreview.shared.hide()
-                }
-                let landing = frame ?? WindowActions.tearOffFrame(at: point, size: source.nsWindow?.frame.size ?? CGSize(width: 1280, height: 820))
-                TearOffPreview.shared.land(in: landing)
-                WindowActions.moveWorkspaceToNewWindow(workspace, from: source, frame: landing)
-            }
-        }
-        // A drop is handled on release too; let it land first.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            let drag = TabDrag.shared
-            defer { drag.tabId = nil }
-            guard let dragged, !drag.didLand, let store = drag.store, !drag.overWindow(point) else {
-                return TearOffPreview.shared.hide()
-            }
-            // A split tab can't go whole; tearOff says why.
-            guard drag.tearable else { return WindowActions.tearOff(tabId: dragged, store: store, frame: nil) }
-            let landing = frame ?? WindowActions.tearOffFrame(at: point, size: NSApp.keyWindow?.frame.size ?? CGSize(width: 1280, height: 820))
-            TearOffPreview.shared.land(in: landing)
-            WindowActions.tearOff(tabId: dragged, store: store, frame: landing)
-        }
+        // Nothing there but the desktop: close by an Octet window still counts.
+        return ours.contains { $0.frame.insetBy(dx: -Self.edgeGrace, dy: -Self.edgeGrace).contains(point) }
     }
 }
 
@@ -131,10 +200,18 @@ final class TabDrag: ObservableObject {
 /// way editors take a dragged tab into a new group, and how iTerm and Warp
 /// build splits by drag.
 struct SplitDropLayer: View {
-    /// The panes of the tab showing; nil until fetched.
+    /// The panes of the tab showing; nil until known.
     let layout: PaneLayout?
+    /// Where the terminal draws them.
+    var cells: CellGeometry?
     /// The dragged tab is from another window, so the middle takes it as a tab.
-    let acceptsTab: Bool
+    var acceptsTab = false
+    /// What a drop does, for the zone's label.
+    var action: SplitAction = .split
+    /// A pane dragged by its handle, rather than a tab.
+    var moving: String?
+    /// Whether a band along the whole tab's edge splits beside everything.
+    var wholeTab = false
     let animation: Animation?
     let drop: (SplitTarget) -> Void
     @State private var target: SplitTarget?
@@ -151,44 +228,43 @@ struct SplitDropLayer: View {
                 }
             }
             .animation(animation, value: target)
-            .onDrop(of: [.text], delegate: SplitDropDelegate(size: proxy.size, layout: layout, acceptsTab: acceptsTab, target: $target, drop: drop))
+            .onDrop(of: OctetDragKind.layout, delegate: SplitDropDelegate(
+                size: proxy.size, layout: layout, cells: cells, acceptsTab: acceptsTab, action: action,
+                moving: moving, wholeTab: wholeTab, target: $target, drop: drop))
         }
     }
 
     private func zone(_ target: SplitTarget) -> some View {
-        let inset: CGFloat = 6
-        return RoundedRectangle(cornerRadius: 8)
-            .fill(Theme.accent.opacity(0.14))
-            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.accent.opacity(0.7), lineWidth: 1.5))
-            .overlay {
-                Text(target.title)
-                    .font(Theme.uiFontMedium)
-                    .foregroundStyle(Theme.textPrimary)
-                    .padding(.horizontal, 10)
-                    .frame(height: 26)
-                    .background(Theme.chrome)
-                    .clipShape(Capsule())
-                    .overlay(Capsule().strokeBorder(Theme.border, lineWidth: 1))
-            }
-            .frame(width: max(0, target.highlight.width - inset * 2), height: max(0, target.highlight.height - inset * 2))
-            .offset(x: target.highlight.minX + inset, y: target.highlight.minY + inset)
-            .allowsHitTesting(false)
-            .accessibilityLabel(target.title)
+        DropZone(title: target.title, rect: target.highlight)
     }
 }
 
 private struct SplitDropDelegate: DropDelegate {
     let size: CGSize
     let layout: PaneLayout?
+    let cells: CellGeometry?
     let acceptsTab: Bool
+    let action: SplitAction
+    let moving: String?
+    let wholeTab: Bool
     @Binding var target: SplitTarget?
     let drop: (SplitTarget) -> Void
 
-    func validateDrop(info: DropInfo) -> Bool { layout != nil && info.hasItemsConforming(to: [.text]) }
+    // Taken even before the layout is known, so the drop never falls
+    // through to the terminal underneath.
+    func validateDrop(info: DropInfo) -> Bool { true }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
-        target = layout.flatMap { SplitDrop.target(at: info.location, in: size, layout: $0, acceptsTab: acceptsTab) }
-        // Mid-pane in the tab's own window: nothing to do, and the cursor says so.
+        // pane.layout is asynchronous: until it arrives the whole view counts
+        // as one pane, so the outer split zones work as soon as the drag
+        // reaches the terminal.
+        let fallback = PaneLayout(area: CGRect(origin: .zero, size: size),
+                                  panes: [.init(id: "", rect: CGRect(origin: .zero, size: size))])
+        let found = SplitDrop.target(at: info.location, in: size, layout: layout ?? fallback, acceptsTab: acceptsTab,
+                                     cells: layout == nil ? nil : cells, moving: moving, action: action, wholeTab: wholeTab)
+        // Only a change redraws the zone: the pointer moves many times a frame.
+        if found != target { target = found }
+        // Mid-pane, or a move that changes nothing: the cursor says so.
         return DropProposal(operation: target == nil ? .forbidden : .move)
     }
 
@@ -196,24 +272,17 @@ private struct SplitDropDelegate: DropDelegate {
 
     func performDrop(info: DropInfo) -> Bool {
         guard let target else { return false }
-        TabDrag.shared.landed()
         drop(target)
         self.target = nil
         return true
     }
 }
 
-/// Drop zones over a window's content while a workspace card is dragged: by
-/// an edge, the screen splits there and the workspace's terminal, still
-/// running, moves in on that side of the tab showing; in the middle, this
-/// window shows the workspace. Present for every workspace drag, so the card's
-/// id never lands in the terminal as text.
+/// Drop zones over a workspace while another workspace card is dragged.
+/// An edge adds an independent workspace surface with its own tab strip.
 struct WorkspaceDropLayer: View {
     let workspaceId: String
     let window: WindowContext
-    /// The terminal tab showing, which an edge drop splits; nil when a
-    /// conversation or board is in front, where the edges show it instead.
-    var splitsInto: String?
     let animation: Animation?
     @State private var target: WorkspaceDropTarget?
 
@@ -227,7 +296,7 @@ struct WorkspaceDropLayer: View {
                 }
             }
             .animation(animation, value: target)
-            .onDrop(of: [.text], delegate: WorkspaceDropDelegate(size: proxy.size, showsIt: showsIt, splits: splitsInto != nil,
+            .onDrop(of: [OctetDragKind.workspace.type], delegate: WorkspaceDropDelegate(size: proxy.size, showsIt: showsIt, splits: !showsIt,
                                                                  target: $target) { target in
                 switch target {
                 case .here: window.focusWorkspace(workspaceId)
@@ -237,31 +306,17 @@ struct WorkspaceDropLayer: View {
         }
     }
 
-    /// The workspace's terminal, on `edge`'s side of the focused pane of the
-    /// tab showing: the pane in front in its active tab moves in as it is,
-    /// output and running programs included. Dropped on its own tab, there's
-    /// nothing to move, so a fresh shell in its folder splits in instead.
+    /// A workspace owns its own tabs, so an edge drop gives it an independent
+    /// client and tab strip in the same window. No pane changes workspaces.
     private func split(_ edge: SplitEdge) {
-        let store = window.store
-        guard let tab = splitsInto,
-              let pane = store.snapshot.panes.first(where: { $0.tabId == tab && $0.focused })
-                  ?? store.snapshot.panes.first(where: { $0.tabId == tab }) else {
-            return window.focusWorkspace(workspaceId)
-        }
-        if let moving = terminal(of: workspaceId, in: store.snapshot), moving.tabId != tab {
-            return store.movePane(moving.paneId, into: tab, beside: pane.paneId, edge: edge)
-        }
-        store.splitNewPane(beside: pane.paneId, edge: edge, cwd: store.snapshot.directory(ofWorkspace: workspaceId), keepingSide: false)
+        // A workspace owns its own tabs, so an edge drop gives it an independent
+        // client and tab strip in the same window.
+        window.splitWorkspace(workspaceId, at: edge)
     }
 
-    /// The pane a workspace shows: the focused one of its active tab.
-    private func terminal(of workspaceId: String, in snapshot: EngineSnapshot) -> EnginePane? {
-        let tabs = snapshot.tabs(inWorkspace: workspaceId)
-        let active = snapshot.workspaces.first { $0.workspaceId == workspaceId }?.activeTabId
-        guard let tab = tabs.first(where: { $0.tabId == active }) ?? tabs.first(where: \.focused) ?? tabs.first else { return nil }
-        let panes = snapshot.panes.filter { $0.tabId == tab.tabId }
-        return panes.first(where: \.focused) ?? panes.first
-    }
+    /// Whether an edge drop opens a fresh shell: never, a workspace is shown
+    /// as it is.
+    private var opensShell: Bool { false }
 
     /// Dropped on the window already showing it, the middle has nothing to do.
     private var showsIt: Bool { window.focusedWorkspace?.workspaceId == workspaceId }
@@ -269,33 +324,14 @@ struct WorkspaceDropLayer: View {
     private var label: String { window.store.snapshot.workspaces.first { $0.workspaceId == workspaceId }?.label ?? "" }
 
     private func zone(_ target: WorkspaceDropTarget, in size: CGSize) -> some View {
-        let inset: CGFloat = 6
-        let rect = target.highlight(in: size)
-        return RoundedRectangle(cornerRadius: 8)
-            .fill(Theme.accent.opacity(0.14))
-            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.accent.opacity(0.7), lineWidth: 1.5))
-            .overlay {
-                Text(target.title(workspace: label))
-                    .font(Theme.uiFontMedium)
-                    .foregroundStyle(Theme.textPrimary)
-                    .padding(.horizontal, 10)
-                    .frame(height: 26)
-                    .background(Theme.chrome)
-                    .clipShape(Capsule())
-                    .overlay(Capsule().strokeBorder(Theme.border, lineWidth: 1))
-            }
-            .frame(width: max(0, rect.width - inset * 2), height: max(0, rect.height - inset * 2))
-            .offset(x: rect.minX + inset, y: rect.minY + inset)
-            .allowsHitTesting(false)
-            .accessibilityLabel(target.title)
+        DropZone(title: target.title(workspace: label, ownTab: opensShell), rect: target.highlight(in: size))
     }
 }
 
 private struct WorkspaceDropDelegate: DropDelegate {
     let size: CGSize
     let showsIt: Bool
-    /// Whether the edges split the tab showing; without a terminal in
-    /// front they only show the workspace, as the middle does.
+    /// Whether an edge can take a different workspace.
     let splits: Bool
     @Binding var target: WorkspaceDropTarget?
     let drop: (WorkspaceDropTarget) -> Void
@@ -305,15 +341,14 @@ private struct WorkspaceDropDelegate: DropDelegate {
     func dropUpdated(info: DropInfo) -> DropProposal? {
         var found = WorkspaceDropTarget.at(info.location, in: size)
         if !splits, found != nil { found = .here }
-        target = showsIt && found == .here ? nil : found
+        let next = showsIt && found == .here ? nil : found
+        if next != target { target = next }
         return DropProposal(operation: target == nil ? .forbidden : .move)
     }
 
     func dropExited(info: DropInfo) { target = nil }
 
     func performDrop(info: DropInfo) -> Bool {
-        // Taken either way: the card's id is never text for the terminal.
-        TabDrag.shared.landed()
         guard let target else { return true }
         self.target = nil
         drop(target)

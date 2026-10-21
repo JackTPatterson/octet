@@ -12,7 +12,7 @@ struct MCPProblemChip: View {
             Button { MCPServersDialog.show(session) } label: {
                 HStack(spacing: 5) {
                     OctetIcon("exclamationmark.triangle.fill", size: 11)
-                        .foregroundStyle(Color(hex: AgentStateColor.blocked))
+                        .foregroundStyle(Theme.danger)
                     Text(problems.count == 1 ? "\(problems[0].name) · \(problems[0].status.title)" : "\(problems.count) MCP servers down")
                         .font(Theme.captionFont.weight(.medium))
                         .foregroundStyle(Theme.textSecondary)

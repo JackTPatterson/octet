@@ -61,7 +61,7 @@ struct AgentLocationRow: View {
                         .font(Theme.captionFont)
                         .foregroundStyle(Theme.textTertiary)
                         .padding(.horizontal, 4)
-                        .background(RoundedRectangle(cornerRadius: 4).fill(Theme.hover.opacity(0.7)))
+                        .background(RoundedRectangle(cornerRadius: Theme.Radius.sm).fill(Theme.hover.opacity(0.7)))
                 }
                 .buttonStyle(.plain)
                 .help("Every place an agent is working")

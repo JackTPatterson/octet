@@ -236,7 +236,7 @@ struct PeerPairingDialog: View {
     private var header: some View {
         HStack(spacing: 8) {
             Text(model.step.machine.map { title(for: $0) } ?? "Pair a Mac")
-                .font(.system(size: 14, weight: .semibold))
+                .font(Theme.Text.title3)
                 .foregroundStyle(Theme.textPrimary)
                 .lineLimit(1)
             Spacer(minLength: 8)
@@ -260,7 +260,7 @@ struct PeerPairingDialog: View {
                         .fill(failed ? Theme.danger : reached ? Theme.accent : Theme.border)
                         .frame(height: 2)
                     Text(failed ? "Not Paired" : name)
-                        .font(.system(size: 10.5, weight: index == model.step.stage ? .medium : .regular))
+                        .font(Theme.interfaceFont(10.5, weight: index == model.step.stage ? .medium : .regular))
                         .foregroundStyle(index == model.step.stage ? Theme.textPrimary : Theme.textTertiary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -276,7 +276,7 @@ struct PeerPairingDialog: View {
     private var choose: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Open Octet on the other Mac with Other Macs on. Macs on this network show up here; for one on your tailnet, type its address.")
-                .font(.system(size: 11.5))
+                .font(Theme.interfaceFont(11.5))
                 .foregroundStyle(Theme.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
             VStack(spacing: 0) {
@@ -303,8 +303,8 @@ struct PeerPairingDialog: View {
                 }
             }
             .background(Theme.terminalBackground.opacity(0.35))
-            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.border.opacity(0.7), lineWidth: 1))
-            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.xl).strokeBorder(Theme.border.opacity(0.7), lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.xl))
             VStack(alignment: .leading, spacing: 6) {
                 Text("Or by address").font(Theme.captionFont.weight(.medium)).foregroundStyle(Theme.textSecondary)
                 HStack(spacing: 6) {
@@ -349,7 +349,7 @@ struct PeerPairingDialog: View {
                 .foregroundStyle(Theme.textSecondary)
             codeBlock(code, fingerprint: fingerprint, dimmed: false)
             Text("A paired Mac can see your agents here, and message them or give them tasks as you allow in Settings › Other Macs.")
-                .font(.system(size: 11.5))
+                .font(Theme.interfaceFont(11.5))
                 .foregroundStyle(Theme.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
             footer {
@@ -376,7 +376,7 @@ struct PeerPairingDialog: View {
 
     private func paired(_ machine: String) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            outcome(icon: "checkmark.circle.fill", tint: Color(hex: AgentStateColor.done), title: "Paired with \(machine)",
+            outcome(icon: "checkmark.circle.fill", tint: Theme.success, title: "Paired with \(machine)",
                     message: "Agents here can now reach agents on \(machine). It asks before anything reaches an agent here; change that in its trust setting.")
             footer {
                 OctetButton(title: "Show Its Agents", kind: .secondary) {
@@ -409,7 +409,7 @@ struct PeerPairingDialog: View {
     private func codeBlock(_ code: String, fingerprint: String, dimmed: Bool) -> some View {
         VStack(spacing: 6) {
             Text(code)
-                .font(.system(size: 40, weight: .semibold, design: .monospaced))
+                .font(Theme.Text.mono(40, weight: .semibold))
                 .kerning(4)
                 .foregroundStyle(Theme.textPrimary)
                 .textSelection(.enabled)
@@ -420,8 +420,8 @@ struct PeerPairingDialog: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 16)
-        .background(RoundedRectangle(cornerRadius: 12).fill(Theme.terminalBackground.opacity(0.55)))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.border.opacity(0.7), lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.terminalBackground.opacity(0.55)))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).strokeBorder(Theme.border.opacity(0.7), lineWidth: 1))
         .opacity(dimmed ? 0.5 : 1)
     }
 
@@ -429,7 +429,7 @@ struct PeerPairingDialog: View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: icon).font(.system(size: 22)).foregroundStyle(tint)
             VStack(alignment: .leading, spacing: 4) {
-                Text(title).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textPrimary)
+                Text(title).font(Theme.interfaceFont(13, weight: .semibold)).foregroundStyle(Theme.textPrimary)
                 Text(message)
                     .font(Theme.uiFont)
                     .foregroundStyle(Theme.textSecondary)

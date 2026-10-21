@@ -155,4 +155,23 @@ final class ShortcutBindingsTests: XCTestCase {
         XCTAssertEqual(lines.count, Set(lines).count)
         XCTAssertTrue(lines.contains("keybind = super+shift+w=unbind"))
     }
+
+    /// A scoped key only competes with keys in its own scope.
+    func testScopesKeepTheirKeysApart() {
+        let scoped = ShortcutTable(
+            entries: [
+                .init(id: "review", title: "Review", defaultBinding: cmdShiftT),
+                .init(id: "hardReload", title: "Hard Reload", defaultBinding: cmdShiftT, scope: "browser"),
+                .init(id: "reload", title: "Reload", defaultBinding: cmdT, scope: "browser"),
+            ],
+            reserved: [.init(binding: ShortcutBinding(key: "q"), title: "Quit Octet", menu: false)]
+        )
+        XCTAssertEqual(scoped.conflicts(overrides: [:]), [:])
+        // Within the browser, the most recent binding still wins.
+        XCTAssertEqual(scoped.assign(cmdT, to: "hardReload", overrides: [:]),
+                       .assigned(overrides: ["hardReload": cmdT.encoded, "reload": ""], displaced: ["Reload"]))
+        // A reserved key is refused in a scope too: it would beat the menu to it.
+        XCTAssertEqual(scoped.assign(ShortcutBinding(key: "q"), to: "reload", overrides: [:]), .reserved("Quit Octet"))
+        XCTAssertEqual(scoped.terminalPassThrough(overrides: [:]), "keybind = super+shift+t=unbind")
+    }
 }

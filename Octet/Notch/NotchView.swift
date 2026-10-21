@@ -15,8 +15,10 @@ enum NotchStyle {
     static var tertiary: Color { palette.color(\.textTertiary) }
     static var accent: Color { palette.color(\.accent) }
     static var danger: Color { palette.color(\.danger) }
-    static let amber = Color(hex: "FFC107")
-    static let done = Color(hex: AgentStateColor.done)
+    /// Needs you and done, in the shared status vocabulary's tones, from
+    /// the island's own dark palette.
+    static var amber: Color { AgentState.needsInput.tone.color(in: palette) }
+    static var done: Color { AgentState.done.tone.color(in: palette) }
     static let hover = Color.white.opacity(0.08)
     static let selected = Color.white.opacity(0.14)
     static let divider = Color.white.opacity(0.09)

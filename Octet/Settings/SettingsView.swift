@@ -32,7 +32,9 @@ struct SettingsView: View {
     private enum Focus: Hashable { case search, sidebar }
 
     enum Section: String, CaseIterable, Identifiable {
-        case general, appearance, terminal, statusBar, notch, agents, plugins, motion, keyboard, advanced
+        // Stored by raw value (sectionKey), so existing names stay put.
+        case general, appearance, terminal, statusBar, notch, notifications, agents, accounts, waits, recovery
+        case integrations, plugins, motion, keyboard, advanced
 
         var id: String { rawValue }
         var title: String {
@@ -42,7 +44,12 @@ struct SettingsView: View {
             case .terminal: return "Terminal"
             case .statusBar: return "Status Bar"
             case .notch: return "Notch"
-            case .agents: return "Agents & Recovery"
+            case .notifications: return "Notifications"
+            case .agents: return "Agents"
+            case .accounts: return "Accounts & Usage"
+            case .waits: return "Waits & Check-ins"
+            case .recovery: return "Recovery"
+            case .integrations: return "Integrations"
             case .plugins: return "Plugins"
             case .motion: return "Motion"
             case .keyboard: return "Keyboard"
@@ -56,11 +63,36 @@ struct SettingsView: View {
             case .terminal: return "terminal"
             case .statusBar: return "list.bullet.rectangle"
             case .notch: return "rectangle.topthird.inset.filled"
+            case .notifications: return "bell"
             case .agents: return "sparkle.magnifyingglass"
+            case .accounts: return "person.2"
+            case .waits: return "clock"
+            case .recovery: return "arrow.counterclockwise.circle"
+            case .integrations: return "point.3.connected.trianglepath.dotted"
             case .plugins: return "puzzlepiece.extension"
             case .motion: return "sparkles"
             case .keyboard: return "keyboard"
             case .advanced: return "slider.horizontal.3"
+            }
+        }
+        /// A line under the page's title saying what's on it.
+        var summary: String {
+            switch self {
+            case .general: return "Starting and quitting, new shells, and workspaces that go idle."
+            case .appearance: return "Theme, fonts, cursor and the window around your terminals."
+            case .terminal: return "Scrollback, the clipboard, links, and Octet's command line."
+            case .statusBar: return "The strip under each pane and the chips on it."
+            case .notch: return "The island at the top of the screen with your agents and usage."
+            case .notifications: return "What Octet tells you about agents, how, and the sounds it makes."
+            case .agents: return "How agents open and run, the ones on this Mac, and their integrations."
+            case .accounts: return "The accounts agents sign in with, and what they've used."
+            case .waits: return "Work set aside until something happens, and check-ins on a timer."
+            case .recovery: return "What Octet keeps so a restart, a closed tab or a bad turn loses nothing."
+            case .integrations: return "Issue trackers, your other Macs, and handing work to other agents."
+            case .plugins: return "Plugins that add to Octet, and their settings."
+            case .motion: return "Animations, everywhere or area by area."
+            case .keyboard: return "Every shortcut, and changing them."
+            case .advanced: return "Worktrees, the terminal engine, and resetting everything."
             }
         }
     }
@@ -89,6 +121,12 @@ struct SettingsView: View {
                     ScrollView {
                         // Full width, 24pt in from the sides, 32pt between sections.
                         VStack(alignment: .leading, spacing: 32) {
+                            Text(section.summary)
+                                .font(Theme.interfaceFont(13))
+                                .foregroundStyle(Theme.textSecondary)
+                                .padding(.horizontal, 16)
+                                .padding(.bottom, -16)
+                                .fixedSize(horizontal: false, vertical: true)
                             ConfigProblemsBanner(settings: settings)
                             switch section {
                             case .general: GeneralSettings(store: store, settings: settings)
@@ -96,7 +134,12 @@ struct SettingsView: View {
                             case .terminal: TerminalSettings(settings: settings)
                             case .statusBar: StatusBarSettings(settings: settings)
                             case .notch: NotchSettingsPage(settings: settings)
+                            case .notifications: NotificationSettings(settings: settings)
                             case .agents: AgentSettings(settings: settings, integrations: integrations)
+                            case .accounts: AccountsUsageSettings(settings: settings)
+                            case .waits: WaitsSettings(settings: settings)
+                            case .recovery: RecoverySettings(settings: settings)
+                            case .integrations: IntegrationsSettings(settings: settings)
                             case .plugins: PluginSettings()
                             case .motion: MotionSettings(motion: motion)
                             case .keyboard: KeyboardSettings(settings: settings)
@@ -201,6 +244,12 @@ struct SettingsView: View {
                 .padding(.vertical, 24)
                 .accessibilityAddTraits(.updatesFrequently)
         } else {
+            // Warp's count: how much matched, and across how many pages.
+            Text(Self.resultCount(results))
+                .font(Theme.Text.caption)
+                .foregroundStyle(Theme.textTertiary)
+                .padding(.horizontal, 18)
+                .accessibilityAddTraits(.updatesFrequently)
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(spacing: 2) {
@@ -220,6 +269,13 @@ struct SettingsView: View {
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Settings search results")
         }
+    }
+
+    /// "4 settings in 2 sections".
+    static func resultCount(_ results: [SettingsSearchEntry]) -> String {
+        let sections = Set(results.map(\.section)).count
+        let settings = results.count == 1 ? "1 setting" : "\(results.count) settings"
+        return sections > 1 ? "\(settings) in \(sections) sections" : settings
     }
 
     // MARK: Header
@@ -453,7 +509,7 @@ private struct GeneralSettings: View {
                 title: "Drop down from the top",
                 detail: "The hotkey slides a window down over the top of the screen, even over a full-screen app, and slides it away again.",
                 setting: \.hotkeyDropDown,
-                disabled: settings.values.globalHotkey == .off
+                unavailable: settings.values.globalHotkey == .off ? "Choose a hotkey above first." : nil
             ) {
                 Toggle("Drop down from the top", isOn: $settings.values.hotkeyDropDown)
                     .labelsHidden().toggleStyle(OctetSwitchStyle())
@@ -503,6 +559,23 @@ private struct GeneralSettings: View {
                     }
                     .disabled(store.pinnedWorkspaceIds.isEmpty)
                 }
+            }
+        }
+        SettingsGroup(title: "Names") {
+            SettingsRow(
+                title: "Name tabs after their work",
+                detail: "Tabs follow what their pane reports it is doing, so a tab stops reading as the task you started with. A tab you rename yourself keeps its name.",
+                setting: \.autoNameTabs
+            ) {
+                Toggle("Name tabs after their work", isOn: $settings.values.autoNameTabs).labelsHidden().toggleStyle(OctetSwitchStyle())
+            }
+            SettingsDivider()
+            SettingsRow(
+                title: "Name workspaces after their work",
+                detail: "A workspace takes the task its agents report, else what its conversation is about, else its branch. A workspace you rename yourself keeps its name.",
+                setting: \.autoNameWorkspaces
+            ) {
+                Toggle("Name workspaces after their work", isOn: $settings.values.autoNameWorkspaces).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
         }
     }
@@ -675,7 +748,7 @@ private struct AppearanceSettings: View {
             }
             SettingsDivider()
             SettingsRow(title: "Blur behind terminal", detail: "Applies when opacity is below 100%.", setting: \.backgroundBlur,
-                        disabled: settings.values.backgroundOpacity >= 1) {
+                        unavailable: settings.values.backgroundOpacity >= 1 ? "Lower Terminal opacity below 100% to see a blur." : nil) {
                 Toggle("Blur behind terminal", isOn: $settings.values.backgroundBlur).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             SettingsDivider()
@@ -683,24 +756,43 @@ private struct AppearanceSettings: View {
                 OctetSegmented(selection: $settings.values.windowPadding, items: [(OctetSettings.WindowPadding.compact, "Compact"), (OctetSettings.WindowPadding.normal, "Normal"), (OctetSettings.WindowPadding.roomy, "Roomy")])
             }
         }
-        SettingsGroup(title: "Split panes") {
-            SettingsRow(title: "Borders", setting: \.paneBorders) {
-                OctetSegmented(selection: $settings.values.paneBorders, items: [(OctetSettings.PaneBorders.auto, "Splits only"), (OctetSettings.PaneBorders.always, "Always"), (OctetSettings.PaneBorders.off, "Off")])
-            }
-            SettingsDivider()
-            SettingsRow(title: "Gaps between panes", setting: \.paneGaps) {
-                Toggle("Gaps between panes", isOn: $settings.values.paneGaps).labelsHidden().toggleStyle(OctetSwitchStyle())
-            }
-            SettingsDivider()
-            SettingsRow(title: "Pane scrollbars", setting: \.paneScrollbars) {
-                Toggle("Pane scrollbars", isOn: $settings.values.paneScrollbars).labelsHidden().toggleStyle(OctetSwitchStyle())
-            }
-        }
     }
 }
 
 private struct TerminalSettings: View {
     @ObservedObject var settings: SettingsStore
+
+    @State private var installingSpecs = false
+    @State private var specStatus = ""
+
+    /// What the corpus adds, and what is installed now.
+    private var specDetail: String {
+        if !specStatus.isEmpty { return specStatus }
+        guard let index = SpecCorpus.index() else {
+            return "Subcommands, options and their descriptions for hundreds of commands, from the MIT-licensed Fig specs. Downloaded on request; Octet's own history and project sources work without it."
+        }
+        return "\(index.commands.count) commands from \(index.source), version \(index.version)."
+    }
+
+    private func installSpecs() {
+        installingSpecs = true
+        specStatus = "Starting…"
+        SpecIngest.run { step in
+            specStatus = step
+        } completion: { result in
+            installingSpecs = false
+            switch result {
+            case .success(let outcome):
+                specStatus = ""
+                ToastCenter.shared.info("Installed \(outcome.commands) command specs",
+                                        detail: "\(SpecIngest.sourceName), version \(outcome.version)")
+            case .failure(let error):
+                specStatus = ""
+                ToastCenter.shared.fail(nil, "Couldn't install the command specs",
+                                        detail: String(describing: error))
+            }
+        }
+    }
 
     var body: some View {
         SettingsGroup(title: "Scrollback & selection") {
@@ -805,7 +897,7 @@ private struct TerminalSettings: View {
             SettingsDivider()
             SettingsRow(title: "Open them with a plain click",
                         detail: "No ⌘ needed for local addresses. Clicks a program in the pane takes for itself still go to it.",
-                        setting: \.previewLinksOnPlainClick, disabled: !settings.values.previewTerminalLinks) {
+                        setting: \.previewLinksOnPlainClick, unavailable: settings.values.previewTerminalLinks ? nil : "Turn on Open local links in the Browser plane first.") {
                 Toggle("Open them with a plain click", isOn: $settings.values.previewLinksOnPlainClick).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             SettingsDivider()
@@ -813,6 +905,50 @@ private struct TerminalSettings: View {
                         detail: "When a dev server starts in the workspace in front, a card offers to open it. Once per port each session.",
                         setting: \.offerServerPreviews) {
                 Toggle("Offer to preview new servers", isOn: $settings.values.offerServerPreviews).labelsHidden().toggleStyle(OctetSwitchStyle())
+            }
+        }
+        SettingsGroup(title: "Command line") {
+            SettingsRow(
+                title: "Octet's command line",
+                detail: "At a shell prompt, Octet edits the line itself: highlighted as you type, with a suggestion from your history. Anything it doesn't handle goes straight to the shell.",
+                setting: \.promptEditor
+            ) {
+                Toggle("Octet's command line", isOn: $settings.values.promptEditor).labelsHidden().toggleStyle(OctetSwitchStyle())
+            }
+            SettingsDivider()
+            SettingsRow(
+                title: "Octet's Tab completions",
+                detail: "Turn off to send Tab to your shell while keeping Octet's command-line editing and history suggestions. The shell takes over the current line after Tab.",
+                setting: \.promptCompletions,
+                unavailable: settings.values.promptEditor ? nil : "Turn on Octet's command line first."
+            ) {
+                Toggle("Octet's Tab completions", isOn: $settings.values.promptCompletions)
+                    .labelsHidden().toggleStyle(OctetSwitchStyle())
+            }
+            SettingsDivider()
+            SettingsRow(
+                title: "Accept a suggestion with",
+                detail: "The key that takes the grey suggestion from your history at the end of the line. ⌥→ takes one word of it either way.",
+                setting: \.suggestionAcceptKey,
+                unavailable: settings.values.promptEditor ? nil : "Turn on Octet's command line first."
+            ) {
+                OctetSelect(selection: $settings.values.suggestionAcceptKey, options: OctetSettings.SuggestionAcceptKey.allCases.map { ($0, $0.title) }, width: 130)
+            }
+            SettingsDivider()
+            SettingsRow(
+                title: "Paste images as files",
+                detail: "⌘V with an image on the clipboard writes it out and pastes the path, which is what agents can actually read.",
+                setting: \.pasteImagesAsFiles
+            ) {
+                Toggle("Paste images as files", isOn: $settings.values.pasteImagesAsFiles).labelsHidden().toggleStyle(OctetSwitchStyle())
+            }
+            SettingsDivider()
+            SettingsRow(
+                title: "Command specs",
+                detail: specDetail
+            ) {
+                OctetButton(title: SpecCorpus.index() == nil ? "Install" : "Update", compact: true) { installSpecs() }
+                    .disabled(installingSpecs)
             }
         }
         SettingsGroup(title: "Sidebar terminal") {
@@ -851,8 +987,12 @@ private struct AgentSettings: View {
     @ObservedObject var integrations: AgentIntegrations
     @ObservedObject private var discovery = AgentDiscoveryStore.shared
     @State private var hookInstalled: Set<String> = []
-    /// Each account's sign-in, read from its CLI when the page opens.
-    @State private var accountStatus: [String: String] = [:]
+
+    /// Agents Octet runs conversations with that a scan found here.
+    private var installedEngines: [AgentSession.Engine] {
+        let found = Set(discovery.agents.filter { $0.executablePath != nil }.map(\.id))
+        return AgentSession.Engine.offered.filter { found.contains($0.rawValue) }
+    }
 
     /// How many agents the last scan found, and when it ran.
     private var discoveryDetail: String {
@@ -861,131 +1001,53 @@ private struct AgentSettings: View {
         return "\(count) found, \(UsageMeter.relative(scannedAt))."
     }
 
-    @State private var installingSpecs = false
-    @State private var specStatus = ""
-
-    /// What the corpus adds, and what is installed now.
-    private var specDetail: String {
-        if !specStatus.isEmpty { return specStatus }
-        guard let index = SpecCorpus.index() else {
-            return "Subcommands, options and their descriptions for hundreds of commands, from the MIT-licensed Fig specs. Downloaded on request; Octet's own history and project sources work without it."
-        }
-        return "\(index.commands.count) commands from \(index.source), version \(index.version)."
-    }
-
-    private func installSpecs() {
-        installingSpecs = true
-        specStatus = "Starting…"
-        SpecIngest.run { step in
-            specStatus = step
-        } completion: { result in
-            installingSpecs = false
-            switch result {
-            case .success(let outcome):
-                specStatus = ""
-                ToastCenter.shared.info("Installed \(outcome.commands) command specs",
-                                        detail: "\(SpecIngest.sourceName), version \(outcome.version)")
-            case .failure(let error):
-                specStatus = ""
-                ToastCenter.shared.fail(nil, "Couldn't install the command specs",
-                                        detail: String(describing: error))
-            }
-        }
-    }
-
     private func refreshHooks() {
         hookInstalled = Set(SubagentHookInstaller.available().filter(SubagentHookInstaller.isInstalled).map(\.hostId))
     }
 
     var body: some View {
-        SettingsGroup(title: "Notifications") {
-            SettingsRow(
-                title: "Quick answers",
-                detail: "Open a small panel in the window corner when an agent needs a choice, answer, or permission.",
-                setting: \.agentQuickAnswers
-            ) {
-                Toggle("Quick answers", isOn: $settings.values.agentQuickAnswers).labelsHidden().toggleStyle(OctetSwitchStyle())
-            }
-            SettingsDivider()
-            SettingsRow(title: "When an agent finishes or needs you", setting: \.notifications) {
-                OctetSelect(selection: $settings.values.notifications, options: [(OctetSettings.NotificationDelivery.system, "macOS notification"), (OctetSettings.NotificationDelivery.banner, "In Octet"), (OctetSettings.NotificationDelivery.off, "Off")], width: 190)
-            }
-            SettingsDivider()
-            SettingsRow(title: "Wait before notifying", detail: "Skipped if you return to the agent first.", setting: \.notificationDelaySeconds) {
-                OctetNumberField(label: "Wait before notifying", value: $settings.values.notificationDelaySeconds,
-                                 range: 0...60, unit: "s", spokenValue: { "\(Int($0)) seconds" })
+        SettingsGroup(title: "Running agents") {
+            SettingsRow(title: "Default agent",
+                        detail: "What a new conversation starts with when you don't pick one: the New Conversation shortcut, or a prompt dropped on the Notch.",
+                        setting: \.defaultAgent,
+                        unavailable: installedEngines.isEmpty ? "No agent found on this Mac. Install one, then Scan Again below." : nil) {
+                OctetSelect(selection: $settings.values.defaultAgent,
+                            options: (installedEngines.isEmpty ? AgentSession.Engine.offered : installedEngines)
+                                .map { ($0.rawValue, $0.displayName) }, width: 160)
             }
             SettingsDivider()
             SettingsRow(
-                title: "Recap when you come back",
-                detail: "When you come back after being away (the screen locked, Octet out of sight, or the Mac untouched), a strip at the top says what every agent did meanwhile. It opens by itself only when something needs you or is stuck. View › Show Recap brings it back.",
-                setting: \.recap
+                title: "When you run an agent in a terminal",
+                detail: "Typing claude, codex or opencode on its own at a prompt opens the agent's own interface in the terminal, or Octet's conversation view. With a flag or a prompt it always runs in the terminal as typed. Octet's view needs Octet's command line, below.",
+                setting: \.agentOpening
             ) {
-                Toggle("Recap when you come back", isOn: $settings.values.recap).labelsHidden().toggleStyle(OctetSwitchStyle())
-            }
-            SettingsDivider()
-            SettingsRow(title: "Away for at least", detail: "Shorter breaks don't get a recap. Not touching the Mac this long counts as away too.", setting: \.recapAfterMinutes, disabled: !settings.values.recap) {
-                OctetNumberField(label: "Away for at least", value: $settings.values.recapAfterMinutes,
-                                 range: 1...120, unit: "min", spokenValue: { "\(Int($0)) minutes" })
-            }
-            SettingsDivider()
-            SettingsRow(title: "Play sounds", detail: "When agents in other workspaces change state.", setting: \.agentSounds) {
-                Toggle("Play sounds", isOn: $settings.values.agentSounds).labelsHidden().toggleStyle(OctetSwitchStyle())
-            }
-            SettingsDivider()
-            SettingsRow(title: "Subagent finished sound", detail: "Played by a subagent's tab when it finishes, so it sounds different from a main agent. Follows Play sounds.", setting: \.subagentFinishedSound,
-                        disabled: !settings.values.agentSounds) {
-                OctetSelect(selection: $settings.values.subagentFinishedSound,
-                            options: [("", "None")] + SubagentWatch.sounds.map { ($0, $0) }, width: 140)
-                .onChange(of: settings.values.subagentFinishedSound) { _, name in
-                    if let path = SubagentWatch.soundPath(name), !name.isEmpty {
-                        NSSound(contentsOf: URL(fileURLWithPath: path), byReference: true)?.play()
-                    }
-                }
-            }
-        }
-        SettingsGroup(title: "Waits") {
-            SettingsRow(
-                title: "Let agents set waits",
-                detail: "When work can't go on until something outside it happens (a pull request merged, a release, a deploy, a date, someone's answer), an agent writes down what it waits for and the next step. Octet checks it with nothing running and brings the work back when it happens. Claude Code, Codex, Gemini, Qwen, OpenCode, Cursor and Copilot get a wait_for tool through the octet-waits MCP server; any other agent can run octet-cli wait add. Waits show in the sidebar.",
-                setting: \.agentsSetWaits
-            ) {
-                Toggle("Let agents set waits", isOn: $settings.values.agentsSetWaits).labelsHidden().toggleStyle(OctetSwitchStyle())
-            }
-            if settings.values.agentsSetWaits {
-                SettingsDivider()
-                SettingsRow(
-                    title: "Tool in your agents",
-                    detail: "Adds the octet-waits MCP server to each installed agent's own settings, and takes it out when this is off. Use Add Again if you installed an agent since."
-                ) {
-                    OctetButton(title: "Add Again", compact: true) { AgentMCPInstaller.shared.sync(server: WaitMCP.serverName, force: true) }
-                }
+                OctetSegmented(selection: $settings.values.agentOpening, items: OctetSettings.AgentOpening.allCases.map { ($0, $0.title) })
             }
             SettingsDivider()
             SettingsRow(
-                title: "Offer a wait from a reply",
-                detail: "When an agent ends with something like \"once the PR is merged, we can remove the old endpoint\", a banner over its composer offers to set a wait for it.",
-                setting: \.suggestWaits
+                title: "Offer Octet's view over a running agent",
+                detail: "A banner above the terminal, while an agent runs in its own interface, offers to continue its session in Octet's conversation view.",
+                setting: \.agentBanner
             ) {
-                Toggle("Offer a wait from a reply", isOn: $settings.values.suggestWaits).labelsHidden().toggleStyle(OctetSwitchStyle())
-            }
-        }
-        CheckInSettingsGroup(settings: settings)
-        SettingsGroup(title: "Recovery") {
-            SettingsRow(
-                title: "Resume agents after a restart",
-                detail: "When the terminal restarts (e.g. your Mac shut down), agents with an installed integration reopen their conversation.",
-                setting: \.resumeAgentsOnRestore
-            ) {
-                Toggle("Resume agents after a restart", isOn: $settings.values.resumeAgentsOnRestore).labelsHidden().toggleStyle(OctetSwitchStyle())
+                Toggle("Offer Octet's view over a running agent", isOn: $settings.values.agentBanner).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             SettingsDivider()
             SettingsRow(
-                title: "Offer to recover lost sessions",
-                detail: "Octet records every agent's session, and every terminal that's running something with its recent output. If the terminal server stops and they end with it, Octet lists them so you can bring them back. A command is put back on the prompt, never rerun. File › Recover Sessions… reopens the list.",
-                setting: \.offerRecovery
+                title: "Visual twin",
+                detail: "⌘⇧V draws Octet's own interface over an agent's pane, read from the session the agent is already writing. What you type there goes to the real agent, so nothing about it changes.",
+                setting: \.visualTwin
             ) {
-                Toggle("Offer to recover lost sessions", isOn: $settings.values.offerRecovery).labelsHidden().toggleStyle(OctetSwitchStyle())
+                Toggle("Visual twin", isOn: $settings.values.visualTwin).labelsHidden().toggleStyle(OctetSwitchStyle())
+            }
+            SettingsDivider()
+            SettingsRow(
+                title: "Open the twin for new agents",
+                detail: "Start an agent and its pane opens in the twin rather than the terminal. Closing the twin for a pane keeps it closed.",
+                setting: \.twinByDefault,
+                unavailable: settings.values.visualTwin ? nil : "Turn on Visual twin first."
+            ) {
+                Toggle("Open the twin for new agents", isOn: $settings.values.twinByDefault)
+                    .labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             SettingsDivider()
             SettingsRow(
@@ -1006,22 +1068,6 @@ private struct AgentSettings: View {
             }
             SettingsDivider()
             SettingsRow(
-                title: "Checkpoint before each agent turn",
-                detail: "As an agent starts working, Octet snapshots the project's files (tracked and untracked, not ignored) so the turn can be undone with Restore a Checkpoint in the command palette, including edits made through the shell. Snapshots are kept in the repository under refs/octet/checkpoints, the last 50 per worktree. Your branch, index and stash aren't touched.",
-                setting: \.checkpointTurns
-            ) {
-                Toggle("Checkpoint before each agent turn", isOn: $settings.values.checkpointTurns).labelsHidden().toggleStyle(OctetSwitchStyle())
-            }
-            SettingsDivider()
-            SettingsRow(
-                title: "Keep closed tabs running",
-                detail: "Close a tab or pane while something runs in it and it keeps running out of sight for this long. ⌘⇧T, or Reopen on the notice, brings it back as it was.",
-                setting: \.keepClosedTabsMinutes
-            ) {
-                OctetSelect(selection: $settings.values.keepClosedTabsMinutes, options: [(0.0, "Off"), (5.0, "5 minutes"), (15.0, "15 minutes"), (30.0, "30 minutes"), (60.0, "1 hour"), (240.0, "4 hours")], width: 190)
-            }
-            SettingsDivider()
-            SettingsRow(
                 title: "Remote Control for Claude conversations",
                 detail: "Every Claude conversation in Octet is listed in claude.ai and the Claude app, to continue from your phone or another computer. What you send there shows up here. Each conversation's header also turns it on and off. Claude Code's own \"enable for all sessions\" setting turns it on too.",
                 setting: \.claudeRemoteControl
@@ -1030,169 +1076,11 @@ private struct AgentSettings: View {
             }
             SettingsDivider()
             SettingsRow(
-                title: "When you run an agent in a terminal",
-                detail: "Typing claude, codex or opencode on its own at a prompt opens the agent's own interface in the terminal, or Octet's conversation view. With a flag or a prompt it always runs in the terminal as typed. Octet's view needs Octet's command line, below.",
-                setting: \.agentOpening
-            ) {
-                OctetSegmented(selection: $settings.values.agentOpening, items: OctetSettings.AgentOpening.allCases.map { ($0, $0.title) })
-            }
-            SettingsDivider()
-            SettingsRow(
-                title: "Offer Octet's view over a running agent",
-                detail: "A banner above the terminal, while an agent runs in its own interface, offers to continue its session in Octet's conversation view.",
-                setting: \.agentBanner
-            ) {
-                Toggle("Offer Octet's view over a running agent", isOn: $settings.values.agentBanner).labelsHidden().toggleStyle(OctetSwitchStyle())
-            }
-            SettingsDivider()
-            SettingsRow(
-                title: "Octet's command line",
-                detail: "At a shell prompt, Octet edits the line itself: highlighted as you type, with a suggestion from your history. Anything it doesn't handle goes straight to the shell.",
-                setting: \.promptEditor
-            ) {
-                Toggle("Octet's command line", isOn: $settings.values.promptEditor).labelsHidden().toggleStyle(OctetSwitchStyle())
-            }
-            SettingsDivider()
-            SettingsRow(
-                title: "Octet's Tab completions",
-                detail: "Turn off to send Tab to your shell while keeping Octet's command-line editing and history suggestions. The shell takes over the current line after Tab.",
-                setting: \.promptCompletions,
-                disabled: !settings.values.promptEditor
-            ) {
-                Toggle("Octet's Tab completions", isOn: $settings.values.promptCompletions)
-                    .labelsHidden().toggleStyle(OctetSwitchStyle())
-            }
-            SettingsDivider()
-            SettingsRow(
-                title: "Accept a suggestion with",
-                detail: "The key that takes the grey suggestion from your history at the end of the line. ⌥→ takes one word of it either way.",
-                setting: \.suggestionAcceptKey,
-                disabled: !settings.values.promptEditor
-            ) {
-                OctetSelect(selection: $settings.values.suggestionAcceptKey, options: OctetSettings.SuggestionAcceptKey.allCases.map { ($0, $0.title) }, width: 130)
-            }
-            SettingsDivider()
-            SettingsRow(
-                title: "Paste images as files",
-                detail: "⌘V with an image on the clipboard writes it out and pastes the path, which is what agents can actually read.",
-                setting: \.pasteImagesAsFiles
-            ) {
-                Toggle("Paste images as files", isOn: $settings.values.pasteImagesAsFiles).labelsHidden().toggleStyle(OctetSwitchStyle())
-            }
-            SettingsDivider()
-            SettingsRow(
-                title: "Command specs",
-                detail: specDetail
-            ) {
-                OctetButton(title: SpecCorpus.index() == nil ? "Install" : "Update", compact: true) { installSpecs() }
-                    .disabled(installingSpecs)
-            }
-            SettingsDivider()
-            SettingsRow(
-                title: "Visual twin",
-                detail: "⌘⇧V draws Octet's own interface over an agent's pane, read from the session the agent is already writing. What you type there goes to the real agent, so nothing about it changes.",
-                setting: \.visualTwin
-            ) {
-                Toggle("Visual twin", isOn: $settings.values.visualTwin).labelsHidden().toggleStyle(OctetSwitchStyle())
-            }
-            SettingsDivider()
-            SettingsRow(
-                title: "Open the twin for new agents",
-                detail: "Start an agent and its pane opens in the twin rather than the terminal. Closing the twin for a pane keeps it closed.",
-                setting: \.twinByDefault,
-                disabled: !settings.values.visualTwin
-            ) {
-                Toggle("Open the twin for new agents", isOn: $settings.values.twinByDefault)
-                    .labelsHidden().toggleStyle(OctetSwitchStyle())
-            }
-            SettingsDivider()
-            SettingsRow(
-                title: "Name tabs after their work",
-                detail: "Tabs follow what their pane reports it is doing, so a tab stops reading as the task you started with. A tab you rename yourself keeps its name.",
-                setting: \.autoNameTabs
-            ) {
-                Toggle("Name tabs after their work", isOn: $settings.values.autoNameTabs).labelsHidden().toggleStyle(OctetSwitchStyle())
-            }
-            SettingsDivider()
-            SettingsRow(
-                title: "Name workspaces after their work",
-                detail: "A workspace takes the task its agents report, else what its conversation is about, else its branch. A workspace you rename yourself keeps its name.",
-                setting: \.autoNameWorkspaces
-            ) {
-                Toggle("Name workspaces after their work", isOn: $settings.values.autoNameWorkspaces).labelsHidden().toggleStyle(OctetSwitchStyle())
-            }
-            SettingsDivider()
-            SettingsRow(
                 title: "Hold Space to talk",
                 detail: "In a conversation's message box, hold Space and speak; let go and what you said is typed in. A tap still types a space. Speech is recognized on this Mac where the language allows.",
                 setting: \.holdSpaceToTalk
             ) {
                 Toggle("Hold Space to talk", isOn: $settings.values.holdSpaceToTalk).labelsHidden().toggleStyle(OctetSwitchStyle())
-            }
-            SettingsDivider()
-            SettingsRow(
-                title: "Restore recent terminal output",
-                detail: "Saves pane contents so they reappear after a restart. Output can include secrets.",
-                setting: \.paneHistory
-            ) {
-                Toggle("Restore recent terminal output", isOn: $settings.values.paneHistory).labelsHidden().toggleStyle(OctetSwitchStyle())
-            }
-        }
-        SettingsGroup(title: "Usage") {
-            SettingsRow(
-                title: "Read live usage from your Claude account",
-                detail: "Uses the sign-in Claude Code keeps in your keychain (macOS asks first) to fetch your allowance, the same way Claude Code's usage display does. The endpoint isn't documented by Anthropic and may change; this turns itself off if it stops working. Off, the chip shows Claude Code's cached usage and live numbers from conversations in Octet.",
-                setting: \.readClaudeAccountUsage
-            ) {
-                Toggle("Read live usage from your Claude account", isOn: $settings.values.readClaudeAccountUsage)
-                    .labelsHidden()
-                    .toggleStyle(OctetSwitchStyle())
-                    .onChange(of: settings.values.readClaudeAccountUsage) { _, on in
-                        if on { AccountStore.shared.accountUsageSettingChanged() }
-                    }
-            }
-        }
-        if PhonePush.offered {
-        SettingsGroup(title: "Phone") {
-            SettingsRow(
-                title: "Notices on your phone",
-                detail: "When an agent needs you or finishes while Octet isn't in front, a push goes to this ntfy topic. Install the ntfy app and subscribe to the same topic. Anyone who knows the topic can read it, so pick something hard to guess. Only the agent, the tab and what happened are sent.",
-                setting: \.phoneTopic
-            ) {
-                CommittedTextField(label: "ntfy topic", placeholder: "topic, e.g. octet-7fq2k", value: $settings.values.phoneTopic, width: 220,
-                                   validate: { value in
-                                       value.isEmpty || value.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" })
-                                           ? nil : "Letters, numbers, - and _ only" })
-            }
-            SettingsDivider()
-            SettingsRow(title: "ntfy server", detail: "Leave empty for ntfy.sh, or your own server's address.", setting: \.phoneServer) {
-                CommittedTextField(label: "ntfy server", placeholder: "https://ntfy.sh", value: $settings.values.phoneServer, width: 220,
-                                   validate: { _ in nil })
-            }
-        }
-        }
-        SettingsGroup(title: "Accounts") {
-            SettingsRow(
-                title: "Agent accounts",
-                detail: "Sign in to Claude or Codex more than once, say for work and personal, and choose which account each project uses. Each account keeps its own sign-in, settings and history in its own folder. Add one, sign in, or switch a project from the command palette: Add Claude Account, Use Account for This Project."
-            ) {
-                EmptyView()
-            }
-            ForEach(settings.values.accountProfiles) { profile in
-                SettingsDivider()
-                    .task(id: profile.id) {
-                        let status = await Task.detached { AccountActions.status(of: profile) }.value
-                        accountStatus[profile.id] = status
-                    }
-                let folders = settings.values.accountAssignments.filter { $0.profileId == profile.id }.map(\.folder)
-                SettingsRow(
-                    title: "\(AgentBrand.forAgent(profile.agent)?.displayName ?? profile.agent) · \(profile.name)",
-                    detail: (accountStatus[profile.id].map { $0 + " · " } ?? "") + profile.home + " · " + (folders.isEmpty ? "No projects yet"
-                        : "Used by " + folders.map { ($0 as NSString).abbreviatingWithTildeInPath }.joined(separator: ", "))
-                ) {
-                    OctetButton(title: "Remove", compact: true) { AccountActions.remove(profile) }
-                        .help("Stop using this account. Its folder and sign-in stay on disk.")
-                }
             }
         }
         SettingsGroup(title: "Installed agents") {
@@ -1264,6 +1152,188 @@ private struct AgentSettings: View {
         .onAppear {
             integrations.refresh()
             refreshHooks()
+        }
+    }
+}
+
+/// The accounts agents sign in with and what they've used of them.
+private struct AccountsUsageSettings: View {
+    @ObservedObject var settings: SettingsStore
+    /// Each account's sign-in, read from its CLI when the page opens.
+    @State private var accountStatus: [String: String] = [:]
+
+    var body: some View {
+        SettingsGroup(title: "Accounts") {
+            SettingsRow(
+                title: "Agent accounts",
+                detail: "Sign in to Claude or Codex more than once, say for work and personal, and choose which account each project uses. Each account keeps its own sign-in, settings and history in its own folder. Add one, sign in, or switch a project from the command palette: Add Claude Account, Use Account for This Project."
+            ) {
+                EmptyView()
+            }
+            ForEach(settings.values.accountProfiles) { profile in
+                SettingsDivider()
+                    .task(id: profile.id) {
+                        let status = await Task.detached { AccountActions.status(of: profile) }.value
+                        accountStatus[profile.id] = status
+                    }
+                let folders = settings.values.accountAssignments.filter { $0.profileId == profile.id }.map(\.folder)
+                SettingsRow(
+                    title: "\(AgentBrand.forAgent(profile.agent)?.displayName ?? profile.agent) · \(profile.name)",
+                    detail: (accountStatus[profile.id].map { $0 + " · " } ?? "") + profile.home + " · " + (folders.isEmpty ? "No projects yet"
+                        : "Used by " + folders.map { ($0 as NSString).abbreviatingWithTildeInPath }.joined(separator: ", "))
+                ) {
+                    OctetButton(title: "Remove", compact: true) { AccountActions.remove(profile) }
+                        .help("Stop using this account. Its folder and sign-in stay on disk.")
+                }
+            }
+        }
+        SettingsGroup(title: "Usage") {
+            SettingsRow(
+                title: "Read live usage from your Claude account",
+                detail: "Uses the sign-in Claude Code keeps in your keychain (macOS asks first) to fetch your allowance, the same way Claude Code's usage display does. The endpoint isn't documented by Anthropic and may change; this turns itself off if it stops working. Off, the chip shows Claude Code's cached usage and live numbers from conversations in Octet.",
+                setting: \.readClaudeAccountUsage
+            ) {
+                Toggle("Read live usage from your Claude account", isOn: $settings.values.readClaudeAccountUsage)
+                    .labelsHidden()
+                    .toggleStyle(OctetSwitchStyle())
+                    .onChange(of: settings.values.readClaudeAccountUsage) { _, on in
+                        if on { AccountStore.shared.accountUsageSettingChanged() }
+                    }
+            }
+        }
+    }
+}
+
+/// Work set aside until something happens, and check-ins on a timer.
+private struct WaitsSettings: View {
+    @ObservedObject var settings: SettingsStore
+
+    var body: some View {
+        SettingsGroup(title: "Waits") {
+            SettingsRow(
+                title: "Let agents set waits",
+                detail: "When work can't go on until something outside it happens (a pull request merged, a release, a deploy, a date, someone's answer), an agent writes down what it waits for and the next step. Octet checks it with nothing running and brings the work back when it happens. Claude Code, Codex, Gemini, Qwen, OpenCode, Cursor and Copilot get a wait_for tool through the octet-waits MCP server; any other agent can run octet-cli wait add. Waits show in the sidebar.",
+                setting: \.agentsSetWaits
+            ) {
+                Toggle("Let agents set waits", isOn: $settings.values.agentsSetWaits).labelsHidden().toggleStyle(OctetSwitchStyle())
+            }
+            if settings.values.agentsSetWaits {
+                SettingsDivider()
+                SettingsRow(
+                    title: "Tool in your agents",
+                    detail: "Adds the octet-waits MCP server to each installed agent's own settings, and takes it out when this is off. Use Add Again if you installed an agent since."
+                ) {
+                    OctetButton(title: "Add Again", compact: true) { AgentMCPInstaller.shared.sync(server: WaitMCP.serverName, force: true) }
+                }
+            }
+            SettingsDivider()
+            SettingsRow(
+                title: "Offer a wait from a reply",
+                detail: "When an agent ends with something like \"once the PR is merged, we can remove the old endpoint\", a banner over its composer offers to set a wait for it.",
+                setting: \.suggestWaits
+            ) {
+                Toggle("Offer a wait from a reply", isOn: $settings.values.suggestWaits).labelsHidden().toggleStyle(OctetSwitchStyle())
+            }
+        }
+        CheckInSettingsGroup(settings: settings)
+    }
+}
+
+/// What Octet keeps so nothing is lost: sessions, checkpoints, closed tabs.
+private struct RecoverySettings: View {
+    @ObservedObject var settings: SettingsStore
+
+    var body: some View {
+        SettingsGroup(title: "After a restart") {
+            SettingsRow(
+                title: "Resume agents after a restart",
+                detail: "When the terminal restarts (e.g. your Mac shut down), agents with an installed integration reopen their conversation.",
+                setting: \.resumeAgentsOnRestore
+            ) {
+                Toggle("Resume agents after a restart", isOn: $settings.values.resumeAgentsOnRestore).labelsHidden().toggleStyle(OctetSwitchStyle())
+            }
+            SettingsDivider()
+            SettingsRow(
+                title: "Offer to recover lost sessions",
+                detail: "Octet records every agent's session, and every terminal that's running something with its recent output. If the terminal server stops and they end with it, Octet lists them so you can bring them back. A command is put back on the prompt, never rerun. File › Recover Sessions… reopens the list.",
+                setting: \.offerRecovery
+            ) {
+                Toggle("Offer to recover lost sessions", isOn: $settings.values.offerRecovery).labelsHidden().toggleStyle(OctetSwitchStyle())
+            }
+            SettingsDivider()
+            SettingsRow(
+                title: "Restore recent terminal output",
+                detail: "Saves pane contents so they reappear after a restart. Output can include secrets.",
+                setting: \.paneHistory
+            ) {
+                Toggle("Restore recent terminal output", isOn: $settings.values.paneHistory).labelsHidden().toggleStyle(OctetSwitchStyle())
+            }
+        }
+        SettingsGroup(title: "Undo and closing") {
+            SettingsRow(
+                title: "Checkpoint before each agent turn",
+                detail: "As an agent starts working, Octet snapshots the project's files (tracked and untracked, not ignored) so the turn can be undone with Restore a Checkpoint in the command palette, including edits made through the shell. Snapshots are kept in the repository under refs/octet/checkpoints, the last 50 per worktree. Your branch, index and stash aren't touched.",
+                setting: \.checkpointTurns
+            ) {
+                Toggle("Checkpoint before each agent turn", isOn: $settings.values.checkpointTurns).labelsHidden().toggleStyle(OctetSwitchStyle())
+            }
+            SettingsDivider()
+            SettingsRow(
+                title: "Keep closed tabs running",
+                detail: "Close a tab or pane while something runs in it and it keeps running out of sight for this long. ⌘⇧T, or Reopen on the notice, brings it back as it was.",
+                setting: \.keepClosedTabsMinutes
+            ) {
+                OctetSelect(selection: $settings.values.keepClosedTabsMinutes, options: [(0.0, "Off"), (5.0, "5 minutes"), (15.0, "15 minutes"), (30.0, "30 minutes"), (60.0, "1 hour"), (240.0, "4 hours")], width: 190)
+            }
+            SettingsDivider()
+            SettingsRow(
+                title: "Ask before stopping running terminals",
+                detail: "Closing a tab, pane or drawer terminal that's running an agent or a command asks first, when closing would stop it. Idle shells close without asking.",
+                setting: \.confirmCloseRunning
+            ) {
+                Toggle("Ask before stopping running terminals", isOn: $settings.values.confirmCloseRunning).labelsHidden().toggleStyle(OctetSwitchStyle())
+            }
+        }
+    }
+}
+
+/// Connections to services and other Macs: issue trackers, paired Macs,
+/// delegation to other agents.
+private struct IntegrationsSettings: View {
+    @ObservedObject var settings: SettingsStore
+
+    var body: some View {
+        SettingsGroup(title: "Issue trackers") {
+            SettingsRow(title: "Let agents read issues",
+                        detail: "Adds read-only issue tools to installed agents using your saved GitHub, Linear and Jira connections. Agents can list issues and read descriptions and comments.",
+                        setting: \.agentsReadIssues) {
+                Toggle("Let agents read issues", isOn: $settings.values.agentsReadIssues)
+                    .labelsHidden().toggleStyle(OctetSwitchStyle())
+            }
+            if settings.values.agentsReadIssues {
+                SettingsDivider()
+                SettingsRow(title: "Tools in your agents", detail: "Refresh the issue tools after installing another agent.") {
+                    OctetButton(title: "Add Again", compact: true) { AgentMCPInstaller.shared.sync(server: IssueMCP.serverName, force: true) }
+                }
+            }
+        }
+        if settings.values.peersEnabled {
+            PeersSettingsGroup(settings: settings)
+        } else {
+            SettingsGroup(title: "Other Macs") {
+                SettingsRow(title: "Talk to other Macs",
+                            detail: "Pair with Octet on your other Macs so agents can message each other and hand off tasks.",
+                            unavailable: "Turn on the Other Macs plugin in Plugins to set this up.") { EmptyView() }
+            }
+        }
+        if settings.values.delegationEnabled {
+            DelegationSettingsGroup(settings: settings)
+        } else {
+            SettingsGroup(title: "Delegation") {
+                SettingsRow(title: "Hand work to other agents",
+                            detail: "Lets an agent ask another agent on this Mac to review its work or take a separate task.",
+                            unavailable: "Turn on the Delegation plugin in Plugins to set this up.") { EmptyView() }
+            }
         }
     }
 }
@@ -1346,7 +1416,7 @@ private struct MotionSettings: View {
                 if index > 0 { SettingsDivider() }
                 SettingsRow(title: area.title, detail: area.detail,
                             isDefault: motion.isOn(area), reset: { motion.set(area, true) },
-                            disabled: !motion.enabled) {
+                            unavailable: motion.enabled ? nil : "Turn on Enable animations first.") {
                     Toggle(area.title, isOn: motion.binding(area)).labelsHidden().toggleStyle(OctetSwitchStyle())
                 }
             }
@@ -1374,14 +1444,6 @@ private struct AdvancedSettings: View {
             }
         }
         SettingsGroup(title: "Terminal engine") {
-            SettingsRow(title: "Check for engine updates", setting: \.checkForEngineUpdates) {
-                Toggle("Check for engine updates", isOn: $settings.values.checkForEngineUpdates).labelsHidden().toggleStyle(OctetSwitchStyle())
-            }
-            SettingsDivider()
-            SettingsRow(title: "Update channel", setting: \.updateChannel) {
-                OctetSegmented(selection: $settings.values.updateChannel, items: [(OctetSettings.UpdateChannel.stable, "Stable"), (OctetSettings.UpdateChannel.preview, "Preview")])
-            }
-            SettingsDivider()
             SettingsRow(title: "Allow a nested session", detail: "Lets you run another terminal session inside an Octet pane.", setting: \.allowNestedSessions) {
                 Toggle("Allow a nested session", isOn: $settings.values.allowNestedSessions).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
@@ -1435,7 +1497,7 @@ private struct ThemeSwatch: View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 6) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("~ % ls").font(.system(size: 10, design: .monospaced)).foregroundStyle(Color(hex: theme.foreground))
+                    Text("~ % ls").font(Theme.Text.mono(10)).foregroundStyle(Color(hex: theme.foreground))
                     HStack(spacing: 3) {
                         ForEach(1..<7) { index in
                             RoundedRectangle(cornerRadius: 1.5).fill(Color(hex: theme.ansi[index])).frame(width: 12, height: 6)
@@ -1445,12 +1507,12 @@ private struct ThemeSwatch: View {
                 .padding(8)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color(hex: theme.background))
-                .clipShape(RoundedRectangle(cornerRadius: 4))
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.sm))
                 Text(theme.name).font(Theme.uiFont).foregroundStyle(selected ? Theme.textPrimary : Theme.textSecondary)
             }
             .padding(6)
-            .background(RoundedRectangle(cornerRadius: 6).fill(selected ? Theme.cardSelected : Color.clear))
-            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(selected ? Theme.accent : Theme.border, lineWidth: selected ? 1.5 : 1))
+            .background(RoundedRectangle(cornerRadius: Theme.Radius.md).fill(selected ? Theme.cardSelected : Color.clear))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.md).strokeBorder(selected ? Theme.accent : Theme.border, lineWidth: selected ? 1.5 : 1))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -1505,6 +1567,10 @@ struct SettingsRow<Control: View>: View {
     var reset: (() -> Void)?
     /// Greys the whole row, not just its control, as T3 Code's rows do.
     var disabled = false
+    /// Why the row can't be changed right now ("Turn on Play sounds
+    /// first"), said under it rather than leaving a grey row to puzzle
+    /// over. Setting it disables the row.
+    var unavailable: String?
     @ViewBuilder let control: Control
     @State private var width: CGFloat = 0
 
@@ -1515,13 +1581,14 @@ struct SettingsRow<Control: View>: View {
 
     init(title: String, detail: String? = nil, badge: String? = nil,
          isDefault: Bool = true, reset: (() -> Void)? = nil, disabled: Bool = false,
-         @ViewBuilder control: () -> Control) {
+         unavailable: String? = nil, @ViewBuilder control: () -> Control) {
         self.title = title
         self.detail = detail
         self.badge = badge
         self.isDefault = isDefault
         self.reset = reset
-        self.disabled = disabled
+        self.disabled = disabled || unavailable != nil
+        self.unavailable = unavailable
         self.control = control()
     }
 
@@ -1529,12 +1596,12 @@ struct SettingsRow<Control: View>: View {
     /// value's default in `OctetSettings.defaults`.
     init<V: Equatable>(title: String, detail: String? = nil, badge: String? = nil,
                        setting key: WritableKeyPath<OctetSettings, V>, disabled: Bool = false,
-                       @ViewBuilder control: () -> Control) {
+                       unavailable: String? = nil, @ViewBuilder control: () -> Control) {
         let store = SettingsStore.shared
         self.init(title: title, detail: detail, badge: badge,
                   isDefault: store.values[keyPath: key] == OctetSettings.defaults[keyPath: key],
                   reset: { store.values[keyPath: key] = OctetSettings.defaults[keyPath: key] },
-                  disabled: disabled, control: control)
+                  disabled: disabled, unavailable: unavailable, control: control)
     }
 
     var body: some View {
@@ -1557,6 +1624,21 @@ struct SettingsRow<Control: View>: View {
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .disabled(disabled)
         .opacity(disabled ? 0.64 : 1)
+        .padding(.bottom, unavailable == nil ? 0 : 14)
+        .overlay(alignment: .bottomLeading) {
+            // Outside the dimming, so the reason reads at full strength.
+            if let unavailable {
+                HStack(spacing: Theme.Space.xs) {
+                    OctetIcon("info.circle.fill", size: 11)
+                    Text(unavailable).font(Theme.Text.caption)
+                }
+                .foregroundStyle(Theme.textSecondary)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 10)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Unavailable: \(unavailable)")
+            }
+        }
         .contentShape(Rectangle())
         .settingsPulse(title)
         // Search jumps scroll to a row by its title.
@@ -1572,7 +1654,7 @@ struct SettingsRow<Control: View>: View {
                     .fixedSize(horizontal: false, vertical: true)
                 if let badge {
                     Text(badge)
-                        .font(.system(size: 10, weight: .medium))
+                        .font(Theme.interfaceFont(10, weight: .medium))
                         .foregroundStyle(Theme.textSecondary)
                         .padding(.horizontal, 6)
                         .frame(height: 18)
@@ -1611,7 +1693,7 @@ private struct SettingResetButton: View {
             OctetIcon("undo", size: 12)
                 .foregroundStyle(hovered ? Theme.textPrimary : Theme.textTertiary)
                 .frame(width: 20, height: 20)
-                .background(RoundedRectangle(cornerRadius: 6).fill(hovered ? Theme.hover : .clear))
+                .background(RoundedRectangle(cornerRadius: Theme.Radius.md).fill(hovered ? Theme.hover : .clear))
                 .contentShape(Rectangle())
         }
         .buttonStyle(OctetPressStyle())
@@ -1708,7 +1790,7 @@ private struct ConfigProblemsBanner: View {
                     .foregroundStyle(Theme.danger)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(problems.count == 1 ? "A setting didn't apply" : "\(problems.count) settings didn't apply")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(Theme.interfaceFont(13, weight: .semibold))
                         .foregroundStyle(Theme.textPrimary)
                     ForEach(problems, id: \.self) { problem in
                         Text(problem)
@@ -1722,8 +1804,8 @@ private struct ConfigProblemsBanner: View {
             }
             .padding(12)
             .background(Theme.danger.opacity(0.12))
-            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.danger.opacity(0.5), lineWidth: 1))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.md).strokeBorder(Theme.danger.opacity(0.5), lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
             .accessibilityElement(children: .combine)
         }
     }
@@ -1745,7 +1827,7 @@ private struct SettingsNavRow: View {
                     .foregroundStyle(selected || hovered ? Theme.textPrimary : Theme.textTertiary)
                     .frame(width: 18)
                 Text(title)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(Theme.Text.transcriptMedium)
                     .foregroundStyle(selected || hovered ? Theme.textPrimary : Theme.textSecondary)
                 Spacer(minLength: 0)
             }

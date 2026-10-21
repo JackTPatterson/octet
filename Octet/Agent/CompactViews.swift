@@ -15,7 +15,7 @@ struct DiffStatLabel: View {
     var body: some View {
         HStack(spacing: 4) {
             if added > 0 {
-                Text("+" + format(added)).foregroundStyle(Color(hex: AgentStateColor.done))
+                Text("+" + format(added)).foregroundStyle(Theme.success)
             }
             if removed > 0 {
                 Text("\u{2212}" + format(removed)).foregroundStyle(Theme.danger)

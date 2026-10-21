@@ -40,7 +40,7 @@ struct BrowserPlane: View {
             toolbar
             Rectangle().fill(Theme.divider).frame(height: 1)
             ZStack {
-                BrowserWebView(page: current)
+                BrowserViewportView(page: current)
                     .id(isPrivate)
                     .opacity(current.showingStart || current.failure != nil ? 0 : 1)
                 if PlaneLoadingPreview.shows("browser") || (current.loading && !current.hasContent && current.failure == nil) {
@@ -63,13 +63,18 @@ struct BrowserPlane: View {
                 BrowserZoomIndicator(zoom: current.zoom).id(isPrivate).padding(10)
             }
         }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            BrowserAnnotationTray(annotations: current.annotations, directory: directory).id(isPrivate)
+        }
         // A plane opened for a request finds it on appearing; one already
         // open hears it change.
         .onAppear {
             address = current.pageURL?.absoluteString ?? ""
+            page.annotations.setProjectDirectory(directory)
             takeRequest()
             runDebugHook()
         }
+        .onChange(of: directory) { _, directory in page.annotations.setProjectDirectory(directory) }
         .onChange(of: ui.browserRequest) { _, _ in takeRequest() }
         .onChange(of: current.url) { _, url in
             if !addressFocused { address = current.pageURL?.absoluteString ?? "" }
@@ -105,6 +110,7 @@ struct BrowserPlane: View {
                 TextField("Search or enter an address", text: $address)
                     .textFieldStyle(.plain)
                     .font(Theme.uiFont)
+                    .accessibilityLabel("Address")
                     .focused($addressFocused)
                     .onSubmit { go(address) }
                     .onExitCommand {
@@ -126,6 +132,8 @@ struct BrowserPlane: View {
                 if let url = current.pageURL { NSWorkspace.shared.open(url) }
             }
             .disabled(current.pageURL == nil)
+            BrowserPickerButton(annotations: current.annotations,
+                                available: current.url?.scheme?.hasPrefix("http") == true && !current.loading && current.failure == nil)
             OctetIconButton(icon: "ellipsis", help: "More") { showMoreMenu() }
         }
         .padding(.horizontal, 8)
@@ -137,8 +145,8 @@ struct BrowserPlane: View {
         let page = current
         let url = page.pageURL
         var items: [OctetMenuItem] = [
-            .action("Reload", icon: "arrow.clockwise", shortcut: "⌘R", enabled: url != nil) { page.reload() },
-            .action("Hard Reload", icon: "arrow.clockwise", shortcut: "⇧⌘R",
+            .action("Reload", icon: "arrow.clockwise", shortcut: OctetShortcut.browserReload.keys, enabled: url != nil) { page.reload() },
+            .action("Hard Reload", icon: "arrow.clockwise", shortcut: OctetShortcut.browserHardReload.keys,
                     enabled: url != nil, help: "Reload without the cache") { page.hardReload() },
             .divider,
             .action("Copy URL", icon: "doc.on.doc", enabled: url != nil) {
@@ -153,14 +161,19 @@ struct BrowserPlane: View {
                     help: "Local servers and recent pages") { page.showStart() },
             .divider,
             .header("Zoom  \(PreviewZoom.label(page.zoom))"),
-            .action("Zoom In", icon: "plus", shortcut: "⌘+", enabled: page.zoom < PreviewZoom.steps.last!) { page.zoomIn() },
-            .action("Zoom Out", icon: "minus", shortcut: "⌘−", enabled: page.zoom > PreviewZoom.steps.first!) { page.zoomOut() },
-            .action("Reset Zoom", icon: "arrow.counterclockwise.circle", shortcut: "⌘0",
+            .action("Zoom In", icon: "plus", shortcut: OctetShortcut.browserZoomIn.keys, enabled: page.zoom < PreviewZoom.steps.last!) { page.zoomIn() },
+            .action("Zoom Out", icon: "minus", shortcut: OctetShortcut.browserZoomOut.keys, enabled: page.zoom > PreviewZoom.steps.first!) { page.zoomOut() },
+            .action("Reset Zoom", icon: "arrow.counterclockwise.circle", shortcut: OctetShortcut.browserResetZoom.keys,
                     enabled: abs(page.zoom - 1) > 0.001) { page.setZoom(1) },
             .divider,
         ]
+        items.append(.header("Viewport size (CSS pixels)"))
+        for preset in BrowserViewport.allCases {
+            items.append(.action(preset.title, icon: preset == page.viewport ? "checkmark" : "rectangle", help: "Responsive layout size; does not emulate a mobile device") { page.viewport = preset })
+        }
+        items.append(.divider)
         if BrowserPage.inspectorAvailable {
-            items.append(.action("Web Inspector", icon: "wrench.and.screwdriver", shortcut: "⌥⌘I",
+            items.append(.action("Web Inspector", icon: "wrench.and.screwdriver", shortcut: OctetShortcut.browserInspector.keys,
                                  enabled: url != nil && page.failure == nil) { page.showInspector() })
         }
         items.append(.action("Clear Private Site Data", icon: "trash", destructive: true,
@@ -242,6 +255,8 @@ final class BrowserPage: NSObject, ObservableObject, WKNavigationDelegate {
         let at: Date
     }
 
+    let annotations: BrowserAnnotations
+    @Published var viewport: BrowserViewport = .desktop
     let view: WKWebView
     let isPrivate: Bool
     @Published private(set) var url: URL?
@@ -277,8 +292,11 @@ final class BrowserPage: NSObject, ObservableObject, WKNavigationDelegate {
         view.loadHTMLString("", baseURL: URL(string: "about:blank"))
     }
 
-    init(private isPrivate: Bool) {
+    init(private isPrivate: Bool, draftKey: String? = nil) {
         self.isPrivate = isPrivate
+        annotations = BrowserAnnotations(draftFile: !isPrivate ? draftKey.map {
+            BrowserDrafts.file(key: $0, directory: EngineSession.supportDirectory.appendingPathComponent("browser-drafts"))
+        } : nil)
         let configuration = WKWebViewConfiguration()
         if isPrivate { configuration.websiteDataStore = .nonPersistent() }
         configuration.preferences.isElementFullscreenEnabled = true
@@ -288,6 +306,7 @@ final class BrowserPage: NSObject, ObservableObject, WKNavigationDelegate {
         if Self.inspectorAvailable { view.isInspectable = true }
         super.init()
         view.navigationDelegate = self
+        annotations.attach(view)
         // Pages often name themselves after loading: Recent takes the title then.
         titleWatch = view.observe(\.title, options: [.new]) { [weak self] webView, _ in
             DispatchQueue.main.async {
@@ -355,20 +374,25 @@ final class BrowserPage: NSObject, ObservableObject, WKNavigationDelegate {
     func zoomIn() { setZoom(PreviewZoom.zoomIn(from: zoom)) }
     func zoomOut() { setZoom(PreviewZoom.zoomOut(from: zoom)) }
 
-    /// ⌘+, ⌘− and ⌘0 zoom, ⌘R and ⇧⌘R reload, ⌥⌘I inspects — only while the
-    /// page itself has focus, so the terminal's own keys are untouched.
+    /// Zoom, reload and the inspector, on the keys Settings › Keyboard gives
+    /// them (⌘+, ⌘−, ⌘0, ⌘R, ⇧⌘R, ⌥⌘I) — only while the page itself has
+    /// focus, so the menus and the terminal keep the same keys everywhere else.
     private func handleKey(_ event: NSEvent) -> Bool {
         guard event.window === view.window, pageHasFocus else { return false }
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.capsLock, .numericPad, .function])
-        let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
-        switch (flags, key) {
-        case (.command, "="), (.command, "+"), ([.command, .shift], "="), ([.command, .shift], "+"): zoomIn()
-        case (.command, "-"), ([.command, .shift], "_"): zoomOut()
-        case (.command, "0"): setZoom(1)
-        case (.command, "r"): reload()
-        case ([.command, .shift], "r"): hardReload()
-        case ([.command, .option], "i") where Self.inspectorAvailable: showInspector()
-        default: return false
+        if OctetShortcut.browserZoomIn.matches(event, ignoringShift: true) {
+            zoomIn()
+        } else if OctetShortcut.browserZoomOut.matches(event, ignoringShift: true) {
+            zoomOut()
+        } else if OctetShortcut.browserResetZoom.matches(event) {
+            setZoom(1)
+        } else if OctetShortcut.browserHardReload.matches(event) {
+            hardReload()
+        } else if OctetShortcut.browserReload.matches(event) {
+            reload()
+        } else if Self.inspectorAvailable, OctetShortcut.browserInspector.matches(event) {
+            showInspector()
+        } else {
+            return false
         }
         return true
     }
@@ -439,11 +463,12 @@ final class BrowserPage: NSObject, ObservableObject, WKNavigationDelegate {
     }
 
     nonisolated func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-        MainActor.assumeIsolated { update() }
+        MainActor.assumeIsolated { annotations.navigationChanged(); update() }
     }
 
     nonisolated func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         MainActor.assumeIsolated {
+            annotations.navigationChanged()
             failure = nil
             hasContent = true
             stopWaiting()
@@ -492,4 +517,18 @@ private struct BrowserWebView: NSViewRepresentable {
     let page: BrowserPage
     func makeNSView(context: Context) -> WKWebView { page.view }
     func updateNSView(_ nsView: WKWebView, context: Context) {}
+}
+
+/// Explicit viewport dimensions affect CSS media queries; no user-agent or touch spoofing.
+struct BrowserViewportView: View {
+    @ObservedObject var page: BrowserPage
+    var body: some View {
+        GeometryReader { geometry in
+            ScrollView([.horizontal, .vertical]) {
+                BrowserWebView(page: page)
+                    .frame(width: page.viewport.size?.width ?? geometry.size.width,
+                           height: page.viewport.size?.height ?? geometry.size.height)
+            }
+        }
+    }
 }

@@ -8,7 +8,7 @@ import SwiftUI
 struct HubDetailHeader<Actions: View>: View {
     let vendor: String?
     let title: String
-    let status: HubAgent.Status
+    let status: AgentState
     let crumbs: [String]
     @ViewBuilder var actions: () -> Actions
 
@@ -56,28 +56,12 @@ struct HubDetailHeader<Actions: View>: View {
     }
 }
 
-/// The agent's state as a tinted capsule: amber waiting on you, the accent
-/// while working, green once done.
+/// The agent's state as a tinted capsule, in the shared vocabulary's colours.
 struct HubStatusPill: View {
-    let status: HubAgent.Status
+    let status: AgentState
 
     var body: some View {
-        HStack(spacing: 5) {
-            if status == .working {
-                LoadingLine(width: 10)
-            } else {
-                Circle().fill(status.color).frame(width: 6, height: 6)
-            }
-            Text(status.title)
-        }
-        .font(Theme.interfaceFont(11, weight: .medium))
-        .foregroundStyle(status.color)
-        .padding(.horizontal, 8)
-        .frame(height: 20)
-        .background(Capsule().fill(status.color.opacity(0.13)))
-        .fixedSize()
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Status: \(status.title)")
+        AgentStatePill(state: status)
     }
 }
 
@@ -151,14 +135,7 @@ struct HubContextMeter: View {
                     .foregroundStyle(Theme.textTertiary)
             }
             if let fraction {
-                GeometryReader { proxy in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(Theme.card)
-                        Capsule().fill(colour(fraction))
-                            .frame(width: max(4, proxy.size.width * fraction))
-                    }
-                }
-                .frame(height: 6)
+                ContextBar(fraction: fraction)
             }
         }
         .accessibilityElement(children: .combine)
@@ -170,15 +147,6 @@ struct HubContextMeter: View {
         let tokens = TwinUsage.compact(used)
         guard let fraction, let window else { return "\(tokens) tokens in play" }
         return "\(Int((fraction * 100).rounded()))% · \(tokens) of \(TwinUsage.compact(window))"
-    }
-
-    /// Quiet until it matters, then increasingly not, as the sidebar's ring.
-    private func colour(_ fraction: Double) -> Color {
-        switch fraction {
-        case ..<0.7: Theme.textSecondary
-        case ..<0.9: Color(hex: "e0af68")
-        default: Color(hex: "e5484d")
-        }
     }
 }
 
@@ -330,16 +298,15 @@ struct HubTranscriptSummary: View {
 /// A conversation in Octet: what it's doing, how full its context is, what
 /// it last said and what it touched. It opens where it runs.
 struct ChatHubDetail: View {
+    @EnvironmentObject private var window: WindowContext
     let agent: HubAgent
     @ObservedObject var session: AgentSession
     let focus: () -> Void
     @State private var filesOpen = true
     @State private var commandsOpen = true
+    @State private var outputItem: String?
 
-    private var status: HubAgent.Status {
-        session.pendingPermission != nil || session.pendingQuestion != nil ? .needsInput
-            : session.conversation.isRunning ? .working : .done
-    }
+    private var status: AgentState { session.agentState }
 
     var body: some View {
         let conversation = session.conversation
@@ -362,8 +329,8 @@ struct ChatHubDetail: View {
             Rectangle().fill(Theme.divider).frame(height: 1)
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    if status == .needsInput {
-                        HubCallout(icon: "message", title: "Waiting on you",
+                    if status.needsYou {
+                        HubCallout(icon: status.icon, title: status.title,
                                    message: "It has a question or needs permission to go on. Open the chat to answer.")
                     }
                     HubFacts(rows: facts(conversation))
@@ -373,7 +340,7 @@ struct ChatHubDetail: View {
                     if let lastReply {
                         VStack(alignment: .leading, spacing: 10) {
                             HubSectionTitle(text: "Last reply")
-                            HubQuote { ItemRow(item: lastReply, running: false) }
+                            HubQuote { ItemRow(item: lastReply, running: conversation.isRunning) }
                         }
                     }
                     if !files.isEmpty || !commands.isEmpty {
@@ -403,6 +370,37 @@ struct ChatHubDetail: View {
             }
             .octetScrollIndicators()
         }
+        .environment(\.transcriptActions, actions)
+        .overlay {
+            if let outputItem {
+                TranscriptOutputPanel(session: session, itemId: outputItem) { self.outputItem = nil }
+            }
+        }
+    }
+
+    /// The reply's own actions, as in the conversation: a quote goes to its
+    /// composer, and a file or diff opens with the hub out of the way.
+    private var actions: TranscriptActions {
+        let session = session
+        let window = window
+        let focus = focus
+        let leave = { AgentCenter.shared.setBoard(nil, in: window.focusedWorkspace?.workspaceId) }
+        return TranscriptActions(
+            cwd: session.cwd,
+            quote: { passage, action in
+                session.quoteInComposer(passage, action: action)
+                focus()
+            },
+            openTurnDiff: { turn, path in
+                leave()
+                window.ui.openTurnDiff(directory: session.cwd, promptAt: turn.promptAt, nextPromptAt: turn.nextPromptAt, path: path)
+            },
+            openFile: { path in
+                leave()
+                window.openFile(URL(fileURLWithPath: path))
+            },
+            openOutput: { id in outputItem = id }
+        )
     }
 
     private func facts(_ conversation: AgentConversation) -> [(label: String, value: String, mono: Bool)] {
@@ -439,8 +437,8 @@ struct TerminalHubDetail: View {
             Rectangle().fill(Theme.divider).frame(height: 1)
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    if agent.status == .needsInput {
-                        HubCallout(icon: "message", title: "Waiting on you",
+                    if agent.status.needsYou {
+                        HubCallout(icon: agent.status.icon, title: "Waiting on you",
                                    message: "It's asking something in its terminal. Go to the tab to answer.")
                     }
                     HubFacts(rows: facts)

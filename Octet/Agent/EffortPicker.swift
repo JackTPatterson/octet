@@ -88,7 +88,7 @@ struct EffortChip: View {
                 EffortName(level: level, color: EffortStyle.isTop(level) ? .white : EffortStyle.color(level))
             } else {
                 Text(implicit.map { "default · \($0)" } ?? "default")
-                    .font(.system(size: 12, design: .monospaced))
+                    .font(Theme.Text.mono(12))
                     .foregroundStyle(Theme.textSecondary)
             }
             OctetIcon("chevron.down", size: 11)
@@ -116,8 +116,8 @@ enum ModeStyle {
         case .default: Theme.textSecondary
         case .acceptEdits: Color(hex: "AF87FF")
         case .plan: Color(hex: "48968C")
-        case .auto: Color(hex: "FFC107")
-        case .bypassPermissions: Color(hex: "FF6B80")
+        case .auto: Theme.warning
+        case .bypassPermissions: Theme.danger
         }
     }
 
@@ -154,9 +154,9 @@ struct ModeChip: View {
         let tint = ModeStyle.color(mode)
         HStack(spacing: 5) {
             if !ModeStyle.glyph(mode).isEmpty {
-                Text(ModeStyle.glyph(mode)).font(.system(size: 10.5))
+                Text(ModeStyle.glyph(mode)).font(Theme.Text.caption)
             }
-            Text(ModeStyle.label(mode)).font(.system(size: 12, design: .monospaced))
+            Text(ModeStyle.label(mode)).font(Theme.Text.mono(12))
             OctetIcon("chevron.down", size: 11)
                 .foregroundStyle(Theme.textTertiary)
                 .rotationEffect(.degrees(open ? 180 : 0))
@@ -180,7 +180,7 @@ enum SandboxStyle {
         switch profile {
         case ":read-only": Color(hex: "48968C")
         case ":workspace": Color(hex: "AF87FF")
-        case let id? where id.contains("danger"): Color(hex: "FF6B80")
+        case let id? where id.contains("danger"): Theme.danger
         default: Theme.textSecondary
         }
     }
@@ -224,9 +224,9 @@ struct SandboxChip: View {
         let plain = profile == nil || profile == ":read-only"
         HStack(spacing: 5) {
             if !SandboxStyle.glyph(profile).isEmpty {
-                Text(SandboxStyle.glyph(profile)).font(.system(size: 10.5))
+                Text(SandboxStyle.glyph(profile)).font(Theme.Text.caption)
             }
-            Text(SandboxStyle.label(profile, profiles: profiles)).font(.system(size: 12, design: .monospaced))
+            Text(SandboxStyle.label(profile, profiles: profiles)).font(Theme.Text.mono(12))
             OctetIcon("chevron.down", size: 11)
                 .foregroundStyle(Theme.textTertiary)
                 .rotationEffect(.degrees(open ? 180 : 0))
@@ -288,12 +288,12 @@ struct EffortSliderPanel: View {
                     EffortName(level: level, size: 14, color: tint)
                 } else {
                     Text("default")
-                        .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                        .font(Theme.Text.mono(14, weight: .semibold))
                         .foregroundStyle(Theme.textSecondary)
                 }
                 if level == nil, let implicit {
                     Text(implicit)
-                        .font(.system(size: 12, design: .monospaced))
+                        .font(Theme.Text.mono(12))
                         .foregroundStyle(EffortStyle.color(implicit).opacity(0.8))
                 }
                 Spacer()
@@ -317,7 +317,7 @@ struct EffortSliderPanel: View {
                         .font(Theme.captionFont)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                .foregroundStyle(ultra ? .white : Color(hex: "FFC107"))
+                .foregroundStyle(ultra ? .white : Theme.warning)
                 .transition(.opacity)
                 .accessibilityElement(children: .combine)
             }
@@ -330,8 +330,8 @@ struct EffortSliderPanel: View {
                 UltracodeBackground().opacity(ultra ? 1 : 0)
             }
         }
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(ultra ? Color.white.opacity(0.2) : Theme.border, lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.xl).strokeBorder(ultra ? Color.white.opacity(0.2) : Theme.border, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.xl))
         .shadow(color: .black.opacity(0.35), radius: 16, y: 6)
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: level)
         .focusable()
@@ -418,7 +418,7 @@ struct EffortName: View {
                 }
             }
         } else {
-            Text(level).font(.system(size: size, weight: weight, design: .monospaced)).foregroundStyle(color)
+            Text(level).font(Theme.Text.mono(size, weight: weight)).foregroundStyle(color)
         }
     }
 
@@ -426,7 +426,7 @@ struct EffortName: View {
         HStack(spacing: 0) {
             ForEach(Array(level.enumerated()), id: \.offset) { index, character in
                 Text(String(character))
-                    .font(.system(size: size, weight: weight, design: .monospaced))
+                    .font(Theme.Text.mono(size, weight: weight))
                     .foregroundStyle(Rainbow.color(at: Rainbow.hue(step: index, phase: phase)))
             }
         }

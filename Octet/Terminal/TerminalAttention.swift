@@ -6,14 +6,20 @@ import SwiftUI
 @MainActor
 enum TerminalAttention {
     /// The Dock icon bounces once when Octet isn't in front; in front, the
-    /// system alert sound for the pane you're in, a notice for another.
+    /// system alert sound for the pane you're in, a notice for another, with
+    /// a way to go there. Notifications off silences all but that sound.
     static func bell(from paneId: String? = nil, store: SessionStore? = nil) {
+        // Settings › Notifications › Terminal bell off: the bell does nothing at all.
+        guard SettingsStore.shared.values.terminalBell else { return }
+        let off = SettingsStore.shared.values.notifications == .off
         guard NSApp.isActive else {
-            NSApp.requestUserAttention(.informationalRequest)
+            if !off { NSApp.requestUserAttention(.informationalRequest) }
             return
         }
         if let paneId, let store, paneId != store.keyPaneId {
-            ToastCenter.shared.info("Bell in \(tabName(of: paneId, store: store))")
+            guard !off else { return }
+            ToastCenter.shared.info("Bell in \(tabName(of: paneId, store: store))",
+                                    action: goToPane(paneId, store: store))
         } else if SettingsStore.shared.values.agentSounds {
             NSSound.beep()
         }
@@ -25,14 +31,26 @@ enum TerminalAttention {
         return TabAutoName.display(label: tab.label, number: tab.number)
     }
 
+    /// "Go to Pane", for a notice about a pane you aren't looking at.
+    static func goToPane(_ paneId: String, store: SessionStore) -> ToastCenter.Action? {
+        guard let pane = store.snapshot.panes.first(where: { $0.paneId == paneId }) else { return nil }
+        let tabId = pane.tabId
+        let workspaceId = store.snapshot.tabs.first { $0.tabId == tabId }?.workspaceId
+        return ToastCenter.Action(title: "Go to Pane") {
+            AttentionRouter.shared.open(AgentEvent(id: "bell-\(paneId)", kind: .needsInput, agent: nil, paneId: paneId,
+                                                   tabId: tabId, workspaceId: workspaceId, label: "", workedFor: nil, at: Date()))
+        }
+    }
+
     /// Shown as Octet's own banner when that's how notices are delivered.
-    static func notify(title: String, body: String) {
+    static func notify(title: String, body: String, paneId: String? = nil, store: SessionStore? = nil) {
         guard !TerminalNotice.isForSoftware(title: title, body: body) else { return }
         let heading = title.isEmpty ? "Terminal" : title
         // With system notifications on, the session server delivers them itself.
         guard SettingsStore.shared.values.notifications == .banner else { return }
+        let action = paneId.flatMap { id in store.flatMap { goToPane(id, store: $0) } }
         // Behind other apps it waits longer, to be there when you come back.
-        ToastCenter.shared.info(heading, detail: body.isEmpty ? nil : body, after: NSApp.isActive ? 6 : 30)
+        ToastCenter.shared.info(heading, detail: body.isEmpty ? nil : body, after: NSApp.isActive ? 6 : 30, action: action)
         if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) }
     }
 }
@@ -110,7 +128,8 @@ final class AttentionWatcher {
                                     TerminalAttention.bell(from: paneId, store: store)
                                 } else if event == "pane.notification" {
                                     let from = paneId.map { TerminalAttention.tabName(of: $0, store: store) }
-                                    TerminalAttention.notify(title: title.isEmpty ? (from ?? "") : title, body: body)
+                                    TerminalAttention.notify(title: title.isEmpty ? (from ?? "") : title, body: body,
+                                                             paneId: paneId, store: store)
                                 }
                             }
                         }

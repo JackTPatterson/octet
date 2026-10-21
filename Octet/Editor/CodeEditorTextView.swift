@@ -56,6 +56,7 @@ struct CodeEditorTextView: NSViewRepresentable {
         scroll.verticalRulerView = ruler
         context.coordinator.textView = textView
         context.coordinator.ruler = ruler
+        textView.textStorage?.delegate = context.coordinator
         workspace.textView = textView
         applyAppearance(to: textView, scroll: scroll, ruler: ruler)
         // Defer syntax coloring until after the native text system has drawn
@@ -78,6 +79,8 @@ struct CodeEditorTextView: NSViewRepresentable {
         context.coordinator.workspace = workspace
         workspace.textView = textView
         applyAppearance(to: textView, scroll: scroll, ruler: context.coordinator.ruler)
+        // A new theme or font repaints everything; typing repaints its lines.
+        context.coordinator.appearanceChanged(font: textView.font, palette: Theme.palette)
         if textView.string != document.text, !context.coordinator.isApplyingHighlight {
             let selection = textView.selectedRanges
             context.coordinator.isReplacingText = true
@@ -118,7 +121,7 @@ struct CodeEditorTextView: NSViewRepresentable {
     }
 
     @MainActor
-    final class Coordinator: NSObject, NSTextViewDelegate {
+    final class Coordinator: NSObject, NSTextViewDelegate, NSTextStorageDelegate {
         var document: EditorDocument
         weak var workspace: EditorWorkspace?
         weak var textView: NSTextView?
@@ -126,6 +129,11 @@ struct CodeEditorTextView: NSViewRepresentable {
         var isReplacingText = false
         var isApplyingHighlight = false
         private var highlightWork: DispatchWorkItem?
+        /// Characters edited since the last paint; nil repaints everything.
+        private var pending: NSRange?
+        private var paintsAll = true
+        private var paintedFont: NSFont?
+        private var paintedPalette: ThemePalette?
 
         init(document: EditorDocument, workspace: EditorWorkspace) {
             self.document = document
@@ -143,7 +151,38 @@ struct CodeEditorTextView: NSViewRepresentable {
             ruler?.needsDisplay = true
         }
 
+        /// Remembers what typing changed, shifted for later edits, so the
+        /// next paint starts at the right line.
+        func textStorage(_ textStorage: NSTextStorage, didProcessEditing editedMask: NSTextStorageEditActions,
+                         range editedRange: NSRange, changeInLength delta: Int) {
+            guard editedMask.contains(.editedCharacters), !isApplyingHighlight else { return }
+            guard var range = pending else {
+                pending = editedRange
+                return
+            }
+            if range.location >= editedRange.location {
+                range.location = max(editedRange.location, range.location + delta)
+            } else if NSMaxRange(range) > editedRange.location {
+                range.length = max(editedRange.location - range.location, range.length + delta)
+            }
+            let union = NSUnionRange(range, editedRange)
+            let length = textStorage.length
+            let location = min(union.location, length)
+            pending = NSRange(location: location, length: min(union.length, length - location))
+        }
+
+        func appearanceChanged(font: NSFont?, palette: ThemePalette) {
+            guard font != paintedFont || palette != paintedPalette else { return }
+            let first = paintedPalette == nil
+            paintedFont = font
+            paintedPalette = palette
+            paintsAll = true
+            // The first paint is scheduled by makeNSView, after the text draws.
+            if !first { highlightSoon() }
+        }
+
         func highlightSoon(immediate: Bool = false) {
+            if immediate { paintsAll = true }
             highlightWork?.cancel()
             let work = DispatchWorkItem { [weak self] in self?.applyHighlight() }
             highlightWork = work
@@ -152,44 +191,21 @@ struct CodeEditorTextView: NSViewRepresentable {
 
         private func applyHighlight() {
             guard let textView, let storage = textView.textStorage,
-                  let layout = textView.layoutManager,
-                  let container = textView.textContainer else { return }
-            let string = textView.string
-            let palette = Theme.palette
-            let full = NSRange(location: 0, length: (string as NSString).length)
-            let font = textView.font ?? .monospacedSystemFont(ofSize: 13, weight: .regular)
+                  let layout = textView.layoutManager else { return }
+            let painter = SyntaxPainter(font: textView.font ?? .monospacedSystemFont(ofSize: 13, weight: .regular),
+                                        palette: Theme.palette)
             isApplyingHighlight = true
-            storage.beginEditing()
-            storage.setAttributes([
-                .font: font,
-                .foregroundColor: palette.nsColor(\.textPrimary),
-            ], range: full)
-            var state = CodeHighlighter.State()
-            var utf16Offset = 0
-            string.enumerateLines { line, _ in
-                for span in CodeHighlighter.highlight(line, state: &state) {
-                    let length = (span.text as NSString).length
-                    let color: NSColor
-                    switch span.kind {
-                    case .plain: color = palette.nsColor(\.textPrimary)
-                    case .keyword: color = palette.nsColor(\.syntaxFlag)
-                    case .type: color = palette.nsColor(\.syntaxBuiltin)
-                    case .string: color = palette.nsColor(\.syntaxString)
-                    case .comment: color = palette.nsColor(\.textTertiary)
-                    case .number: color = palette.nsColor(\.syntaxVariable)
-                    }
-                    storage.addAttribute(.foregroundColor, value: color,
-                                         range: NSRange(location: utf16Offset, length: length))
-                    utf16Offset += length
-                }
-                // enumerateLines omits the line ending.
-                if utf16Offset < full.length { utf16Offset += 1 }
+            defer { isApplyingHighlight = false }
+            let painted: NSRange
+            if paintsAll || pending == nil {
+                painter.paintAll(storage)
+                painted = NSRange(location: 0, length: storage.length)
+            } else {
+                painted = painter.paint(storage, edited: pending!)
             }
-            storage.endEditing()
-            layout.invalidateDisplay(forCharacterRange: full)
-            layout.ensureLayout(for: container)
-            textView.needsDisplay = true
-            isApplyingHighlight = false
+            paintsAll = false
+            pending = nil
+            layout.invalidateDisplay(forCharacterRange: painted)
         }
     }
 }
@@ -229,8 +245,10 @@ final class LineNumberRulerView: NSRulerView {
     @objc private func redraw() { needsDisplay = true }
 
     override func drawHashMarksAndLabels(in rect: NSRect) {
+        // Only the gutter: on current macOS `rect` is the whole scroll view's, and
+        // filling all of it paints over the text.
         backgroundColor.setFill()
-        rect.fill()
+        NSRect(x: 0, y: rect.minY, width: ruleThickness, height: rect.height).fill()
         guard let textView, let layout = textView.layoutManager, let container = textView.textContainer else { return }
         let visible = scrollView?.contentView.bounds ?? .zero
         let glyphRange = layout.glyphRange(forBoundingRect: visible, in: container)

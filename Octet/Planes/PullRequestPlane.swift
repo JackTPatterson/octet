@@ -15,12 +15,20 @@ struct PullRequestPlane: View {
     let askAgent: (String) -> Void
     /// Number, tone and title, for the tab chip.
     let onSummary: (Int, PullRequestTone, String) -> Void
+    /// Whether the plane is in front; it polls gh only then.
+    var visible = true
+    /// Back to the list it was opened from, shown at the start of the top
+    /// row; nil when there's nowhere to go back to.
+    var back: (() -> Void)?
     @StateObject private var model: PullRequestPlaneModel
 
-    init(directory: String, number: Int?, repo: String? = nil,
+    init(directory: String, number: Int?, repo: String? = nil, visible: Bool = true,
+         back: (() -> Void)? = nil,
          askAgent: @escaping (String) -> Void,
          onSummary: @escaping (Int, PullRequestTone, String) -> Void) {
         self.directory = directory
+        self.visible = visible
+        self.back = back
         self.number = number
         self.repo = repo
         self.askAgent = askAgent
@@ -32,9 +40,15 @@ struct PullRequestPlane: View {
         Group {
             switch PlaneLoadingPreview.shows("pullRequest") ? .loading : model.phase {
             case .loading:
-                PullRequestSkeleton()
+                VStack(spacing: 0) {
+                    backRow
+                    PullRequestSkeleton()
+                }
             case .failed(let failure):
-                PullRequestFailureView(failure: failure, model: model, askAgent: askAgent)
+                VStack(spacing: 0) {
+                    backRow
+                    PullRequestFailureView(failure: failure, model: model, askAgent: askAgent)
+                }
             case .loaded:
                 if let detail = model.detail {
                     PullRequestContent(model: model, detail: detail, askAgent: askAgent)
@@ -45,13 +59,49 @@ struct PullRequestPlane: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Theme.sidebar)
-        .onAppear { model.start() }
-        .onDisappear { model.stop() }
+        .environment(\.pullRequestBack, back.map(PullRequestBackAction.init))
+        .pollWhileSeen(visible, start: model.start, stop: model.stop)
         .onChange(of: number) { _, new in model.retarget(new) }
         .onReceive(model.$detail) { detail in
             guard let detail else { return }
             onSummary(detail.number, detail.tone, detail.title)
         }
+    }
+
+    /// Before the PR has loaded, the way back sits on its own.
+    @ViewBuilder private var backRow: some View {
+        if let back {
+            HStack {
+                PullRequestBackButton(action: back)
+                Spacer()
+            }
+            .padding(.horizontal, PullRequestStyle.horizontalPadding)
+            .padding(.top, 8)
+        }
+    }
+}
+
+/// The way back to the list a pull request was opened from.
+struct PullRequestBackAction {
+    let perform: () -> Void
+}
+
+private struct PullRequestBackKey: EnvironmentKey {
+    static let defaultValue: PullRequestBackAction? = nil
+}
+
+extension EnvironmentValues {
+    var pullRequestBack: PullRequestBackAction? {
+        get { self[PullRequestBackKey.self] }
+        set { self[PullRequestBackKey.self] = newValue }
+    }
+}
+
+struct PullRequestBackButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        OctetIconButton(icon: "chevron.left", help: "All pull requests", compact: true, action: action)
     }
 }
 
@@ -61,7 +111,7 @@ extension PullRequestTone {
     /// GitHub's colours for a PR's state, with Octet's green and red.
     var color: Color {
         switch self {
-        case .open: Color(hex: AgentStateColor.done)
+        case .open: Theme.success
         case .draft: Theme.textTertiary
         case .closed: Theme.danger
         case .merged: PullRequestStyle.violet
@@ -79,12 +129,12 @@ extension PullRequestTone {
 
 enum PullRequestStyle {
     static let violet = Color(hex: "a371f7")
-    static let amber = Color(hex: "d29922")
+    static var amber: Color { Theme.warning }
     static let horizontalPadding: CGFloat = 16
 
     static func checksColor(_ tone: PullRequestChecksSummary.Tone) -> Color {
         switch tone {
-        case .passing: Color(hex: AgentStateColor.done)
+        case .passing: Theme.success
         case .failing: Theme.danger
         case .pending: amber
         case .none, .mixed: Theme.textTertiary
@@ -102,7 +152,7 @@ enum PullRequestStyle {
 
     static func checkColor(_ state: PullRequestCheck.State) -> Color {
         switch state {
-        case .passed: Color(hex: AgentStateColor.done)
+        case .passed: Theme.success
         case .failed, .cancelled: Theme.danger
         case .running: amber
         case .skipped, .neutral: Theme.textTertiary
@@ -120,7 +170,7 @@ enum PullRequestStyle {
 
     static func verdictColor(_ verdict: PullRequestDetail.Verdict?) -> Color {
         switch verdict {
-        case .approved: Color(hex: AgentStateColor.done)
+        case .approved: Theme.success
         case .changesRequested: Theme.danger
         case .none, .pending: amber
         case .commented, .dismissed: Theme.textTertiary
@@ -257,9 +307,11 @@ private struct PullRequestTopRow: View {
     let askAgent: (String) -> Void
     @State private var repoHovered = false
     @State private var numberHovered = false
+    @Environment(\.pullRequestBack) private var back
 
     var body: some View {
         HStack(spacing: 4) {
+            if let back { PullRequestBackButton(action: back.perform) }
             HStack(spacing: 6) {
                 if condensed {
                     Text(detail.title)
@@ -499,7 +551,7 @@ private struct PullRequestMoreMenu: View {
             OctetIcon("ellipsis", size: 14)
                 .foregroundStyle(hovered ? Theme.textPrimary : Theme.textSecondary)
                 .frame(width: 24, height: 24)
-                .background(RoundedRectangle(cornerRadius: 6).fill(hovered ? Theme.hover : .clear))
+                .background(RoundedRectangle(cornerRadius: Theme.Radius.md).fill(hovered ? Theme.hover : .clear))
                 .contentShape(Rectangle())
         }
         .menuStyle(.button)
@@ -548,6 +600,9 @@ private struct PullRequestHeader: View {
             title
             meta
             branches
+            if let stack = model.stack {
+                PullRequestStackBar(model: model, stack: stack)
+            }
             if detail.isOpen, detail.isBehind {
                 behind
             }
@@ -560,14 +615,14 @@ private struct PullRequestHeader: View {
         if editingTitle {
             TextField("Title", text: $titleDraft, axis: .vertical)
                 .textFieldStyle(.plain)
-                .font(.system(size: 15, weight: .semibold))
+                .font(Theme.interfaceFont(15, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
                 .lineLimit(1...4)
                 .focused($titleFocused)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 4)
-                .background(RoundedRectangle(cornerRadius: 6).fill(Theme.terminalBackground))
-                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.accent.opacity(0.7), lineWidth: 1))
+                .background(RoundedRectangle(cornerRadius: Theme.Radius.md).fill(Theme.terminalBackground))
+                .overlay(RoundedRectangle(cornerRadius: Theme.Radius.md).strokeBorder(Theme.accent.opacity(0.7), lineWidth: 1))
                 .onSubmit {
                     model.editTitle(titleDraft)
                     editingTitle = false
@@ -577,7 +632,7 @@ private struct PullRequestHeader: View {
         } else {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(detail.title)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(Theme.interfaceFont(15, weight: .semibold))
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
@@ -588,7 +643,7 @@ private struct PullRequestHeader: View {
                         titleDraft = detail.title
                         editingTitle = true
                     }
-                    .opacity(titleHovered ? 1 : 0)
+                    .hoverReveal(titleHovered)
                 }
             }
             .onHover { titleHovered = $0 }

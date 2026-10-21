@@ -45,7 +45,7 @@ struct RecoveryPanel: View {
             .frame(width: 30, height: 30)
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(Theme.interfaceFont(13, weight: .semibold))
                     .foregroundStyle(Theme.textPrimary)
                 Text(subtitle)
                     .font(Theme.captionFont)
@@ -168,8 +168,8 @@ struct RecoveryPanel: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 22)
         .padding(.horizontal, 24)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.terminalBackground.opacity(0.45)))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.border, lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.xl, style: .continuous).fill(Theme.terminalBackground.opacity(0.45)))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.xl, style: .continuous).strokeBorder(Theme.border, lineWidth: 1))
         .padding(.horizontal, 16)
         .padding(.bottom, 14)
     }
@@ -286,6 +286,14 @@ private struct RecoveryItemRow: View {
         .onTapGesture { if item.status.canRestore, !busy { toggle() } }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(item.title), \(abbreviateHome(item.cwd))")
+        // The row's buttons show on hover; these reach them without it.
+        .accessibilityActions {
+            if item.status.canRestore, !busy {
+                Button(item.status.isFailed ? "Try Again" : "Restore", action: restore)
+                if item.agentRecord != nil { Button("Copy Resume Command", action: copy) }
+            }
+            Button("Dismiss", action: dismiss)
+        }
     }
 
     @ViewBuilder
@@ -341,9 +349,9 @@ private struct RecoveryItemRow: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(8)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .background(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
                             .fill(Theme.terminalBackground.opacity(0.6)))
-                        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
                             .strokeBorder(Theme.danger.opacity(0.35), lineWidth: 1))
                 }
             }

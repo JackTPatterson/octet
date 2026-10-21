@@ -12,6 +12,8 @@ struct SidebarView: View {
     @ObservedObject private var waits = WaitCenter.shared
     @ObservedObject private var checkIns = CheckInCenter.shared
     @ObservedObject private var idle = IdleCenter.shared
+    @ObservedObject private var tabDrag = TabDrag.shared
+    @State private var newWorkspaceDropTargeted = false
     @State private var collapsedGroups: Set<String> = []
     /// Groups showing all their workspaces, past the first few.
     @State private var expandedGroups: Set<String> = []
@@ -28,6 +30,24 @@ struct SidebarView: View {
     var body: some View {
         VStack(spacing: 0) {
             controlBar
+            if tabDrag.tabId != nil {
+                HStack(spacing: 7) {
+                    OctetIcon("plus.square", size: 14)
+                    Text("New workspace from tab").font(Theme.uiFontMedium)
+                    Spacer(minLength: 0)
+                }
+                .foregroundStyle(Theme.textPrimary)
+                .padding(.horizontal, 10)
+                .frame(height: 34)
+                .background(newWorkspaceDropTargeted ? Theme.cardSelected : Theme.hover,
+                            in: RoundedRectangle(cornerRadius: Theme.rowRadius))
+                .padding(.horizontal, 8)
+                .onDrop(of: [OctetDragKind.tab.type], isTargeted: $newWorkspaceDropTargeted) { _ in
+                    guard let tabId = tabDrag.tabId else { return false }
+                    WindowActions.tabToWorkspace(tabId, in: window)
+                    return true
+                }
+            }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 8) {
                     if searching {
@@ -44,7 +64,8 @@ struct SidebarView: View {
                                 .font(Theme.uiFont)
                                 .foregroundStyle(Theme.textTertiary)
                             if store.isConnected {
-                                Text("Press ⌘N or double-click here to start one.")
+                                let keys = OctetShortcut.newWorkspace.display
+                                Text(keys.isEmpty ? "Double-click here to start one." : "Press \(keys) or double-click here to start one.")
                                     .font(Theme.captionFont)
                                     .foregroundStyle(Theme.textMuted)
                             }
@@ -92,11 +113,12 @@ struct SidebarView: View {
         .onReceive(window.ui.$sidebarSearchRequest.dropFirst()) { _ in searchFocused = true }
     }
 
-    /// Two quiet rows, after T3 Code's: search with a button for a new
+    /// Search, the onboarding checklist, and project filtering: search with a button for a new
     /// workspace, then which project the sidebar shows with a button to
     /// start one in another folder.
     private var controlBar: some View {
         VStack(spacing: 2) {
+            OnboardingChecklistRow(openProject: pickFolder)
             searchField
             projectRow
         }
@@ -205,8 +227,10 @@ struct SidebarView: View {
     }
 
     private var newWorkspaceHelp: String {
-        if let filteredGroup { return "New workspace in \(filteredGroup.name) (⌘N)" }
-        return "New workspace (⌘N)"
+        let keys = OctetShortcut.newWorkspace.display
+        let suffix = keys.isEmpty ? "" : " (\(keys))"
+        if let filteredGroup { return "New workspace in \(filteredGroup.name)\(suffix)" }
+        return "New workspace\(suffix)"
     }
 
     /// A new workspace, in the project the sidebar is narrowed to.
@@ -452,7 +476,7 @@ private struct BranchChip: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 3)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 6).fill(hovered ? Theme.hover : .clear))
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.md).fill(hovered ? Theme.hover : .clear))
         .onHover { hovered = $0 }
         .help(run.worktreePath.map { "Worktree at \($0)" } ?? "Branch \(run.branch ?? "")")
     }
@@ -463,20 +487,12 @@ private struct BranchChip: View {
 /// that fills clockwise; the number is a hover away.
 private struct ContextChip: View {
     let usage: TwinUsage
-    @ObservedObject private var motion = MotionPreferences.shared
 
     var body: some View {
         Group {
             if let fraction = usage.contextFraction {
-                ZStack {
-                    Circle().stroke(Theme.border, lineWidth: 2)
-                    Circle()
-                        .trim(from: 0, to: max(0.03, fraction))
-                        .stroke(colour, style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                        .rotationEffect(.degrees(-90))
-                }
-                .frame(width: 12, height: 12)
-                .animation(motion.animation(.connections, .easeOut(duration: 0.4)), value: fraction)
+                // The shared ring and thresholds (ContextLevel), as the composer's.
+                ContextRing(fraction: fraction)
             } else {
                 // No window to measure against: just how much is in play.
                 Text(usage.label)
@@ -488,15 +504,6 @@ private struct ContextChip: View {
         .accessibilityElement()
         .accessibilityLabel("Context")
         .accessibilityValue(usage.label)
-    }
-
-    /// Quiet until it matters, then increasingly not.
-    private var colour: Color {
-        switch usage.contextFraction ?? 0 {
-        case ..<0.7: Theme.textSecondary
-        case ..<0.9: Color(hex: "e0af68")
-        default: Color(hex: "e5484d")
-        }
     }
 
     private var detail: String {
@@ -545,9 +552,10 @@ private struct WorkspaceCard: View {
 
     @ViewBuilder private var card: some View {
         let snapshot = store.snapshot
-        let isSelected = workspace.workspaceId == window.focusedWorkspace?.workspaceId
+        let isSelected = workspace.workspaceId == window.panelContext.focusedWorkspace?.workspaceId
         // Open in another window: a click brings that window forward.
-        let elsewhere = WindowRegistry.shared.window(showing: workspace.workspaceId).map { $0 !== window } ?? false
+        let elsewhere = WindowRegistry.shared.window(showing: workspace.workspaceId)
+            .map { $0 !== window && $0 !== window.splitContext } ?? false
         let agents = snapshot.agents(inWorkspace: workspace.workspaceId)
         let agent = store.primaryAgent(in: agents)
         let session = conversations.active(in: workspace.workspaceId)
@@ -560,9 +568,20 @@ private struct WorkspaceCard: View {
         let brand = handoffAgent.flatMap(AgentBrand.forAgent)
             ?? session.flatMap { AgentBrand.forAgent($0.engine.agent) }
             ?? AgentBrand.forAgent(agent?.agent)
-        let status = handoffAgent != nil ? (agent?.agentStatus ?? .working)
-            : session.map(Self.status) ?? agent?.agentStatus ?? workspace.agentStatus
+        // The loudest of the workspace's agents speaks for it, in the shared
+        // vocabulary (approval > input > failed > working > … > done).
+        let status: AgentState = handoffAgent != nil ? AgentState(agent?.agentStatus ?? .working)
+            : AgentState.rollUp(conversations.sessions(in: workspace.workspaceId).map(\.agentState)
+                + agents.filter { !$0.isSubagentViewer }.map { AgentState($0.agentStatus) }
+                + [AgentState(workspace.agentStatus)])
         let directory = snapshot.directory(ofWorkspace: workspace.workspaceId)
+        // Different agents across this workspace's tabs: the primary one
+        // first, then the rest, each vendor once.
+        var seenBrands = Set<String>()
+        let brands = ([brand]
+            + agents.map { AgentBrand.forAgent($0.agent) }
+            + conversations.sessions(in: workspace.workspaceId).map { AgentBrand.forAgent($0.engine.agent) })
+            .compactMap { $0 }.filter { seenBrands.insert($0.displayName).inserted }
 
         let receded = !isSelected && (status == .idle || status == .unknown)
         // The agent's state; with no agent here, a running server's logo
@@ -572,93 +591,47 @@ private struct WorkspaceCard: View {
             if status == .unknown,
                let logo = LanguageLogo(service: portsWatcher.service(inWorkspace: workspace.workspaceId, snapshot: snapshot), size: 13) {
                 logo.help("Serving on localhost")
+            } else if status == .working {
+                // The sub-row below carries what the agent is doing: the title
+                // line has no loading line of its own.
+                Color.clear
             } else {
-                AgentStateGlyph(status: status)
+                AgentStateGlyph(state: status)
             }
         }
         .frame(width: 16)
-        // With nothing to say about agents or tabs, the mark sits beside
-        // the title rather than alone on a line of its own.
-        let hasMeta = brand != nil || workspace.tabCount > 1
-        // T3 Code's card row: a line of who and how, the title, then where.
         VStack(alignment: .leading, spacing: 3) {
-            if hasMeta {
             HStack(spacing: 6) {
                 mark
-                if let brand {
-                    AgentLogo(brand: brand, size: 11)
-                    Text(brand.displayName)
-                        .font(.system(size: 11.5, weight: .medium))
-                        .foregroundStyle(Theme.textTertiary)
+                if renaming {
+                    InlineRenameField(initial: workspace.label, placeholder: "Workspace name") { label in
+                        renaming = false
+                        store.renameWorkspace(workspace.workspaceId, to: label, from: workspace.label)
+                    }
+                } else {
+                    Text(workspace.label)
+                        .font(Theme.interfaceFont(13, weight: receded ? .regular : .medium))
+                        .foregroundStyle(receded ? Theme.textSecondary : Theme.textPrimary)
                         .lineLimit(1)
-                } else if workspace.tabCount > 1 {
-                    Text("\(workspace.tabCount) tabs")
-                        .font(.system(size: 11.5, weight: .medium))
-                        .foregroundStyle(Theme.textTertiary)
                 }
-                let agentCount = session == nil ? agents.count : 1
-                if !renaming, agentCount > 1 {
-                    AgentCountBadge(count: agentCount)
-                }
+                Spacer(minLength: 4)
                 if store.isPinned(workspace.workspaceId) {
-                    OctetIcon("pin.fill", size: 11)
-                        .foregroundStyle(Theme.textMuted)
+                    OctetIcon("pin.fill", size: 11).foregroundStyle(Theme.textMuted)
                         .help("Pinned: never moves to Idle")
-                }
-                Spacer(minLength: 4)
-                if elsewhere {
-                    OctetIcon("rectangle.on.rectangle", size: 12)
-                        .foregroundStyle(Theme.textTertiary)
-                        .help("Open in another window. Click to bring it forward.")
-                        .accessibilityLabel("Open in another window")
-                }
-                // How full this agent's context is, before it bites.
-                if let usage = store.usageTracker.usage(forTerminal: agent?.terminalId), !usage.label.isEmpty {
-                    ContextChip(usage: usage)
-                        .opacity(hovered && !renaming ? 0 : 1)
-                }
-                // The status, which gives way to the close button on hover.
-                if brand != nil, status != .unknown {
-                    Text(Self.statusTitle(status))
-                        .font(.system(size: 11.5, weight: .medium))
-                        .foregroundStyle(Self.statusColor(status))
-                        .lineLimit(1)
-                        .opacity(hovered && !renaming ? 0 : 1)
-                }
-            }
-            .frame(minHeight: 18)
-            }
-            HStack(spacing: 6) {
-            if !hasMeta { mark }
-            if renaming {
-                InlineRenameField(initial: workspace.label, placeholder: "Workspace name") { label in
-                    renaming = false
-                    store.renameWorkspace(workspace.workspaceId, to: label, from: workspace.label)
-                }
-            } else {
-                Text(workspace.label)
-                    .font(.system(size: 13, weight: receded ? .regular : .medium))
-                    .foregroundStyle(receded ? Theme.textSecondary : Theme.textPrimary)
-                    .lineLimit(1)
-            }
-            if !hasMeta {
-                Spacer(minLength: 4)
-                if store.isPinned(workspace.workspaceId) {
-                    OctetIcon("pin.fill", size: 11).foregroundStyle(Theme.textMuted).help("Pinned: never moves to Idle")
                 }
                 if elsewhere {
                     OctetIcon("rectangle.on.rectangle", size: 12).foregroundStyle(Theme.textTertiary)
                         .help("Open in another window. Click to bring it forward.")
                 }
             }
-            }
             // Always shown: the folder is what decides the card's group.
             if let directory {
                 Text(abbreviateHome(directory))
-                    .font(.system(size: 11, design: .monospaced))
+                    .font(Theme.Text.mono(11))
                     .foregroundStyle(Theme.textTertiary)
                     .lineLimit(1)
                     .truncationMode(.middle)
+                    .padding(.leading, 22)
             }
             if let from = store.movedWorkspaces[workspace.workspaceId] {
                 HStack(spacing: 4) {
@@ -671,6 +644,7 @@ private struct WorkspaceCard: View {
                 .help("Its tab's folder is now in this project, so the workspace moved with it.")
                 .transition(.opacity)
             }
+            WorkspaceAgentsList(store: store, workspaceId: workspace.workspaceId, brands: brands)
             // Subagents that left for a worktree, repo or folder of their own.
             let locations = store.agentLocations(inWorkspace: workspace.workspaceId)
             if !locations.isEmpty {
@@ -685,22 +659,13 @@ private struct WorkspaceCard: View {
                                    hue: store.workspaceColor(workspace.workspaceId)?.hex ?? brand?.hueHex))
         .clipShape(RoundedRectangle(cornerRadius: Theme.controlRadius))
         .animation(.easeOut(duration: 0.15), value: hovered)
-        .overlay(alignment: .topTrailing) {
-            let showsClose = hovered && !renaming
-            WorkspaceCloseButton { store.closeWorkspace(workspace.workspaceId) }
-                .padding(.top, 7)
-                .padding(.trailing, 8)
-                .opacity(showsClose ? 1 : 0)
-                .allowsHitTesting(showsClose)
-                .accessibilityHidden(!showsClose)
-        }
         .contentShape(Rectangle())
         .onHover { hovering in
             hovered = hovering
             // Not for the workspace already showing, nor while renaming or
             // dragging a tab over it.
             peek.source(hovering && !isSelected && !renaming
-                        && TabDrag.shared.tabId == nil && TabDrag.shared.workspaceId == nil)
+                        && TabDrag.shared.item == nil)
         }
         .popover(isPresented: $peek.isShown, arrowEdge: .trailing) {
             WorkspacePeek(store: store, workspace: workspace) { peek.close() }
@@ -720,11 +685,11 @@ private struct WorkspaceCard: View {
         }
         .simultaneousGesture(TapGesture(count: 2).onEnded { renaming = true })
         // Dragged out of the window, the workspace gets a window of its own.
-        .onDrag {
+        .octetDragSource(.workspace, enabled: !renaming, began: {
             peek.close()
             TabDrag.shared.begin(workspace: workspace.workspaceId, from: window)
-            return NSItemProvider(object: workspace.workspaceId as NSString)
-        }
+            return true
+        }, moved: { TabDrag.shared.moved(to: $0) }, ended: { TabDrag.shared.ended($0) })
         .octetContextMenu {
             WorkspaceMenu.items(store: store, workspace: workspace, window: window) { renaming = true }
         }
@@ -733,6 +698,8 @@ private struct WorkspaceCard: View {
         .accessibilityAction { window.focusWorkspace(workspace.workspaceId) }
         .accessibilityAction(named: "Rename") { renaming = true }
         .accessibilityAction(named: "Close") { store.closeWorkspace(workspace.workspaceId) }
+        // The peek opens on hover; this is the way to it without a pointer.
+        .accessibilityAction(named: "Show Details") { peek.show() }
     }
 
     /// Nothing at rest, a fill under the pointer and a stronger one for the
@@ -747,43 +714,12 @@ private struct WorkspaceCard: View {
         }
     }
 
-    static func statusTitle(_ status: EngineAgentStatus) -> String {
-        switch status {
-        case .working: "Working"
-        case .blocked: "Needs input"
-        case .done: "Done"
-        case .idle: "Idle"
-        case .unknown: ""
-        }
-    }
-
-    static func statusColor(_ status: EngineAgentStatus) -> Color {
-        switch status {
-        case .working: Theme.accent
-        case .blocked: Color(hex: AgentStateColor.blocked)
-        case .done: Color(hex: AgentStateColor.done)
-        case .idle, .unknown: Theme.textTertiary
-        }
-    }
-
-    private static func status(_ session: AgentSession) -> EngineAgentStatus {
-        if session.pendingPermission != nil || session.pendingQuestion != nil { return .blocked }
-        return session.conversation.isRunning ? .working : .idle
-    }
-
-    private func agentLine(status: EngineAgentStatus, brand: AgentBrand) -> String {
-        "\(brand.displayName) \(stateLabel(status))"
-    }
 }
 
+/// The session server's status in a sentence ("needs input"), from the
+/// shared vocabulary so every surface says it the same way.
 func stateLabel(_ status: EngineAgentStatus) -> String {
-    switch status {
-    case .working: return "working"
-    case .blocked: return "needs input"
-    case .done: return "done"
-    case .idle: return "idle"
-    case .unknown: return ""
-    }
+    AgentState(status).label
 }
 
 func abbreviateHome(_ path: String) -> String {
@@ -1025,7 +961,7 @@ struct WorkspaceCloseButton: View {
                 .foregroundStyle(hovered ? Theme.textPrimary : Theme.textTertiary)
                 .frame(width: 18, height: 18)
                 .background(hovered ? Theme.cardSelected : Color.clear)
-                .clipShape(RoundedRectangle(cornerRadius: 3))
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.xs))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -1069,40 +1005,50 @@ private struct ProjectGroupHeader: View {
                         ProjectMonogram(name: group.name)
                     }
                     Text(group.name)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(Theme.Text.transcriptMedium)
                         .foregroundStyle(hovered ? Theme.textPrimary : Theme.textSecondary)
                         .lineLimit(1)
                     if isRepository {
                         OctetIcon("arrow.triangle.branch", size: 10).foregroundStyle(Theme.textMuted)
                     }
                     Spacer(minLength: 4)
-                    if collapsed || hovered {
+                    if collapsed || (hovered && newWorkspace == nil) {
                         Text("\(group.workspaces.count)")
                             .font(Theme.captionFont.monospacedDigit())
                             .foregroundStyle(Theme.textTertiary)
                             .help(group.workspaces.count == 1 ? "1 workspace" : "\(group.workspaces.count) workspaces")
                     }
+                    // A square box, so the turn is about the glyph's centre
+                    // and the chevron's edge is the row's edge.
                     OctetIcon("chevron.right", size: 11)
                         .foregroundStyle(Theme.textTertiary)
+                        .frame(width: 16, height: 16)
                         .rotationEffect(.degrees(collapsed ? 0 : 90))
                         .animation(.easeOut(duration: 0.15), value: collapsed)
                 }
+                .frame(maxHeight: .infinity)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help(help)
-            if let newWorkspace {
-                Button(action: newWorkspace) {
-                    OctetIcon("pencil", size: 13).foregroundStyle(Theme.textSecondary)
-                        .frame(width: 22, height: 22)
-                        .background(RoundedRectangle(cornerRadius: 6).fill(Theme.hover.opacity(0.6)))
-                        .contentShape(Rectangle())
+            // On hover the new-workspace button sits over the count, left
+            // of the chevron, so the chevron never moves off the edge.
+            .overlay(alignment: .trailing) {
+                if let newWorkspace {
+                    Button(action: newWorkspace) {
+                        OctetIcon("pencil", size: 13).foregroundStyle(Theme.textSecondary)
+                            .frame(width: 22, height: 22)
+                            .background(RoundedRectangle(cornerRadius: Theme.Radius.md).fill(Theme.hover.opacity(0.6)))
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.trailing, 22)
+                    .hoverReveal(hovered)
+                    .allowsHitTesting(hovered)
+                    .animation(.easeOut(duration: 0.15), value: hovered)
+                    .help("New workspace in \(group.name)")
+                    .accessibilityLabel("New workspace in \(group.name)")
                 }
-                .buttonStyle(.plain)
-                .opacity(hovered ? 1 : 0)
-                .animation(.easeOut(duration: 0.15), value: hovered)
-                .help("New workspace in \(group.name)")
-                .accessibilityLabel("New workspace in \(group.name)")
             }
         }
         // T3 Code's project row: 32pt, a fill under the pointer.
@@ -1143,7 +1089,7 @@ private struct SnippetLine: View {
 
     var body: some View {
         (Text(snippet.fromYou ? "You: " : "Agent: ")
-            .foregroundColor(snippet.fromYou ? Theme.accent : Color(hex: AgentStateColor.done))
+            .foregroundColor(snippet.fromYou ? Theme.accent : Theme.success)
          + Text(snippet.before).foregroundColor(Theme.textTertiary)
          + Text(snippet.match).bold().foregroundColor(Theme.textPrimary)
          + Text(snippet.after).foregroundColor(Theme.textTertiary))
@@ -1171,6 +1117,7 @@ private struct SidebarIconButton: View {
         .buttonStyle(.plain)
         .onHover { hovered = $0 }
         .help(help)
+        .accessibilityLabel(help)
     }
 }
 

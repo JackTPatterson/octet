@@ -99,29 +99,18 @@ final class ConfirmCenter: ObservableObject {
 
 struct ConfirmDialog: View {
     @ObservedObject var center: ConfirmCenter
-    @ObservedObject private var motion = MotionPreferences.shared
-    @StateObject private var host = HostWindow()
 
     var body: some View {
-        ZStack {
-            if let request = center.request, host.owns(request.window) {
-                Color.black.opacity(0.35)
-                    .ignoresSafeArea()
-                    .onTapGesture { center.cancel() }
-                card(request)
-                    .transition(motion.animates(.palette)
-                        ? .opacity.combined(with: .scale(scale: 0.96))
-                        : .identity)
-            }
+        OctetModalShell(isPresented: center.request != nil, window: center.request?.window,
+                        identity: center.request?.id, onDismiss: { center.cancel() }) {
+            if let request = center.request { card(request) }
         }
-        .animation(motion.animation(.palette, .smooth(duration: 0.16)), value: center.request?.id)
-        .background(HostWindowReader(host: host))
     }
 
     private func card(_ request: ConfirmCenter.Request) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(request.title)
-                .font(.system(size: 13, weight: .semibold))
+                .font(Theme.interfaceFont(13, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
             if !request.message.isEmpty {
                 Text(request.message)
@@ -168,8 +157,8 @@ struct ConfirmDialog: View {
             HStack(spacing: 8) {
                 Spacer()
                 if !request.cancelTitle.isEmpty {
+                    // Escape is the shell's: it cancels.
                     DialogButton(title: request.cancelTitle, kind: .secondary) { center.cancel() }
-                        .keyboardShortcut(.cancelAction)
                 }
                 if let alternateTitle = request.alternateTitle {
                     DialogButton(title: alternateTitle, kind: .secondary) { center.alternate() }
@@ -181,9 +170,7 @@ struct ConfirmDialog: View {
             }
             .padding(.top, 2)
         }
-        .padding(16)
-        .frame(width: request.detail.isEmpty ? 380 : 560)
-        .octetGlass(cornerRadius: 18, fill: Theme.card)
+        .octetModalCard(width: request.detail.isEmpty ? 380 : 560)
     }
 }
 
@@ -203,8 +190,8 @@ private struct DialogButton: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 6)
                 .background {
-                    RoundedRectangle(cornerRadius: 6).fill(background)
-                    RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.border, lineWidth: kind == .secondary ? 1 : 0)
+                    RoundedRectangle(cornerRadius: Theme.Radius.md).fill(background)
+                    RoundedRectangle(cornerRadius: Theme.Radius.md).strokeBorder(Theme.border, lineWidth: kind == .secondary ? 1 : 0)
                 }
         }
         .buttonStyle(.plain)
@@ -215,15 +202,14 @@ private struct DialogButton: View {
         switch kind {
         case .secondary: Theme.textSecondary
         case .primary: Theme.onAccent
-        case .destructive: .white
+        case .destructive: Theme.onDanger
         }
     }
 
     private var background: Color {
         switch kind {
         case .primary: Theme.accent.opacity(hovered ? 0.85 : 1)
-        // Dark enough for white text on light and dark themes alike.
-        case .destructive: Color(hex: "c62a2f").opacity(hovered ? 0.85 : 1)
+        case .destructive: Theme.danger.opacity(hovered ? 0.85 : 1)
         case .secondary: hovered ? Theme.hover : Color.clear
         }
     }

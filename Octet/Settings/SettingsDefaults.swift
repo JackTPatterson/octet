@@ -59,9 +59,6 @@ enum SettingsDefaults {
         .init("Terminal opacity", \.backgroundOpacity),
         .init("Blur behind terminal", \.backgroundBlur),
         .init("Window padding", \.windowPadding),
-        .init("Split pane borders", \.paneBorders),
-        .init("Gaps between panes", \.paneGaps),
-        .init("Pane scrollbars", \.paneScrollbars),
         // Terminal
         .init("Scrollback per pane", \.scrollbackMegabytes),
         .init("Terminal text", \.textPosition),
@@ -92,6 +89,12 @@ enum SettingsDefaults {
         .init("Recap when you come back", \.recap),
         .init("Away for at least", \.recapAfterMinutes),
         .init("Play sounds", \.agentSounds),
+        .init("Agent finished", \.notifyFinished),
+        .init("Agent needs input", \.notifyNeedsInput),
+        .init("Agent failed", \.notifyFailed),
+        .init("Suppress while the agent is on screen", \.notifySuppressWhileVisible),
+        .init("Terminal bell", \.terminalBell),
+        .init("Default agent", \.defaultAgent),
         .init("Subagent finished sound", \.subagentFinishedSound),
         .init("Let agents set waits", \.agentsSetWaits),
         .init("Offer a wait from a reply", \.suggestWaits),
@@ -106,6 +109,7 @@ enum SettingsDefaults {
         .init("Keep the Mac awake while agents work", \.keepAwake),
         .init("Checkpoint before each agent turn", \.checkpointTurns),
         .init("Keep closed tabs running", \.keepClosedTabsMinutes),
+        .init("Ask before stopping running terminals", \.confirmCloseRunning),
         .init("Remote Control for Claude conversations", \.claudeRemoteControl),
         .init("When you run an agent in a terminal", \.agentOpening),
         .init("Offer Octet's view over a running agent", \.agentBanner),
@@ -127,8 +131,6 @@ enum SettingsDefaults {
         // Advanced
         .init("Worktree folder", \.worktreesDirectory),
         .init("Set up new worktrees", \.worktreeSetup),
-        .init("Check for engine updates", \.checkForEngineUpdates),
-        .init("Update channel", \.updateChannel),
         .init("Allow a nested session", \.allowNestedSessions),
     ]
 

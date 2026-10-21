@@ -1,4 +1,7 @@
 // Native Find smoke test with a stubbed engine; never touches live sessions.
+// STALE: written for the old AppKit OutputSearch panel, which was replaced by
+// OutputFindState and the SwiftUI OutputFindBar. It no longer compiles; port it
+// to OutputFindState before running it again.
 // swiftc -parse-as-library -module-cache-path /tmp/octet-smoke-modules \
 //   Octet/Terminal/OutputSearch.swift Shared/TerminalSearch.swift \
 //   scripts/verify-output-search.swift -o /tmp/octet-find-smoke

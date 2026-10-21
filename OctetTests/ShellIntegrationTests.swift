@@ -42,7 +42,7 @@ final class ShellIntegrationTests: XCTestCase {
         process.standardOutput = output
         process.standardError = output
         try process.run()
-        input.fileHandleForWriting.write(Data("echo rc=$FROM_USER_RC shell=$SHELL\nfalse\nexit\n".utf8))
+        input.fileHandleForWriting.write(Data("PS1='p> '\necho rc=$FROM_USER_RC shell=$SHELL\necho ps1=[$PS1]\nfalse\nexit\n".utf8))
         try input.fileHandleForWriting.close()
         let data = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
@@ -50,7 +50,10 @@ final class ShellIntegrationTests: XCTestCase {
 
         XCTAssertTrue(text.contains("rc=yes"), text)
         XCTAssertTrue(text.contains("shell=/bin/zsh"), text)
-        XCTAssertTrue(text.contains("\u{1b}]133;A\u{07}"), text)
+        // The prompt carries its own marks, so a redraw (after a resize)
+        // prints them again; a running command sees PS1 as it was.
+        XCTAssertTrue(text.contains("\u{1b}]133;A;cl=line\u{07}p> \u{1b}]133;B\u{07}"), text)
+        XCTAssertTrue(text.contains("ps1=[p> ]"), text)
         XCTAssertTrue(text.contains("\u{1b}]133;C\u{07}"), text)
         XCTAssertTrue(text.contains("\u{1b}]133;D;0\u{07}"), text)
         XCTAssertTrue(text.contains("\u{1b}]133;D;1\u{07}"), text)

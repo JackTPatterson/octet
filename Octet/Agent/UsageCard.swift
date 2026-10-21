@@ -19,8 +19,8 @@ struct UsageCard: View {
         }
         .padding(14)
         .frame(maxWidth: 560, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Theme.card))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.border, lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.lg).fill(Theme.card))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.lg).strokeBorder(Theme.border, lineWidth: 1))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(report.summary)
     }
@@ -37,7 +37,7 @@ struct UsageCard: View {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(report.summary, forType: .string)
             } label: { OctetIcon("doc.on.doc", size: 12) }
-                .buttonStyle(.plain).foregroundStyle(Theme.textTertiary).help("Copy as text")
+                .buttonStyle(.plain).foregroundStyle(Theme.textTertiary).help("Copy as text").accessibilityLabel("Copy as text")
         }
     }
 
@@ -48,7 +48,7 @@ struct UsageCard: View {
             SectionTitle("Context")
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(UsageReport.tokens(report.contextUsed ?? 0))
-                    .font(.system(size: 22, weight: .semibold).monospacedDigit()).foregroundStyle(Theme.textPrimary)
+                    .font(Theme.Text.title1.monospacedDigit()).foregroundStyle(Theme.textPrimary)
                 if let window = report.contextWindow, window > 0 {
                     Text("of \(UsageReport.tokens(window))").font(Theme.uiFont).foregroundStyle(Theme.textSecondary)
                 }
@@ -307,8 +307,8 @@ private struct Columns: View {
                         .font(Theme.captionFont.monospacedDigit())
                         .foregroundStyle(Theme.textPrimary)
                         .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(RoundedRectangle(cornerRadius: 4).fill(Theme.chrome))
-                        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Theme.border, lineWidth: 1))
+                        .background(RoundedRectangle(cornerRadius: Theme.Radius.sm).fill(Theme.chrome))
+                        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sm).strokeBorder(Theme.border, lineWidth: 1))
                         .offset(y: -22)
                         .allowsHitTesting(false)
                 }
@@ -325,11 +325,11 @@ private struct Tile: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(value).font(.system(size: 15, weight: .semibold).monospacedDigit()).foregroundStyle(Theme.textPrimary)
+            Text(value).font(Theme.interfaceFont(15, weight: .semibold).monospacedDigit()).foregroundStyle(Theme.textPrimary)
             Text(label).font(Theme.captionFont).foregroundStyle(Theme.textTertiary).lineLimit(1)
         }
         .padding(.horizontal, 10).padding(.vertical, 7)
         .frame(minWidth: 90, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 6).fill(Theme.hover))
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.md).fill(Theme.hover))
     }
 }

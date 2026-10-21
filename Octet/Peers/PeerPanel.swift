@@ -89,14 +89,14 @@ struct PeerPanel: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Text("Other Macs").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textPrimary)
+            Text("Other Macs").font(Theme.interfaceFont(13, weight: .semibold)).foregroundStyle(Theme.textPrimary)
             HStack(spacing: 5) {
                 PeerStatusDot(tone: center.running ? .online : .idle, size: 6)
                 Text(center.machineName).font(Theme.captionFont).foregroundStyle(Theme.textSecondary).lineLimit(1)
             }
             .padding(.horizontal, 6)
             .frame(height: 20)
-            .background(RoundedRectangle(cornerRadius: 6).fill(Theme.hover.opacity(0.6)))
+            .background(RoundedRectangle(cornerRadius: Theme.Radius.md).fill(Theme.hover.opacity(0.6)))
             .help("This Mac, as your other Macs see it")
             Spacer(minLength: 6)
             if center.running {
@@ -132,8 +132,8 @@ struct PeerPanel: View {
                     PeerPairingModel.shared.present()
                 }
             }
-            .background(RoundedRectangle(cornerRadius: 12).fill(Theme.card.opacity(0.55)))
-            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.border.opacity(0.7), lineWidth: 1))
+            .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.card.opacity(0.55)))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).strokeBorder(Theme.border.opacity(0.7), lineWidth: 1))
         } else {
             VStack(alignment: .leading, spacing: 8) {
                 PeerSectionHeader(title: "Paired Macs")
@@ -184,9 +184,9 @@ struct PeerPanel: View {
                     .transition(motion.animates(.connections) ? .opacity.combined(with: .offset(y: -4)) : .identity)
             }
         }
-        .background(RoundedRectangle(cornerRadius: 12).fill(Theme.card.opacity(0.55)))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.border.opacity(0.7), lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.card.opacity(0.55)))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).strokeBorder(Theme.border.opacity(0.7), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
     }
 
     /// The status, with the version and round trip when they're known.
@@ -233,6 +233,17 @@ struct PeerPanel: View {
     private func agentRow(_ agent: PeerProtocol.Agent, machine: String) -> some View {
         let key = machine + "\u{0}" + agent.id
         let hovered = hoveredAgent == key || messaging == key
+        let read = {
+            model.read(agent, on: machine) { text in
+                reading = ("\(agent.name) on \(machine)", text, machine, agent)
+            }
+        }
+        let startMessage = {
+            MotionPreferences.shared.perform(.connections, .smooth(duration: 0.2)) {
+                messaging = messaging == key ? nil : key
+            }
+            message = ""
+        }
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Group {
@@ -249,17 +260,8 @@ struct PeerPanel: View {
                 Spacer(minLength: 4)
                 if hovered {
                     HStack(spacing: 2) {
-                        OctetButton(title: "Read", icon: "eye", kind: .ghost, compact: true) {
-                            model.read(agent, on: machine) { text in
-                                reading = ("\(agent.name) on \(machine)", text, machine, agent)
-                            }
-                        }
-                        OctetButton(title: "Message", icon: "message", kind: .ghost, compact: true) {
-                            MotionPreferences.shared.perform(.connections, .smooth(duration: 0.2)) {
-                                messaging = messaging == key ? nil : key
-                            }
-                            message = ""
-                        }
+                        OctetButton(title: "Read", icon: "eye", kind: .ghost, compact: true, action: read)
+                        OctetButton(title: "Message", icon: "message", kind: .ghost, compact: true, action: startMessage)
                     }
                     .transition(.opacity)
                 } else {
@@ -283,6 +285,11 @@ struct PeerPanel: View {
             MotionPreferences.shared.perform(.connections, .easeOut(duration: 0.15)) {
                 hoveredAgent = inside ? key : (hoveredAgent == key ? nil : hoveredAgent)
             }
+        }
+        // Read and Message show on hover; the menu reaches them without it.
+        .contextMenu {
+            Button("Read Screen", action: read)
+            Button("Message \(agent.name)", action: startMessage)
         }
     }
 
@@ -339,8 +346,8 @@ struct PeerPanel: View {
             }
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Theme.terminalBackground.opacity(0.35)))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.border.opacity(0.7), lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.xl).fill(Theme.terminalBackground.opacity(0.35)))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.xl).strokeBorder(Theme.border.opacity(0.7), lineWidth: 1))
     }
 
     // MARK: Tasks given from here
@@ -358,9 +365,9 @@ struct PeerPanel: View {
                     PeerTaskRow(task: task)
                 }
             }
-            .background(RoundedRectangle(cornerRadius: 12).fill(Theme.card.opacity(0.55)))
-            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.border.opacity(0.7), lineWidth: 1))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.card.opacity(0.55)))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).strokeBorder(Theme.border.opacity(0.7), lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
         }
     }
 
@@ -385,9 +392,9 @@ struct PeerPanel: View {
                     .frame(height: 40)
                 }
             }
-            .background(RoundedRectangle(cornerRadius: 12).fill(Theme.card.opacity(0.55)))
-            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.border.opacity(0.7), lineWidth: 1))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .background(RoundedRectangle(cornerRadius: Theme.Radius.card).fill(Theme.card.opacity(0.55)))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).strokeBorder(Theme.border.opacity(0.7), lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
         }
     }
 
@@ -414,8 +421,8 @@ struct PeerPanel: View {
             }
             .octetScrollIndicators()
             .frame(maxHeight: .infinity)
-            .background(RoundedRectangle(cornerRadius: 10).fill(Theme.terminalBackground))
-            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.border.opacity(0.7), lineWidth: 1))
+            .background(RoundedRectangle(cornerRadius: Theme.Radius.xl).fill(Theme.terminalBackground))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.xl).strokeBorder(Theme.border.opacity(0.7), lineWidth: 1))
         }
         .padding(14)
     }
@@ -468,7 +475,7 @@ private struct PeerTaskRow: View {
                         .padding(8)
                 }
                 .frame(maxHeight: 180)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Theme.terminalBackground))
+                .background(RoundedRectangle(cornerRadius: Theme.Radius.lg).fill(Theme.terminalBackground))
                 .transition(.opacity)
             }
         }

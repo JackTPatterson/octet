@@ -187,9 +187,10 @@ struct ProjectSearchDialog: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            Color.black.opacity(0.35)
+            Theme.scrim
                 .ignoresSafeArea()
                 .onTapGesture(perform: onClose)
+                .accessibilityHidden(true)
             VStack(spacing: 0) {
                 searchRow
                 if model.showsInclude { includeRow }
@@ -211,9 +212,10 @@ struct ProjectSearchDialog: View {
         HStack(spacing: 10) {
             OctetIcon("magnifyingglass", size: 19)
                 .foregroundStyle(Theme.textSecondary)
+                .accessibilityHidden(true)
             TextField("Search in \(model.projectName)", text: $model.query)
                 .textFieldStyle(.plain)
-                .font(.system(size: 15))
+                .font(Theme.interfaceFont(15))
                 .foregroundStyle(Theme.textPrimary)
                 .focused($fieldFocused)
                 .onKeyPress(.upArrow) { model.move(-1); return .handled }
@@ -336,6 +338,10 @@ struct ProjectSearchDialog: View {
                                             model.selection = entry.index
                                             openSelection()
                                         }
+                                        .accessibilityAction {
+                                            model.selection = entry.index
+                                            openSelection()
+                                        }
                                 }
                             } header: {
                                 fileHeader(group)
@@ -379,7 +385,7 @@ struct ProjectSearchDialog: View {
             }
             Spacer(minLength: 8)
             Text(verbatim: String(group.matches.count))
-                .font(.system(size: 10, weight: .medium).monospacedDigit())
+                .font(Theme.interfaceFont(10, weight: .medium).monospacedDigit())
                 .foregroundStyle(Theme.textTertiary)
                 .padding(.horizontal, 6)
                 .frame(height: 16)
@@ -397,7 +403,7 @@ struct ProjectSearchDialog: View {
             hint("esc", "close")
             Spacer()
             Text((model.root as NSString).abbreviatingWithTildeInPath)
-                .font(.system(size: 10.5))
+                .font(Theme.Text.caption)
                 .foregroundStyle(Theme.textMuted)
                 .lineLimit(1)
                 .truncationMode(.head)
@@ -411,7 +417,7 @@ struct ProjectSearchDialog: View {
     private func hint(_ key: String, _ label: String) -> some View {
         HStack(spacing: 4) {
             Keycap(text: key)
-            Text(label).font(.system(size: 10.5)).foregroundStyle(Theme.textTertiary)
+            Text(label).font(Theme.Text.caption).foregroundStyle(Theme.textTertiary)
         }
     }
 
@@ -430,11 +436,11 @@ private struct ProjectSearchRow: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             Text(verbatim: String(match.line))
-                .font(.system(size: 11, design: .monospaced))
+                .font(Theme.Text.mono(11))
                 .foregroundStyle(Theme.textMuted)
                 .frame(width: 40, alignment: .trailing)
             Text(highlighted)
-                .font(.system(size: 11.5, design: .monospaced))
+                .font(Theme.Text.mono(11.5))
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: 0)
@@ -445,6 +451,9 @@ private struct ProjectSearchRow: View {
             .fill(selected ? Theme.cardSelected : hovered ? Theme.hover : .clear))
         .padding(.horizontal, 6)
         .onHover { hovered = $0 }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Line \(match.line): \(match.text.trimmingCharacters(in: .whitespaces))")
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
     }
 
     private var highlighted: AttributedString {

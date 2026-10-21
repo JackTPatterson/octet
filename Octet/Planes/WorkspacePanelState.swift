@@ -33,8 +33,11 @@ extension UIState {
         panelDefaults.set(data, forKey: panelKey(id))
     }
 
-    func activateWorkspacePanel(_ workspace: String?) {
+    func activateWorkspacePanel(_ workspace: String?, preserveWindowState: Bool = false) {
         guard let workspace, workspace != panelWorkspaceID else { return }
+        let windowVisibility = sidePanelVisible
+        let windowMaximized = sidePanelMaximized
+        let windowWidth = sidePanelWidth
         // Mutations persist immediately; do not overwrite a newer record
         // merely because an older window is switching away.
         if let previous = panelWorkspaceID { workspaceClosedPlanes[previous] = closedPlanes }
@@ -49,19 +52,29 @@ extension UIState {
             state.opened = Set(panelDefaults.stringArray(forKey: "octet.sidePanel.opened") ?? [])
         }
         panelDefaults.set(true, forKey: migrationKey)
+        // Move the formerly embedded todo list into a discoverable tab once.
+        // A user who subsequently closes it keeps that choice.
+        let todoMigrationKey = "octet.workspacePanel.todosTab.\(workspace)"
+        if !panelDefaults.bool(forKey: todoMigrationKey) {
+            if !state.planes.contains(where: { $0.kind == .todos }) {
+                let index = state.planes.firstIndex(where: { $0.kind == .overview }).map { $0 + 1 } ?? state.planes.count
+                state.planes.insert(.make(.todos), at: index)
+            }
+            panelDefaults.set(true, forKey: todoMigrationKey)
+        }
         var transaction = Transaction(animation: nil)
         transaction.disablesAnimations = true
         withTransaction(transaction) {
             restoringWorkspacePanel = true
             panelWorkspaceID = workspace
-            planes = state.planes
-            activePlaneId = state.activePlaneID
-            splitPlaneIds = state.splitIDs
+            planes = Plane.consolidated(state.planes, active: state.activePlaneID)
+            activePlaneId = state.activePlaneID.map(Plane.migratedID)
+            splitPlaneIds = state.splitIDs.map(Plane.migratedID).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
             splitSideBySide = state.sideBySide
             planeSplitWeights = state.weights
-            sidePanelVisible = state.visible
-            sidePanelMaximized = state.maximized
-            sidePanelWidth = max(Self.sidePanelMinWidth, state.width)
+            sidePanelVisible = preserveWindowState ? windowVisibility : state.visible
+            sidePanelMaximized = preserveWindowState ? windowMaximized : state.maximized
+            sidePanelWidth = preserveWindowState ? windowWidth : max(Self.sidePanelMinWidth, state.width)
             additionalPlaneShortcuts = state.shortcuts
             panelFolded = state.folded
             panelOpened = state.opened
@@ -95,7 +108,7 @@ extension UIState {
     @MainActor func workspaceBrowserPage() -> BrowserPage {
         let key = panelWorkspaceID ?? ""
         if let page = panelBrowserPages[key] { return page }
-        let page = BrowserPage(private: false)
+        let page = BrowserPage(private: false, draftKey: key.isEmpty ? nil : key)
         panelBrowserPages[key] = page
         return page
     }

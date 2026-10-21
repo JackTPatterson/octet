@@ -62,7 +62,7 @@ struct PluginSettingsGroup: View {
         }
         .overlay {
             if focus.pluginId == plugin.id {
-                RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.accent.opacity(0.6), lineWidth: 1.5)
+                RoundedRectangle(cornerRadius: Theme.Radius.lg).strokeBorder(Theme.accent.opacity(0.6), lineWidth: 1.5)
                     .allowsHitTesting(false)
             }
         }

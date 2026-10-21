@@ -51,7 +51,7 @@ struct HuggingFaceModelView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Add a model from Hugging Face").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.textPrimary)
+                    Text("Add a model from Hugging Face").font(Theme.interfaceFont(15, weight: .semibold)).foregroundStyle(Theme.textPrimary)
                     Text("GGUF models run on this Mac through Ollama, and show up in OpenCode's model menu.")
                         .font(Theme.uiFont).foregroundStyle(Theme.textTertiary)
                 }
@@ -77,13 +77,13 @@ struct HuggingFaceModelView: View {
             EmptyView()
         case .running(let version):
             HStack(spacing: 5) {
-                Circle().fill(Color.green).frame(width: 6, height: 6)
+                Circle().fill(Theme.success).frame(width: 6, height: 6)
                 Text("Ollama" + (version.isEmpty ? "" : " \(version)")).font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
             }
             .help("Ollama is running, and will pull and run the model")
         case .stopped(let installed):
             HStack(spacing: 6) {
-                Circle().fill(Color.orange).frame(width: 6, height: 6)
+                Circle().fill(Theme.warning).frame(width: 6, height: 6)
                 Text(installed ? "Ollama isn't running" : "Ollama isn't installed").font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
                 if installed {
                     OctetButton(title: "Start", kind: .ghost, compact: true) { Task { _ = await downloads.startOllama() } }
@@ -148,7 +148,7 @@ struct HuggingFaceModelView: View {
             VStack(alignment: .leading, spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(HuggingFaceModel.Reference(owner: chosen.owner, repo: chosen.repo).displayName)
-                        .font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.textPrimary).lineLimit(2)
+                        .font(Theme.Text.title3).foregroundStyle(Theme.textPrimary).lineLimit(2)
                     HStack(spacing: 8) {
                         Text(chosen.repoId).font(Theme.captionFont).foregroundStyle(Theme.textTertiary).lineLimit(1).truncationMode(.middle)
                         Button("Open on Hugging Face") { NSWorkspace.shared.open(chosen.pageURL) }
@@ -454,7 +454,7 @@ private struct DownloadRow: View {
     private var color: Color {
         switch download.phase {
         case .failed: Theme.danger
-        case .done: Color.green
+        case .done: Theme.success
         default: Theme.textTertiary
         }
     }

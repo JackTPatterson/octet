@@ -140,7 +140,7 @@ struct TearOffCard: View {
         // The theme's colors can carry the terminal's transparency; a
         // preview should read as a solid window.
         .background(Color(nsColor: .windowBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.accent.opacity(0.55), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.xl))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.xl).strokeBorder(Theme.accent.opacity(0.55), lineWidth: 1))
     }
 }

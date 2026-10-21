@@ -22,6 +22,25 @@ struct AgentEvent: Identifiable, Equatable {
     /// How long it worked before this, when Octet saw it start.
     let workedFor: TimeInterval?
     let at: Date
+    /// The state it moved to, for the notice's wording; nil reads from `kind`.
+    var state: AgentState? = nil
+    /// The conversation it came from, for one Octet runs itself (no pane).
+    var sessionId: String? = nil
+    /// What it last said, for a notification's body.
+    var detail: String? = nil
+
+    /// "needs approval", "finished", "failed": what the notice says happened.
+    var phrase: String {
+        switch (kind, state) {
+        case (.needsInput, .some(let state)) where state.needsYou: state.label
+        case (.finished, .some(.failed)): AgentState.failed.label
+        case (.finished, .some(.planReady)): "has a plan ready"
+        default: kind.title
+        }
+    }
+
+    /// One notice per agent: its conversation, else its pane.
+    var agentKey: String { sessionId.map { "chat:" + $0 } ?? "pane:" + paneId }
 }
 
 /// Watches agent statuses between snapshots and reports the transitions worth
@@ -66,7 +85,8 @@ struct AgentActivityWatcher {
                 workspaceId: agent.workspaceId,
                 label: TabAutoName.isUnnamed(label) ? (AgentBrand.forAgent(agent.agent)?.displayName ?? "Agent") : label,
                 workedFor: previous.status == .working ? previous.startedWorking.map { now.timeIntervalSince($0) } : nil,
-                at: now
+                at: now,
+                state: kind == .finished ? .done : AgentState(agent.agentStatus)
             ))
         }
         states = next

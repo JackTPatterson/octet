@@ -129,6 +129,10 @@ final class AgentSession: ObservableObject, Identifiable {
                     contextHistory.append(used)
                     if contextHistory.count > 200 { contextHistory.removeFirst(contextHistory.count - 200) }
                 }
+                // The next follow-up goes once the turn has fully settled.
+                if !conversation.isRunning, !heldPrompts.isEmpty {
+                    DispatchQueue.main.async { [weak self] in self?.releaseHeldPrompt() }
+                }
             }
         }
     }
@@ -207,6 +211,9 @@ final class AgentSession: ObservableObject, Identifiable {
         }
     }
     @Published var startupError: String?
+    /// The agent couldn't start at all; the transcript gives way to a page
+    /// saying so. Cleared when it's started again.
+    @Published private(set) var launchFailure: AgentLaunchFailure?
 
     /// Assigned up front so the session can be resumed or opened in a pane.
     /// Claude Code's session. A rewind moves the conversation onto a fork
@@ -281,6 +288,8 @@ final class AgentSession: ObservableObject, Identifiable {
     private var permissionServer: PermissionSocketServer?
     private var permissionReply: (([String: Any]) -> Void)?
     private var permissionQueue: [(AgentPermissionRequest, ([String: Any]) -> Void)] = []
+    /// Requests waiting for an answer, the one on show included, for "1/3".
+    var pendingPermissionCount: Int { (pendingPermission == nil ? 0 : 1) + permissionQueue.count }
 
     // MARK: - OpenCode
 
@@ -396,6 +405,87 @@ final class AgentSession: ObservableObject, Identifiable {
     /// Follow-ups waiting behind the current turn. The composer draws these
     /// beside questions and approvals instead of burying them in transcript.
     var queuedMessages: [AgentItem] { conversation.items.filter(\.queued) }
+
+    /// A message typed while a turn runs, kept here until it ends, so it can
+    /// still be edited, reordered or dropped. Octet holds it rather than the
+    /// agent for every engine, so the queue works the same everywhere.
+    struct HeldPrompt: Identifiable, Equatable {
+        let id: UUID
+        var text: String
+        var attachments: [Attachment]
+
+        init(text: String, attachments: [Attachment], id: UUID = UUID()) {
+            self.id = id
+            self.text = text
+            self.attachments = attachments
+        }
+    }
+
+    /// Follow-ups Octet is holding, sent one per turn, in order.
+    @Published var heldPrompts: [HeldPrompt] = []
+
+    /// How a message sent while a turn runs is delivered: held for when it
+    /// ends, or into the running turn at once.
+    enum Delivery { case queue, steer }
+
+    /// Whether this engine can take a message into a running turn: Codex's
+    /// `turn/steer` and Pi's steering prompt. Claude Code and Qwen Code take
+    /// stdin messages only as the next turn; OpenCode queues its own.
+    var engineSteers: Bool { engine == .codex || engine == .pi }
+
+    /// Whether a message could steer the turn running now. Codex needs the
+    /// turn's id, which it sends as the turn starts.
+    var canSteer: Bool {
+        guard conversation.isRunning, engineSteers else { return false }
+        return engine == .pi || codexTurnId != nil
+    }
+
+    /// Sends the oldest held follow-up, unless the turn ended on something
+    /// that would only stop it again (a usage limit, a missing agent).
+    private func releaseHeldPrompt() {
+        guard !conversation.isRunning, !heldPrompts.isEmpty, conversation.limitHit == nil, launchFailure == nil,
+              pendingPermission == nil, pendingQuestion == nil else { return }
+        let next = heldPrompts.removeFirst()
+        send(next.text, attachments: next.attachments)
+    }
+
+    /// Takes a held follow-up out of the queue now: steered into the turn
+    /// where the engine can, else the turn is stopped and it goes first.
+    func sendHeldNow(_ id: UUID) {
+        guard let index = heldPrompts.firstIndex(where: { $0.id == id }) else { return }
+        let prompt = heldPrompts.remove(at: index)
+        if !conversation.isRunning {
+            return send(prompt.text, attachments: prompt.attachments)
+        }
+        if canSteer {
+            return send(prompt.text, attachments: prompt.attachments, delivery: .steer)
+        }
+        heldPrompts.insert(prompt, at: 0)
+        interrupt()
+    }
+
+    /// Moves a held follow-up `offset` places (negative is earlier).
+    func moveHeld(_ id: UUID, by offset: Int) {
+        guard let index = heldPrompts.firstIndex(where: { $0.id == id }) else { return }
+        let target = min(max(index + offset, 0), heldPrompts.count - 1)
+        guard target != index else { return }
+        heldPrompts.insert(heldPrompts.remove(at: index), at: target)
+    }
+
+    /// Moves a held follow-up to where `other` is, for drag and drop.
+    func moveHeld(_ id: UUID, to other: UUID) {
+        guard let from = heldPrompts.firstIndex(where: { $0.id == id }),
+              let to = heldPrompts.firstIndex(where: { $0.id == other }), from != to else { return }
+        heldPrompts.insert(heldPrompts.remove(at: from), at: to)
+    }
+
+    func updateHeld(_ id: UUID, text: String, attachments: [Attachment]) {
+        guard let index = heldPrompts.firstIndex(where: { $0.id == id }) else { return }
+        heldPrompts[index].text = text
+        heldPrompts[index].attachments = attachments
+    }
+
+    func dropHeld(_ id: UUID) { heldPrompts.removeAll { $0.id == id } }
 
     /// The model a conversation starts on until one is picked: the one
     /// Claude Code recommends, once it has said.
@@ -667,7 +757,7 @@ final class AgentSession: ObservableObject, Identifiable {
         return "Working"
     }
 
-    func send(_ text: String, attachments: [Attachment] = []) {
+    func send(_ text: String, attachments: [Attachment] = [], delivery: Delivery = .queue) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !attachments.isEmpty else { return }
         takeBaselineIfNeeded()
@@ -694,9 +784,14 @@ final class AgentSession: ObservableObject, Identifiable {
             if trimmed == "/undo" { undoOpenCode() } else { redoOpenCode() }
             return
         }
+        // Mid-turn, a message waits with Octet unless it steers the turn.
+        if wasRunning, delivery == .queue || !canSteer {
+            heldPrompts.append(HeldPrompt(text: text, attachments: attachments))
+            return
+        }
         if engine == .opencode {
             if !conversation.isRunning { turnStartedAt = Date() }
-            conversation.appendUser(trimmed, images: attachments.map(\.data), queued: wasRunning)
+            conversation.appendUser(trimmed, images: attachments.map(\.data))
             if title == engine.displayName, !trimmed.hasPrefix("/") {
                 title = String(trimmed.prefix(40))
                 provisionalTitle = title
@@ -710,11 +805,9 @@ final class AgentSession: ObservableObject, Identifiable {
         // The item shares the message's uuid, so a queued one can be
         // taken back from Claude Code by it.
         let messageId = UUID().uuidString.lowercased()
-        conversation.appendUser(trimmed, images: attachments.map(\.data), queued: wasRunning, id: messageId)
-        if trimmed == "/compact" {
-            conversation.items.append(AgentItem(id: UUID().uuidString,
-                                                kind: .notice("Compacting the conversation to free context…")))
-        }
+        // Running, it steers the turn, so it's part of it, not queued.
+        conversation.appendUser(trimmed, images: attachments.map(\.data), id: messageId)
+        if trimmed == "/compact" { conversation.beginCompaction() }
         if title == engine.displayName, !trimmed.hasPrefix("/") { title = String(trimmed.prefix(40)) }
         // What `!` commands printed goes along, so the agent knows what you saw.
         let outgoing = ShellPassthrough.outgoing(trimmed, runs: shellRuns)
@@ -736,7 +829,7 @@ final class AgentSession: ObservableObject, Identifiable {
                     if let paths = QwenImages.save(images, in: QwenImages.directory(environment: environment)) {
                         text = QwenImages.message(text, images: paths)
                     } else {
-                        notice("Couldn't hand the images to Qwen; the text was sent.")
+                        notice("Couldn't hand the images to Qwen; the text was sent.", style: .error)
                     }
                     attachments = []
                 }
@@ -775,7 +868,8 @@ final class AgentSession: ObservableObject, Identifiable {
                     ["type": "image", "data": $0.data.base64EncodedString(), "mimeType": $0.mediaType]
                 }
             }
-            if conversation.isRunning { message["streamingBehavior"] = "followUp" }
+            // Reached mid-turn only to steer; Pi folds it into the run.
+            if wasRunning { message["streamingBehavior"] = "steer" }
             if write(message) { hasTurns = true }
         }
     }
@@ -928,10 +1022,12 @@ final class AgentSession: ObservableObject, Identifiable {
     /// Goes back to before user message `item`: its and later file edits
     /// undone when `restoreFiles`, and the conversation resumed from just
     /// before it on a fork of the session, with the message back in the
-    /// composer to edit and send again.
-    func rewind(to item: AgentItem, restoreFiles: Bool) {
+    /// composer to edit and send again. With `refill` off the message isn't
+    /// put back, and `then` runs once the conversation is back there, for
+    /// edit-and-resend and regenerate, which send at once.
+    func rewind(to item: AgentItem, restoreFiles: Bool, refill: Bool = true, then: (() -> Void)? = nil) {
         guard canRewind(to: item), case .user(let text) = item.kind else { return }
-        if engine == .pi { return rewindPi(to: item, text: text) }
+        if engine == .pi { return rewindPi(to: item, text: text, refill: refill, then: then) }
         let finish = { [weak self] in
             guard let self else { return }
             let anchor = self.conversation.resumeAnchor(before: item.id)
@@ -947,7 +1043,8 @@ final class AgentSession: ObservableObject, Identifiable {
             }
             self.needsRestart = true
             AgentCenter.shared.save()
-            self.editorRequest = EditorRequest(id: UUID().uuidString, text: text)
+            if refill { self.editorRequest = EditorRequest(id: UUID().uuidString, text: text) }
+            then?()
         }
         guard restoreFiles, process?.isRunning == true else { return finish() }
         controlRequest(["subtype": "rewind_files", "user_message_id": item.id.lowercased()]) { response in
@@ -1084,7 +1181,7 @@ final class AgentSession: ObservableObject, Identifiable {
 
     /// Pi: forks the session from `item`, which Pi does by starting a new
     /// session file from the message before it; the original is kept.
-    private func rewindPi(to item: AgentItem, text: String) {
+    private func rewindPi(to item: AgentItem, text: String, refill: Bool = true, then: (() -> Void)? = nil) {
         // Which of the branch's prompts it is, counted, since Octet's ids
         // for Pi's messages aren't Pi's.
         let prompts = conversation.items.filter { if case .user = $0.kind { return !$0.queued }; return false }
@@ -1104,9 +1201,10 @@ final class AgentSession: ObservableObject, Identifiable {
                     return ToastCenter.shared.fail(nil, "Couldn't rewind",
                                                    detail: response["error"] as? String ?? "An extension stopped the fork.")
                 }
-                self.editorRequest = EditorRequest(id: UUID().uuidString, text: data["text"] as? String ?? text)
+                if refill { self.editorRequest = EditorRequest(id: UUID().uuidString, text: data["text"] as? String ?? text) }
                 // The new session's messages, and its file, which get_state names.
                 self.refreshPiState(includeMessages: true)
+                then?()
             }
         }
     }
@@ -1580,7 +1678,7 @@ final class AgentSession: ObservableObject, Identifiable {
     }
 
     func debugShowError() {
-        notice(#"Couldn't answer OpenCode: OpenCode answered 400: Expected a string starting with "que", got "debug-question" at ["requestID"]"#)
+        notice(#"Couldn't answer OpenCode: OpenCode answered 400: Expected a string starting with "que", got "debug-question" at ["requestID"]"#, style: .error)
     }
 
     func debugLoadSuggestedCommands() {
@@ -1616,7 +1714,8 @@ final class AgentSession: ObservableObject, Identifiable {
                     message: "The user skipped this question in Octet."
                 ))
             })
-            NSApp.requestUserAttention(.informationalRequest)
+            // AttentionRouter decides how to say it (banner, notification, Dock).
+            AttentionRouter.shared.conversationNeedsAttention(self)
             return
         }
         guard let request = AgentPermissionRequest(json: prompt) else {
@@ -1634,7 +1733,8 @@ final class AgentSession: ObservableObject, Identifiable {
         } else {
             permissionQueue.append((request, reply))
         }
-        NSApp.requestUserAttention(.informationalRequest)
+        // AttentionRouter decides how to say it (banner, notification, Dock).
+        AttentionRouter.shared.conversationNeedsAttention(self)
     }
 
     private func denyAllPending(message: String) {
@@ -1744,6 +1844,7 @@ final class AgentSession: ObservableObject, Identifiable {
         stopProcess()
         needsRestart = false
         startupError = nil
+        launchFailure = nil
         if engine == .codex { startCodex(); return }
         if engine == .opencode { startOpenCode(); return }
         if engine == .pi { startPi(); return }
@@ -2041,9 +2142,12 @@ final class AgentSession: ObservableObject, Identifiable {
         if remoteControl != .off { remoteControl = wantsRemoteControl ? .connecting : .off }
         if conversation.isRunning || status != 0 {
             let detail = stderrTail.trimmingCharacters(in: .whitespacesAndNewlines)
-            let message = status == 127 || detail.contains("command not found")
+            // The login shell exits 127 when it can't find the command.
+            let missing = status == 127
+            let message = missing
                 ? "\(engine.displayName) isn't installed, or isn't on your shell's PATH."
                 : (detail.isEmpty ? "\(engine.displayName) exited (\(status))." : String(detail.suffix(400)))
+            if missing { launchFailure = .notInstalled(detail.isEmpty ? message : message + "\n" + String(detail.suffix(300))) }
             conversation.apply(["type": "result", "subtype": "error", "errors": [message]])
         }
     }
@@ -2155,7 +2259,7 @@ final class AgentSession: ObservableObject, Identifiable {
             } else if (response["request_id"] as? String)?.hasPrefix(Self.settingsRequestPrefix) == true,
                       response["subtype"] as? String == "error" {
                 let message = response["error"] as? String ?? (response["error"] as? [String: Any])?["message"] as? String ?? ""
-                notice("Qwen didn't take that setting\(message.isEmpty ? "" : ": \(message)").")
+                notice("Qwen didn't take that setting\(message.isEmpty ? "" : ": \(message)").", style: .error)
             }
             return true
         default:
@@ -2201,6 +2305,8 @@ final class AgentSession: ObservableObject, Identifiable {
            let command = event["command"] as? String {
             let data = event["data"] as? [String: Any] ?? [:]
             switch command {
+            case "compact":
+                conversation.finishCompaction()
             case "prompt" where data["disposition"] as? String == "handled":
                 // An extension command took the prompt: no run starts, so
                 // nothing else would end the one Octet began showing.
@@ -2372,12 +2478,12 @@ final class AgentSession: ObservableObject, Identifiable {
             // Changing a running thread rides on Codex's experimental API,
             // which a newer Codex may change; say so rather than pretend.
             if let error {
-                notice("Codex didn't take the new settings mid-conversation (\(error)). They apply to conversations started from now.")
+                notice("Codex didn't take the new settings mid-conversation (\(error)). They apply to conversations started from now.", style: .error)
             }
         case .interrupt:
             break
         case .command(let name):
-            if let error { notice("Codex couldn't run /\(name): \(error)") }
+            if let error { notice("Codex couldn't run /\(name): \(error)", style: .error) }
         case .mcpStatus:
             let result = message["result"] as? [String: Any] ?? [:]
             finishMCPCheck(error == nil ? MCPServerState.codex(result) : nil)
@@ -2389,7 +2495,7 @@ final class AgentSession: ObservableObject, Identifiable {
     func codexPrompt(_ command: SlashCommand, arguments: String) -> String? {
         let directory = command.origin == .project ? "\(cwd)/.codex/prompts" : NSHomeDirectory() + "/.codex/prompts"
         guard var text = try? String(contentsOfFile: "\(directory)/\(command.name).md", encoding: .utf8) else {
-            notice("Couldn't read the prompt file for /\(command.name).")
+            notice("Couldn't read the prompt file for /\(command.name).", style: .error)
             return nil
         }
         // Front matter describes the prompt; it isn't part of it.
@@ -2408,8 +2514,7 @@ final class AgentSession: ObservableObject, Identifiable {
         guard let threadId else { return notice("Send a message first; Codex hasn't opened the conversation yet.") }
         switch name {
         case "compact":
-            conversation.items.append(AgentItem(id: UUID().uuidString,
-                                                kind: .notice("Compacting the conversation to free context…")))
+            conversation.beginCompaction()
             call("thread/compact/start", ["threadId": threadId], as: .command(name))
         case "review":
             // `/review main` compares with a branch; bare, the working tree.
@@ -2428,8 +2533,7 @@ final class AgentSession: ObservableObject, Identifiable {
         guard engine == .pi else { return }
         switch name {
         case "compact":
-            conversation.items.append(AgentItem(id: UUID().uuidString,
-                                                kind: .notice("Compacting the conversation to free context…")))
+            conversation.beginCompaction()
             var request: [String: Any] = ["type": "compact"]
             if !arguments.isEmpty { request["customInstructions"] = arguments }
             write(request)
@@ -2472,8 +2576,8 @@ final class AgentSession: ObservableObject, Identifiable {
         }
     }
 
-    func notice(_ text: String) {
-        conversation.items.append(AgentItem(id: UUID().uuidString, kind: .notice(text)))
+    func notice(_ text: String, style: AgentNoticeStyle = .plain) {
+        conversation.appendNotice(text, style: style)
     }
 
     // MARK: - `!` commands
@@ -2515,6 +2619,8 @@ final class AgentSession: ObservableObject, Identifiable {
     /// Where the transcript was scrolled to when the view went away (the
     /// item at the top), nil when it was following the latest.
     var transcriptReadingAt: String?
+    /// The conversation's find bar (Command-F).
+    let find = TranscriptFindState()
 
     @Published private(set) var shellRuns: [ShellPassthrough.Run] = []
     /// The `!` command running now.

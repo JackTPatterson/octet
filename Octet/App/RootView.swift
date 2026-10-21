@@ -7,18 +7,20 @@ struct RootView: View {
     let session: EngineSession?
     @ObservedObject var prompt: PromptEditor
     @ObservedObject var twin: TwinSession
+    var embedded = false
     @StateObject private var palette = PaletteModel()
     @ObservedObject private var motion = MotionPreferences.shared
     @ObservedObject private var settings = SettingsStore.shared
     @ObservedObject private var confirmations = ConfirmCenter.shared
-    @StateObject private var terminalAnchor = TerminalAnchor()
+    @StateObject private var paneGeometry = PaneGeometry()
     @StateObject private var splash = NewTabSplashModel()
     @StateObject private var statusBar = StatusBarModel()
     @StateObject private var liveScroll = LiveScrollWatcher()
     /// The terminal client went away (a crash, the session server stopping):
     /// offer it back rather than quitting.
     @State private var terminalDisconnected = false
-    @State private var terminalGeneration = 0
+    /// When the disconnected card last reconnected, to tell a retry that failed.
+    @State private var lastReconnect: Date?
     /// The connection card over the terminal, while it shows.
     @State private var connecting: SSHTarget?
     @ObservedObject private var tabDrag = TabDrag.shared
@@ -26,7 +28,12 @@ struct RootView: View {
     /// The last terminal failure shown, so a repeat isn't shown again.
     private static var lastFailure: (message: String, at: Date)?
     /// The panes of the tab showing, fetched when a tab drag starts.
-    @State private var dropLayout: PaneLayout?
+    /// A tab's panes fetched when a drag began, for when the snapshot has none.
+    @State private var dropLayout: (tab: String, layout: PaneLayout)?
+    /// How far a tab beside the terminal, on its left or above, pushes it
+    /// from where it would start: what's drawn over the terminal from the
+    /// root moves with it.
+    @State private var terminalOffset: CGSize = .zero
     @ObservedObject private var agents = AgentCenter.shared
     @ObservedObject private var offers = AgentOfferCenter.shared
     @ObservedObject private var waitCenter = WaitCenter.shared
@@ -40,19 +47,27 @@ struct RootView: View {
     /// Where the terminal starts across the window.
     private var sidebarInset: CGFloat { ui.sidebarVisible ? ui.sidebarWidth + 1 : 0 }
     private var windowHeight: CGFloat { NSApp.keyWindow?.contentView?.bounds.height ?? 800 }
+    private var windowWidth: CGFloat { NSApp.keyWindow?.contentView?.bounds.width ?? 1200 }
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {
-        layered
+        Group {
+            if embedded { embeddedWorkspaceSurface }
+            else { layered }
+        }
+        .octetDropdownHost(window.chromeDropdowns)
         .onChange(of: ui.paletteVisible) { _, visible in
             DebugSnapshot.overlay("palette", visible)
             if visible {
                 store.refreshPlugins()
-                store.refreshRemoteMachines()
                 palette.reset()
                 let items = PaletteCatalog.items(window: window)
                 palette.reload(items: items)
+                if let query = ui.paletteQuery {
+                    ui.paletteQuery = nil
+                    palette.query = query
+                }
                 // Opened for one action (a menu shortcut): go straight to it.
                 if let start = ui.paletteStart {
                     ui.paletteStart = nil
@@ -76,18 +91,16 @@ struct RootView: View {
                 palette.reload(items: PaletteCatalog.items(window: window))
             }
         }
-        .onChange(of: store.remoteMachines) { _, _ in
-            if ui.paletteVisible, palette.prompt == nil {
-                palette.reload(items: PaletteCatalog.items(window: window))
-            }
-        }
         .onChange(of: window.focusedPaneId) { _, _ in twin.snapshotChanged() }
-        .onChange(of: liveScrollPanes, initial: true) { _, panes in
-            liveScroll.watch(panes, client: store.client)
-        }
+        .onReceive(paneGeometry.$panes) { liveScroll.follow($0) }
         // Process discovery lands after the first grid reading. Recheck once
         // the shell is recognized so an untouched initial tab gets its splash.
-        .onChange(of: window.focusedPaneAtPrompt) { _, _ in observeSplash(terminalAnchor.grid) }
+        .onChange(of: window.focusedPaneAtPrompt) { _, _ in observeSplash(paneGeometry.focusedGrid) }
+        // The engine went away under a working window; streams reconnect on
+        // their own once it's back.
+        .onChange(of: store.isConnected) { was, now in
+            if was, !now { terminalDisconnected = true } else if now { terminalDisconnected = false }
+        }
         .onChange(of: twin.isVisible) { _, visible in DebugSnapshot.overlay("twin", visible) }
         .onChange(of: window.editor.isPresented) { _, visible in
             if visible { window.containerLogs.activeID = nil }
@@ -97,7 +110,14 @@ struct RootView: View {
             if id != nil { window.containerLogs.activeID = nil }
         }
         .onChange(of: window.focusedWorkspace?.workspaceId, initial: true) { _, id in
-            ui.activateWorkspacePanel(id)
+            if embedded {
+                ui.activateWorkspacePanel(id)
+                if let parent = window.splitParent, parent.panelContext === window {
+                    parent.ui.activateWorkspacePanel(id, preserveWindowState: true)
+                }
+            } else if window.panelContext === window {
+                ui.activateWorkspacePanel(id, preserveWindowState: window.splitContext != nil)
+            }
             window.migrateContainerLogPlanes()
         }
         .onChange(of: window.editor.filePickerVisible) { _, visible in DebugSnapshot.overlay("editor-picker", visible) }
@@ -130,7 +150,7 @@ struct RootView: View {
     /// in the tab showing, while the terminal is what's showing.
     private var agentOffer: EngineAgent? {
         guard settings.values.agentBanner, !twin.isVisible, boardHere == nil, window.activeContainerLog == nil,
-              agents.active(in: window.focusedWorkspace?.workspaceId) == nil,
+              coveringConversation == nil,
               let tab = window.displayedFocusedTabId else { return nil }
         return AgentOffer.candidate(in: store.snapshot.agents(inTab: tab), dismissed: offers.dismissed)
     }
@@ -201,64 +221,62 @@ struct RootView: View {
                     .id(settings.themeKey)
                     .transition(motion.animates(.sidebar) ? .move(edge: .leading) : .identity)
                 }
-                HStack(spacing: 0) {
-                    VStack(spacing: 0) {
-                        TabBarView(store: store, ui: ui)
-                            .id(settings.themeKey)
-                        if let offer = agentOffer {
-                            AgentOfferBanner(agent: offer,
-                                             open: { window.continueInOctet(offer) },
-                                             dismiss: { offers.dismiss(offer) },
-                                             never: turnOffAgentBanner)
-                                // Keyed by agent, so each one's banner arrives afresh.
-                                .id(AgentOffer.key(offer))
-                        }
-                        contentArea
-                            .overlay(alignment: .topTrailing) {
-                                if ui.detailsVisible {
-                                    DetailsCard(model: statusBar, store: store, ui: ui)
-                                        .padding(12)
-                                        .transition(motion.animates(.sidebar)
-                                            ? .opacity.combined(with: .scale(scale: 0.98, anchor: .topTrailing)) : .identity)
+                VStack(spacing: 0) {
+                    HStack(spacing: 0) {
+                        workspaceSurfaces
+                            .overlay {
+                                if let dragged = tabDrag.workspaceId {
+                                    WorkspaceDropLayer(workspaceId: dragged, window: window,
+                                                       animation: motion.animation(.tabs, .smooth(duration: 0.15)))
                                 }
                             }
-                            .animation(motion.animation(.sidebar, .easeOut(duration: 0.15)), value: ui.detailsVisible)
-                        // Not re-identified per theme: that would restart its shells.
-                        TerminalDrawerHost(store: store, ui: ui)
+                        // Room for the panel, which draws over it from the overlay.
+                        // It changes at once, never animated: the terminal then
+                        // resizes and reflows its text one time, while the panel
+                        // slides in over the room, instead of reflowing on every
+                        // frame of the slide.
+                        Color.clear
+                            .frame(width: ui.sidePanelVisible && !ui.sidePanelMaximized ? ui.presentedSidePanelWidth : 0)
+                            .transaction { $0.animation = nil }
                     }
-                    // Room for the panel, which draws over it from the overlay.
-                    // It changes at once, never animated: the terminal then
-                    // resizes and reflows its text one time, while the panel
-                    // slides in over the room, instead of reflowing on every
-                    // frame of the slide.
-                    Color.clear
-                        .frame(width: ui.sidePanelVisible && !ui.sidePanelMaximized ? ui.sidePanelWidth : 0)
-                        .transaction { $0.animation = nil }
-                }
-                // The right panel: a strip of planes over the one in front.
-                // In an overlay so that maximized it covers the terminal
-                // rather than squeezing it: a terminal resized to nothing
-                // reflows every agent's screen.
-                .overlay(alignment: .trailing) {
-                    GeometryReader { proxy in
-                        let width = ui.sidePanelMaximized ? proxy.size.width : ui.sidePanelWidth
-                        ZStack(alignment: .leading) {
-                            Rectangle().fill(Theme.divider).frame(width: 1)
-                                .frame(maxHeight: .infinity, alignment: .leading)
-                            SidePanel(store: store, ui: ui)
-                                .frame(width: width - 1)
-                                .padding(.leading, 1)
-                                .offset(x: ui.sidePanelVisible ? 0 : width)
-                            if !ui.sidePanelMaximized { SidePanelResizeHandle(ui: ui) }
+                    // The right panel: a strip of planes over the one in front.
+                    // In an overlay so that maximized it covers the terminal
+                    // rather than squeezing it: a terminal resized to nothing
+                    // reflows every agent's screen.
+                    .overlay(alignment: .trailing) {
+                        GeometryReader { proxy in
+                            let width = ui.sidePanelMaximized ? proxy.size.width : min(proxy.size.width, ui.presentedSidePanelWidth)
+                            ZStack(alignment: .leading) {
+                                Rectangle().fill(Theme.divider).frame(width: 1)
+                                    .frame(maxHeight: .infinity, alignment: .leading)
+                                SidePanel(store: store, ui: ui)
+                                    .environmentObject(window.panelContext)
+                                    .frame(width: width - 1)
+                                    .padding(.leading, 1)
+                                if !ui.sidePanelMaximized { SidePanelResizeHandle(ui: ui) }
+                            }
+                            .frame(width: width, alignment: .leading)
+                            .clipped()
+                            .offset(x: ui.sidePanelVisible ? 0 : width)
+                            .animation(motion.animation(.sidebar), value: ui.sidePanelVisible)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+                            .onChange(of: proxy.size.width, initial: true) { _, width in
+                                ui.availablePanelWidth = width
+                            }
                         }
-                        .frame(width: ui.sidePanelVisible ? width : 0, alignment: .leading)
-                        .clipped()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+                        .allowsHitTesting(ui.sidePanelVisible)
+                        .accessibilityHidden(!ui.sidePanelVisible)
                     }
-                    .allowsHitTesting(ui.sidePanelVisible)
-                    .accessibilityHidden(!ui.sidePanelVisible)
+                    if settings.values.repoContextBar {
+                        StatusBar(model: statusBar, store: store, ui: ui, ssh: focusedSSH, agent: focusedAgent,
+                                  openOnOctetUI: { window.openOnOctetUI($0) })
+                    }
                 }
             }
+            // Their drags are off under a page, which would otherwise lose
+            // its own presses to the tab or card beneath.
+            .environment(\.octetDragSourcesCovered, ui.settingsVisible || ui.marketplaceVisible || ui.usageBreakdownVisible
+                         || ui.pullRequests != nil || boardHere != nil)
             // Settings as a page over the sidebar and content, as T3 Code's.
             .overlay {
                 if ui.settingsVisible {
@@ -324,10 +342,9 @@ struct RootView: View {
         .animation(motion.animation(.toasts, .smooth(duration: 0.18)), value: recapCenter.expanded)
         .onAppear { appeared() }
         .modifier(TerminalWatchers(
-            anchor: terminalAnchor, tabDrag: tabDrag,
+            geometry: paneGeometry, tabDrag: tabDrag,
             focusedTab: window.displayedFocusedTabId, promptEmpty: prompt.line.text.isEmpty,
-            observe: observeSplash, dragChanged: loadDropLayout,
-            ready: { window.clientReady() }
+            observe: observeSplash, dragChanged: { loadDropLayout(dragging: $0) }
         ))
         .onChange(of: store.lastError) { _, error in
             guard let error else { return }
@@ -341,7 +358,6 @@ struct RootView: View {
         .onChange(of: confirmations.request?.id) { _, id in DebugSnapshot.overlay("confirmation", id != nil) }
         // Hide the engine's chrome before drawing the prompt and completions;
         // bottom anchoring can move this cover through the completion menu.
-        .overlay(alignment: .topLeading) { chromeCover }
         .overlay(alignment: .topLeading) { promptOverlay }
         .overlay {
             if ui.paletteVisible {
@@ -351,6 +367,13 @@ struct RootView: View {
                         : .identity)
             }
         }
+        .overlay {
+            if ui.shortcutsVisible {
+                ShortcutsCheatSheet { ui.shortcutsVisible = false }
+                    .transition(motion.animates(.palette) ? .opacity : .identity)
+            }
+        }
+        .animation(motion.animation(.palette, .easeOut(duration: 0.15)), value: ui.shortcutsVisible)
         .overlay {
             if window.editor.filePickerVisible {
                 EditorFilePickerView(rootDirectory: window.editorRootDirectory, workspace: window.editor)
@@ -401,16 +424,120 @@ struct RootView: View {
         }
     }
 
+    @ViewBuilder
+    private var primaryWorkspaceSurface: some View {
+        if window.editor.isPresented, window.editor.presentation == .split {
+            HSplitView {
+                terminalWorkspaceSurface.frame(minWidth: 260)
+                CodeEditorView(workspace: window.editor, rootDirectory: window.editorRootDirectory,
+                               revealFolder: revealInFiles)
+                    .frame(minWidth: 260)
+                    .simultaneousGesture(TapGesture().onEnded { window.activateSplitSurface() })
+            }
+        } else {
+            terminalWorkspaceSurface
+        }
+    }
+
+    private var terminalWorkspaceSurface: some View {
+        VStack(spacing: 0) {
+            TabBarView(store: store, ui: ui, focusOwner: window.splitParent ?? window).id(settings.themeKey)
+            if let offer = agentOffer {
+                AgentOfferBanner(agent: offer,
+                                 open: { window.continueInOctet(offer) },
+                                 dismiss: { offers.dismiss(offer) }, never: turnOffAgentBanner)
+                    .id(AgentOffer.key(offer))
+            }
+            terminal.overlay { terminalOverlay }
+                .overlay {
+                    if terminalDisconnected && window.activeContainerLog == nil {
+                        TerminalDisconnectedCard(
+                            serverReachable: store.isConnected,
+                            retryFailed: lastReconnect.map { Date().timeIntervalSince($0) < 10 } ?? false
+                        ) {
+                            lastReconnect = Date()
+                            terminalDisconnected = false
+                            session?.ensureServer()
+                            store.scheduleRefresh()
+                        }
+                    }
+                }
+                .overlay(alignment: .topTrailing) {
+                    if ui.detailsVisible { DetailsCard(model: statusBar, store: store, ui: ui).padding(12) }
+                }
+                .animation(motion.animation(.sidebar, .easeOut(duration: 0.15)), value: ui.detailsVisible)
+            TerminalDrawerHost(store: store, ui: ui)
+        }
+        .contentShape(Rectangle())
+        .simultaneousGesture(TapGesture().onEnded { window.activateSplitSurface() })
+    }
+
+    @ViewBuilder
+    private var workspaceSurfaces: some View {
+        if let split = window.splitContext {
+            let other = RootView(store: store, ui: split.ui, session: session, prompt: prompt,
+                                 twin: split.twin, embedded: true)
+                .environmentObject(split)
+                .frame(minWidth: 260, minHeight: 220)
+            let primary = primaryWorkspaceSurface.frame(minWidth: 260, minHeight: 220)
+            if window.splitEdge == .top || window.splitEdge == .bottom {
+                VSplitView {
+                    if window.splitEdge == .top { other; primary }
+                    else { primary; other }
+                }
+            } else {
+                HSplitView {
+                    if window.splitEdge == .left { other; primary }
+                    else { primary; other }
+                }
+            }
+        } else {
+            primaryWorkspaceSurface
+        }
+    }
+
+    private var embeddedWorkspaceSurface: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                TabBarView(store: store, ui: ui, focusOwner: window.splitParent ?? window, embedded: true)
+                OctetIconButton(icon: "rectangle.on.rectangle", help: "Split workspace options", compact: true) {
+                    OctetContextMenu.present([
+                        .action("Move to New Window", icon: "rectangle.on.rectangle") { window.splitParent?.detachWorkspaceSplit() },
+                        .action("Close Split", icon: "xmark") { window.splitParent?.closeWorkspaceSplit() }
+                    ])
+                }
+                .frame(width: 32, height: Theme.tabBarHeight)
+            }
+            contentArea
+            TerminalDrawerHost(store: store, ui: ui)
+        }
+        .background(Theme.terminalBackground)
+        .contentShape(Rectangle())
+        .simultaneousGesture(TapGesture().onEnded { window.activateSplitSurface() })
+        .onAppear {
+            window.todos.attach(window)
+            window.projectAgent.attach(window)
+            window.git.attach(window)
+            window.pluginPanels.attach(window)
+            window.terminalQuestions.attach(window)
+        }
+        .modifier(TerminalWatchers(
+            geometry: paneGeometry, tabDrag: tabDrag,
+            focusedTab: window.displayedFocusedTabId, promptEmpty: prompt.line.text.isEmpty,
+            observe: observeSplash, dragChanged: loadDropLayout
+        ))
+    }
+
     /// Once the window is up: the marketplace opener, clipboard watching, and
     /// the DEBUG verification hooks that open things without a click.
     #if DEBUG
     /// The key hook runs once, however many times a window appears.
     private static var debugKeysPressed = false
+    private static var debugResizeStormed = false
     private static var debugHotkeyPressed = false
     #endif
 
     private func appeared() {
-            AgentBoardWindow.opener = { openWindow(id: AgentBoardWindow.id) }
             MarketplaceWindow.opener = { openWindow(id: MarketplaceWindow.id) }
             HuggingFaceWindow.opener = { openWindow(id: HuggingFaceWindow.id) }
             PluginSettingsOpener.opener = { openSettings() }
@@ -420,6 +547,31 @@ struct RootView: View {
             #if DEBUG
             // Verification hook: "notch", "notch:collapsed", "notch:peek", "notch:tab=<name>".
             NotchDebug.runHook()
+            if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "workspace-split",
+               !Self.debugHotkeyPressed {
+                Self.debugHotkeyPressed = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    let cwd = ProcessInfo.processInfo.environment["OCTET_SPLIT_PREVIEW_CWD"]
+                        ?? FileManager.default.currentDirectoryPath
+                    store.call("workspace.create", ["focus": false, "cwd": cwd],
+                               failure: "Couldn't preview the workspace split") { created in
+                        guard let workspaceId = created.workspaceId else { return }
+                        window.splitWorkspace(workspaceId, at: .right)
+                    }
+                }
+            }
+            if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "tab-split",
+               !Self.debugHotkeyPressed {
+                Self.debugHotkeyPressed = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    guard let workspaceId = window.focusedWorkspace?.workspaceId else { return }
+                    store.call("tab.create", ["workspace_id": workspaceId, "focus": false],
+                               failure: "Couldn't preview the tab split") { created in
+                        guard let tabId = created.tabId else { return }
+                        WindowActions.splitTab(tabId, beside: window, at: .right)
+                    }
+                }
+            }
             // Verification hook: "conversation" opens a native conversation;
             // "conversation:model" also opens that dropdown.
             if let window = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], window.hasPrefix("conversation") {
@@ -527,6 +679,25 @@ struct RootView: View {
                 let delay = Double(ProcessInfo.processInfo.environment["OCTET_DEBUG_KEYS_AFTER"] ?? "") ?? 10
                 DispatchQueue.main.asyncAfter(deadline: .now() + delay) { OctetTerminalRuntime.debugPress(keys) }
             }
+            #if DEBUG
+            // Verification: OCTET_DEBUG_RESIZE_STORM=<seconds> resizes the
+            // window 30 times, 30ms apart, as a fast drag does, then back.
+            if let after = ProcessInfo.processInfo.environment["OCTET_DEBUG_RESIZE_STORM"].flatMap(Double.init),
+               !Self.debugResizeStormed {
+                Self.debugResizeStormed = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + after) {
+                    guard let nsWindow = NSApp.windows.first(where: { $0.isVisible && $0.frame.width > 600 }) else { return }
+                    let original = nsWindow.frame
+                    for step in 0...30 {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + Double(step) * 0.03) {
+                            var frame = original
+                            if step < 30 { frame.size.width = 900 + CGFloat((step * 97) % 500) }
+                            nsWindow.setFrame(frame, display: true)
+                        }
+                    }
+                }
+            }
+            #endif
             // "bestofn:<task>" starts a best-of-N task in the focused workspace.
             if let open = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], open.hasPrefix("bestofn:"),
                !Self.debugHotkeyPressed {
@@ -581,7 +752,7 @@ struct RootView: View {
             if let open = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], open.hasPrefix("find:") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
                     window.findOutput(.showFindInterface)
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { window.search?.debugFind(String(open.dropFirst(5))) }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { window.outputFind.debugFind(String(open.dropFirst(5))) }
                 }
             }
             // "palette" opens the command palette as ⌘P does.
@@ -642,8 +813,17 @@ struct RootView: View {
                     switch parts.dropFirst().first {
                     case "empty": ui.closePlanes { _ in true }; ui.sidePanelVisible = true
                     case "max": ui.sidePanelVisible = true; ui.sidePanelMaximized = true
-                    case "pr", "pullRequest": ui.showPlane(.pullRequest, number: parts.count > 2 ? Int(parts[2]) : nil)
+                    case "pr", "pullRequest":
+                        #if DEBUG
+                        // "planes:pr:sample" shows made-up stacked pull requests; nothing reads GitHub.
+                        if parts.count > 2, parts[2] == "sample" { PullRequestPlaneModel.debugSample = true }
+                        #endif
+                        ui.showPlane(.pullRequest, number: parts.count > 2 ? Int(parts[2]) : nil)
                     case "prs", "pullRequests": ui.showPlane(.pullRequests)
+                    case "todos":
+                        ui.showPlane(.todos)
+                        // ":sample:empty|partial|linked|done" for the other states.
+                        if parts.count > 2, parts[2] == "sample" { window.todos.loadSample(variant: parts.count > 3 ? parts[3] : nil) }
                     case "overview":
                         ui.showPlane(.overview)
                         #if DEBUG
@@ -654,6 +834,8 @@ struct RootView: View {
                             RuntimePanel.debugVariant = variant
                             window.todos.loadSample(variant: variant)
                             if variant != "empty" { window.projectAgent.loadSample() }
+                            // The panel may have built before the flag was set.
+                            NotificationCenter.default.post(name: RuntimePanel.debugSampleChanged, object: nil)
                         }
                         #endif
                     case "git":
@@ -837,34 +1019,84 @@ struct RootView: View {
             #endif
         }
 
+    /// A breadcrumb's folder: the Files plane comes forward with it open.
+    private func revealInFiles(_ folder: String) {
+        window.editor.folderReveal = EditorWorkspace.FolderReveal(path: folder)
+        ui.showPlane(.files)
+    }
+
     private func closePalette() {
         ui.paletteVisible = false
     }
 
     /// Files opened from terminal context begin beside the live terminal, so
     /// commands and source stay in one flow. External “Open in Octet” requests
-    /// use the full editor surface instead.
-    @ViewBuilder
+    /// use the full editor surface instead. A conversation or container logs
+    /// dragged to the terminal's edge sit beside it the same way.
     private var contentArea: some View {
-        if window.editor.isPresented, window.editor.presentation == .split {
-            HStack(spacing: 0) {
-                terminal.frame(maxWidth: .infinity, maxHeight: .infinity)
-                Rectangle().fill(Theme.divider).frame(width: 1)
-                CodeEditorView(workspace: window.editor, rootDirectory: window.editorRootDirectory)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+        let companion = shownCompanion
+        return CompanionSplit(edge: companion?.edge, share: companion?.share ?? 0.5,
+                              setShare: { share in companion.map { window.setShare(share, of: $0.stripId) } },
+                              terminalMoved: { terminalOffset = $0 }) {
+            terminalWithOverlay
+        } companion: {
+            // One view either way, so the layout's three places stay put.
+            ZStack {
+                if let companion { companionView(companion.stripId) } else { Color.clear }
             }
-        } else {
-            terminal.overlay { terminalOverlay }
-                .overlay {
-                    if terminalDisconnected && window.activeContainerLog == nil {
-                        TerminalDisconnectedCard {
-                            terminalDisconnected = false
-                            terminalGeneration += 1
-                            store.scheduleRefresh()
-                        }
+        }
+    }
+
+    /// What's beside the terminal. A file opened beside it (the editor's
+    /// split) comes first, where the editor was last put; then whatever was
+    /// dragged there, unless that's the editor and it's open over everything.
+    private var shownCompanion: WindowContext.Companion? {
+        let editorId = "editor:" + window.id.uuidString
+        if window.editor.isPresented, window.editor.presentation == .split {
+            let edge = window.companion?.stripId == editorId ? window.companion?.edge ?? .right : .right
+            return WindowContext.Companion(stripId: editorId, edge: edge, share: window.share(of: editorId))
+        }
+        guard let companion = window.companion else { return nil }
+        if companion.stripId == editorId, window.editor.isPresented, window.editor.presentation == .full { return nil }
+        return companion
+    }
+
+    @ViewBuilder
+    private func companionView(_ stripId: String) -> some View {
+        if stripId.hasPrefix("conversation:"),
+           let session = agents.sessions(in: window.focusedWorkspace?.workspaceId).first(where: { "conversation:" + $0.id == stripId }) {
+            ConversationView(session: session, client: store.client)
+                .id(session.id)
+        } else if stripId.hasPrefix("editor:") {
+            CodeEditorView(workspace: window.editor, rootDirectory: window.editorRootDirectory,
+                           revealFolder: revealInFiles)
+        } else if let log = window.workspaceContainerLogs.first(where: { $0.visualID == stripId }) {
+            ContainerLogsPlane(context: log.context, containerID: log.containerID, name: log.name, visible: true)
+        }
+    }
+
+    private var terminalWithOverlay: some View {
+        terminal.overlay { terminalOverlay }
+            .overlay {
+                if terminalDisconnected && window.activeContainerLog == nil {
+                    TerminalDisconnectedCard(
+                        serverReachable: store.isConnected,
+                        retryFailed: lastReconnect.map { Date().timeIntervalSince($0) < 10 } ?? false
+                    ) {
+                        lastReconnect = Date()
+                        terminalDisconnected = false
+                        session?.ensureServer()
+                        store.scheduleRefresh()
                     }
                 }
-        }
+            }
+    }
+
+    /// The conversation in front of the terminal, unless it's beside it.
+    private var coveringConversation: AgentSession? {
+        guard let conversation = agents.active(in: window.focusedWorkspace?.workspaceId),
+              !window.isBeside("conversation:" + conversation.id) else { return nil }
+        return conversation
     }
 
     /// What covers the terminal: a board, a conversation, or a new tab's
@@ -882,8 +1114,9 @@ struct RootView: View {
                             .onAppear { DebugSnapshot.overlay("review", true) }
                             .onDisappear { DebugSnapshot.overlay("review", false) }
                     } else if window.editor.isPresented, window.editor.presentation == .full {
-                        CodeEditorView(workspace: window.editor, rootDirectory: window.editorRootDirectory)
-                    } else if let conversation = agents.active(in: window.focusedWorkspace?.workspaceId) {
+                        CodeEditorView(workspace: window.editor, rootDirectory: window.editorRootDirectory,
+                               revealFolder: revealInFiles)
+                    } else if let conversation = coveringConversation {
                         ConversationView(session: conversation, client: store.client)
                             .id(conversation.id)
                             .onAppear { DebugSnapshot.overlay("conversation", true) }
@@ -891,12 +1124,9 @@ struct RootView: View {
                     } else if twin.isVisible {
                         TwinView(twin: twin, store: store)
                     } else if let hints = ui.hints {
-                        HintsOverlay(session: hints, layout: store.snapshot.layouts.first {
-                            $0.tabId == window.displayedFocusedTabId
-                        }, contentTop: terminalAnchor.contentTop, cellSize: terminalAnchor.cellSize,
-                           contentLeft: terminalAnchor.contentLeft, window: window)
+                        HintsOverlay(session: hints, geometry: paneGeometry, window: window)
                         .id(hints.id)
-                    } else if let grid = terminalAnchor.grid, let tab = splash.tabId,
+                    } else if let grid = paneGeometry.focusedGrid, let tab = splash.tabId,
                               tab == window.displayedFocusedTabId {
                         newTabSplash(clearOf: grid)
                             .id(tab)
@@ -904,26 +1134,32 @@ struct RootView: View {
                     } else {
                         let layout = store.snapshot.layouts.first { $0.tabId == window.displayedFocusedTabId }
                         ZStack {
-                            SearchHighlightView(layout: layout, contentTop: terminalAnchor.contentTop,
-                                                cellSize: terminalAnchor.cellSize, contentLeft: terminalAnchor.contentLeft)
-                            LiveScrollPills(watcher: liveScroll, layout: layout)
+                            SearchHighlightView(geometry: paneGeometry)
+                            LiveScrollPills(watcher: liveScroll, geometry: paneGeometry)
+                            if let tab = window.displayedFocusedTabId, let layout = liveLayout(of: tab) {
+                                PaneCards(layout: layout, cells: cellGeometry, focusedPane: window.focusedPaneId)
+                                if tabDrag.item == nil {
+                                    PaneDividers(layout: layout, cells: cellGeometry, move: { pane, sideBySide, cells in
+                                        store.moveDivider(beside: pane, sideBySide: sideBySide, by: cells)
+                                    }, equalize: { pane in
+                                        store.call("pane.equalize", ["pane_id": pane], failure: "Couldn't make the panes equal") { _ in }
+                                    })
+                                }
+                            }
+                            OutputFindHost(find: window.outputFind,
+                                           layout: window.displayedFocusedTabId.flatMap { liveLayout(of: $0) },
+                                           cells: cellGeometry)
                         }
                     }
-                    ForEach(window.containerLogs.tabs) { tab in
+                    // The one beside the terminal shows there instead.
+                    ForEach(window.containerLogs.tabs.filter { !window.isBeside($0.visualID) }) { tab in
                         let shown = window.activeContainerLog?.id == tab.id
                         ContainerLogsPlane(context: tab.context, containerID: tab.containerID, name: tab.name, visible: shown)
                             .opacity(shown ? 1 : 0).allowsHitTesting(shown).accessibilityHidden(!shown)
                     }
-                    if let dragged = tabDrag.tabId, let showing = splitTargetTab(for: dragged) {
-                        splitDropLayer(moving: dragged, into: showing)
-                    }
-                    if let dragged = tabDrag.workspaceId {
-                        WorkspaceDropLayer(workspaceId: dragged, window: window,
-                                           splitsInto: boardHere == nil && agents.active(in: window.focusedWorkspace?.workspaceId) == nil
-                                               ? window.displayedFocusedTabId : nil,
-                                           animation: motion.animation(.tabs, .smooth(duration: 0.15)))
-                    }
+                    dropLayers
                 }
+                .overlay { popupPane }
                 .overlay(alignment: .top) { BroadcastBanner(mode: BroadcastMode.shared, tabId: window.displayedFocusedTabId) }
                 .overlay(alignment: .bottomLeading) { HoverLinkPreview() }
                 .overlay(alignment: .topTrailing) { SecureInputBadge() }
@@ -971,7 +1207,7 @@ struct RootView: View {
         (ui.sidePanelVisible && ui.sidePanelMaximized) || ui.settingsVisible || ui.marketplaceVisible
             || ui.usageBreakdownVisible || ui.pullRequests != nil || ui.review != nil
             || window.agentUIHandoff != nil || boardHere != nil || window.activeContainerLog != nil
-            || agents.active(in: window.focusedWorkspace?.workspaceId) != nil
+            || coveringConversation != nil
             || (window.editor.isPresented && window.editor.presentation == .full)
     }
 
@@ -983,19 +1219,20 @@ struct RootView: View {
             if prompt.isActive, !panelCoversTerminal, let anchor = prompt.anchor {
                 PromptEditorView(editor: prompt)
                     .frame(width: max(120, CGFloat(anchor.columnsRemaining) * anchor.cellWidth))
-                    .offset(x: sidebarInset + anchor.origin.x,
-                            y: contentTop + anchor.origin.y)
+                    .offset(x: sidebarInset + terminalOffset.width + anchor.origin.x,
+                            y: contentTop + terminalOffset.height + anchor.origin.y)
                     .allowsHitTesting(false)
             }
-            if prompt.isActive, prompt.completionsOpen, !panelCoversTerminal, let anchor = prompt.anchor {
+            if prompt.isActive, prompt.menuShown, !panelCoversTerminal, let anchor = prompt.anchor {
                 // Under the word being completed, or above it near the foot
                 // of the window.
-                let top = contentTop + anchor.origin.y
+                let top = contentTop + terminalOffset.height + anchor.origin.y
                 let below = top + anchor.cellHeight + 4
                 let fitsBelow = below + 240 < windowHeight
-                let left = sidebarInset + anchor.origin.x + CGFloat(prompt.completionColumn) * anchor.cellWidth
+                let left = sidebarInset + terminalOffset.width + anchor.origin.x + CGFloat(prompt.completionColumn) * anchor.cellWidth
+                let room = windowWidth - left - 8
                 if fitsBelow {
-                    CompletionMenuView(editor: prompt)
+                    CompletionMenuView(editor: prompt, maxWidth: room)
                         .fixedSize(horizontal: true, vertical: true)
                         .offset(x: left, y: below)
                 } else {
@@ -1004,10 +1241,10 @@ struct RootView: View {
                     // height, so a short menu does not float above the cursor.
                     VStack(spacing: 0) {
                         Spacer(minLength: 0)
-                        CompletionMenuView(editor: prompt)
+                        CompletionMenuView(editor: prompt, maxWidth: room)
                             .fixedSize(horizontal: true, vertical: true)
                     }
-                    .frame(width: 340, height: max(0, top - 4), alignment: .bottom)
+                    .frame(width: CompletionMenuView.widest, height: max(0, top - 4), alignment: .bottomLeading)
                     .offset(x: left)
                 }
             }
@@ -1016,50 +1253,98 @@ struct RootView: View {
         .clipped()
     }
 
-    @ViewBuilder
-    private var chromeCover: some View {
-            // The engine's chrome row travels down with bottom-anchored
-            // content. Only a root-level overlay paints above the hosted
-            // terminal view, so the cover lives here rather than on it.
-            let _ = { DebugSnapshot.coverActive = terminalAnchor.chromeCover != nil || prompt.isActive }()
-            // A conversation covers the terminal, so the patch over the engine's
-            // tab row would only show through it.
-            if let cover = terminalAnchor.chromeCover, !twin.isVisible, !panelCoversTerminal,
-               agents.active(in: window.focusedWorkspace?.workspaceId) == nil, boardHere == nil {
-                Theme.terminalBackground
-                    .frame(width: cover.width, height: cover.height)
-                    .offset(x: sidebarInset + cover.minX,
-                            y: contentTop + cover.minY)
-                    .allowsHitTesting(false)
-            }
-        }
-
     // MARK: - Splitting by drag
 
-    /// The tab a dragged tab would split into: the one showing, when the
-    /// terminal is what's showing. The tab in front dropped on its own edge
-    /// splits the screen there with a fresh shell; another tab moves in.
-    private func splitTargetTab(for dragged: String) -> String? {
-        guard window.activeContainerLog == nil, boardHere == nil, agents.active(in: window.focusedWorkspace?.workspaceId) == nil,
-              let showing = window.displayedFocusedTabId else { return nil }
-        return showing
+    /// Whether the tab in front has several panes.
+    private var showingSplit: Bool {
+        guard let tab = window.displayedFocusedTabId, let layout = liveLayout(of: tab) else { return false }
+        return layout.panes.count > 1
+    }
+
+    /// The tab whose terminal is in view, which a drop splits: none while
+    /// anything covers the terminal (logs, a board, a conversation, review,
+    /// the full editor, Twin, hints, an agent's hand-off), since a split
+    /// there would land out of sight.
+    private var terminalShowing: String? {
+        guard window.activeContainerLog == nil, boardHere == nil, coveringConversation == nil, ui.review == nil,
+              !(window.editor.isPresented && window.editor.presentation == .full), !twin.isVisible,
+              ui.hints == nil, window.agentUIHandoff == nil else { return nil }
+        return window.displayedFocusedTabId
+    }
+
+    /// One of Octet's own tabs covering the terminal, which a terminal tab
+    /// dropped by its edge goes beside.
+    private var coveringStripTab: String? {
+        if let conversation = coveringConversation { return "conversation:" + conversation.id }
+        if window.editor.isPresented, window.editor.presentation == .full { return "editor:" + window.id.uuidString }
+        return window.activeContainerLog?.visualID
+    }
+
+    /// Panes are placed by the layout scaled to the terminal area
+    /// (`NativePaneGrid`), so the overlays scale it the same way.
+    private var cellGeometry: CellGeometry { .scaled }
+
+    /// A tab's panes as the snapshot has them, kept current as panes change;
+    /// the layout fetched when the drag began while the snapshot has none.
+    private func liveLayout(of tabId: String) -> PaneLayout? {
+        store.snapshot.layouts.first { $0.tabId == tabId }.flatMap(PaneLayout.init)
+            ?? (dropLayout?.tab == tabId ? dropLayout?.layout : nil)
+    }
+
+    /// The zones over the terminal for whatever is being dragged.
+    @ViewBuilder
+    private var dropLayers: some View {
+        let animation = motion.animation(.tabs, .smooth(duration: 0.15))
+        switch tabDrag.item {
+        case .tab(let dragged)?:
+            if let showing = terminalShowing {
+                splitDropLayer(moving: dragged, into: showing)
+            } else if let cover = coveringStripTab,
+                      store.snapshot.tabs.first(where: { $0.tabId == dragged })?.workspaceId == window.focusedWorkspace?.workspaceId {
+                // The terminal tab goes on that side; what covered it, beside.
+                CompanionDropLayer(title: { "Terminal \($0.sideName)" }, animation: animation) { edge in
+                    window.showBeside(cover, edge: edge.opposite)
+                    window.focusTab(dragged)
+                }
+            }
+        case .pane(let pane)?:
+            if let showing = terminalShowing { paneDropLayer(moving: pane, into: showing) }
+        case .stripTab(let id)?:
+            // Over the terminal, or over itself where it covers the terminal:
+            // either way, by an edge, it goes beside the terminal there.
+            if tabDrag.sourceWindow === window, terminalShowing != nil || coveringStripTab == id {
+                CompanionDropLayer(title: { "Show Beside, \($0.sideName)" }, animation: animation) { edge in
+                    window.showBeside(id, edge: edge)
+                }
+            }
+        case .workspace?:
+            // The window's own overlay takes workspace drops, over every surface.
+            EmptyView()
+        case nil:
+            EmptyView()
+        }
     }
 
     private func splitDropLayer(moving dragged: String, into showing: String) -> some View {
         let fromElsewhere = dragged != showing
             && store.snapshot.tabs.first { $0.tabId == dragged }?.workspaceId != window.focusedWorkspace?.workspaceId
-        return SplitDropLayer(layout: dropLayout, acceptsTab: fromElsewhere,
+        let own = dragged == showing
+        return SplitDropLayer(layout: liveLayout(of: showing), cells: cellGeometry, acceptsTab: fromElsewhere,
+                              action: own ? .newShell : .split, wholeTab: store.hasOctetEngine,
                               animation: motion.animation(.tabs, .smooth(duration: 0.15))) { target in
             guard let edge = target.edge else {
-                return WindowActions.moveTab(dragged, into: window, at: window.displayedTabs.count)
+                return WindowActions.moveTab(dragged, into: window, atStripGap: nil)
             }
-            if dragged == showing {
-                // Its own edge: the screen splits here, in the same folder.
-                let cwd = store.snapshot.workingDirectory(ofPane: target.paneId)
-                    ?? store.snapshot.panes.first { $0.paneId == target.paneId }?.effectiveCwd
-                store.splitNewPane(beside: target.paneId, edge: edge, cwd: cwd, keepingSide: true)
-            } else if store.onlyPane(ofTab: dragged) != nil {
-                store.splitTab(dragged, into: showing, beside: target.paneId, edge: edge)
+            if own {
+                // Its own edge: a fresh shell opens on the side shown, in the
+                // folder of the pane beside it.
+                let near = target.paneId ?? store.snapshot.panes.first { $0.tabId == showing && $0.focused }?.paneId
+                let cwd = near.flatMap { pane in
+                    store.snapshot.workingDirectory(ofPane: pane) ?? store.snapshot.panes.first { $0.paneId == pane }?.effectiveCwd
+                }
+                store.splitNewPane(beside: target.paneId, inTab: showing, edge: edge, cwd: cwd)
+            } else if let moving = store.onlyPane(ofTab: dragged) {
+                store.movePane(moving.paneId, into: showing, beside: target.paneId, edge: edge)
             } else {
                 ToastCenter.shared.info("A split tab can't move in as one pane",
                                         detail: "Move its panes out first (Pane › Move Pane to New Tab), then drag each.")
@@ -1067,18 +1352,23 @@ struct RootView: View {
         }
     }
 
-    /// The panes in the tab showing, whose scroll position the pills follow.
-    private var liveScrollPanes: Set<String> {
-        let tab = window.displayedFocusedTabId
-        return Set(store.snapshot.panes.filter { $0.tabId == tab }.map(\.paneId))
+    /// A pane dragged by its handle, over the tab it's in or another.
+    private func paneDropLayer(moving pane: String, into showing: String) -> some View {
+        SplitDropLayer(layout: liveLayout(of: showing), cells: cellGeometry, moving: pane, wholeTab: store.hasOctetEngine,
+                       animation: motion.animation(.tabs, .smooth(duration: 0.15))) { target in
+            guard let edge = target.edge else { return }
+            store.movePane(pane, into: showing, beside: target.paneId, edge: edge)
+        }
     }
 
-    /// Fetches the showing tab's panes when a tab drag starts, for its zones.
-    private func loadDropLayout(for dragged: String?) {
+    /// Fetches the showing tab's panes when a drag starts, for its zones,
+    /// in case the snapshot has none for it yet.
+    private func loadDropLayout(dragging: Bool) {
         dropLayout = nil
-        guard let dragged, let showing = splitTargetTab(for: dragged) else { return }
+        guard dragging, let showing = terminalShowing,
+              !store.snapshot.layouts.contains(where: { $0.tabId == showing }) else { return }
         store.paneLayout(ofTab: showing) { layout in
-            if tabDrag.tabId == dragged { dropLayout = layout }
+            if tabDrag.item != nil, let layout { dropLayout = (showing, layout) }
         }
     }
 
@@ -1092,7 +1382,7 @@ struct RootView: View {
         let tab = window.displayedTabs.first { $0.tabId == tabId }
         let eligible = settings.values.newTabSplash
             && boardHere == nil
-            && agents.active(in: window.focusedWorkspace?.workspaceId) == nil
+            && coveringConversation == nil
             && tab?.paneCount == 1
             // Unknown counts as a shell: a new tab's first look is still coming.
             && (window.focusedProcess == nil || window.focusedPaneAtPrompt)
@@ -1115,6 +1405,7 @@ struct RootView: View {
                 hostWindow: window.nsWindow,
                 runAgent: { window.startAgent($0) },
                 openFolder: { window.runInFocusedPane("cd " + shellQuote($0)) },
+                runCommand: { window.runInFocusedPane($0) },
                 shortcuts: [
                     .init(title: "Command Palette", keys: OctetShortcut.palette.keys) { ui.paletteVisible = true },
                     .init(title: "New Claude Conversation", keys: OctetShortcut.newConversation.keys, agent: "claude") {
@@ -1145,57 +1436,89 @@ struct RootView: View {
     @ViewBuilder
     private var terminal: some View {
         if let session {
-            VStack(spacing: 0) {
-                OctetTerminalView(
-                    command: session.command,
-                    environment: session.environment,
-                    workingDirectory: NSHomeDirectory(),
-                    hiddenTopRows: EngineSession.hiddenTopRows,
-                    anchor: terminalAnchor,
-                    onTitleChange: { _ in },
-                    onExit: {
-                        // A window closing takes its client with it; that's not
-                        // the engine going away. With other windows open, a
-                        // client that exits closes only its own window.
-                        if window.closing { return }
-                        if WindowRegistry.shared.isMulti { window.nsWindow?.close() } else { terminalDisconnected = true }
-                    },
-                    onSurface: { window.surface = $0 }
-                )
-                .id(terminalGeneration)
-                .background(Theme.terminalBackground.opacity(settings.values.effectiveBackgroundOpacity))
-                if settings.values.repoContextBar,
-                   StatusBar.hasContent(model: statusBar, ssh: focusedSSH, agent: focusedAgent) {
-                    StatusBar(model: statusBar, store: store, ui: ui, ssh: focusedSSH, agent: focusedAgent,
-                              openOnOctetUI: { window.openOnOctetUI($0) })
+            sessionTerminal(session)
+                .overlay(alignment: .top) {
+                    if let connecting {
+                        SSHConnectCard(target: connecting)
+                            .padding(.top, 18)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                            .allowsHitTesting(false)
+                    }
                 }
-            }
-            .overlay(alignment: .top) {
-                if let connecting {
-                    SSHConnectCard(target: connecting)
-                        .padding(.top, 18)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                        .allowsHitTesting(false)
+                .onChange(of: focusedClaude, initial: true) { _, claude in
+                    statusBar.watchRemoteControl(sessionId: claude?.sessionId, cwd: claude?.cwd, claudePid: claude?.pid)
                 }
-            }
-            .onChange(of: focusedClaude, initial: true) { _, claude in
-                statusBar.watchRemoteControl(sessionId: claude?.sessionId, cwd: claude?.cwd, claudePid: claude?.pid)
-            }
-            .onChange(of: StatusBarFocus(pane: window.focusedPaneId, directory: focusedPaneCwd, ssh: focusedSSH), initial: true) { _, focus in
-                statusBar.show(pane: focus.pane, directory: focus.directory, ssh: focus.ssh, client: store.client)
-            }
-            .onChange(of: store.paneSSH) { old, new in sshChanged(from: old, to: new) }
-
+                .onChange(of: StatusBarFocus(pane: window.focusedPaneId, directory: focusedPaneCwd, ssh: focusedSSH), initial: true) { _, focus in
+                    statusBar.show(pane: focus.pane, directory: focus.directory, ssh: focus.ssh, client: store.client)
+                }
+                .onChange(of: store.paneSSH) { old, new in sshChanged(from: old, to: new) }
         } else {
-            VStack(spacing: 8) {
-                Text("Terminal engine missing").font(.system(size: 14, weight: .semibold))
-                Text("The terminal engine is missing from this copy of Octet. Reinstall Octet.")
-                    .font(Theme.uiFont)
-                    .foregroundStyle(Theme.textSecondary)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Theme.terminalBackground)
+            missingEngine
         }
+    }
+
+    /// The tab in front, each pane a terminal of its own, drawn from the
+    /// engine's stream of it.
+    private func sessionTerminal(_ session: EngineSession) -> some View {
+        NativePaneGrid(layout: window.displayedFocusedTabId.flatMap { liveLayout(of: $0) },
+                       tabId: window.displayedFocusedTabId,
+                       focusedPaneId: window.focusedPaneId,
+                       socketPath: session.socketPath,
+                       gutter: PaneCards.gutter,
+                       geometry: paneGeometry,
+                       viewport: { tab, columns, rows in store.setViewport(tab: tab, columns: columns, rows: rows) }) { pane in
+            window.activateSplitSurface()
+            guard pane != window.focusedPaneId else { return }
+            store.call("pane.focus", ["pane_id": pane], failure: "Couldn't focus the pane") { _ in }
+        }
+        .background(Theme.terminalBackground.opacity(settings.values.effectiveBackgroundOpacity))
+        .onAppear {
+            // No terminal client starts the server any more, and none has to
+            // be waited for before the window goes where it was opened for.
+            session.ensureServer()
+            window.terminalReady()
+        }
+    }
+
+    /// A popup pane, floating over the terminal at the size its plugin asks
+    /// for. It goes when its program exits, or when closed here.
+    @ViewBuilder
+    private var popupPane: some View {
+        if let pane = window.popupPaneId, let session {
+            GeometryReader { proxy in
+                ZStack(alignment: .topTrailing) {
+                    PaneTerminal(paneId: pane, socketPath: session.socketPath) {
+                        if window.popupPaneId == pane { window.popupPaneId = nil }
+                        OctetTerminalRuntime.focusTerminal()
+                    }
+                    .id(pane)
+                    .clipShape(RoundedRectangle(cornerRadius: PaneCards.radius))
+                    OctetIconButton(icon: "xmark", help: "Close the popup", compact: true) {
+                        store.call("pane.close", ["pane_id": pane], failure: "Couldn't close the popup") { _ in }
+                        window.popupPaneId = nil
+                        OctetTerminalRuntime.focusTerminal()
+                    }
+                    .padding(Theme.Space.sm)
+                }
+                .background(RoundedRectangle(cornerRadius: PaneCards.radius).fill(Theme.terminalBackground))
+                .overlay(RoundedRectangle(cornerRadius: PaneCards.radius).strokeBorder(Theme.border))
+                .shadow(color: .black.opacity(0.35), radius: 24, y: 8)
+                .frame(width: proxy.size.width * 0.8, height: proxy.size.height * 0.8)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .transition(.opacity)
+        }
+    }
+
+    private var missingEngine: some View {
+        VStack(spacing: 8) {
+            Text("Terminal engine missing").font(Theme.Text.title3)
+            Text("The terminal engine is missing from this copy of Octet. Reinstall Octet.")
+                .font(Theme.uiFont)
+                .foregroundStyle(Theme.textSecondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.terminalBackground)
     }
 }
 
@@ -1239,6 +1562,10 @@ final class UIState: ObservableObject {
     @Published var hints: HintsSession?
     /// Palette items to open straight into, the first that exists.
     var paletteStart: [String]?
+    /// What the palette's field holds as it opens: ">" for Show All Commands.
+    var paletteQuery: String?
+    /// The keyboard cheat sheet over the window (Help › Keyboard Shortcuts).
+    @Published var shortcutsVisible = false
     /// The changes review over the terminal, while it's open.
     @Published var review: DiffReviewModel?
     /// The Pull Requests page over the terminal, while it's open.
@@ -1291,7 +1618,7 @@ final class UIState: ObservableObject {
         }
     }
     /// The plane in front, by id.
-    @Published var activePlaneId: String? = UserDefaults.standard.string(forKey: "octet.activePlane") {
+    @Published var activePlaneId: String? = UserDefaults.standard.string(forKey: "octet.activePlane").map(Plane.migratedID) {
         didSet {
             saveWorkspacePanel()
             if !restoringWorkspacePanel, let activePlaneId, splitPlaneIds.count > 1, !splitPlaneIds.contains(activePlaneId) {
@@ -1319,7 +1646,7 @@ final class UIState: ObservableObject {
         // ever the last session's end: start from the usual two again.
         guard let data = UserDefaults.standard.data(forKey: "octet.planes"),
               let planes = try? JSONDecoder().decode([Plane].self, from: data), !planes.isEmpty else { return Plane.defaults }
-        return planes
+        return Plane.consolidated(planes, active: UserDefaults.standard.string(forKey: "octet.activePlane"))
     }
 
     /// The plane in front: the chosen one, else the first.
@@ -1331,7 +1658,10 @@ final class UIState: ObservableObject {
     /// Adds a plane, or brings forward the one there, and shows it.
     func addPlane(_ kind: PlaneKind, number: Int? = nil) {
         let plane = Plane.make(kind, number: number)
-        if !planes.contains(where: { $0.id == plane.id }) { planes.append(plane) }
+        if plane.kind == .pullRequests, let index = planes.firstIndex(where: { $0.id == plane.id }) {
+            planes[index] = plane
+            planeBadges[plane.id] = nil
+        } else if !planes.contains(where: { $0.id == plane.id }) { planes.append(plane) }
         activePlaneId = plane.id
         sidePanelVisible = true
     }
@@ -1408,9 +1738,8 @@ final class UIState: ObservableObject {
         splitPlaneIds = splitPlaneIds.filter { id in planes.contains { $0.id == id } }
         if splitPlaneIds.count < 2 { splitPlaneIds = [] }
         planeBadges = planeBadges.filter { id, _ in planes.contains { $0.id == id } }
-        if planes.isEmpty {
-            sidePanelVisible = false
-        } else if closingActive, let activeIndex {
+        // An empty panel stays open: the launcher is its getting-started view.
+        if !planes.isEmpty, closingActive, let activeIndex {
             activePlaneId = splitPlaneIds.first ?? planes[min(activeIndex, planes.count - 1)].id
         }
     }
@@ -1432,7 +1761,7 @@ final class UIState: ObservableObject {
 
     /// Shows the panel with `section` open and in view, on its plane.
     func showSidePanel(_ section: SidePanelSection) {
-        showPlane(section == .files ? .git : .overview)
+        showPlane(section == .todos ? .todos : section == .files ? .git : .overview)
         sidePanelJump = SidePanelJump(section: section)
     }
 
@@ -1463,6 +1792,10 @@ final class UIState: ObservableObject {
     var seenRuntimeEntryIDs: Set<String> = []
     /// Whether the agent in front has any runtimes, set by the Runtime panel
     /// (which works them out); the tab bar hides its button when it has none.
+    @Published var availablePanelWidth: CGFloat = 1200
+    var presentedSidePanelWidth: CGFloat {
+        AgentPresentationLogic.panelWidth(normal: sidePanelWidth, available: availablePanelWidth)
+    }
     @Published var runtimeHasEntries = false
     /// Runtimes opened in place in the list, to show their details.
     @Published var runtimeExpandedEntryIDs: Set<String> = []
@@ -1512,11 +1845,22 @@ private struct SidePanelResizeHandle: View {
                 DragGesture(minimumDistance: 1, coordinateSpace: .global)
                     .onChanged { drag in
                         let start = startWidth ?? ui.sidePanelWidth
+                        if startWidth == nil { ResizeCancel.shared.begin { ui.sidePanelWidth = start } }
                         startWidth = start
+                        guard ResizeCancel.shared.isLive else { return }
+                        // Kept while dragging, even where the pointer outruns the strip.
+                        NSCursor.resizeLeftRight.set()
                         ui.sidePanelWidth = min(maxWidth, max(UIState.sidePanelMinWidth, (start - drag.translation.width).rounded()))
                     }
-                    .onEnded { _ in startWidth = nil }
+                    .onEnded { _ in
+                        startWidth = nil
+                        ResizeCancel.shared.end()
+                    }
             )
+            .onDisappear {
+                if startWidth != nil { ResizeCancel.shared.end() }
+                startWidth = nil
+            }
             .onTapGesture(count: 2) { ui.sidePanelWidth = SidePanel.width }
             .help("Drag to resize the panel. Double-click to reset.")
             .accessibilityLabel("Panel width")
@@ -1548,19 +1892,30 @@ private struct SidebarResizeHandle: View {
                 DragGesture(minimumDistance: 1, coordinateSpace: .global)
                     .onChanged { drag in
                         let start = startWidth ?? ui.sidebarWidth
+                        if startWidth == nil { ResizeCancel.shared.begin { ui.sidebarWidth = start } }
                         startWidth = start
+                        guard ResizeCancel.shared.isLive else { return }
+                        NSCursor.resizeLeftRight.set()
                         let maxWidth = max(UIState.sidebarMinWidth, (NSApp.keyWindow?.frame.width ?? 1280) / 2)
                         ui.sidebarWidth = min(maxWidth, max(UIState.sidebarMinWidth, (start + drag.translation.width).rounded()))
                     }
-                    .onEnded { _ in startWidth = nil }
+                    .onEnded { _ in
+                        startWidth = nil
+                        ResizeCancel.shared.end()
+                    }
             )
+            .onDisappear {
+                if startWidth != nil { ResizeCancel.shared.end() }
+                startWidth = nil
+            }
             .onTapGesture(count: 2) { ui.sidebarWidth = Theme.sidebarWidth }
             .help("Drag to resize the sidebar. Double-click to reset.")
             .accessibilityLabel("Sidebar width")
             .accessibilityValue("\(Int(ui.sidebarWidth)) points")
             .accessibilityAdjustableAction { direction in
                 let delta: CGFloat = direction == .increment ? 16 : -16
-                ui.sidebarWidth = max(UIState.sidebarMinWidth, ui.sidebarWidth + delta)
+                let maxWidth = max(UIState.sidebarMinWidth, (NSApp.keyWindow?.frame.width ?? 1280) / 2)
+                ui.sidebarWidth = min(maxWidth, max(UIState.sidebarMinWidth, ui.sidebarWidth + delta))
             }
     }
 }
@@ -1570,6 +1925,8 @@ private struct TitleBar: View {
     @ObservedObject var ui: UIState
     @EnvironmentObject private var window: WindowContext
     @ObservedObject private var agents = AgentCenter.shared
+    /// Redraws the key hints when a shortcut is rebound.
+    @ObservedObject private var shortcuts = ShortcutOverrides.shared
     @State private var isFullScreen = false
 
     var body: some View {
@@ -1586,7 +1943,7 @@ private struct TitleBar: View {
                     .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
             }
             .buttonStyle(.plain)
-            .help("Toggle Sidebar (⌘B)")
+            .help(OctetShortcut.toggleSidebar.help("Toggle Sidebar"))
             .accessibilityLabel(ui.sidebarVisible ? "Hide sidebar" : "Show sidebar")
             // Pane layouts from plugins (Pane Layouts ships with Octet).
             LayoutPickerButton()
@@ -1596,6 +1953,9 @@ private struct TitleBar: View {
             // A connected engine is the normal state and says nothing worth a
             // badge; only the wait for one does.
             if !store.isConnected { connectingIndicator }
+            // Every tab's agents, wherever they run.
+            AgentsHubButton(store: store)
+                .environmentObject(window.panelContext)
             // The Usage page, then what the agents have left: its chips open
             // their card on hover.
             OctetIconButton(icon: "chart.bar.xaxis", help: "Usage", active: ui.usageBreakdownVisible) {
@@ -1604,7 +1964,21 @@ private struct TitleBar: View {
                 }
             }
             AccountChips(runningAgents: runningAgents) { ui.usageBreakdownVisible = true }
-                .padding(.trailing, 10)
+                .padding(.trailing, 2)
+            // The window's right panel, its toggle mirroring the sidebar's.
+            Button {
+                ui.sidePanelVisible.toggle()
+            } label: {
+                OctetIcon("sidebar.right", size: 18)
+                    .foregroundStyle(ui.sidePanelVisible ? Theme.textPrimary : Theme.textSecondary)
+                    .frame(width: 28, height: 24)
+                    .background(ui.sidePanelVisible ? Theme.cardSelected : Color.clear)
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
+            }
+            .buttonStyle(.plain)
+            .help(OctetShortcut.togglePanel.help(ui.sidePanelVisible ? "Hide the panel" : "Show the panel"))
+            .accessibilityLabel(ui.sidePanelVisible ? "Hide panel" : "Show panel")
+            .padding(.trailing, 8)
         }
         // Centered on the window, not between the uneven side groups.
         .overlay {
@@ -1615,7 +1989,7 @@ private struct TitleBar: View {
                     OctetIcon("magnifyingglass", size: 15)
                     Text(titleText).font(Theme.uiFontMedium).lineLimit(1)
                     Spacer(minLength: 8)
-                    Keycap(text: "⌘P")
+                    if let keys = OctetShortcut.palette.keys { KeyCombo(keys: keys) }
                 }
                 .foregroundStyle(Theme.textSecondary)
                 .padding(.horizontal, 10)
@@ -1625,7 +1999,7 @@ private struct TitleBar: View {
                 .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
             }
             .buttonStyle(.plain)
-            .help("Command Palette (⌘P)")
+            .help(OctetShortcut.palette.help("Command Palette"))
             .accessibilityLabel("Search, \(titleText)")
         }
         .frame(height: Theme.titleBarHeight)
@@ -1721,6 +2095,12 @@ private struct RootDialogHosts: ViewModifier {
             .overlay { PastePreviewDialog(center: PastePreviewCenter.shared, store: store) }
             .overlay { ProjectSearchHost() }
             .overlay { SnoozePickerHost() }
+            .overlay { FirstRunFlow(center: FirstRunCenter.shared) }
+            // The welcome, on a first launch only, once the window has settled.
+            .task {
+                try? await Task.sleep(for: .seconds(1))
+                FirstRunCenter.shared.presentIfFirstLaunch()
+            }
     }
 }
 
@@ -1734,31 +2114,29 @@ private struct RootAnimations: ViewModifier {
         content
             .animation(motion.animation(.palette, .smooth(duration: 0.16)), value: ui.paletteVisible)
             .animation(motion.animation(.sidebar), value: ui.sidebarVisible)
-            .animation(motion.animation(.sidebar), value: ui.sidePanelVisible)
             .animation(motion.animation(.sidebar), value: ui.sidePanelMaximized)
             .animation(motion.animation(.sidebar), value: boardShowing)
     }
 }
 
 private struct TerminalWatchers: ViewModifier {
-    @ObservedObject var anchor: TerminalAnchor
+    @ObservedObject var geometry: PaneGeometry
     @ObservedObject var tabDrag: TabDrag
     let focusedTab: String?
     let promptEmpty: Bool
     let observe: (TerminalGrid?) -> Void
-    let dragChanged: (String?) -> Void
-    /// The client has drawn: it can be sent keys.
-    let ready: () -> Void
+    let dragChanged: (Bool) -> Void
 
     func body(content: Content) -> some View {
         content
-            .onReceive(anchor.$grid) { grid in
-                if grid != nil { ready() }
-                observe(grid)
+            .onReceive(geometry.$focusedGrid) { observe($0) }
+            .onChange(of: focusedTab) { _, _ in
+                observe(geometry.focusedGrid)
+                // A drag that brought another tab forward needs its panes.
+                if tabDrag.item != nil { dragChanged(true) }
             }
-            .onChange(of: focusedTab) { _, _ in observe(anchor.grid) }
-            .onChange(of: promptEmpty) { _, _ in observe(anchor.grid) }
-            .onChange(of: tabDrag.tabId) { _, dragged in dragChanged(dragged) }
+            .onChange(of: promptEmpty) { _, _ in observe(geometry.focusedGrid) }
+            .onChange(of: tabDrag.item != nil) { _, dragging in dragChanged(dragging) }
     }
 }
 

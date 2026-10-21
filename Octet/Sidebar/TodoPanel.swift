@@ -1,332 +1,258 @@
 import SwiftUI
 
-/// The plan of the agent in front, whichever agent it is: a conversation in
-/// Octet, or the agents running in the tab's terminal panes. Each agent keeps
-/// its list its own way (Claude Code's task files, Codex's plan, OpenCode's
-/// database, a TodoWrite call); `AgentTodos` reads them into one shape.
-@MainActor
-final class TodoModel: ObservableObject {
-    struct Section: Identifiable, Equatable {
-        let id: String
-        /// The agent's id, for its logo and name.
-        let agent: String?
-        let title: String
-        let todos: [AgentTodo]
-    }
-
-    @Published private(set) var sections: [Section] = []
-    /// The project's own list, from `TODO.md` at its root.
-    @Published private(set) var project: ProjectTodoList?
-    /// The root of the project in front, where `TODO.md` is or would go.
-    @Published private(set) var projectRoot: String?
-    /// The file last read, so it's parsed again only when it changes.
-    private var projectRead: (path: String, modified: Date)?
-    private weak var window: WindowContext?
-    private var timer: Timer?
-    @Published private(set) var loading = false
-    @Published private(set) var loaded = false
-    @Published private(set) var projectLoading = false
-    private var projectLoaded = false
-    /// A Codex rollout is re-read only when it has changed.
-    private var rollouts: [String: (modified: Date, plan: [AgentTodo]?)] = [:]
-    static let interval: TimeInterval = 2.5
-
-    #if DEBUG
-    /// Verification and demos: made-up plans and a made-up TODO.md.
-    /// "empty" has no plans and no TODO.md; "partial" one finished plan and a
-    /// project list; anything else is the full set.
-    func loadSample(variant: String? = nil) {
-        sampling = true
-        projectRoot = NSHomeDirectory()
-        if variant == "empty" {
-            sections = []
-            project = nil
-            loaded = true
-            return
-        }
-        sections = [
-            Section(id: "sample-claude", agent: "claude", title: "Fix the upload retry", todos: [
-                AgentTodo(id: "a1", text: "Find every retry call site", activeText: nil, status: .completed, detail: nil),
-                AgentTodo(id: "a2", text: "Cap the backoff at 30 seconds", activeText: nil, status: .completed, detail: nil),
-                AgentTodo(id: "a3", text: "Add jitter to the delay", activeText: "Adding jitter to the delay", status: .inProgress, detail: nil),
-                AgentTodo(id: "a4", text: "Write tests for both", activeText: nil, status: .pending, detail: nil),
-                AgentTodo(id: "a5", text: "Update the share extension", activeText: nil, status: .pending, detail: nil),
-            ]),
-            Section(id: "sample-codex", agent: "codex", title: "Review the auth flow", todos: [
-                AgentTodo(id: "b1", text: "Read the session code", activeText: nil, status: .completed, detail: nil),
-                AgentTodo(id: "b2", text: "List the places a token is logged", activeText: "Listing the places a token is logged", status: .inProgress, detail: nil),
-                AgentTodo(id: "b3", text: "Propose fixes", activeText: nil, status: .pending, detail: nil),
-            ]),
-        ]
-        if variant == "partial" {
-            sections = [Section(id: "sample-claude", agent: "claude", title: "Fix the upload retry", todos: [
-                AgentTodo(id: "a1", text: "Find every retry call site", activeText: nil, status: .completed, detail: nil),
-                AgentTodo(id: "a2", text: "Cap the backoff at 30 seconds", activeText: nil, status: .completed, detail: nil),
-                AgentTodo(id: "a3", text: "Add jitter to the delay", activeText: nil, status: .completed, detail: nil),
-            ])]
-        }
-        project = ProjectTodoList(path: NSHomeDirectory() + "/TODO.md", items: [
-            .init(line: 0, text: "Ship build 21", status: .inProgress, section: "Release"),
-            .init(line: 1, text: "Renew the notarization password", status: .pending, section: "Release"),
-            .init(line: 2, text: "Write the release notes", status: .pending, section: "Release"),
-            .init(line: 4, text: "Branch picker in the Git panel", status: .pending, section: "Later"),
-            .init(line: 5, text: "Agent cursor in the browser", status: .pending, section: "Later"),
-            .init(line: 7, text: "Project content search", status: .completed, section: "Done"),
-            .init(line: 8, text: "Composer stash", status: .completed, section: "Done"),
-        ])
-        loaded = true
-    }
-    #endif
-
-    /// Set while the sample is up, so reading the real lists doesn't replace it.
-    private var sampling = false
-
-    /// All steps across the sections, for the tab bar's count.
-    var todos: [AgentTodo] { sections.flatMap(\.todos) }
-
-    func attach(_ window: WindowContext) {
-        guard self.window !== window else { return }
-        self.window = window
-        refresh()
-        timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: Self.interval, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refresh() }
-        }
-    }
-
-    /// Where each list comes from, for what's in front now.
-    private enum Source {
-        case conversation(AgentSession)
-        case claudeTasks(sessionId: String)
-        case codexRollout(sessionId: String)
-        case openCode(sessionId: String)
-    }
-
-    func refresh() {
-        #if DEBUG
-        if sampling { return }
-        #endif
-        guard let window, !loading else { return }
-        let store = window.store
-        var sources: [(id: String, agent: String?, title: String, source: Source)] = []
-        if let session = AgentCenter.shared.active(in: window.focusedWorkspace?.workspaceId) {
-            sources.append(("conversation:\(session.id)", session.engine.agent, session.title, .conversation(session)))
-        } else if let tabId = window.displayedFocusedTabId {
-            for agent in store.snapshot.agents where agent.tabId == tabId {
-                let brand = AgentBrand.forAgent(agent.agent)
-                guard let brandId = brand?.id,
-                      let sessionId = agent.sessionReference ?? agent.terminalId.flatMap({ store.recovery.sessionId(forTerminal: $0) })
-                else { continue }
-                let title = brand?.displayName ?? brandId
-                switch brandId {
-                case "claude": sources.append(("pane:\(agent.paneId)", brandId, title, .claudeTasks(sessionId: sessionId)))
-                case "codex": sources.append(("pane:\(agent.paneId)", brandId, title, .codexRollout(sessionId: sessionId)))
-                case "opencode": sources.append(("pane:\(agent.paneId)", brandId, title, .openCode(sessionId: sessionId)))
-                default: continue
-                }
-            }
-        }
-        refreshProject(window)
-        // A conversation's own list is already in memory; files are read off
-        // the main thread.
-        var ready: [String: [AgentTodo]] = [:]
-        var claudeFiles: [String: String] = [:]
-        for entry in sources {
-            if case .conversation(let session) = entry.source {
-                if session.engine == .claude {
-                    claudeFiles[entry.id] = session.conversation.sessionId ?? session.sessionId
-                }
-                ready[entry.id] = session.conversation.plan ?? AgentTodos.latest(in: session.conversation.items)
-            }
-        }
-        loading = true
-        let rollouts = self.rollouts
-        DispatchQueue.global(qos: .utility).async { [weak self] in
-            var found = ready
-            var seenRollouts: [String: (modified: Date, plan: [AgentTodo]?)] = [:]
-            for entry in sources {
-                switch entry.source {
-                case .conversation:
-                    // Claude Code keeps its tasks in files whichever way it runs.
-                    if let id = claudeFiles[entry.id],
-                       let tasks = AgentTodos.claudeTasks(in: AgentTodos.claudeTasksDirectory(sessionId: id)) {
-                        found[entry.id] = tasks
-                    }
-                case .claudeTasks(let sessionId):
-                    found[entry.id] = AgentTodos.claudeTasks(in: AgentTodos.claudeTasksDirectory(sessionId: sessionId))
-                case .codexRollout(let sessionId):
-                    guard let path = AgentSessionFiles.codexPath(forSession: sessionId) else { continue }
-                    let modified = (try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate] as? Date) ?? .distantPast
-                    if let cached = rollouts[path], cached.modified == modified {
-                        seenRollouts[path] = cached
-                        found[entry.id] = cached.plan
-                    } else {
-                        let plan = AgentTodos.codexPlan(inRollout: path)
-                        seenRollouts[path] = (modified, plan)
-                        found[entry.id] = plan
-                    }
-                case .openCode(let sessionId):
-                    found[entry.id] = AgentTodos.openCodeTodos(sessionId: sessionId)
-                }
-            }
-            let sections = sources.compactMap { entry -> Section? in
-                guard let todos = found[entry.id], !todos.isEmpty else { return nil }
-                return Section(id: entry.id, agent: entry.agent, title: entry.title, todos: todos)
-            }
-            DispatchQueue.main.async {
-                guard let self else { return }
-                self.loading = false
-                self.loaded = true
-                self.rollouts = seenRollouts
-                if sections != self.sections { self.sections = sections }
-            }
-        }
-    }
+/// Where the keyboard is in the Todos tab.
+enum TodoFocus: Hashable {
+    case add
+    case item(TodoModel.ListKind, String)
+    case step(String, String)
 }
 
-// MARK: - The project's TODO.md
-
-extension TodoModel {
-    /// Re-reads the project's `TODO.md` when the project in front or the
-    /// file has changed.
-    fileprivate func refreshProject(_ window: WindowContext) {
-        #if DEBUG
-        if sampling { return }
-        #endif
-        let directory = window.focusedWorkspace.flatMap { window.store.snapshot.directory(ofWorkspace: $0.workspaceId) }
-        let root = directory.map { GitBranch.location(for: $0)?.root ?? $0 }
-        if root != projectRoot {
-            projectRoot = root
-            project = nil
-            projectRead = nil
-            projectLoaded = false
-            projectLoading = false
-        }
-        guard let root else { return }
-        if !projectLoaded { projectLoading = true }
-        let last = projectRead
-        DispatchQueue.global(qos: .utility).async { [weak self] in
-            let path = ProjectTodos.path(inRoot: root)
-            let modified = (try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate] as? Date) ?? nil
-            if let last, last.path == path, last.modified == modified { return }
-            let list = modified == nil ? nil
-                : (try? String(contentsOfFile: path, encoding: .utf8)).map { ProjectTodos.parse($0, path: path) }
-            DispatchQueue.main.async {
-                guard let self, self.projectRoot == root else { return }
-                self.projectLoading = false
-                self.projectLoaded = true
-                self.projectRead = modified.map { (path: path, modified: $0) }
-                if list != self.project { self.project = list }
-            }
-        }
-    }
-
-    /// Marks an item, checking first that its line still holds it: the file
-    /// may have changed since it was read.
-    func set(_ item: ProjectTodoList.Item, to status: AgentTodo.Status) {
-        guard let path = project?.path else { return }
-        edit(path) { contents in
-            let current = ProjectTodos.parse(contents, path: path).items.first { $0.line == item.line }
-            guard current?.text == item.text else { return nil }
-            return ProjectTodos.setting(status, line: item.line, in: contents)
-        }
-    }
-
-    /// Adds an open item, making `TODO.md` if the project has none.
-    func add(_ text: String) {
-        guard let root = projectRoot else { return }
-        let path = project?.path ?? ProjectTodos.path(inRoot: root)
-        edit(path) { ProjectTodos.adding(text, to: $0) }
-    }
-
-    /// The agent in this window's tab that an item can be handed to.
-    var agentInFront: EngineAgent? {
-        guard let window, AgentCenter.shared.active(in: window.focusedWorkspace?.workspaceId) == nil,
-              let tabId = window.displayedFocusedTabId else { return nil }
-        return window.store.snapshot.agents.first { $0.tabId == tabId && $0.agent != nil && !$0.isSubagentViewer }
-    }
-
-    /// Sends the item to the agent in front as a prompt, asking it to tick
-    /// the item off when done, and marks it under way.
-    func handToAgent(_ item: ProjectTodoList.Item) {
-        guard let window, let agent = agentInFront, let path = project?.path else { return }
-        let name = AgentBrand.forAgent(agent.agent)?.displayName ?? agent.agent ?? "Agent"
-        let fileName = (path as NSString).lastPathComponent
-        window.store.broadcast(ProjectTodos.prompt(for: item, fileName: fileName),
-                               to: [Broadcast.Target(paneId: agent.paneId, name: name, isAgent: true)])
-        if item.status == .pending { set(item, to: .inProgress) }
-    }
-
-    /// Reads, changes and writes the file off the main thread, then reads it
-    /// back so the panel shows the result straight away.
-    private func edit(_ path: String, _ change: @escaping (String) -> String?) {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let contents = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
-            var failure: String?
-            if let changed = change(contents) {
-                if changed != contents {
-                    do { try changed.write(toFile: path, atomically: true, encoding: .utf8) } catch {
-                        failure = error.localizedDescription
-                    }
-                }
-            } else {
-                failure = "The item moved in the file. Try again."
-            }
-            DispatchQueue.main.async {
-                guard let self else { return }
-                if let failure {
-                    ToastCenter.shared.fail(nil, "Couldn't update \((path as NSString).lastPathComponent)", detail: failure)
-                }
-                self.projectRead = nil
-                if let window = self.window { self.refreshProject(window) }
-            }
-        }
-    }
-}
-
-/// The todo panel: each agent's plan with how far it has got, and the
-/// project's own TODO.md.
+/// The Todos tab: one place for what's left to do in this workspace. What
+/// the agents are doing now, live and read-only; your own todos for this
+/// checkout; the project's `TODO.md`; and what the workspace is linked to.
+/// Every row can become an agent's work in one action, and none of it needs
+/// a server.
 struct TodoPanel: View {
     @ObservedObject var model: TodoModel
     @ObservedObject var ui: UIState
+    /// The panel is in front, not just built behind another plane.
+    var visible = true
+    @EnvironmentObject private var window: WindowContext
     @ObservedObject private var motion = MotionPreferences.shared
+    @FocusState private var focus: TodoFocus?
 
     var body: some View {
-        let todos = model.todos
-        let projectOpen = model.project?.open.count ?? 0
-        let loading = PlaneLoadingPreview.shows("overview") || (model.sections.isEmpty && model.project == nil
-            && ((model.loading && !model.loaded) || model.projectLoading))
-        if !loading && model.sections.isEmpty && model.projectRoot == nil {
-            SidePanelSectionView(.todos, quiet: "None",
-                                 quietHelp: "When the agent in this tab plans its work, the steps and where it's got to show here, with the project's TODO.md.") {
-                EmptyView()
+        let summary = self.summary
+        let loading = PlaneLoadingPreview.shows("todos") || PlaneLoadingPreview.shows("overview")
+            || (model.sections.isEmpty && model.mine == nil && model.project == nil
+                && ((model.loading && !model.loaded) || model.listsLoading))
+        SidePanelSectionView(.todos, label: summary.text, labelColor: summary.isComplete ? Theme.success : nil,
+                             trailing: { TodoFilterMenu(model: model) }) {
+            if loading {
+                OverviewTodoSkeleton()
+            } else {
+                content(summary)
             }
-        } else {
-            SidePanelSectionView(.todos,
-                                 count: todos.isEmpty ? projectOpen : nil,
-                                 label: todos.isEmpty ? nil : "\(todos.completedCount)/\(todos.count)",
-                                 labelColor: !todos.isEmpty && todos.completedCount == todos.count ? Color(hex: AgentStateColor.done) : nil) {
-                if loading {
-                    OverviewTodoSkeleton()
-                } else {
-                    VStack(alignment: .leading, spacing: 14) {
-                        ForEach(model.sections) { section in
-                            TodoPlanView(section: section, showsTitle: model.sections.count > 1)
-                        }
-                        if let root = model.projectRoot {
-                            if !model.sections.isEmpty { Rectangle().fill(Theme.divider).frame(height: 1) }
-                            ProjectTodoSection(model: model, root: root)
-                        }
-                    }
+        }
+        .accessibilityValue(summary.spoken)
+        .animation(motion.animation(.sidebar, .smooth(duration: 0.2)), value: model.sections)
+        .onAppear { model.refresh() }
+        .onChange(of: summary) { _, value in showBadge(value) }
+        .onAppear { showBadge(summary) }
+        .onKeyPress(phases: .down) { press in handleKey(press) }
+    }
+
+    @ViewBuilder
+    private func content(_ summary: TodoSummary) -> some View {
+        let filter = model.filter
+        let nothing = model.sections.isEmpty && (model.mine?.items.isEmpty ?? true) && model.project == nil
+            && model.issue == nil && model.waits.isEmpty && model.proposed == nil
+        VStack(alignment: .leading, spacing: Theme.Space.lg) {
+            if nothing {
+                VStack(alignment: .leading, spacing: Theme.Space.xxs) {
+                    Text("Nothing to do here yet.").font(Theme.Text.body).foregroundStyle(Theme.textSecondary)
+                    Text("Add a todo, or start an agent; its plan shows up here.")
+                        .font(Theme.Text.caption).foregroundStyle(Theme.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .accessibilityElement(children: .combine)
+                // Brought to the front, it's ready for a todo. Not merely on
+                // appearing: the plane is built behind others at launch, and
+                // took the keys from the terminal.
+                .onChange(of: visible) { _, now in if now { focus = .add } }
+            } else if summary.isComplete {
+                Text("All caught up · \(summary.done) of \(summary.total) done")
+                    .font(Theme.Text.caption.monospacedDigit())
+                    .foregroundStyle(Theme.success)
+            }
+            if summary.total > 0 { TodoSummaryBar(summary: summary) }
+            if filter.shows(.agents) {
+                if let proposed = model.proposed { ProposedPlanCard(proposed: proposed, model: model) }
+                ForEach(model.sections) { section in
+                    TodoPlanView(section: section, showsTitle: model.sections.count > 1, model: model, focus: $focus)
                 }
             }
-            .animation(motion.animation(.sidebar, .smooth(duration: 0.2)), value: model.sections)
+            if filter.shows(.mine) {
+                TodoListSection(kind: .mine, model: model, focus: $focus)
+            }
+            if filter.shows(.project), model.projectRoot != nil {
+                TodoListSection(kind: .project, model: model, focus: $focus)
+            }
+            if filter.shows(.linked), model.issue != nil || !model.waits.isEmpty {
+                TodoLinkedSection(model: model)
+            }
+        }
+    }
+
+    private var summary: TodoSummary {
+        let plans = model.filter.shows(.agents) ? model.sections.filter(\.running).map(\.todos) : []
+        var lists: [[AgentTodo.Status]] = []
+        if model.filter.shows(.mine) { lists.append(model.mine?.items.map(\.status) ?? []) }
+        if model.filter.shows(.project) { lists.append(model.project?.items.map(\.status) ?? []) }
+        return TodoSummary(runningPlans: plans, lists: lists)
+    }
+
+    /// "3/7" on the tab's chip in the strip.
+    private func showBadge(_ summary: TodoSummary) {
+        guard let plane = ui.planes.first(where: { $0.kind == .todos }) else { return }
+        let badge = summary.total == 0 ? nil
+            : PlaneBadge(title: summary.badge, tint: summary.isComplete ? Theme.success : nil, help: summary.spoken)
+        if ui.planeBadges[plane.id] != badge { ui.planeBadges[plane.id] = badge }
+    }
+
+    // MARK: - Keyboard
+
+    /// Every row the keyboard walks, top to bottom.
+    private var order: [TodoFocus] {
+        var all: [TodoFocus] = []
+        if model.filter.shows(.agents) {
+            for section in model.sections where section.running {
+                all += section.todos.filter { $0.status != .completed }.map { .step(section.id, $0.id) }
+            }
+        }
+        if model.filter.shows(.mine) {
+            all.append(.add)
+            all += visibleItems(.mine).map { .item(.mine, $0.id) }
+        }
+        if model.filter.shows(.project) { all += visibleItems(.project).map { .item(.project, $0.id) } }
+        return all
+    }
+
+    private func visibleItems(_ kind: TodoModel.ListKind) -> [ProjectTodoList.Item] {
+        guard let list = model.list(kind) else { return [] }
+        let open = list.items.filter { $0.status != .completed || model.lingering.contains($0.id) }
+        return ProjectTodoGrouping.groups(open).flatMap(\.items)
+    }
+
+    private func focusedItem() -> (TodoModel.ListKind, ProjectTodoList.Item)? {
+        guard case .item(let kind, let id) = focus, let item = model.list(kind)?.items.first(where: { $0.id == id }) else { return nil }
+        return (kind, item)
+    }
+
+    private func handleKey(_ press: KeyPress) -> KeyPress.Result {
+        guard let focus, focus != .add else { return .ignored }
+        let order = self.order
+        let index = order.firstIndex(of: focus)
+        let command = press.modifiers.contains(.command), option = press.modifiers.contains(.option)
+        switch press.key {
+        case .upArrow where command && option, .downArrow where command && option:
+            guard let (kind, item) = focusedItem() else { return .ignored }
+            model.move(item, in: kind, by: press.key == .upArrow ? -1 : 1)
+            return .handled
+        case .upArrow, .downArrow:
+            guard let index else { self.focus = order.first; return .handled }
+            let next = index + (press.key == .upArrow ? -1 : 1)
+            if order.indices.contains(next) { self.focus = order[next] }
+            return .handled
+        case .space:
+            guard let (kind, item) = focusedItem() else { return .ignored }
+            model.set(item, in: kind, to: option ? .inProgress : item.status == .completed ? .pending : .completed)
+            return .handled
+        case .return where command:
+            guard let (kind, item) = focusedItem(), let target = TodoDispatch.inFront(window) else { return .ignored }
+            TodoDispatch.send(item, in: kind, to: target, model: model, window: window)
+            return .handled
+        case .return:
+            guard focusedItem() != nil else { return .ignored }
+            TodoRowEditing.shared.editing = self.focus
+            return .handled
+        case .delete where command:
+            guard let (kind, item) = focusedItem() else { return .ignored }
+            moveFocus(awayFrom: focus, in: order)
+            model.delete(item, in: kind)
+            return .handled
+        case .escape:
+            self.focus = nil
+            OctetTerminalRuntime.focusTerminal()
+            return .handled
+        default:
+            if press.characters == "n", press.modifiers.isEmpty {
+                self.focus = .add
+                return .handled
+            }
+            return .ignored
+        }
+    }
+
+    private func moveFocus(awayFrom current: TodoFocus, in order: [TodoFocus]) {
+        guard let index = order.firstIndex(of: current) else { return }
+        focus = order.indices.contains(index + 1) ? order[index + 1] : index > 0 ? order[index - 1] : nil
+    }
+}
+
+/// Which row is being reworded: shared so the panel's Return key and a
+/// row's double-click start the same edit.
+@MainActor
+final class TodoRowEditing: ObservableObject {
+    static let shared = TodoRowEditing()
+    @Published var editing: TodoFocus?
+}
+
+/// The filter at the header's right: show finished items or not, and which
+/// sections to show. Kept per project.
+private struct TodoFilterMenu: View {
+    @ObservedObject var model: TodoModel
+
+    var body: some View {
+        Menu {
+            Toggle("Show Done", isOn: $model.filter.showDone)
+            Divider()
+            Section("Sources") {
+                ForEach(TodoModel.Source.allCases) { source in
+                    Toggle(source.title, isOn: Binding(
+                        get: { model.filter.shows(source) },
+                        set: { shown in
+                            if shown { model.filter.hidden.remove(source.rawValue) } else { model.filter.hidden.insert(source.rawValue) }
+                        }))
+                }
+            }
+        } label: {
+            OctetIcon("line.3.horizontal.decrease", size: 13)
+                .foregroundStyle(model.filter == TodoModel.Filter() ? Theme.textTertiary : Theme.accent)
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Filter todos")
+        .accessibilityLabel("Filter todos")
+    }
+}
+
+/// How far everything has got: a segment a task when there are a few,
+/// after T3 Code's task badge, else one slim bar.
+private struct TodoSummaryBar: View {
+    let summary: TodoSummary
+
+    var body: some View {
+        Group {
+            if summary.segmented {
+                HStack(spacing: Theme.Space.xxs) {
+                    ForEach(Array(summary.statuses.enumerated()), id: \.offset) { _, status in
+                        Capsule().fill(color(status)).frame(height: 3)
+                    }
+                }
+            } else {
+                TodoProgressBar(progress: TodoProgress(done: summary.done, total: summary.total))
+            }
+        }
+        .accessibilityElement()
+        .accessibilityLabel("Progress")
+        .accessibilityValue(summary.spoken)
+    }
+
+    private func color(_ status: AgentTodo.Status) -> Color {
+        switch status {
+        case .completed: Theme.success
+        case .inProgress: Theme.accent
+        case .pending: Theme.textMuted.opacity(0.5)
         }
     }
 }
 
 /// A slim bar for how far a list has got: green once it's done.
-private struct TodoProgressBar: View {
+struct TodoProgressBar: View {
     let progress: TodoProgress
 
     var body: some View {
@@ -334,7 +260,7 @@ private struct TodoProgressBar: View {
             ZStack(alignment: .leading) {
                 Capsule().fill(Theme.cardSelected)
                 Capsule()
-                    .fill(progress.isComplete ? Color(hex: AgentStateColor.done) : Theme.accent)
+                    .fill(progress.isComplete ? Theme.success : Theme.accent)
                     .frame(width: max(progress.done > 0 ? 3 : 0, geometry.size.width * progress.fraction))
             }
         }
@@ -345,8 +271,8 @@ private struct TodoProgressBar: View {
     }
 }
 
-/// "n done", folding a list's finished steps away.
-private struct DoneDisclosure: View {
+/// "n done", folding a list's finished items away.
+struct TodoDoneDisclosure: View {
     let count: Int
     @Binding var open: Bool
 
@@ -354,117 +280,49 @@ private struct DoneDisclosure: View {
         Button {
             MotionPreferences.shared.perform(.sidebar) { open.toggle() }
         } label: {
-            HStack(spacing: 4) {
+            HStack(spacing: Theme.Space.xs) {
                 OctetIcon("chevron.right", size: 10).rotationEffect(.degrees(open ? 90 : 0))
-                Text("\(count) done").font(Theme.captionFont)
+                Text("\(count) done").font(Theme.Text.caption)
             }
             .foregroundStyle(Theme.textTertiary)
-            .padding(.horizontal, 6)
+            .padding(.horizontal, Theme.Space.sm)
             .frame(height: 22)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("\(count) done")
         .accessibilityValue(open ? "Expanded" : "Collapsed")
     }
 }
 
-/// One agent's plan: its logo and name, "3 of 5" over a slim bar, the step
-/// under way set apart, the steps to come, and the finished ones folded
-/// behind "n done".
-private struct TodoPlanView: View {
-    let section: TodoModel.Section
-    let showsTitle: Bool
-    @State private var showsDone = false
-
-    var body: some View {
-        let progress = TodoProgress(section.todos)
-        let steps = TodoSteps.split(section.todos)
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 7) {
-                if let brand = AgentBrand.forAgent(section.agent) { AgentLogo(brand: brand, size: 14) }
-                if showsTitle || AgentBrand.forAgent(section.agent) == nil {
-                    Text(section.title).font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                } else if let name = AgentBrand.forAgent(section.agent)?.displayName {
-                    Text(name).font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                }
-                Spacer(minLength: 4)
-                Text(progress.summary)
-                    .font(Theme.captionFont.monospacedDigit())
-                    .foregroundStyle(progress.isComplete ? Color(hex: AgentStateColor.done) : Theme.textTertiary)
-            }
-            TodoProgressBar(progress: progress)
-            if !steps.open.isEmpty {
-                VStack(alignment: .leading, spacing: 1) {
-                    ForEach(steps.open) { todo in TodoRow(todo: todo) }
-                }
-            }
-            if !steps.done.isEmpty {
-                DoneDisclosure(count: steps.done.count, open: $showsDone)
-                if showsDone {
-                    VStack(alignment: .leading, spacing: 1) {
-                        ForEach(steps.done) { todo in TodoRow(todo: todo) }
-                    }
-                }
-            }
-        }
-    }
-}
-
-private struct TodoRow: View {
-    let todo: AgentTodo
-    @State private var hovered = false
-
-    var body: some View {
-        let active = todo.status == .inProgress
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            OctetIcon(icon, size: 13)
-                .foregroundStyle(tint)
-                .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(todo.shownText)
-                    .font(active ? Theme.uiFontMedium : Theme.uiFont)
-                    .foregroundStyle(todo.status == .completed ? Theme.textTertiary
-                                     : todo.status == .pending ? Theme.textSecondary : Theme.textPrimary)
-                    .strikethrough(todo.status == .completed, color: Theme.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-                if (hovered || active), let detail = todo.detail, !detail.isEmpty {
-                    Text(detail)
-                        .font(Theme.captionFont)
-                        .foregroundStyle(Theme.textTertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 6)
-        .padding(.vertical, active ? 6 : 4)
-        .background(RoundedRectangle(cornerRadius: Theme.controlRadius)
-            .fill(active ? Theme.accent.opacity(0.1) : hovered ? Theme.hover : Color.clear))
-        .contentShape(Rectangle())
-        .onHover { hovered = $0 }
-        .help(todo.detail ?? "")
-        .accessibilityElement(children: .combine)
-        .accessibilityValue(status)
-    }
-
-    private var icon: String {
-        switch todo.status {
+/// A status glyph and its colour, shared by every kind of row.
+enum TodoGlyph {
+    static func icon(_ status: AgentTodo.Status) -> String {
+        switch status {
         case .completed: "tool.todo.done"
         case .inProgress: "tool.todo.active"
         case .pending: "tool.todo.open"
         }
     }
 
-    private var tint: Color {
-        switch todo.status {
-        case .completed: Color(hex: AgentStateColor.done)
+    static func tint(_ status: AgentTodo.Status) -> Color {
+        switch status {
+        case .completed: Theme.success
         case .inProgress: Theme.accent
         case .pending: Theme.textTertiary
         }
     }
 
-    private var status: String {
-        switch todo.status {
+    static func text(_ status: AgentTodo.Status) -> Color {
+        switch status {
+        case .completed: Theme.textTertiary
+        case .inProgress: Theme.textPrimary
+        case .pending: Theme.textSecondary
+        }
+    }
+
+    static func spoken(_ status: AgentTodo.Status) -> String {
+        switch status {
         case .completed: "Done"
         case .inProgress: "In progress"
         case .pending: "Not started"
@@ -472,162 +330,19 @@ private struct TodoRow: View {
     }
 }
 
-/// The project's `TODO.md`: its open items by heading, the done ones
-/// folded away, a field to add one, and a way to hand one to the agent.
-private struct ProjectTodoSection: View {
-    @ObservedObject var model: TodoModel
-    let root: String
-    @State private var draft = ""
-    @State private var showsDone = false
+/// A section's heading: quiet caps, a heading to VoiceOver.
+struct TodoHeading: View {
+    let title: String
+    var first = true
 
     var body: some View {
-        let list = model.project
-        let fileName = (list?.path as NSString?)?.lastPathComponent ?? ProjectTodos.fileNames[0]
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 7) {
-                OctetIcon("folder", size: 14).foregroundStyle(Theme.textTertiary)
-                Text((root as NSString).lastPathComponent)
-                    .font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                Text(fileName).font(Theme.captionFont).foregroundStyle(Theme.textTertiary).lineLimit(1)
-                Spacer(minLength: 4)
-                if let list, !list.items.isEmpty {
-                    let progress = TodoProgress(done: list.done.count, total: list.items.count)
-                    Text(progress.summary)
-                        .font(Theme.captionFont.monospacedDigit())
-                        .foregroundStyle(progress.isComplete ? Color(hex: AgentStateColor.done) : Theme.textTertiary)
-                }
-            }
-            .help(list?.path ?? "Adding a todo makes \(fileName) in \(abbreviateHome(root))")
-            if let list, !list.items.isEmpty {
-                TodoProgressBar(progress: TodoProgress(done: list.done.count, total: list.items.count))
-                items(list.open)
-                if !list.done.isEmpty {
-                    DoneDisclosure(count: list.done.count, open: $showsDone)
-                    if showsDone { items(list.done) }
-                }
-            } else {
-                Text(list == nil
-                     ? "No \(fileName) in this project yet. Add a todo to start one; agents can read and tick it too."
-                     : "\(fileName) has no checkbox items yet (- [ ] like this).")
-                    .font(Theme.captionFont)
-                    .foregroundStyle(Theme.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            addField
-        }
-    }
-
-    /// A flat field with a hairline under it, not a box.
-    private var addField: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                OctetIcon("plus", size: 13).foregroundStyle(Theme.textTertiary)
-                TextField("Add a todo", text: $draft)
-                    .textFieldStyle(.plain)
-                    .font(Theme.uiFont)
-                    .onSubmit {
-                        let text = draft.trimmingCharacters(in: .whitespaces)
-                        guard !text.isEmpty else { return }
-                        model.add(text)
-                        draft = ""
-                    }
-            }
-            .padding(.horizontal, 6)
-            .frame(height: 28)
-            Rectangle().fill(Theme.divider).frame(height: 1)
-        }
-    }
-
-    /// Rows under their headings.
-    private func items(_ items: [ProjectTodoList.Item]) -> some View {
-        let agent = model.agentInFront
-        let agentName = agent.flatMap { AgentBrand.forAgent($0.agent)?.displayName ?? $0.agent }
-        let groups = ProjectTodoGrouping.groups(items)
-        return VStack(alignment: .leading, spacing: 1) {
-            ForEach(Array(groups.enumerated()), id: \.element.id) { index, group in
-                if let title = group.title {
-                    Text(title.uppercased())
-                        .font(Theme.headerFont).kerning(0.4)
-                        .foregroundStyle(Theme.textTertiary)
-                        .lineLimit(1)
-                        .padding(.top, index == 0 ? 0 : 8)
-                        .padding(.bottom, 2)
-                        .padding(.horizontal, 6)
-                }
-                ForEach(group.items) { item in
-                    ProjectTodoRow(item: item, agentName: agentName,
-                                   toggle: { model.set(item, to: item.status == .completed ? .pending : .completed) },
-                                   hand: { model.handToAgent(item) })
-                }
-            }
-        }
-    }
-}
-
-private struct ProjectTodoRow: View {
-    let item: ProjectTodoList.Item
-    /// The agent in the tab, when there is one to hand the item to.
-    let agentName: String?
-    let toggle: () -> Void
-    let hand: () -> Void
-    @State private var hovered = false
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Button(action: toggle) {
-                OctetIcon(icon, size: 13)
-                    .foregroundStyle(tint)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 }
-            .help(item.status == .completed ? "Mark as not done" : "Mark as done")
-            Text(item.text)
-                .font(item.status == .inProgress ? Theme.uiFontMedium : Theme.uiFont)
-                .foregroundStyle(item.status == .completed ? Theme.textTertiary
-                                 : item.status == .pending ? Theme.textSecondary : Theme.textPrimary)
-                .strikethrough(item.status == .completed, color: Theme.textTertiary)
-                .lineLimit(3)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-            if let agentName, item.status != .completed {
-                Button(action: hand) {
-                    OctetIcon("arrow.right", size: 12)
-                        .foregroundStyle(Theme.textSecondary)
-                        .frame(width: 18, height: 18)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .opacity(hovered ? 1 : 0)
-                .allowsHitTesting(hovered)
-                .help("Hand to \(agentName): it works on this and ticks it off in the file")
-            }
-        }
-        .padding(.horizontal, 6)
-        .padding(.vertical, item.status == .inProgress ? 6 : 4)
-        .background(RoundedRectangle(cornerRadius: Theme.controlRadius)
-            .fill(item.status == .inProgress ? Theme.accent.opacity(0.1) : hovered ? Theme.hover : Color.clear))
-        .contentShape(Rectangle())
-        .onHover { hovered = $0 }
-        .help(item.text)
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAction(named: item.status == .completed ? "Mark as not done" : "Mark as done", toggle)
-    }
-
-    private var icon: String {
-        switch item.status {
-        case .completed: "tool.todo.done"
-        case .inProgress: "tool.todo.active"
-        case .pending: "tool.todo.open"
-        }
-    }
-
-    private var tint: Color {
-        switch item.status {
-        case .completed: Color(hex: AgentStateColor.done)
-        case .inProgress: Theme.accent
-        case .pending: Theme.textTertiary
-        }
+        Text(title.uppercased())
+            .font(Theme.headerFont).kerning(0.4)
+            .foregroundStyle(Theme.textTertiary)
+            .lineLimit(1)
+            .padding(.top, first ? 0 : Theme.Space.md)
+            .padding(.bottom, Theme.Space.xxs)
+            .padding(.horizontal, Theme.Space.sm)
+            .accessibilityAddTraits(.isHeader)
     }
 }

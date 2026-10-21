@@ -126,7 +126,7 @@ struct MarketplaceNavRow: View {
                 .foregroundStyle(selected || hovered ? Theme.textPrimary : Theme.textTertiary)
                 .frame(width: 18)
                 Text(title)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(Theme.Text.transcriptMedium)
                     .foregroundStyle(selected || hovered ? Theme.textPrimary : Theme.textSecondary)
                     .lineLimit(1)
                 Spacer(minLength: 4)
@@ -306,7 +306,8 @@ struct MarketplaceBanner<Trailing: View>: View {
 }
 
 /// Stands in for a section with nothing to list: empty, failed, no
-/// matches, or no agent to manage it.
+/// matches, or no agent to manage it. Octet's shared empty state, set a
+/// little down the page as the catalog's sections are top-aligned.
 struct MarketplaceEmptyState: View {
     let symbol: String
     let title: String
@@ -315,29 +316,12 @@ struct MarketplaceEmptyState: View {
     var action: (() -> Void)?
 
     var body: some View {
-        VStack(spacing: 10) {
-            OctetIcon(symbol, size: 28)
-                .foregroundStyle(Theme.textTertiary)
-                .frame(width: 52, height: 52)
-            Text(title)
-                .font(Theme.interfaceFont(14, weight: .semibold))
-                .foregroundStyle(Theme.textPrimary)
-                .padding(.top, 4)
-            Text(message)
-                .font(Theme.interfaceFont(12))
-                .foregroundStyle(Theme.textSecondary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
-                .frame(maxWidth: 420)
+        OctetEmptyState(icon: symbol, title: title, message: message, fills: false) {
             if let actionTitle, let action {
                 OctetButton(title: actionTitle, compact: true, action: action)
-                    .padding(.top, 4)
             }
         }
-        .frame(maxWidth: .infinity)
-        .padding(.top, 80)
-        .padding(.bottom, 30)
+        .padding(.top, 56)
         .accessibilityElement(children: .contain)
     }
 }
@@ -440,7 +424,7 @@ struct SourceBadge: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 10, weight: .medium))
+            .font(Theme.interfaceFont(10, weight: .medium))
             .foregroundStyle(Theme.textSecondary)
             .lineLimit(1)
             .padding(.horizontal, 6)
@@ -484,14 +468,14 @@ struct MarketplaceAgentChip: View {
             }
             Text(host.displayName).font(Theme.captionFont).lineLimit(1)
             if warning {
-                OctetIcon("exclamationmark.triangle.fill", size: 10).foregroundStyle(.orange)
+                OctetIcon("exclamationmark.triangle.fill", size: 10).foregroundStyle(Theme.warning)
             }
         }
         .foregroundStyle(installed ? Theme.textPrimary : Theme.textTertiary)
         .padding(.horizontal, 7)
         .frame(height: 20)
-        .background(RoundedRectangle(cornerRadius: 6).fill(installed ? tint.opacity(disabled ? 0.08 : 0.18) : .clear))
-        .overlay(RoundedRectangle(cornerRadius: 6)
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.md).fill(installed ? tint.opacity(disabled ? 0.08 : 0.18) : .clear))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.md)
             .strokeBorder(installed ? tint.opacity(0.45) : Theme.border.opacity(0.8),
                           style: StrokeStyle(lineWidth: 1, dash: installed ? [] : [3, 2])))
         .fixedSize()
@@ -638,7 +622,7 @@ struct AgentStateRow<Controls: View>: View {
                 .foregroundStyle(Theme.textPrimary)
             Text(state)
                 .font(Theme.interfaceFont(12))
-                .foregroundStyle(warning ? Color.orange : Theme.textTertiary)
+                .foregroundStyle(warning ? Theme.warning : Theme.textTertiary)
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .textSelection(.enabled)

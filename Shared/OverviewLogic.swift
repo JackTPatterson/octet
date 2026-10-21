@@ -8,28 +8,127 @@ import Foundation
 
 // MARK: - Runtime rows
 
-/// Where a subagent, task or monitor stands, drawn as an icon as well as a
-/// colour so it never rests on colour alone.
-enum RuntimeState: Equatable {
-    case running, waiting, failed, done
-
-    /// Read from the word the row carries ("Running", "Needs input", "Failed", …).
-    /// Anything that isn't one of the others is under way: a timer, a
-    /// countdown, "Active", "Watching".
-    static func classify(detail: String) -> RuntimeState {
-        let text = detail.lowercased()
-        if text.contains("fail") || text.contains("error") || text.contains("exited") || text.contains("crash") {
-            return .failed
-        }
-        if text.contains("needs input") || text.contains("waiting") || text.contains("paused") {
-            return .waiting
-        }
-        if text.contains("finished") || text.contains("done") || text.contains("complete") {
-            return .done
-        }
-        return .running
+/// Where a subagent, task or monitor stands, in the shared vocabulary
+/// (`AgentState`), from real signals rather than the words a row shows: a
+/// tool call's error flag and result, the session server's status.
+enum RuntimeStates {
+    /// A subagent started by a conversation's Agent/Task call: failed when
+    /// the call errored, done once it returned, otherwise still working.
+    static func subagent(isError: Bool, hasResult: Bool) -> AgentState {
+        if isError { return .failed }
+        return hasResult ? .done : .working
     }
 
+    /// A subagent in a tab of its own, as the session server reports it.
+    /// Unknown is still a running process: it reads as working.
+    static func subagentTab(_ status: EngineAgentStatus) -> AgentState {
+        status == .unknown ? .working : AgentState(status)
+    }
+
+    /// A background shell command: running until its call errors. A
+    /// background call returns at once ("running in background"), so a
+    /// result alone doesn't mean it's finished.
+    static func backgroundTask(isError: Bool, exitCode: Int?) -> AgentState {
+        if isError { return .failed }
+        if let exitCode { return exitCode == 0 ? .done : .failed }
+        return .working
+    }
+
+    /// A background task's exit code, when its output says ("exit code 2",
+    /// "exited with code 2", "Exit code: 2").
+    static func exitCode(in output: String?) -> Int? {
+        guard let output else { return nil }
+        let pattern = #"(?i)exit(?:ed)?(?: with)? code:? *(-?\d+)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.matches(in: output, range: NSRange(output.startIndex..., in: output)).last,
+              let range = Range(match.range(at: 1), in: output) else { return nil }
+        return Int(output[range])
+    }
+
+    /// "1 subagent", "3 subagents".
+    static func subagentCount(_ count: Int) -> String {
+        count == 1 ? "1 subagent" : "\(count) subagents"
+    }
+}
+
+/// The panel's count line ("2 working · 1 needs you · 1 failed · 3 done"),
+/// from the rows' states.
+enum RuntimeCount {
+    struct Count: Equatable {
+        let count: Int
+        let label: String
+        /// The loudest state counted, for its colour.
+        let state: AgentState
+    }
+
+    /// The Agents tab's header: one part per bucket that has anything
+    /// ("1 needs you · 3 working · 2 done"), each the colour of its loudest
+    /// state. Idle isn't counted: a quiet agent isn't news.
+    static func buckets(_ states: [AgentState]) -> [(bucket: AgentState.Bucket, count: Int, label: String, state: AgentState)] {
+        [AgentState.Bucket.needsYou, .working, .done].compactMap { bucket in
+            let matched = states.filter { $0.bucket == bucket }
+            guard !matched.isEmpty else { return nil }
+            let label: String = switch bucket {
+            case .needsYou: matched.count == 1 ? "needs you" : "need you"
+            case .working: "working"
+            case .done: "done"
+            case .idle: "idle"
+            }
+            return (bucket, matched.count, label, AgentState.rollUp(matched))
+        }
+    }
+
+    static func counts(_ states: [AgentState]) -> [Count] {
+        let groups: [(label: (Int) -> String, match: (AgentState) -> Bool)] = [
+            ({ $0 == 1 ? "needs you" : "need you" }, { $0.needsYou || $0 == .planReady }),
+            ({ _ in "failed" }, { $0 == .failed }),
+            ({ _ in "working" }, { $0.bucket == .working }),
+            ({ _ in "done" }, { $0 == .done }),
+        ]
+        return groups.compactMap { group in
+            let matched = states.filter(group.match)
+            guard !matched.isEmpty else { return nil }
+            return Count(count: matched.count, label: group.label(matched.count), state: AgentState.rollUp(matched))
+        }
+    }
+}
+
+/// A plan's steps as a strip of up to ten segments (T3 Code's and Warp's
+/// task meter): one per step, or per group of steps in a longer plan.
+struct TodoMeter: Equatable {
+    let segments: [AgentTodo.Status]
+    let done: Int
+    let total: Int
+
+    static let maxSegments = 10
+
+    init?(_ statuses: [AgentTodo.Status]) {
+        guard !statuses.isEmpty else { return nil }
+        total = statuses.count
+        done = statuses.filter { $0 == .completed }.count
+        if statuses.count <= Self.maxSegments {
+            segments = statuses
+        } else {
+            // A longer plan: each segment stands for a run of steps, and
+            // reads as its least finished step.
+            let per = Double(statuses.count) / Double(Self.maxSegments)
+            segments = (0..<Self.maxSegments).map { index in
+                let slice = statuses[Int((Double(index) * per).rounded(.down))..<min(statuses.count, Int((Double(index + 1) * per).rounded(.down)))]
+                if slice.contains(.inProgress) { return .inProgress }
+                if slice.contains(.pending) { return .pending }
+                return .completed
+            }
+        }
+    }
+
+    /// "3/7".
+    var label: String { "\(done)/\(total)" }
+    /// "3 of 7 tasks complete".
+    var spoken: String { "\(done) of \(total) tasks complete" }
+}
+
+/// What a runtime row says beside its state.
+enum RuntimeText {
     /// The detail worth saying beside the icon: nothing for the generic words
     /// that the icon already says ("Running", "Active"), the word itself for
     /// a state the icon alone doesn't spell out, a countdown as it is.
@@ -39,21 +138,29 @@ enum RuntimeState: Equatable {
         return generic.contains(trimmed.lowercased()) ? nil : trimmed
     }
 
-    var title: String {
-        switch self {
-        case .running: "Running"
-        case .waiting: "Waiting"
-        case .failed: "Failed"
-        case .done: "Finished"
-        }
-    }
-
     /// The last non-empty line of some output, for a one-line preview.
     static func lastLine(of output: String?) -> String? {
         guard let output else { return nil }
         return output.split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .last { !$0.isEmpty }
+    }
+
+    /// How long ago, as Orca's dashboard says it: "just now", "4m", "2h", "3d".
+    static func ago(_ seconds: TimeInterval) -> String {
+        let total = max(0, Int(seconds))
+        if total < 60 { return "just now" }
+        if total < 3600 { return "\(total / 60)m" }
+        if total < 86_400 { return "\(total / 3600)h" }
+        return "\(total / 86_400)d"
+    }
+
+    /// The first non-empty line, for a result or an error on one line.
+    static func firstLine(of output: String?) -> String? {
+        guard let output else { return nil }
+        return output.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .first { !$0.isEmpty }
     }
 }
 

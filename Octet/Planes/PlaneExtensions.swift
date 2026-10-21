@@ -94,6 +94,9 @@ struct PlaneDeck<Content: View>: View {
     @ObservedObject var ui: UIState
     @ViewBuilder var content: (Plane) -> Content
     @State private var dragLengths: [CGFloat]?
+    /// The sizes while a divider is dragged, saved once it's let go rather
+    /// than on every move.
+    @State private var liveWeights: [String: CGFloat]?
 
     var body: some View {
         GeometryReader { geometry in
@@ -103,7 +106,7 @@ struct PlaneDeck<Content: View>: View {
             let minimum: CGFloat = horizontal ? 240 : 140
             let size = CGSize(width: split && horizontal ? max(geometry.size.width, CGFloat(ids.count) * minimum) : geometry.size.width,
                               height: split && !horizontal ? max(geometry.size.height, CGFloat(ids.count) * minimum) : geometry.size.height)
-            let lengths = PlaneSplitSizing.lengths(ids: ids, weights: ui.planeSplitWeights, extent: horizontal ? size.width : size.height, minimum: minimum)
+            let lengths = PlaneSplitSizing.lengths(ids: ids, weights: liveWeights ?? ui.planeSplitWeights, extent: horizontal ? size.width : size.height, minimum: minimum)
             ZStack {
                 ScrollView([.horizontal, .vertical]) {
                     ZStack(alignment: .topLeading) {
@@ -127,14 +130,30 @@ struct PlaneDeck<Content: View>: View {
                                     .frame(width: horizontal ? 5 : size.width, height: horizontal ? size.height : 5)
                                     .contentShape(Rectangle())
                                     .offset(x: horizontal ? boundary - 2.5 : 0, y: horizontal ? 0 : boundary - 2.5)
-                                    .gesture(DragGesture(minimumDistance: 1).onChanged { value in
-                                        if dragLengths == nil { dragLengths = lengths }
-                                        guard let original = dragLengths, original.count == ids.count else { return }
-                                        resize(ids, lengths: original, index: index, delta: horizontal ? value.translation.width : value.translation.height, minimum: minimum)
-                                    }.onEnded { _ in dragLengths = nil })
+                                    .onHover { inside in inside ? (horizontal ? NSCursor.resizeLeftRight : NSCursor.resizeUpDown).push() : NSCursor.pop() }
+                                    // Global: the divider itself moves as it's dragged, which a
+                                    // local measure would follow at half the speed.
+                                    .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global).onChanged { value in
+                                        if dragLengths == nil {
+                                            dragLengths = lengths
+                                            ResizeCancel.shared.begin { liveWeights = nil }
+                                        }
+                                        guard ResizeCancel.shared.isLive, let original = dragLengths, original.count == ids.count else { return }
+                                        liveWeights = resized(ids, lengths: original, index: index,
+                                                              delta: horizontal ? value.translation.width : value.translation.height, minimum: minimum)
+                                    }.onEnded { _ in
+                                        if ResizeCancel.shared.isLive, let liveWeights { ui.planeSplitWeights = liveWeights }
+                                        ResizeCancel.shared.end()
+                                        dragLengths = nil
+                                        liveWeights = nil
+                                    })
+                                    // Back to equal sizes, as a terminal's dividers do.
+                                    .onTapGesture(count: 2) { ui.planeSplitWeights = [:] }
+                                    .help("Drag to resize. Double-click to make them equal.")
                                     .accessibilityLabel("Resize split")
                                     .accessibilityAdjustableAction { direction in
-                                        resize(ids, lengths: lengths, index: index, delta: direction == .increment ? 20 : -20, minimum: minimum)
+                                        ui.planeSplitWeights = resized(ids, lengths: lengths, index: index,
+                                                                       delta: direction == .increment ? 20 : -20, minimum: minimum)
                                     }
                             }
                         }
@@ -143,8 +162,19 @@ struct PlaneDeck<Content: View>: View {
                 if ui.planes.isEmpty { PlaneLauncher(ui: ui) }
             }
         }
-        .onChange(of: ui.visiblePlaneIds) { _, _ in dragLengths = nil }
-        .onChange(of: ui.splitSideBySide) { _, _ in dragLengths = nil }
+        .onDisappear {
+            if dragLengths != nil { ResizeCancel.shared.end() }
+            dragLengths = nil
+            liveWeights = nil
+        }
+        .onChange(of: ui.visiblePlaneIds) { _, _ in
+            dragLengths = nil
+            liveWeights = nil
+        }
+        .onChange(of: ui.splitSideBySide) { _, _ in
+            dragLengths = nil
+            liveWeights = nil
+        }
     }
 
     private func header(_ plane: Plane) -> some View {
@@ -158,13 +188,13 @@ struct PlaneDeck<Content: View>: View {
         .padding(.horizontal, 8).frame(height: 28).background(Theme.chrome)
     }
 
-    private func resize(_ ids: [String], lengths: [CGFloat], index: Int, delta: CGFloat, minimum: CGFloat) {
+    private func resized(_ ids: [String], lengths: [CGFloat], index: Int, delta: CGFloat, minimum: CGFloat) -> [String: CGFloat] {
         let pair = lengths[index] + lengths[index + 1]
         let first = max(minimum, min(pair - minimum, lengths[index] + delta))
         var changed = lengths
         changed[index] = first
         changed[index + 1] = pair - first
-        ui.planeSplitWeights = Dictionary(uniqueKeysWithValues: zip(ids, changed.map { max(0, $0 - minimum) }))
+        return Dictionary(uniqueKeysWithValues: zip(ids, changed.map { max(0, $0 - minimum) }))
     }
 }
 
@@ -175,5 +205,87 @@ enum PlaneSplitSizing {
         let total = values.reduce(0, +)
         let extra = max(0, extent - CGFloat(ids.count) * minimum)
         return values.map { minimum + extra * (total > 0 ? $0 / total : 1 / CGFloat(ids.count)) }
+    }
+}
+
+// MARK: - Polling only while seen
+
+/// Planes stay alive behind the one in front, hidden by opacity, so
+/// `onDisappear` never fires for them. Anything that polls takes a
+/// `visible` flag from the host instead, and this adds the window: a
+/// miniaturised, covered or hidden window has nobody to refresh for.
+struct WindowOnScreenReader: NSViewRepresentable {
+    @Binding var onScreen: Bool
+
+    func makeNSView(context: Context) -> ReaderView {
+        let view = ReaderView()
+        view.report = { value in if onScreen != value { onScreen = value } }
+        return view
+    }
+
+    func updateNSView(_ view: ReaderView, context: Context) {
+        view.report = { value in if onScreen != value { onScreen = value } }
+    }
+
+    final class ReaderView: NSView {
+        var report: ((Bool) -> Void)?
+        private var observers: [NSObjectProtocol] = []
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            observers.forEach(NotificationCenter.default.removeObserver)
+            observers = []
+            guard let window else { return }
+            let center = NotificationCenter.default
+            observers.append(center.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.publish() }
+            })
+            for name in [NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification] {
+                observers.append(center.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.publish() }
+                })
+            }
+            for name in [NSApplication.didHideNotification, NSApplication.didUnhideNotification] {
+                observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.publish() }
+                })
+            }
+            publish()
+        }
+
+        /// Reported on the next turn: this runs during a layout pass, when
+        /// SwiftUI state mustn't change.
+        private func publish() {
+            guard let window else { return }
+            let value = window.isVisible && !window.isMiniaturized
+                && window.occlusionState.contains(.visible) && !NSApp.isHidden
+            DispatchQueue.main.async { [weak self] in self?.report?(value) }
+        }
+
+        deinit { observers.forEach(NotificationCenter.default.removeObserver) }
+    }
+}
+
+private struct PollWhileSeen: ViewModifier {
+    let visible: Bool
+    let start: @MainActor () -> Void
+    let stop: @MainActor () -> Void
+    @State private var onScreen = true
+
+    func body(content: Content) -> some View {
+        content
+            .background(WindowOnScreenReader(onScreen: $onScreen).frame(width: 0, height: 0))
+            .onChange(of: visible && onScreen, initial: true) { _, active in active ? start() : stop() }
+            .onDisappear { stop() }
+    }
+}
+
+extension View {
+    /// Calls `start` when the plane comes into view in a window on screen,
+    /// `stop` when either goes; in place of `onAppear`/`onDisappear`, which
+    /// a plane hidden behind another never gets.
+    func pollWhileSeen(_ visible: Bool, start: @escaping @MainActor () -> Void,
+                       stop: @escaping @MainActor () -> Void) -> some View {
+        modifier(PollWhileSeen(visible: visible, start: start, stop: stop))
     }
 }

@@ -72,6 +72,11 @@ struct AgentConversation: Equatable {
     /// What the latest model call read and wrote.
     var lastTokens: TokenUsage?
     var lastError: String?
+    /// The usage limit the last turn stopped on, as the agent reported it.
+    var limitHit: AgentLimitHit?
+    /// When Claude Code's rate-limit event said the window rejecting this
+    /// turn resets, for the limit the turn then ends on.
+    var limitResetsAt: Date?
     /// Plan allowance, when the account is a subscription.
     var usageWindows: [UsageWindow] = []
 
@@ -104,6 +109,7 @@ struct AgentConversation: Equatable {
         items.append(AgentItem(id: id, kind: .user(text), images: images, queued: queued))
         isRunning = true
         lastError = nil
+        limitHit = nil
     }
 
     /// Remembers where a rewind to user message `id` resumes.
@@ -152,6 +158,11 @@ struct AgentConversation: Equatable {
             guard let message = event["message"] as? [String: Any] else { return }
             if parent == nil, let uuid = event["uuid"] as? String { lastAssistantUUID = uuid }
             applyAssistant(message, parent: parent)
+            // Claude Code's own reply when the account is out of allowance.
+            if parent == nil, event["error"] as? String == "rate_limit" {
+                let text = (message["content"] as? [[String: Any]])?.compactMap { $0["text"] as? String }.joined(separator: "\n") ?? ""
+                limitHit = AgentLimitHit(message: text, resetsAt: limitResetsAt ?? AgentLimitText.resetDate(in: text))
+            }
         case "user":
             guard let message = event["message"] as? [String: Any] else { return }
             if event["isReplay"] as? Bool == true {
@@ -165,6 +176,9 @@ struct AgentConversation: Equatable {
             if let info = event["rate_limit_info"] as? [String: Any] {
                 let windows = AgentAccounts.claudeWindows(rateLimitInfo: info)
                 if !windows.isEmpty { usageWindows = windows }
+                if info["status"] as? String == "rejected" {
+                    limitResetsAt = (info["resetsAt"] as? Double).map(Date.init(timeIntervalSince1970:))
+                }
             }
         default:
             break
@@ -174,6 +188,12 @@ struct AgentConversation: Equatable {
     // MARK: - Event kinds
 
     private mutating func applySystem(_ event: [String: Any]) {
+        // Compaction, Claude Code's own or `/compact`: said as it starts
+        // and when the summary is in.
+        if event["subtype"] as? String == "status", event["status"] as? String == "compacting" {
+            return beginCompaction()
+        }
+        if event["subtype"] as? String == "compact_boundary" { return finishCompaction() }
         guard ["init", "session_start"].contains(event["subtype"] as? String ?? "") else { return }
         sessionId = event["session_id"] as? String ?? sessionId
         model = event["model"] as? String ?? model
@@ -190,6 +210,7 @@ struct AgentConversation: Equatable {
         case "agent_start":
             isRunning = true
             lastError = nil
+            limitHit = nil
         case "agent_settled":
             isRunning = false
             openBlocks = [:]
@@ -207,7 +228,7 @@ struct AgentConversation: Equatable {
                 if message["stopReason"] as? String == "error",
                    let error = message["errorMessage"] as? String, !error.isEmpty {
                     lastError = error
-                    items.append(AgentItem(id: UUID().uuidString, kind: .notice(error)))
+                    items.append(AgentItem(id: UUID().uuidString, kind: .notice(error), noticeStyle: .error))
                 }
             }
             openBlocks = [:]
@@ -218,7 +239,7 @@ struct AgentConversation: Equatable {
             let message = event["error"] as? String ?? "Pi rejected the request."
             lastError = message
             isRunning = false
-            items.append(AgentItem(id: UUID().uuidString, kind: .notice(message)))
+            items.append(AgentItem(id: UUID().uuidString, kind: .notice(message), noticeStyle: .error))
         default:
             break
         }
@@ -448,6 +469,7 @@ struct AgentConversation: Equatable {
                                images: images, remote: true))
         isRunning = true
         lastError = nil
+        limitHit = nil
     }
 
     private mutating func applyToolResults(_ message: [String: Any]) {
@@ -472,6 +494,14 @@ struct AgentConversation: Equatable {
             contextWindow = window
         }
         let subtype = event["subtype"] as? String ?? "success"
+        settleCompaction()
+        // A turn the rate limit rejected ends as an error with the limit's
+        // words; the event before it said which window and when it resets.
+        if limitHit == nil, event["is_error"] as? Bool == true, limitResetsAt != nil {
+            let text = event["result"] as? String ?? (event["errors"] as? [String])?.joined(separator: "\n") ?? ""
+            limitHit = AgentLimitHit(message: text, resetsAt: limitResetsAt)
+        }
+        limitResetsAt = nil
         switch subtype {
         case "success":
             break
@@ -480,7 +510,7 @@ struct AgentConversation: Equatable {
         default:
             let errors = (event["errors"] as? [String])?.joined(separator: "\n")
             lastError = errors ?? subtype.replacingOccurrences(of: "_", with: " ")
-            items.append(AgentItem(id: UUID().uuidString, kind: .notice(lastError ?? "Error")))
+            items.append(AgentItem(id: UUID().uuidString, kind: .notice(lastError ?? "Error"), noticeStyle: .error))
         }
     }
 
@@ -563,6 +593,7 @@ struct AgentConversation: Equatable {
         lhs.sessionId == rhs.sessionId && lhs.model == rhs.model && lhs.permissionMode == rhs.permissionMode
             && lhs.items == rhs.items && lhs.isRunning == rhs.isRunning && lhs.costUSD == rhs.costUSD
             && lhs.contextUsed == rhs.contextUsed && lhs.contextWindow == rhs.contextWindow && lhs.lastError == rhs.lastError
+            && lhs.limitHit == rhs.limitHit
     }
 }
 
@@ -667,6 +698,8 @@ struct AgentItem: Identifiable, Equatable {
     /// When the item began. Runtime uses this with a Monitor call's timeout
     /// to distinguish a live watch from historical tool output.
     var createdAt = Date()
+    /// For a notice: what kind it is, as its writer says.
+    var noticeStyle: AgentNoticeStyle = .plain
 }
 
 struct AgentToolCall: Equatable {

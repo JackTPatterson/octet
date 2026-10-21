@@ -5,12 +5,13 @@ import SwiftUI
 /// The kinds of plane the right panel can show. A plane is one tab in the
 /// panel's strip; the "+" picker adds them, after T3 Code's surfaces.
 enum PlaneKind: String, Codable, CaseIterable, Identifiable {
-    case overview, diff, files, git, pullRequest, pullRequests, terminal, browser, device, ci, containers, tickets, containerLogs
+    case overview, todos, diff, files, git, pullRequest, pullRequests, terminal, browser, device, ci, containers, tickets, containerLogs
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .overview: "Overview"
+        case .overview: "Agents"
+        case .todos: "TODO"
         case .diff: "Diff"
         case .files: "Files"
         case .git: "Git"
@@ -29,11 +30,12 @@ enum PlaneKind: String, Codable, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .overview: "list.bullet.rectangle"
+        case .todos: "checklist"
         case .diff: "doc.diff"
         case .files: "folder"
         case .git: "branch"
         case .pullRequest: "pull.request"
-        case .pullRequests: "list"
+        case .pullRequests: "pull.request"
         case .terminal: "terminal"
         case .browser: "safari"
         case .device: "iphone"
@@ -48,6 +50,7 @@ enum PlaneKind: String, Codable, CaseIterable, Identifiable {
     var key: Character {
         switch self {
         case .overview: "o"
+        case .todos: "u"
         case .diff: "d"
         case .files: "f"
         case .git: "g"
@@ -65,7 +68,8 @@ enum PlaneKind: String, Codable, CaseIterable, Identifiable {
 
     var detail: String {
         switch self {
-        case .overview: "Agents, tasks, todos and plugins for the tab in front"
+        case .overview: "Agents, subagents and background work in this workspace"
+        case .todos: "Agent plans and the project TODO list"
         case .diff: "What changed, file by file, with notes for the agent"
         case .files: "The project's files, to open beside the terminal"
         case .git: "Changes, commits and worktrees"
@@ -81,9 +85,9 @@ enum PlaneKind: String, Codable, CaseIterable, Identifiable {
         }
     }
 
-    static var addableCases: [PlaneKind] { allCases.filter { $0 != .containerLogs } }
+    static var addableCases: [PlaneKind] { allCases.filter { $0 != .containerLogs && $0 != .pullRequest } }
 
-    static let starterKinds: [PlaneKind] = [.overview, .diff, .files, .git, .pullRequest, .pullRequests, .terminal, .browser, .device]
+    static let starterKinds: [PlaneKind] = [.overview, .todos, .diff, .files, .git, .pullRequests, .terminal, .browser, .device]
 
     /// Kinds that are one per panel: adding another shows the one there.
     var single: Bool { self != .pullRequest && self != .device && self != .terminal && self != .containerLogs }
@@ -103,7 +107,8 @@ struct Plane: Codable, Identifiable, Equatable {
 
     static func make(_ kind: PlaneKind, number: Int? = nil, deviceId: String? = nil) -> Plane {
         switch kind {
-        case .pullRequest: Plane(id: "pr:" + (number.map(String.init) ?? "branch"), kind: kind, number: number)
+        case .pullRequest: Plane(id: "pullRequests", kind: .pullRequests, number: number ?? 0)
+        case .pullRequests: Plane(id: "pullRequests", kind: kind, number: number)
         // Several can be open, one per device; each its own tab.
         case .device: Plane(id: "device:" + UUID().uuidString, kind: kind, deviceId: deviceId)
         case .terminal: Plane(id: "terminal:" + UUID().uuidString, kind: kind)
@@ -111,7 +116,22 @@ struct Plane: Codable, Identifiable, Equatable {
         }
     }
 
-    static let defaults: [Plane] = [.make(.overview), .make(.git)]
+    static func migratedID(_ id: String) -> String { id.hasPrefix("pr:") ? "pullRequests" : id }
+
+    static func consolidated(_ planes: [Plane], active: String?) -> [Plane] {
+        let selected = planes.first { $0.id == active && ($0.kind == .pullRequest || $0.kind == .pullRequests) }
+        var seen = Set<String>()
+        return planes.compactMap { old in
+            var plane = old
+            if old.kind == .pullRequest || old.kind == .pullRequests {
+                let chosen = selected ?? old
+                plane = .make(chosen.kind, number: chosen.number)
+            }
+            return seen.insert(plane.id).inserted ? plane : nil
+        }
+    }
+
+    static let defaults: [Plane] = [.make(.overview), .make(.todos), .make(.git)]
 }
 
 /// What a plane shows on its tab beyond its kind: a pull request's number
@@ -126,159 +146,142 @@ struct PlaneBadge: Equatable {
 
 // MARK: - Strip
 
-/// The panel's strip: a tab per plane, "+" to add one, then the panel's own
-/// controls: maximize, the terminal drawer, and hide.
+/// The panel's header: the plane in front's name, then the panel's own
+/// controls. The planes themselves are tabs down the rail on its outer edge.
+/// The project's actions and the drawer and panel toggles are the tab bar's,
+/// beside it: not twice.
 struct PlaneStrip: View {
+    @ObservedObject var ui: UIState
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(ui.activePlane.map { ui.planeBadges[$0.id]?.title ?? $0.kind.title } ?? "Panels")
+                .font(Theme.uiFontMedium)
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(1)
+                .padding(.leading, 12)
+            Spacer(minLength: 4)
+            PlaneSplitMenu(ui: ui)
+            OctetIconButton(icon: ui.sidePanelMaximized ? "arrow.down.right.and.arrow.up.left"
+                                : "arrow.up.left.and.arrow.down.right",
+                            help: ui.sidePanelMaximized ? "Restore panel size" : "Maximize panel") {
+                MotionPreferences.shared.perform(.sidebar) { ui.sidePanelMaximized.toggle() }
+            }
+        }
+        .padding(.trailing, 8)
+        .frame(height: Theme.tabBarHeight)
+    }
+}
+
+/// The open planes as a rail of icon tabs on the panel's outer edge, "+" at
+/// its foot. Switching leaves the header and the plane's scroll where they are.
+struct PlaneRail: View {
     @ObservedObject var ui: UIState
     @State private var adding = false
     @Namespace private var selection
 
     var body: some View {
-        HStack(spacing: 4) {
+        VStack(spacing: 0) {
             ScrollViewReader { proxy in
-            ScrollView(.horizontal) {
-                HStack(spacing: 0) {
-                    ForEach(ui.planes) { plane in
-                        PlaneChip(plane: plane, badge: ui.planeBadges[plane.id],
-                                  active: ui.activePlane?.id == plane.id, ui: ui, selection: selection)
-                            .id(plane.id)
-                    }
-                    // The tab bar's own plus.
-                    Button { adding.toggle() } label: {
-                        OctetIcon("plus", size: 15)
-                            .foregroundStyle(Theme.textSecondary)
-                            .frame(width: 30, height: 24)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Add a plane")
-                    .accessibilityLabel("Add a plane")
-                        .popover(isPresented: $adding, arrowEdge: .bottom) {
-                            PlanePicker(ui: ui) { adding = false }
-                                .padding(6)
-                                .frame(width: 280)
-                                .background(Theme.chrome)
+                ScrollView(.vertical) {
+                    VStack(spacing: 2) {
+                        ForEach(ui.planes) { plane in
+                            PlaneRailItem(plane: plane, badge: ui.planeBadges[plane.id],
+                                          active: ui.activePlane?.id == plane.id, ui: ui, selection: selection)
+                                .id(plane.id)
                         }
+                    }
+                    .padding(.vertical, 6)
                 }
-                .frame(maxHeight: .infinity)
-            }
-            .scrollIndicators(.never)
-            // The plane in front is always in view, as a new one is added.
-            .onChange(of: ui.activePlane?.id, initial: true) { _, id in
-                guard let id else { return }
-                DispatchQueue.main.async {
-                    MotionPreferences.shared.perform(.sidebar) { proxy.scrollTo(id, anchor: .trailing) }
-                }
-            }
-            }
-            Spacer(minLength: 0)
-            PlaneSplitMenu(ui: ui)
-            if ui.sidePanelVisible {
-                OctetIconButton(icon: ui.sidePanelMaximized ? "arrow.down.right.and.arrow.up.left"
-                                    : "arrow.up.left.and.arrow.down.right",
-                                help: ui.sidePanelMaximized ? "Restore panel size" : "Maximize panel") {
-                    MotionPreferences.shared.perform(.sidebar) { ui.sidePanelMaximized.toggle() }
+                .scrollIndicators(.never)
+                // The plane in front is always in view, as a new one is added.
+                .onChange(of: ui.activePlane?.id, initial: true) { _, id in
+                    guard let id else { return }
+                    DispatchQueue.main.async {
+                        MotionPreferences.shared.perform(.sidebar) { proxy.scrollTo(id, anchor: .center) }
+                    }
                 }
             }
-            OctetIconButton(icon: "panel.bottom", help: OctetShortcut.terminalDrawer.help("Toggle terminal drawer"),
-                            active: ui.terminalDrawerVisible) {
-                MotionPreferences.shared.perform(.sidebar) { ui.terminalDrawerVisible.toggle() }
-            }
-            OctetIconButton(icon: "sidebar.right", help: OctetShortcut.togglePanel.help("Hide the panel"), active: true) {
-                ui.sidePanelVisible = false
-            }
+            Rectangle().fill(Theme.divider).frame(height: 1)
+            OctetIconButton(icon: "plus", help: "Add a plane", compact: true) { adding.toggle() }
+                .frame(width: 42, height: 40)
+                .accessibilityLabel("Add a plane")
+                .popover(isPresented: $adding, arrowEdge: .leading) {
+                    PlanePicker(ui: ui) { adding = false }
+                        .padding(6)
+                        .frame(width: 280)
+                        .background(Theme.chrome)
+                }
         }
-        .padding(.trailing, 6)
-        .frame(height: Theme.tabBarHeight)
+        .frame(width: 44)
+        .background(Theme.chrome)
     }
 }
 
-/// One plane's tab, in Octet's own tab style like the tab bar's: square
-/// edges, the plane in front on the terminal's background with a line along
-/// its top, dividers between, and a close button at the right.
-private struct PlaneChip: View {
+/// One plane's tab on the rail: its icon, the plane in front on a raised
+/// square with a mark along its outer side.
+private struct PlaneRailItem: View {
     let plane: Plane
     let badge: PlaneBadge?
     let active: Bool
     @ObservedObject var ui: UIState
     let selection: Namespace.ID
     @State private var hovered = false
-    @State private var closeHovered = false
     @ObservedObject private var motion = MotionPreferences.shared
 
     var body: some View {
-        HStack(spacing: 6) {
-            OctetIcon(badge?.icon ?? plane.kind.icon, size: 12)
-                .foregroundStyle(badge?.tint ?? (active ? Theme.textPrimary : Theme.textSecondary))
-            Text(title)
-                .font(Theme.uiFont)
-                .fontWeight(active ? .medium : .regular)
-                .foregroundStyle(active ? Theme.textPrimary : Theme.textSecondary)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(maxWidth: 160, alignment: .leading)
-            Button { ui.closePlane(plane.id) } label: {
-                OctetIcon("xmark", size: 15)
-                    .foregroundStyle(closeHovered ? Theme.textPrimary : Theme.textSecondary)
-                    .frame(width: 18, height: 18)
-                    .background(closeHovered ? Theme.cardSelected : Color.clear)
-                    .clipShape(RoundedRectangle(cornerRadius: 3))
-            }
-            .buttonStyle(.plain)
-            .onHover { closeHovered = $0 }
-            .opacity(hovered || active ? 1 : 0)
-            .help("Close \(title)")
-            .accessibilityLabel("Close \(title)")
-        }
-        .padding(.leading, 12)
-        .padding(.trailing, 6)
-        .frame(maxHeight: .infinity)
-        .background {
-            ZStack {
-                if hovered && !active { Theme.hover }
-                // One selection surface slides between the tabs.
-                if active {
-                    ZStack(alignment: .top) {
-                        Theme.terminalBackground
-                        Rectangle().fill(Color.white.opacity(0.9)).frame(height: 2)
+        OctetIcon(badge?.icon ?? plane.kind.icon, size: 17)
+            .foregroundStyle(badge?.tint ?? (active ? Theme.textPrimary : Theme.textSecondary))
+            .frame(width: 34, height: 34)
+            .background {
+                ZStack {
+                    if hovered && !active {
+                        RoundedRectangle(cornerRadius: Theme.Radius.md).fill(Theme.hover)
                     }
-                    .matchedGeometryEffect(id: "selectedPlane", in: selection)
+                    // One selection surface slides between the tabs.
+                    if active {
+                        RoundedRectangle(cornerRadius: Theme.Radius.md).fill(Theme.cardSelected)
+                            .overlay(alignment: .trailing) {
+                                Capsule().fill(Theme.selectionMark).frame(width: 2, height: 16).offset(x: 5)
+                            }
+                            .matchedGeometryEffect(id: "selectedPlane", in: selection)
+                    }
                 }
+                .animation(motion.animation(.tabs, .easeOut(duration: 0.12)), value: hovered)
             }
-            .animation(motion.animation(.tabs, .easeOut(duration: 0.12)), value: hovered)
-        }
-        .overlay(alignment: .trailing) { Rectangle().fill(Theme.divider).frame(width: 1) }
-        .overlay { MiddleClickCatcher { ui.closePlane(plane.id) } }
-        .contentShape(Rectangle())
-        .onTapGesture { MotionPreferences.shared.perform(.tabs) { ui.activePlaneId = plane.id } }
-        .onHover { hovered = $0 }
-        .help(badge?.help ?? title)
-        .contextMenu {
-            Button("Close") { ui.closePlane(plane.id) }
-            Button("Close Others") { ui.closePlanes { $0.id != plane.id } }
-                .disabled(ui.planes.count < 2)
-            Button("Close to the Right") {
-                let after = ui.planes.drop { $0.id != plane.id }.dropFirst().map(\.id)
-                ui.closePlanes { after.contains($0.id) }
-            }
-            .disabled(ui.planes.last?.id == plane.id)
-            Divider()
-            Button("Close All") { ui.closePlanes { _ in true } }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(title)
-        .accessibilityAddTraits(active ? [.isButton, .isSelected] : .isButton)
-        .accessibilityAction { ui.activePlaneId = plane.id }
-        .onDrag { NSItemProvider(object: plane.id as NSString) }
-        .onDrop(of: [.text], isTargeted: nil) { providers in
-            _ = providers.first?.loadObject(ofClass: NSString.self) { object, _ in
-                guard let moved = object as? String else { return }
-                DispatchQueue.main.async {
-                    MotionPreferences.shared.perform(.tabs) { ui.movePlane(moved, before: plane.id) }
+            .frame(width: 44, height: 38)
+            .overlay { MiddleClickCatcher { ui.closePlane(plane.id) } }
+            .contentShape(Rectangle())
+            .onTapGesture { MotionPreferences.shared.perform(.tabs) { ui.activePlaneId = plane.id } }
+            .onHover { hovered = $0 }
+            .help(badge?.help ?? title)
+            .contextMenu {
+                Button("Close \(title)") { ui.closePlane(plane.id) }
+                Button("Close Others") { ui.closePlanes { $0.id != plane.id } }
+                    .disabled(ui.planes.count < 2)
+                Button("Close Below") {
+                    let after = ui.planes.drop { $0.id != plane.id }.dropFirst().map(\.id)
+                    ui.closePlanes { after.contains($0.id) }
                 }
+                .disabled(ui.planes.last?.id == plane.id)
+                Divider()
+                Button("Close All") { ui.closePlanes { _ in true } }
             }
-            return true
-        }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(title)
+            .accessibilityAddTraits(active ? [.isButton, .isSelected] : .isButton)
+            .accessibilityAction { ui.activePlaneId = plane.id }
+            // A type of Octet's own, so a panel tab dropped on a terminal isn't
+            // typed into it.
+            .octetDragSource(.plane, began: {
+                PlaneTabDrag.dragged = plane.id
+                return true
+            }, ended: { _ in PlaneTabDrag.dragged = nil })
+            .onDrop(of: [OctetDragKind.plane.type], isTargeted: nil) { _ in
+                guard let moved = PlaneTabDrag.dragged else { return false }
+                MotionPreferences.shared.perform(.tabs) { ui.movePlane(moved, before: plane.id) }
+                return true
+            }
     }
 
     private var title: String {
@@ -347,7 +350,7 @@ struct PlanePicker: View {
         }
         .padding(.horizontal, 10)
         .frame(height: large ? 40 : 30)
-        .background(RoundedRectangle(cornerRadius: 6).fill(highlighted == kind ? Theme.hover : .clear))
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.md).fill(highlighted == kind ? Theme.hover : .clear))
         .contentShape(Rectangle())
         .onHover { if $0 { highlighted = kind } }
         .onTapGesture { add(kind) }
@@ -382,7 +385,7 @@ struct PlaneLauncher: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Open a plane")
-                .font(.system(size: 14, weight: .medium))
+                .font(Theme.interfaceFont(14, weight: .medium))
                 .foregroundStyle(Theme.textPrimary)
                 .padding(.horizontal, 10)
             ScrollView {
@@ -400,17 +403,8 @@ struct PlaneLauncher: View {
     }
 }
 
-/// Stands in for a plane whose view isn't in this build.
-struct PlaneUnavailable: View {
-    let kind: PlaneKind
-
-    var body: some View {
-        VStack(spacing: 8) {
-            OctetIcon(kind.icon, size: 22).foregroundStyle(Theme.textTertiary)
-            Text("\(kind.title) isn't available yet.")
-                .font(Theme.captionFont)
-                .foregroundStyle(Theme.textTertiary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
+/// The side-panel tab being dragged along its rail.
+@MainActor
+enum PlaneTabDrag {
+    static var dragged: String?
 }

@@ -7,10 +7,17 @@ struct PullRequestListPlane: View {
     let open: (Int) -> Void
     /// Opens the Pull Requests page; nil hides its button.
     let openFullPage: (() -> Void)?
+    /// Whether the plane is in front; it polls gh only then.
+    let visible: Bool
+    /// Shows the PR for the branch checked out; nil hides its button.
+    let currentBranch: (() -> Void)?
     @StateObject private var model: PullRequestListModel
 
-    init(directory: String, openFullPage: (() -> Void)? = nil, open: @escaping (Int) -> Void) {
+    init(directory: String, visible: Bool = true, openFullPage: (() -> Void)? = nil,
+         currentBranch: (() -> Void)? = nil, open: @escaping (Int) -> Void) {
         self.directory = directory
+        self.visible = visible
+        self.currentBranch = currentBranch
         self.open = open
         self.openFullPage = openFullPage
         _model = StateObject(wrappedValue: PullRequestListModel(directory: directory))
@@ -23,8 +30,7 @@ struct PullRequestListPlane: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Theme.sidebar)
-        .onAppear { model.start() }
-        .onDisappear { model.stop() }
+        .pollWhileSeen(visible, start: model.start, stop: model.stop)
     }
 
     private var header: some View {
@@ -38,6 +44,10 @@ struct PullRequestListPlane: View {
                     .foregroundStyle(Theme.textTertiary)
             }
             Spacer()
+            if let currentBranch {
+                OctetButton(title: "Current Branch", icon: "branch", kind: .ghost, compact: true, action: currentBranch)
+                    .help("The pull request for the branch checked out here")
+            }
             if let openFullPage {
                 OctetIconButton(icon: "arrow.up.left.and.arrow.down.right", help: "Open Full Page", action: openFullPage)
             }
@@ -61,7 +71,7 @@ struct PullRequestListPlane: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 1) {
                         ForEach(items) { item in
-                            PullRequestListRow(item: item) { open(item.number) }
+                            PullRequestRow(item) { open(item.number) }
                         }
                     }
                     .padding(.horizontal, 8)
@@ -92,51 +102,102 @@ struct PullRequestListPlane: View {
     }
 }
 
-/// One open PR: state, title, then number, author, age, checks and size.
-private struct PullRequestListRow: View {
-    let item: PullRequestSummary
+/// One pull request in a list, the same in the panel's list and the Pull
+/// Requests page: state, number and title, then who opened it, the
+/// repository when the list spans several, its age, checks and size.
+struct PullRequestRow: View {
+    let tone: PullRequestTone
+    let number: Int
+    let title: String
+    let author: String
+    /// "owner/name", for a list across repositories.
+    var repository: String?
+    let updatedAt: Date?
+    let isDraft: Bool
+    var checks: PullRequestChecksSummary?
+    var additions: Int?
+    var deletions: Int?
+    var url: URL?
+    var selected = false
     let action: () -> Void
     @State private var hovered = false
 
     var body: some View {
         Button(action: action) {
-            HStack(alignment: .top, spacing: 8) {
-                OctetIcon(item.tone.icon, size: 14)
-                    .foregroundStyle(item.tone.color)
-                    .padding(.top, 1)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(item.title)
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 6) {
+                    OctetIcon(tone.icon, size: 13)
+                        .foregroundStyle(tone.color)
+                    Text(verbatim: "#\(number)")
+                        .font(Theme.uiFont.monospacedDigit())
+                        .foregroundStyle(Theme.textTertiary)
+                    Text(title)
                         .font(Theme.uiFont)
                         .foregroundStyle(Theme.textPrimary)
                         .lineLimit(1)
                         .truncationMode(.tail)
-                    HStack(spacing: 6) {
-                        Text(verbatim: "#\(item.number) · \(item.author) · updated \(PullRequestJSON.ago(item.updatedAt))")
-                            .font(Theme.captionFont)
-                            .foregroundStyle(Theme.textTertiary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                        Spacer(minLength: 4)
-                        if item.checks.tone != .none {
-                            OctetIcon(PullRequestStyle.checksIcon(item.checks.tone), size: 11)
-                                .foregroundStyle(PullRequestStyle.checksColor(item.checks.tone))
-                                .help(item.checks.text)
-                        }
-                        DiffStatLabel(added: item.additions, removed: item.deletions)
+                    Spacer(minLength: 6)
+                    if let checks, checks.tone != .none {
+                        OctetIcon(PullRequestStyle.checksIcon(checks.tone), size: 12)
+                            .foregroundStyle(PullRequestStyle.checksColor(checks.tone))
+                            .help(checks.text)
+                    }
+                    if let additions, let deletions {
+                        DiffStatLabel(added: additions, removed: deletions)
+                            .font(Theme.captionFont.monospacedDigit())
                             .fixedSize()
                     }
                 }
+                HStack(spacing: 6) {
+                    GitHubAvatar(login: author, size: 14)
+                    Text(author)
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
+                    if let repository {
+                        Text(repository)
+                            .foregroundStyle(Theme.textTertiary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    Spacer(minLength: 6)
+                    Text(PullRequestJSON.ago(updatedAt))
+                        .foregroundStyle(Theme.textTertiary)
+                        .lineLimit(1)
+                        .fixedSize()
+                }
+                .font(Theme.captionFont)
+                .padding(.leading, 19)
             }
             .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 6).fill(hovered ? Theme.hover : .clear))
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: Theme.Radius.lg)
+                .fill(selected ? Theme.cardSelected : hovered ? Theme.hover : .clear))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { hovered = $0 }
-        .help(item.isDraft ? "Draft: \(item.title)" : item.title)
-        .accessibilityLabel("#\(item.number) \(item.title) by \(item.author)\(item.isDraft ? ", draft" : "")")
+        .help(isDraft ? "Draft: \(title)" : title)
+        .accessibilityLabel("\(repository.map { $0 + " " } ?? "")#\(number) \(title) by \(author)\(isDraft ? ", draft" : "")")
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+        .contextMenu {
+            if let url {
+                Button("Open on GitHub") { NSWorkspace.shared.open(url) }
+                Button("Copy Link") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(url.absoluteString, forType: .string)
+                }
+            }
+        }
+    }
+}
+
+extension PullRequestRow {
+    /// A row of the panel's list, from `gh pr list`.
+    init(_ item: PullRequestSummary, action: @escaping () -> Void) {
+        self.init(tone: item.tone, number: item.number, title: item.title, author: item.author,
+                  updatedAt: item.updatedAt, isDraft: item.isDraft, checks: item.checks,
+                  additions: item.additions, deletions: item.deletions, action: action)
     }
 }
 

@@ -170,7 +170,7 @@ private struct DeviceRow: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
-        .background(RoundedRectangle(cornerRadius: 6).fill(hovered ? Theme.hover : .clear))
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.md).fill(hovered ? Theme.hover : .clear))
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
         .onTapGesture(count: 2) { if !pending { open() } }
@@ -343,8 +343,8 @@ private struct DeviceLiveView: View {
             OctetButton(title: button, compact: true, action: action)
         }
         .padding(8)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Theme.chrome))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.border, lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.lg).fill(Theme.chrome))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.lg).strokeBorder(Theme.border, lineWidth: 1))
     }
 }
 
@@ -389,6 +389,7 @@ private struct DeviceControlsRail: View {
             .menuIndicator(.hidden)
             .fixedSize()
             .help("Text Size")
+            .accessibilityLabel("Text Size")
             OctetIconButton(icon: "device.tools", help: "Device Tools", active: model.toolsOpen, large: true) {
                 MotionPreferences.shared.perform(.sidebar) { model.toolsOpen.toggle() }
             }
@@ -418,6 +419,7 @@ private struct DeviceControlsRail: View {
             .menuIndicator(.hidden)
             .fixedSize()
             .help("More")
+            .accessibilityLabel("More")
         }
         .padding(.vertical, 8)
         .frame(width: 44)

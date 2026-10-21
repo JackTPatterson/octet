@@ -4,7 +4,7 @@ import SwiftUI
 /// a chevron, and folds away to just the header; which are folded is kept
 /// across launches. Plugins' panels are sections too, by plugin id.
 enum SidePanelSection: Hashable {
-    case files, todos, agents, tasks, monitors, shells, setup
+    case files, todos, agents, tasks, monitors, shells, setup, activity, workspaceTools, folder
     case plugin(String)
 
     var title: String {
@@ -16,6 +16,9 @@ enum SidePanelSection: Hashable {
         case .monitors: "Monitors"
         case .shells: "Shells"
         case .setup: "Agent Setup"
+        case .activity: "Background activity"
+        case .workspaceTools: "Workspace tools"
+        case .folder: "Also in this folder"
         case .plugin(let id): id
         }
     }
@@ -30,6 +33,9 @@ enum SidePanelSection: Hashable {
         case .monitors: "monitors"
         case .shells: "shells"
         case .setup: "setup"
+        case .activity: "activity"
+        case .workspaceTools: "workspace-tools"
+        case .folder: "folder"
         case .plugin(let id): "plugin:\(id)"
         }
     }
@@ -37,7 +43,8 @@ enum SidePanelSection: Hashable {
 
 extension SidePanelSection {
     /// Agent Setup starts as one summary line; the rest open until folded.
-    var opensByDefault: Bool { self != .setup }
+    /// Also in this folder starts closed: its agents only share the folder.
+    var opensByDefault: Bool { self != .setup && self != .activity && self != .workspaceTools && self != .folder }
 }
 
 /// A section's header, with the content below it while it's open. Every
@@ -183,11 +190,12 @@ struct SidePanelMore: View {
     }
 }
 
-/// The right panel: a strip of planes (tabs added with "+", after T3 Code's
-/// surfaces) over the one in front. Overview is everything about the tab in
-/// front as sections down one page; Git is the Git panel; pull requests come
-/// from GitHub. Every plane stays alive behind the one showing, so a pull
-/// request keeps what it loaded and where it was scrolled.
+/// The right panel: the plane in front under its header, and a rail of the
+/// open planes (tabs added with "+", after T3 Code's surfaces) on its outer
+/// edge. Overview is everything about the tab in front as sections down one
+/// page; Git is the Git panel; pull requests come from GitHub. Every plane
+/// stays alive behind the one showing, so a pull request keeps what it
+/// loaded and where it was scrolled.
 struct SidePanel: View {
     @EnvironmentObject private var window: WindowContext
     @ObservedObject var store: SessionStore
@@ -198,12 +206,16 @@ struct SidePanel: View {
     static let width: CGFloat = 420
 
     var body: some View {
-        VStack(spacing: 0) {
-            PlaneStrip(ui: ui)
-            Rectangle().fill(Theme.divider).frame(height: 1)
-            PlaneDeck(ui: ui) { plane in planeView(plane) }
-                .id(ui.panelWorkspaceID)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        HStack(spacing: 0) {
+            VStack(spacing: 0) {
+                PlaneStrip(ui: ui)
+                Rectangle().fill(Theme.divider).frame(height: 1)
+                PlaneDeck(ui: ui) { plane in planeView(plane) }
+                    .id(ui.panelWorkspaceID)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            Rectangle().fill(Theme.divider).frame(width: 1)
+            PlaneRail(ui: ui)
         }
         .background(Theme.sidebar)
         .environmentObject(ui)
@@ -217,7 +229,11 @@ struct SidePanel: View {
     private func planeView(_ plane: Plane) -> some View {
         switch plane.kind {
         case .overview: overview
-        case .ci: OperationsPlane(kind: plane.kind, directory: planeDirectory)
+        case .todos:
+            ScrollView { TodoPanel(model: window.todos, ui: ui, visible: shows(plane)).padding(.vertical, 4) }
+                .scrollIndicators(.hidden)
+                .onAppear { ui.setPanelSection(.todos, open: true) }
+        case .ci: OperationsPlane(kind: plane.kind, directory: planeDirectory, visible: shows(plane))
         case .containers:
             DockerPlane(ui: ui, directory: planeDirectory, visible: ui.sidePanelVisible && ui.visiblePlaneIds.contains(plane.id))
         case .containerLogs:
@@ -228,7 +244,7 @@ struct SidePanel: View {
             } else {
                 PlaneMessage(icon: "tool.read", title: "No container selected", detail: "Open logs from the Containers pane.")
             }
-        case .tickets: TicketsPlane(directory: planeDirectory)
+        case .tickets: TicketsPlane(directory: planeDirectory, visible: shows(plane))
         case .git:
             // The panel scrolls itself, so its header and commit box stay put.
             GitPanel(model: window.git, ui: ui)
@@ -236,28 +252,29 @@ struct SidePanel: View {
         case .files: FilesPlane(ui: ui, directory: planeDirectory)
         case .browser: BrowserPlane(ui: ui, directory: planeDirectory)
         case .terminal: TerminalPlane(ui: ui, planeId: plane.id, directory: planeDirectory)
-        case .pullRequest:
+        case .pullRequest, .pullRequests:
+            // One plane, two views: a PR (by number, or the branch's own
+            // under the legacy `.pullRequest` kind) or the list of them.
             if let directory = planeDirectory {
-                PullRequestPlane(directory: directory, number: plane.number,
-                                 askAgent: { askAgent($0, in: directory) },
-                                 onSummary: { number, tone, title in
-                                     let badge = PlaneBadge(title: "#\(number)", tint: tone.color,
-                                                            help: "#\(number) \(title)", icon: tone.icon)
-                                     if ui.planeBadges[plane.id] != badge { ui.planeBadges[plane.id] = badge }
-                                 })
-            } else {
-                PlaneMessage(icon: "pull.request", title: "No project in front",
-                             detail: "Open a tab in a repository to see its pull request.")
-            }
-        case .pullRequests:
-            if let directory = planeDirectory {
-                PullRequestListPlane(directory: directory, openFullPage: {
-                    if window.ui.pullRequests == nil { window.togglePullRequests(scope: .project) }
-                }) { number in
-                    MotionPreferences.shared.perform(.sidebar) { ui.showPlane(.pullRequest, number: number) }
+                if plane.number != nil || plane.kind == .pullRequest {
+                    PullRequestPlane(directory: directory, number: plane.number == 0 ? nil : plane.number,
+                        visible: shows(plane),
+                        back: { ui.showPlane(.pullRequests) },
+                        askAgent: { askAgent($0, in: directory) },
+                        onSummary: { number, tone, title in
+                            let badge = PlaneBadge(title: "#\(number)", tint: tone.color,
+                                help: "#\(number) \(title)", icon: tone.icon)
+                            if ui.planeBadges[plane.id] != badge { ui.planeBadges[plane.id] = badge }
+                        })
+                } else {
+                    PullRequestListPlane(directory: directory, visible: shows(plane), openFullPage: {
+                        if window.ui.pullRequests == nil { window.togglePullRequests(scope: .project) }
+                    }, currentBranch: { ui.showPlane(.pullRequest) }) { number in
+                        MotionPreferences.shared.perform(.sidebar) { ui.showPlane(.pullRequest, number: number) }
+                    }
                 }
             } else {
-                PlaneMessage(icon: "list", title: "No project in front",
+                PlaneMessage(icon: "pull.request", title: "No project in front",
                              detail: "Open a tab in a repository to see its pull requests.")
             }
         case .device:
@@ -281,6 +298,12 @@ struct SidePanel: View {
                         },
                         presentSetup: { model in if ui.deviceSetup !== model { ui.deviceSetup = model } })
         }
+    }
+
+    /// Whether `plane` is on screen: the panel open and the plane in front
+    /// or in the split. Planes behind stay alive but stop polling.
+    private func shows(_ plane: Plane) -> Bool {
+        ui.sidePanelVisible && ui.visiblePlaneIds.contains(plane.id)
     }
 
     /// The project planes look at: the pane in front's.
@@ -311,15 +334,21 @@ struct SidePanel: View {
                 // stack can lose track of and draw as nothing.
                 VStack(alignment: .leading, spacing: 0) {
                     RuntimePanel(store: store, ui: ui)
-                    TodoPanel(model: window.todos, ui: ui)
-                    ProjectAgentSection(model: window.projectAgent)
-                    PluginPanelSections(model: window.pluginPanels)
+                    SidePanelSectionView(.workspaceTools, label: "Setup & plugins") {
+                        ProjectAgentSection(model: window.projectAgent)
+                        PluginPanelSections(model: window.pluginPanels)
+                    }
                 }
                 .padding(.vertical, 4)
             }
             .scrollIndicators(.hidden)
             .onChange(of: ui.sidePanelJump) { _, jump in
                 guard let section = jump?.section else { return }
+                switch section {
+                case .tasks, .monitors, .shells: ui.setPanelSection(.activity, open: true)
+                case .setup, .plugin: ui.setPanelSection(.workspaceTools, open: true)
+                default: break
+                }
                 ui.setPanelSection(section, open: true)
                 DispatchQueue.main.async {
                     motion.perform(.sidebar, .smooth(duration: 0.25)) { proxy.scrollTo(section, anchor: .top) }
@@ -329,25 +358,15 @@ struct SidePanel: View {
     }
 }
 
-/// The tab bar's controls for the panel and the terminal drawer, shown
-/// while the panel is closed; while it's open its own strip has them, as in
-/// T3 Code.
-struct SidePanelButton: View {
+/// The terminal drawer's toggle, with the tab's other actions in its strip.
+struct TerminalDrawerButton: View {
     @ObservedObject var ui: UIState
 
     var body: some View {
-        if !ui.sidePanelVisible {
-            HStack(spacing: 2) {
-                OctetIconButton(icon: "panel.bottom",
-                                help: OctetShortcut.terminalDrawer.help("Toggle terminal drawer"),
-                                active: ui.terminalDrawerVisible) {
-                    MotionPreferences.shared.perform(.sidebar) { ui.terminalDrawerVisible.toggle() }
-                }
-                OctetIconButton(icon: "sidebar.right", help: OctetShortcut.togglePanel.help("Show the panel")) {
-                    ui.sidePanelVisible = true
-                }
-                .accessibilityLabel("Show panel")
-            }
+        OctetIconButton(icon: "panel.bottom",
+                        help: OctetShortcut.terminalDrawer.help("Toggle terminal drawer"),
+                        active: ui.terminalDrawerVisible) {
+            MotionPreferences.shared.perform(.sidebar) { ui.terminalDrawerVisible.toggle() }
         }
     }
 }

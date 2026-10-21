@@ -166,7 +166,7 @@ struct OctetCopyText: View {
                 .truncationMode(.middle)
                 .padding(.horizontal, 4)
                 .padding(.vertical, 2)
-                .background(RoundedRectangle(cornerRadius: 4).fill(hovered ? Theme.hover : .clear))
+                .background(RoundedRectangle(cornerRadius: Theme.Radius.sm).fill(hovered ? Theme.hover : .clear))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -337,7 +337,7 @@ struct OctetSelect<Value: Hashable>: View {
         } label: {
             HStack(spacing: 6) {
                 Text(current)
-                    .font(.system(size: 13))
+                    .font(Theme.Text.transcript)
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(1)
                     .truncationMode(.tail)

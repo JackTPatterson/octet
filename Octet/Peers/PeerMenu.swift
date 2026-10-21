@@ -15,8 +15,8 @@ struct PeerCommands: Commands {
         // Only while Other Macs is on.
         if settings.values.peersEnabled {
             CommandMenu("Peer") {
-                Button("Open Peer") { PeerWindow.show() }
-                    .keyboardShortcut("e", modifiers: [.command, .shift])
+                Button(OctetShortcut.openPeer.title) { PeerWindow.show() }
+                    .keyboardShortcut(OctetShortcut.openPeer.keyboardShortcut)
                 Divider()
                 if center.paired.isEmpty {
                     Text("No Other Macs Paired")

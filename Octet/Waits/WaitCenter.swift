@@ -55,6 +55,7 @@ final class WaitCenter: ObservableObject {
         }
         applyServer()
         CheckInCenter.shared.start(store: store)
+        ProjectJobCenter.shared.start(store: store)
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in
             MainActor.assumeIsolated { WaitCenter.shared.tick() }
@@ -84,14 +85,10 @@ final class WaitCenter: ObservableObject {
     }
 
     /// The Dock shows how many are ready (and check-ins due), so they're
-    /// seen with Octet behind other apps.
+    /// seen with Octet behind other apps. `AttentionRouter` sets it, with
+    /// agents waiting on you, so the count lives in one place.
     private func updateBadge() {
-        NSApp?.dockTile.badgeLabel = badgeText
-    }
-
-    var badgeText: String? {
-        let count = ready.count + CheckInCenter.shared.dueCount
-        return count > 0 ? String(count) : nil
+        AttentionRouter.shared.refreshDockBadge()
     }
 
     /// Swaps in made-up waits that live only in memory (the debug sample).
@@ -149,6 +146,7 @@ final class WaitCenter: ObservableObject {
         guard !isSample else { return }
         let now = Date()
         CheckInCenter.shared.tick(now: now)
+        ProjectJobCenter.shared.tick(now: now)
         for wait in waits where wait.isDue(now: now) && !checking.contains(wait.id) {
             check(wait)
         }

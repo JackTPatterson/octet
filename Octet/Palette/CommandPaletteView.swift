@@ -6,7 +6,9 @@ final class PaletteModel: ObservableObject {
     @Published var query = "" { didSet { selection = 0 } }
     @Published var chip: PaletteKind? { didSet { selection = 0 } }
     @Published var selection = 0
-    @Published var prompt: (title: String, placeholder: String, submit: (String) -> Void)?
+    /// A text field replacing the list; `detail` is the chosen row's
+    /// subtitle, which says what the text is for.
+    @Published var prompt: (title: String, placeholder: String, detail: String, submit: (String) -> Void)?
     @Published var promptText = ""
     /// A nested list replacing the main results (e.g. plugin logs).
     @Published var subList: (title: String, items: [PaletteItem]?)?
@@ -27,6 +29,11 @@ final class PaletteModel: ObservableObject {
         let selectedId = before.indices.contains(selection) ? before[selection].item.id : nil
         objectWillChange.send()
         self.items = items
+        #if DEBUG
+        // A second row with an id is never shown: the first one wins.
+        let duplicates = PaletteModel.duplicateIds(items.map(\.id))
+        if !duplicates.isEmpty { NSLog("Octet palette: duplicate ids %@", duplicates.joined(separator: ", ")) }
+        #endif
         itemsById = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let after = results
         if let selectedId, let index = after.firstIndex(where: { $0.item.id == selectedId }) {
@@ -34,6 +41,35 @@ final class PaletteModel: ObservableObject {
         } else {
             selection = min(selection, max(0, after.count - 1))
         }
+    }
+
+    /// Ids that more than one row uses, in the order first seen.
+    nonisolated static func duplicateIds(_ ids: [String]) -> [String] {
+        var seen = Set<String>()
+        var repeated: [String] = []
+        for id in ids where !seen.insert(id).inserted && !repeated.contains(id) { repeated.append(id) }
+        return repeated
+    }
+
+    /// Whether there's a page to go back from: a sub-list, a prompt, or a
+    /// filter chip.
+    var canGoBack: Bool { subList != nil || prompt != nil || chip != nil }
+
+    /// Esc on a sub-page, or ⌫ in an empty field: one step back toward the
+    /// main list. False when there was nowhere to go.
+    @discardableResult
+    func goBack() -> Bool {
+        if prompt != nil {
+            prompt = nil
+        } else if subList != nil {
+            subList = nil
+            query = ""
+        } else if chip != nil {
+            chip = nil
+        } else {
+            return false
+        }
+        return true
     }
 
     func reset() {
@@ -82,7 +118,7 @@ final class PaletteModel: ObservableObject {
             }
             return false
         case .prompt(let title, let placeholder, let initial, let submit):
-            prompt = (title, placeholder, submit)
+            prompt = (title, placeholder, item.subtitle, submit)
             promptText = initial
             return false
         }
@@ -107,7 +143,7 @@ struct CommandPaletteView: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            Color.black.opacity(0.35)
+            Theme.scrim
                 .ignoresSafeArea()
                 .onTapGesture(perform: onClose)
             panel
@@ -119,7 +155,7 @@ struct CommandPaletteView: View {
     private var panel: some View {
         VStack(spacing: 0) {
             if let prompt = model.prompt {
-                promptField(prompt.title, placeholder: prompt.placeholder)
+                promptField(prompt.title, placeholder: prompt.placeholder, detail: prompt.detail)
             } else {
                 if let subList = model.subList {
                     subListHeader(subList.title, loading: subList.items == nil)
@@ -128,8 +164,8 @@ struct CommandPaletteView: View {
                 if model.subList == nil { chips }
                 Rectangle().fill(Theme.divider).frame(height: 1)
                 resultsList
-                footer
             }
+            footer
         }
         .frame(width: 576)
         .octetGlass(cornerRadius: 18)
@@ -146,7 +182,7 @@ struct CommandPaletteView: View {
                 text: $model.query
             )
                 .textFieldStyle(.plain)
-                .font(.system(size: 15))
+                .font(Theme.Text.title3.weight(.regular))
                 .foregroundStyle(Theme.textPrimary)
                 .focused($fieldFocused)
                 .onKeyPress(.upArrow) { move(-1) }
@@ -158,10 +194,11 @@ struct CommandPaletteView: View {
                     press.modifiers.contains(.control) ? move(1) : .ignored
                 }
                 .onKeyPress(.tab) { cycleChip(); return .handled }
+                // ⌫ in an empty field steps back, as Raycast's does.
+                .onKeyPress(.delete) { model.query.isEmpty && model.goBack() ? .handled : .ignored }
                 .onKeyPress(.escape) {
                     if model.subList != nil {
-                        model.subList = nil
-                        model.query = ""
+                        model.goBack()
                     } else {
                         onClose()
                     }
@@ -185,7 +222,7 @@ struct CommandPaletteView: View {
                         Text(kind.title)
                         Text(kind.prefix).foregroundStyle(Theme.textTertiary)
                     }
-                    .font(.system(size: 11, weight: .medium))
+                    .font(Theme.Text.captionMedium)
                     .foregroundStyle(active ? Theme.textPrimary : Theme.textSecondary)
                     .padding(.horizontal, 8)
                     .frame(height: 22)
@@ -282,13 +319,25 @@ struct CommandPaletteView: View {
             .padding(.bottom, 4)
     }
 
+    /// The keys, on every page: what they do changes with the page, but the
+    /// strip is always there to read.
     private var footer: some View {
         HStack(spacing: 14) {
-            hint("↑↓", "navigate")
-            hint("↩", "run")
-            hint("⇥", "filter")
-            hint("esc", "close")
+            if model.prompt != nil {
+                hint("↩", "Confirm")
+            } else {
+                hint("↑↓", "Navigate")
+                hint("↩", "Open")
+                if model.subList == nil { hint("⇥", "Filter") }
+            }
+            if model.canGoBack { hint("⌫", "Back") }
+            hint("esc", model.prompt != nil ? "Back" : "Close")
             Spacer()
+            if model.prompt == nil, model.subList == nil, model.chip == nil, model.query.isEmpty {
+                Text("Type > for actions only")
+                    .font(Theme.Text.caption)
+                    .foregroundStyle(Theme.textTertiary)
+            }
         }
         .padding(.horizontal, 14)
         .frame(height: 30)
@@ -299,21 +348,22 @@ struct CommandPaletteView: View {
     private func hint(_ key: String, _ label: String) -> some View {
         HStack(spacing: 4) {
             Keycap(text: key)
-            Text(label).font(.system(size: 10.5)).foregroundStyle(Theme.textTertiary)
+            Text(label).font(Theme.Text.caption).foregroundStyle(Theme.textTertiary)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    /// The icon-only way back, for the pointer; ⌫ and Esc do the same.
+    private var backButton: some View {
+        OctetIconButton(icon: "chevron.left", help: "Back (⌫ or esc)") {
+            model.goBack()
+            fieldFocused = true
         }
     }
 
     private func subListHeader(_ title: String, loading: Bool) -> some View {
         HStack(spacing: 8) {
-            Button {
-                model.subList = nil
-                model.query = ""
-                fieldFocused = true
-            } label: {
-                OctetIcon("chevron.left", size: 16)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(Theme.textSecondary)
+            backButton
             Text(title).font(Theme.uiFontMedium).foregroundStyle(Theme.textSecondary)
             if loading { LoadingLine(width: 18) }
             Spacer()
@@ -324,44 +374,38 @@ struct CommandPaletteView: View {
 
     // MARK: Prompt
 
-    private func promptField(_ title: String, placeholder: String) -> some View {
+    private func promptField(_ title: String, placeholder: String, detail: String) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
-                Button {
-                    model.prompt = nil
-                    fieldFocused = true
-                } label: {
-                    OctetIcon("chevron.left", size: 16)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(Theme.textSecondary)
+                backButton
                 Text(title).font(Theme.uiFontMedium).foregroundStyle(Theme.textSecondary)
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)
+            if !detail.isEmpty {
+                Text(detail)
+                    .font(Theme.Text.caption)
+                    .foregroundStyle(Theme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 16)
+                    .padding(.top, Theme.Space.xs)
+            }
             TextField(placeholder, text: $model.promptText)
                 .textFieldStyle(.plain)
-                .font(.system(size: 15))
+                .font(Theme.Text.title3.weight(.regular))
                 .foregroundStyle(Theme.textPrimary)
                 .focused($fieldFocused)
                 .onKeyPress(.escape) {
-                    model.prompt = nil
+                    model.goBack()
                     return .handled
                 }
+                .onKeyPress(.delete) { model.promptText.isEmpty && model.goBack() ? .handled : .ignored }
                 .onSubmit {
                     if model.submitPrompt() { onClose() }
                 }
                 .padding(.horizontal, 16)
                 .frame(height: 46)
                 .onAppear { DispatchQueue.main.async { fieldFocused = true } }
-            HStack(spacing: 14) {
-                hint("↩", "confirm")
-                hint("esc", "back")
-                Spacer()
-            }
-            .padding(.horizontal, 14)
-            .frame(height: 30)
-            .background(Theme.chrome)
         }
     }
 
@@ -404,11 +448,11 @@ private struct PaletteRow: View {
                 .frame(width: 18, height: 18)
             VStack(alignment: .leading, spacing: 1) {
                 highlightedTitle
-                    .font(.system(size: 13))
+                    .font(Theme.Text.transcript)
                     .lineLimit(1)
                 if !item.subtitle.isEmpty {
                     Text(item.subtitle)
-                        .font(.system(size: 11))
+                        .font(Theme.Text.caption)
                         .foregroundStyle(Theme.textTertiary)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -416,10 +460,10 @@ private struct PaletteRow: View {
             }
             Spacer(minLength: 8)
             if let shortcut = item.shortcut {
-                Keycap(text: shortcut)
+                KeyCombo(keys: shortcut)
             } else if item.kind != .action {
                 Text(item.kind.title.dropLast())
-                    .font(.system(size: 10.5))
+                    .font(Theme.Text.caption)
                     .foregroundStyle(Theme.textTertiary)
             }
         }
@@ -458,20 +502,5 @@ private struct PaletteRow: View {
                 : piece.foregroundColor(selected ? Theme.textPrimary : Theme.textMuted))
         }
         return text
-    }
-}
-
-struct Keycap: View {
-    let text: String
-
-    var body: some View {
-        Text(text)
-            .font(.system(size: 10.5, weight: .medium))
-            .foregroundStyle(Theme.textSecondary)
-            .padding(.horizontal, 5)
-            .frame(minWidth: 18, minHeight: 18)
-            .background(Theme.card)
-            .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(Theme.border, lineWidth: 1))
-            .clipShape(RoundedRectangle(cornerRadius: 3))
     }
 }

@@ -36,8 +36,8 @@ struct PlanFollowUpBanner: View {
         .padding(.leading, 10)
         .padding(.trailing, 4)
         .padding(.vertical, 4)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.accent.opacity(0.08)))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.accent.opacity(0.25), lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.accent.opacity(0.08)))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).strokeBorder(Theme.accent.opacity(0.25), lineWidth: 1))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Plan ready" + (plan.title.map { ": \($0)" } ?? ""))
         .onAppear { AccessibilityNotification.Announcement("The plan is ready").post() }

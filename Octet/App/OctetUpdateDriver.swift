@@ -350,7 +350,7 @@ private struct UpdatePromptView: View {
                 card
             }
         }
-        .octetGlass(cornerRadius: 16, fill: Theme.card)
+        .octetGlass(cornerRadius: Theme.Radius.sheet, fill: Theme.card)
         .environment(\.colorScheme, Theme.colorScheme)
     }
 
@@ -359,7 +359,7 @@ private struct UpdatePromptView: View {
             appIcon(size: 32)
             VStack(alignment: .leading, spacing: 6) {
                 Text("Checking for updates…")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(Theme.interfaceFont(13, weight: .semibold))
                     .foregroundStyle(Theme.textPrimary)
                 LoadingLine(width: 120)
             }
@@ -395,7 +395,7 @@ private struct UpdatePromptView: View {
             appIcon(size: 52)
             VStack(alignment: .leading, spacing: 6) {
                 Text(title)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(Theme.interfaceFont(15, weight: .semibold))
                     .foregroundStyle(Theme.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 6) {
@@ -441,8 +441,8 @@ private struct UpdatePromptView: View {
                     .frame(maxWidth: .infinity, minHeight: 64, alignment: .center)
                 }
             }
-            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.terminalBackground.opacity(0.6)))
-            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.border, lineWidth: 1))
+            .background(RoundedRectangle(cornerRadius: Theme.Radius.xl, style: .continuous).fill(Theme.terminalBackground.opacity(0.6)))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.xl, style: .continuous).strokeBorder(Theme.border, lineWidth: 1))
         }
     }
 
@@ -535,7 +535,7 @@ struct VersionTag: View {
             .foregroundStyle(current ? Theme.textSecondary : Theme.accent)
             .padding(.horizontal, 7)
             .frame(height: 20)
-            .background(RoundedRectangle(cornerRadius: 6).fill(current ? Theme.hover : Theme.accent.opacity(0.14)))
+            .background(RoundedRectangle(cornerRadius: Theme.Radius.md).fill(current ? Theme.hover : Theme.accent.opacity(0.14)))
             .help(current ? "Installed" : "New")
     }
 }

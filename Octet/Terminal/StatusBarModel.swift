@@ -300,6 +300,9 @@ final class StatusBarModel: ObservableObject {
         loadVersion()
     }
 
+    /// After the branch picker switches branches, without waiting for the next poll.
+    func refreshGitNow() { refreshGit() }
+
     private func refreshGit() {
         guard var repo else { return }
         // HEAD and the operation markers are small files: read them here.

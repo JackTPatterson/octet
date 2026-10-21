@@ -14,7 +14,7 @@ struct DeviceSetupSheet: View {
     var body: some View {
         ZStack {
             if model.setupShowing {
-                Color.black.opacity(0.6)
+                Theme.scrim
                     .ignoresSafeArea()
                     .onTapGesture { cancel() }
                 card
@@ -32,7 +32,7 @@ struct DeviceSetupSheet: View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 3) {
                 Text("Set up devices")
-                    .font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.textPrimary)
+                    .font(Theme.interfaceFont(15, weight: .semibold)).foregroundStyle(Theme.textPrimary)
                 Text("Review what this Mac needs before using simulators and emulators.")
                     .font(Theme.uiFont).foregroundStyle(Theme.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -182,7 +182,7 @@ struct DeviceSetupSheet: View {
                 Spacer(minLength: 4)
                 Text(status.title)
                     .font(Theme.captionFont.weight(.medium))
-                    .foregroundStyle(status == .ready ? Color.green : status == .missing ? Theme.danger : Theme.textSecondary)
+                    .foregroundStyle(status == .ready ? Theme.success : status == .missing ? Theme.danger : Theme.textSecondary)
                     .padding(.horizontal, 7)
                     .frame(height: 18)
                     .background(Capsule().fill(Theme.hover))
@@ -194,15 +194,15 @@ struct DeviceSetupSheet: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Theme.card))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.border, lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.xl).fill(Theme.card))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.xl).strokeBorder(Theme.border, lineWidth: 1))
         .accessibilityElement(children: .combine)
     }
 
     private func statusRow(ready: Bool, title: String) -> some View {
         HStack(spacing: 6) {
             OctetIcon(ready ? "circle.check" : "circle.x", size: 14)
-                .foregroundStyle(ready ? Color.green : Theme.textTertiary)
+                .foregroundStyle(ready ? Theme.success : Theme.textTertiary)
             Text(title).font(Theme.uiFont).foregroundStyle(Theme.textPrimary)
         }
     }

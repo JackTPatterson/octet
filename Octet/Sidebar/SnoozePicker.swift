@@ -58,7 +58,7 @@ struct SnoozePickerHost: View {
     var body: some View {
         ZStack {
             if let request = center.request, host.owns(request.window) {
-                Color.black.opacity(0.35)
+                Theme.scrim
                     .ignoresSafeArea()
                     .onTapGesture { center.finish(nil) }
                 SnoozePickerDialog(label: request.label) { center.finish($0) }
@@ -121,7 +121,7 @@ struct SnoozePickerDialog: View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(heading ?? "Snooze “\(label)”")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(Theme.interfaceFont(13, weight: .semibold))
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(1)
                 Text(blurb ?? "It leaves the sidebar and comes back at the time you pick.")
@@ -225,7 +225,7 @@ struct SnoozePickerDialog: View {
         let today = calendar.isDateInToday(date)
         return Button { day = date } label: {
             Text("\(calendar.component(.day, from: date))")
-                .font(.system(size: 11.5, weight: chosen || today ? .semibold : .regular).monospacedDigit())
+                .font(Theme.interfaceFont(11.5, weight: chosen || today ? .semibold : .regular).monospacedDigit())
                 .foregroundStyle(chosen ? Theme.onAccent : Theme.textPrimary)
                 .opacity(past && !chosen ? 0.3 : 1)
                 .frame(maxWidth: .infinity)

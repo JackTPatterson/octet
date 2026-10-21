@@ -1,9 +1,8 @@
 import SwiftUI
 
 /// Watches the panes on screen for being scrolled back while output keeps
-/// arriving, and offers the way back: "↓ 26 new lines". Scroll changes come
-/// as events for named panes only, so each window's watcher follows the
-/// panes it shows.
+/// arriving, and offers the way back: "↓ 26 new lines". Each pane's terminal
+/// scrolls itself, so it's read from there (`PaneGeometry`).
 @MainActor
 final class LiveScrollWatcher: ObservableObject {
 
@@ -11,85 +10,16 @@ final class LiveScrollWatcher: ObservableObject {
     @Published private(set) var pills: [String: String] = [:]
 
     private var trackers: [String: LiveScrollTracker] = [:]
-    private var watched: Set<String> = []
-    private var subscription: Subscription?
-    private var client: EngineClient?
 
-    /// One subscription's connection, ended from the main thread when the
-    /// watched panes change while its thread reads.
-    private final class Subscription: @unchecked Sendable {
-        private let lock = NSLock()
-        private var connection: EngineSocketConnection?
-        private var cancelled = false
-
-        var isCancelled: Bool { lock.withLock { cancelled } }
-
-        /// Keeps the connection to end later; false once cancelled.
-        func adopt(_ connection: EngineSocketConnection) -> Bool {
-            lock.withLock {
-                guard !cancelled else { return false }
-                self.connection = connection
-                return true
-            }
+    /// Takes where each pane on screen is scrolled to now.
+    func follow(_ panes: [String: PaneGeometry.Pane]) {
+        trackers = trackers.filter { panes[$0.key] != nil }
+        for (paneId, pane) in panes {
+            guard let scroll = pane.scroll else { continue }
+            var tracker = trackers[paneId] ?? LiveScrollTracker()
+            tracker.update(scroll)
+            trackers[paneId] = tracker
         }
-
-        func cancel() {
-            lock.withLock {
-                cancelled = true
-                connection?.shutdownNow()
-                connection = nil
-            }
-        }
-    }
-
-    /// Follows `paneIds`, resubscribing only when the set changes.
-    func watch(_ paneIds: Set<String>, client: EngineClient) {
-        self.client = client
-        guard paneIds != watched else { return }
-        watched = paneIds
-        trackers = trackers.filter { paneIds.contains($0.key) }
-        publish()
-        subscription?.cancel()
-        subscription = nil
-        guard !paneIds.isEmpty else { return }
-        let subscription = Subscription()
-        self.subscription = subscription
-        let subscriptions = paneIds.sorted().map { ["type": "pane.scroll_changed", "pane_id": $0] }
-        let socketPath = client.socketPath
-        let thread = Thread { [weak self] in
-            // A dropped connection (the server restarting) is retried until
-            // the watched set changes.
-            while !subscription.isCancelled {
-                do {
-                    let connection = try EngineSocketConnection(path: socketPath)
-                    guard subscription.adopt(connection) else { return connection.shutdownNow() }
-                    try connection.send(["id": "octet-scroll", "method": "events.subscribe",
-                                         "params": ["subscriptions": subscriptions]])
-                    _ = try EngineClient.parseResponse(try connection.readLine())
-                    while true {
-                        let line = try connection.readLine()
-                        guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
-                              let event = PaneScroll.parseEvent(object) else { continue }
-                        DispatchQueue.main.async {
-                            MainActor.assumeIsolated {
-                                guard let self, !subscription.isCancelled else { return }
-                                self.apply(event.scroll, to: event.paneId)
-                            }
-                        }
-                    }
-                } catch {
-                    Thread.sleep(forTimeInterval: 1)
-                }
-            }
-        }
-        thread.name = "octet.scroll-events"
-        thread.start()
-    }
-
-    private func apply(_ scroll: PaneScroll, to paneId: String) {
-        var tracker = trackers[paneId] ?? LiveScrollTracker()
-        tracker.update(scroll)
-        trackers[paneId] = tracker
         publish()
     }
 
@@ -103,10 +33,7 @@ final class LiveScrollWatcher: ObservableObject {
 
     /// Back to the bottom of `paneId`, where the output is.
     func jumpToLive(_ paneId: String) {
-        guard let client else { return }
-        DispatchQueue.global(qos: .userInitiated).async {
-            _ = try? client.call("pane.scroll", ["pane_id": paneId, "offset_from_bottom": 0])
-        }
+        PaneMirrorView.view(of: paneId)?.scroll(toOffsetFromBottom: 0)
         OctetTerminalRuntime.focusTerminal()
     }
 }
@@ -114,12 +41,12 @@ final class LiveScrollWatcher: ObservableObject {
 /// The pills over the panes of the tab in front, each at the foot of its pane.
 struct LiveScrollPills: View {
     @ObservedObject var watcher: LiveScrollWatcher
-    let layout: EngineLayout?
+    @ObservedObject var geometry: PaneGeometry
 
     var body: some View {
-        GeometryReader { proxy in
+        GeometryReader { _ in
             ForEach(Array(watcher.pills.keys.sorted()), id: \.self) { paneId in
-                if let frame = layout?.frame(ofPane: paneId, in: proxy.size), let label = watcher.pills[paneId] {
+                if let frame = geometry.panes[paneId]?.frame, let label = watcher.pills[paneId] {
                     LiveScrollPill(label: label) { watcher.jumpToLive(paneId) }
                         .position(x: frame.midX, y: frame.maxY - 26)
                 }

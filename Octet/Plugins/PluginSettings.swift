@@ -41,7 +41,8 @@ struct PluginSettings: View {
             }
         }
         // Octet's own features that come as plugins: switched on here, and
-        // their settings appear below once they are.
+        // their settings appear below once they are (Other Macs' and
+        // Delegation's under Integrations).
         let features = host.plugins.filter { $0.isBundled && $0.manifest.feature != nil }
         if !features.isEmpty {
             SettingsGroup(title: "Built-in features") {
@@ -65,13 +66,6 @@ struct PluginSettings: View {
                     SettingsRow(title: problem) { EmptyView() }
                 }
             }
-        }
-        // A plugin's own settings, while it's on.
-        if settings.values.peersEnabled {
-            PeersSettingsGroup(settings: settings)
-        }
-        if settings.values.delegationEnabled {
-            DelegationSettingsGroup(settings: settings)
         }
     }
 }

@@ -351,33 +351,31 @@ final class GitPanelModel: ObservableObject {
         }
     }
 
-    /// Throws a file's changes away, after a checkpoint so it can be undone.
+    /// Throws a file's changes away at once; the toast's Undo puts back
+    /// what was there, unless the file changed again since.
     func discard(_ file: AgentGit.FileChange, in top: String) {
-        ConfirmCenter.shared.ask(
-            title: "Discard the changes to \((file.path as NSString).lastPathComponent)?",
-            message: file.kind == .untracked
-                ? "The file is deleted. A checkpoint is taken first, so this can be undone."
-                : "It goes back to the last commit. A checkpoint is taken first, so this can be undone.",
-            items: [file.path],
-            confirmTitle: "Discard",
-            destructive: true
-        ) { [weak self] _ in
-            self?.runGit(failure: "Couldn't discard \(file.path)") { () throws -> Checkpoint? in
-                let git = Git()
-                let checkpoint = Checkpoints.create(in: top, label: "Before discarding \(file.path)", force: true, git: git)
-                if file.kind == .untracked {
-                    try FileManager.default.removeItem(atPath: (top as NSString).appendingPathComponent(file.path))
-                } else if file.kind == .added {
-                    try git.run(["rm", "-q", "-f", "--", file.path], in: top)
-                } else {
-                    try git.run(["restore", "--source=HEAD", "--staged", "--worktree", "--", file.path], in: top)
-                }
-                return checkpoint
-            } done: { checkpoint in
-                guard let checkpoint else { return }
-                ToastCenter.shared.info("Discarded \(file.path)", after: 8,
-                                        action: .init(title: "Undo") { CheckpointActions.restore(checkpoint, in: top) })
+        runGit(failure: "Couldn't discard \(file.path)") { () throws -> DiscardedFile in
+            let git = Git()
+            var kept = DiscardedFile.capture(file.path, in: top)
+            if file.kind == .untracked {
+                try FileManager.default.removeItem(atPath: (top as NSString).appendingPathComponent(file.path))
+            } else if file.kind == .added {
+                try git.run(["rm", "-q", "-f", "--", file.path], in: top)
+            } else {
+                try git.run(["restore", "--source=HEAD", "--staged", "--worktree", "--", file.path], in: top)
             }
+            kept.discarded(in: top)
+            return kept
+        } done: { [weak self] kept in
+            ToastCenter.shared.info("Discarded \((file.path as NSString).lastPathComponent)", detail: file.path, after: 8,
+                                    action: .init(title: "Undo") { self?.undoDiscard(kept, in: top) })
+        }
+    }
+
+    private func undoDiscard(_ kept: DiscardedFile, in top: String) {
+        runGit(failure: "Couldn't undo the discard") { try kept.undo(in: top) } done: { _ in
+            ToastCenter.shared.info("Restored \((kept.path as NSString).lastPathComponent)",
+                                    detail: "Its changes are back, unstaged.")
         }
     }
 

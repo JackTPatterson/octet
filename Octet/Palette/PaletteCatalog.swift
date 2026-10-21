@@ -133,12 +133,21 @@ enum PaletteCatalog {
             action("newWorkspace", "New Workspace", "rectangle.stack.badge.plus", shortcut: OctetShortcut.newWorkspace.keys, keywords: ["space"]) { window.newWorkspace() },
             action("openFile", "Open File…", "tool.edit", shortcut: OctetShortcut.openFile.keys, keywords: ["code", "editor", "search"]) { window.showFilePicker() },
             action("openFolder", "Open Folder as Workspace…", "folder.badge.plus", shortcut: OctetShortcut.openFolder.keys, keywords: ["project", "directory"]) { openFolder(window: window) },
-            action("saveFile", "Save File", "tool.write", shortcut: OctetShortcut.saveFile.keys, keywords: ["code", "editor"]) { window.editor.save() },
+            action("saveFile", OctetShortcut.saveFile.title, "tool.write", shortcut: OctetShortcut.saveFile.keys, keywords: ["code", "editor", "file"]) { window.editor.save() },
+            action("saveAll", OctetShortcut.saveAll.title, "tool.write", shortcut: OctetShortcut.saveAll.keys,
+                   keywords: ["code", "editor", "files"]) { window.editor.saveAll() },
             action("nextWorkspace", "Next Workspace", "chevron.down.square", shortcut: OctetShortcut.nextWorkspace.keys) { window.selectAdjacentWorkspace(offset: 1) },
             action("previousWorkspace", "Previous Workspace", "chevron.up.square", shortcut: OctetShortcut.previousWorkspace.keys) { window.selectAdjacentWorkspace(offset: -1) },
-            action("splitRight", "Split Pane Right", "rectangle.split.2x1", shortcut: OctetShortcut.splitRight.keys, keywords: ["vertical"]) { window.splitPane(.right) },
-            action("splitDown", "Split Pane Down", "rectangle.split.1x2", shortcut: OctetShortcut.splitDown.keys, keywords: ["horizontal"]) { window.splitPane(.down) },
-            action("zoomPane", "Toggle Pane Zoom", "arrow.up.left.and.arrow.down.right", shortcut: OctetShortcut.toggleZoom.keys, keywords: ["maximize"]) { window.toggleZoom() },
+            // Titles as the Pane menu says them; "pane" is a keyword.
+            action("splitRight", OctetShortcut.splitRight.title, "rectangle.split.2x1", shortcut: OctetShortcut.splitRight.keys, keywords: ["pane", "vertical"]) { window.splitPane(.right) },
+            action("splitDown", OctetShortcut.splitDown.title, "rectangle.split.1x2", shortcut: OctetShortcut.splitDown.keys, keywords: ["pane", "horizontal"]) { window.splitPane(.down) },
+            action("splitLeft", "Split Left", "rectangle.split.2x1", keywords: ["pane", "vertical"]) { window.splitPane(beside: .left) },
+            action("splitUp", "Split Up", "rectangle.split.1x2", keywords: ["pane", "horizontal"]) { window.splitPane(beside: .top) },
+            action("equalizePanes", "Make Panes Equal", "rectangle.split.3x1", shortcut: OctetShortcut.equalizePanes.keys,
+                   keywords: ["equalize", "even", "balance", "reset", "divider"]) { window.equalizePanes() },
+            action("paneToWindow", "Move Pane to New Window", "rectangle.on.rectangle",
+                   keywords: ["window", "tear", "detach", "pop out", "split"]) { window.moveFocusedPaneToNewWindow() },
+            action("zoomPane", OctetShortcut.toggleZoom.title, "arrow.up.left.and.arrow.down.right", shortcut: OctetShortcut.toggleZoom.keys, keywords: ["pane", "maximize"]) { window.toggleZoom() },
             action("closePane", "Close Pane", "xmark.rectangle") { window.closeFocusedPane() },
             action("newWindow", "New Window", "rectangle.on.rectangle", shortcut: OctetShortcut.newWindow.keys,
                    keywords: ["window", "open"]) { WindowActions.newWindow(store: store) },
@@ -150,10 +159,10 @@ enum PaletteCatalog {
                    keywords: ["window", "combine", "close"]) { WindowActions.mergeAllWindows() },
             action("paneToTab", "Move Pane to New Tab", "rectangle.on.rectangle",
                    keywords: ["break", "unsplit", "detach", "split", "pane", "tab"]) { window.moveFocusedPaneToNewTab() },
-            action("focusLeft", "Focus Pane Left", "arrow.left", shortcut: OctetShortcut.focusLeft.keys) { window.focusPane(.left) },
-            action("focusRight", "Focus Pane Right", "arrow.right", shortcut: OctetShortcut.focusRight.keys) { window.focusPane(.right) },
-            action("focusUp", "Focus Pane Up", "arrow.up", shortcut: OctetShortcut.focusUp.keys) { window.focusPane(.up) },
-            action("focusDown", "Focus Pane Down", "arrow.down", shortcut: OctetShortcut.focusDown.keys) { window.focusPane(.down) },
+            action("focusLeft", OctetShortcut.focusLeft.title, "arrow.left", shortcut: OctetShortcut.focusLeft.keys, keywords: ["pane"]) { window.focusPane(.left) },
+            action("focusRight", OctetShortcut.focusRight.title, "arrow.right", shortcut: OctetShortcut.focusRight.keys, keywords: ["pane"]) { window.focusPane(.right) },
+            action("focusUp", OctetShortcut.focusUp.title, "arrow.up", shortcut: OctetShortcut.focusUp.keys, keywords: ["pane"]) { window.focusPane(.up) },
+            action("focusDown", OctetShortcut.focusDown.title, "arrow.down", shortcut: OctetShortcut.focusDown.keys, keywords: ["pane"]) { window.focusPane(.down) },
             action("toggleSidebar", "Toggle Sidebar", "sidebar.left", shortcut: OctetShortcut.toggleSidebar.keys) { ui.sidebarVisible.toggle() },
             action("todos", "Show Todos", "tool.todo.done",
                    keywords: ["todo", "todos", "TODO.md", "tasks", "plan", "checklist", "project"]) { ui.showSidePanel(.todos) },
@@ -169,8 +178,8 @@ enum PaletteCatalog {
                    keywords: ["details", "info", "branch", "changes", "servers", "workspace"]) { ui.detailsVisible.toggle() },
             action("reopenPlane", "Reopen Closed Plane", "arrow.uturn.backward",
                    keywords: ["plane", "panel", "tab", "undo", "restore"]) { ui.reopenClosedPlane() },
-            action("pullRequests", "Show Pull Requests", "list",
-                   keywords: ["prs", "pull requests", "github", "open"]) { ui.showPlane(.pullRequests) },
+            action("pullRequestsPlane", "Show Pull Requests in Panel", "list",
+                   keywords: ["prs", "pull requests", "github", "open", "plane"]) { ui.showPlane(.pullRequests) },
             action("reloadConfig", "Reload Terminal Config", "arrow.clockwise", keywords: ["settings"]) { store.reloadSessionConfig() },
             action("agentsReadTerminal",
                    SettingsStore.shared.values.agentsReadSidebarTerminal
@@ -240,6 +249,7 @@ enum PaletteCatalog {
                             keywords: ["pr", "prs", "github", "review requested", "inbox", "gh", "pull request"]) {
             window.togglePullRequests()
         })
+        items += appItems(window: window)
         items += accountItems(window: window)
         if let item = checkpointItem(window: window) { items.append(item) }
         if let item = commandLogItem(window: window) { items.append(item) }
@@ -277,6 +287,18 @@ enum PaletteCatalog {
                 icon: .symbol("pencil"),
                 effect: .prompt(title: "Rename Tab", placeholder: "Tab name", initial: tab.label) { label in
                     store.renameTab(tab.tabId, to: label)
+                }
+            ))
+        }
+        if let paneId = window.focusedPaneId, store.snapshot.panes.contains(where: { $0.paneId == paneId }) {
+            items.append(PaletteItem(
+                id: "action.renamePane", kind: .action, title: "Rename Pane…", keywords: ["label", "split"],
+                icon: .symbol("pencil"),
+                effect: .prompt(title: "Rename Pane", placeholder: "Pane name", initial: "") { label in
+                    let trimmed = label.trimmingCharacters(in: .whitespaces)
+                    var params: [String: Any] = ["pane_id": paneId]
+                    if !trimmed.isEmpty { params["label"] = trimmed }
+                    store.call("pane.rename", params, failure: "Couldn't rename the pane") { _ in }
                 }
             ))
         }
@@ -371,20 +393,16 @@ enum PaletteCatalog {
                 IdleCenter.shared.wake(record.id, in: window)
             })
         }
-        // Machines the engine can reach, each opening a session in a tab.
-        for machine in store.remoteMachines where machine.enabled {
-            items.append(action("remote.\(machine.id)", "Open \(machine.label)", "network",
-                                keywords: ["remote", "ssh", "machine", machine.target]) {
-                store.openRemote(machine, workspaceId: window.focusedWorkspace?.workspaceId)
-            })
-        }
-        items.append(action("remoteAdd", "Add a Remote Machine…", "network.badge.shield.half.filled",
-                            keywords: ["ssh", "remote", "machine", "connect"]) {
-            PaletteCatalog.addRemoteMachine(store: store)
+        items.append(action("agentBoard", OctetShortcut.agents.title, "square.grid.2x2", shortcut: OctetShortcut.agents.keys,
+                            keywords: ["agents", "board", "overview", "running", "status", "all", "hub"]) {
+            // Opens rather than toggles: choosing it means "show me".
+            AgentCenter.shared.setBoard(.all, in: window.focusedWorkspace?.workspaceId)
         })
-        items.append(action("agentBoard", "Running Terminal Agents…", "square.grid.2x2",
-                            keywords: ["board", "overview", "running", "status", "all"]) {
-            AgentBoardWindow.open()
+        items.append(action("agentsNextNeedingYou", "Agents Tab: Next Needing You", "tool.agent",
+                            keywords: ["agents", "waiting", "needs input", "permission", "attention", "next", "blocked"]) {
+            ui.showPlane(.overview)
+            // After the plane is up, so its agents tab hears it.
+            DispatchQueue.main.async { NotificationCenter.default.post(name: RuntimePanel.nextNeedingYou, object: nil) }
         })
         items.append(action("twin", window.twin.isVisible ? "Show the Terminal" : "Visual Twin",
                             "rectangle.on.rectangle.angled", shortcut: OctetShortcut.visualTwin.keys,
@@ -1036,38 +1054,6 @@ enum ProjectDirectories {
 }
 
 /// Native confirmation dialogs for plugin changes.
-@MainActor
-extension PaletteCatalog {
-    /// Prepares a machine through the engine, which sets up the far side over
-    /// ssh — so it only ever runs when the user asks for it by name.
-    @MainActor
-    static func addRemoteMachine(store: SessionStore) {
-        ConfirmCenter.shared.ask(ConfirmCenter.Request(
-            title: "Add a remote machine",
-            message: "Octet asks the engine to prepare the far side over ssh, then lists it here. Enter the ssh target, e.g. user@host.",
-            confirmTitle: "Continue",
-            onConfirm: { _ in
-                PaletteCatalog.promptForTarget(store: store)
-            }
-        ))
-    }
-
-    @MainActor
-    private static func promptForTarget(store: SessionStore) {
-        let alert = NSAlert()
-        alert.messageText = "ssh target"
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 22))
-        field.placeholderString = "user@host"
-        alert.accessoryView = field
-        alert.addButton(withTitle: "Add")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let target = field.stringValue.trimmingCharacters(in: .whitespaces)
-        guard !target.isEmpty else { return }
-        store.addRemoteMachine(target: target)
-    }
-}
-
 @MainActor
 enum PluginDialogs {
     /// Shows the session server's install preview; returns true when the user confirms.

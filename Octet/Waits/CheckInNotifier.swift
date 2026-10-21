@@ -104,9 +104,15 @@ final class CheckInNotifier: NSObject, UNUserNotificationCenterDelegate {
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                             withCompletionHandler completionHandler: @escaping () -> Void) {
-        let id = response.notification.request.content.userInfo["checkin"] as? String
+        let userInfo = response.notification.request.content.userInfo
+        let id = userInfo["checkin"] as? String
+        // Agent notifications share this delegate (only one is allowed); the
+        // router knows where those go.
+        let agentInfo = userInfo[AttentionRouter.userInfoKey] as? [String: Any]
         DispatchQueue.main.async {
-            if let id, let url = URL(string: OctetURL.checkin(id: id).url.absoluteString), let command = OctetURL(url) {
+            if let agentInfo {
+                MainActor.assumeIsolated { _ = AttentionRouter.shared.openNotification([AttentionRouter.userInfoKey: agentInfo]) }
+            } else if let id, let url = URL(string: OctetURL.checkin(id: id).url.absoluteString), let command = OctetURL(url) {
                 MainActor.assumeIsolated { OctetURLHandler.handle(command) }
             }
         }

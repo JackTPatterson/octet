@@ -24,6 +24,7 @@ enum EngineSocketError: Error, CustomStringConvertible {
 final class EngineSocketConnection {
     private let fd: Int32
     private var buffer = Data()
+    private var chunk = [UInt8](repeating: 0, count: 65536)
 
     init(path: String) throws {
         fd = socket(AF_UNIX, SOCK_STREAM, 0)
@@ -70,18 +71,21 @@ final class EngineSocketConnection {
         guard written == data.count else { throw EngineSocketError.writeFailed }
     }
 
-    /// Blocks until one full line arrives.
+    /// Blocks until one full line arrives. A snapshot runs to many reads:
+    /// each read lands in one reused chunk, and only its new bytes are
+    /// searched for the line's end.
     func readLine() throws -> Data {
+        var searched = 0
         while true {
-            if let newline = buffer.firstIndex(of: 0x0A) {
-                let line = buffer[buffer.startIndex..<newline]
+            if let newline = buffer[(buffer.startIndex + searched)...].firstIndex(of: 0x0A) {
+                let line = Data(buffer[buffer.startIndex..<newline])
                 buffer.removeSubrange(buffer.startIndex...newline)
-                return Data(line)
+                return line
             }
-            var chunk = [UInt8](repeating: 0, count: 65536)
-            let n = read(fd, &chunk, chunk.count)
+            searched = buffer.count
+            let n = chunk.withUnsafeMutableBytes { read(fd, $0.baseAddress, $0.count) }
             guard n > 0 else { throw EngineSocketError.closed }
-            buffer.append(chunk, count: n)
+            chunk.withUnsafeBytes { buffer.append($0.baseAddress!.assumingMemoryBound(to: UInt8.self), count: n) }
         }
     }
 
@@ -111,12 +115,16 @@ struct EngineClient {
 
     @discardableResult
     func call(_ method: String, _ params: [String: Any] = [:]) throws -> [String: Any] {
+        try Self.parseResponse(roundTrip(method, params))
+    }
+
+    /// Sends one request and returns the response line, undecoded.
+    private func roundTrip(_ method: String, _ params: [String: Any]) throws -> Data {
         let params = Self.prepareRequest?(method, params) ?? params
         let connection = try EngineSocketConnection(path: socketPath)
         let id = "octet-\(UUID().uuidString.prefix(8))"
         try connection.send(["id": id, "method": method, "params": params])
-        let line = try connection.readLine()
-        return try Self.parseResponse(line)
+        return try connection.readLine()
     }
 
     static func parseResponse(_ line: Data) throws -> [String: Any] {
@@ -135,13 +143,25 @@ struct EngineClient {
         return result
     }
 
+    /// Decoded straight from the response line: going through a dictionary
+    /// first, then back to JSON for the decoder, took twice as long.
     func snapshot() throws -> EngineSnapshot {
-        let result = try call("session.snapshot")
+        let line = try roundTrip("session.snapshot", [:])
+        if let response = try? JSONDecoder().decode(SnapshotResponse.self, from: line) {
+            return response.result.snapshot
+        }
+        // An error, or something the model can't read: say which.
+        let result = try Self.parseResponse(line)
         guard let raw = result["snapshot"] else {
             throw EngineSocketError.malformedResponse("session.snapshot without snapshot")
         }
         let data = try JSONSerialization.data(withJSONObject: raw)
         return try JSONDecoder().decode(EngineSnapshot.self, from: data)
+    }
+
+    private struct SnapshotResponse: Decodable {
+        struct Result: Decodable { let snapshot: EngineSnapshot }
+        let result: Result
     }
 
     /// Event types Octet listens to; any of them triggers a snapshot refresh.

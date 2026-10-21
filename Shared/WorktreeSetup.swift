@@ -92,6 +92,22 @@ enum WorktreeSetup {
         }
     }
 
+    /// Checked preparation for workspaces whose agents must wait for setup.
+    static func copyEnvFilesChecked(from root: String, to checkout: String) throws {
+        let process = Process(), pipe = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        process.arguments = ["-C", root] + listEnvFilesArguments
+        process.standardOutput = pipe; process.standardError = FileHandle.nullDevice
+        try process.run()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            throw ProjectConfiguration.ConfigError.invalid("Couldn't inspect the repository's environment files.")
+        }
+        let paths = envFiles(ignored: String(decoding: data, as: UTF8.self).split(separator: "\0").map(String.init))
+        _ = try ProjectWorkspaceFiles.materialize(ProjectConfiguration(copyPaths: paths), root: root, checkout: checkout)
+    }
+
     // MARK: - Setup script
 
     enum Script: Equatable {

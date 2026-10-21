@@ -268,8 +268,9 @@ final class CheckInCenter: ObservableObject {
         updateBadge()
     }
 
+    /// One Dock count for agents, waits and check-ins: `AttentionRouter`'s.
     func updateBadge() {
-        NSApp?.dockTile.badgeLabel = waits.badgeText
+        AttentionRouter.shared.refreshDockBadge()
     }
 
     // MARK: - Waking

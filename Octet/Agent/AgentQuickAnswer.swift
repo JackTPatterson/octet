@@ -226,7 +226,7 @@ private struct QuickQuestion: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
-            .background(RoundedRectangle(cornerRadius: 6).fill(selected ? Theme.hover : .clear))
+            .background(RoundedRectangle(cornerRadius: Theme.Radius.md).fill(selected ? Theme.hover : .clear))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -299,7 +299,7 @@ private struct QuickQuestionText: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(question)
-                .font(.system(size: 13, weight: .semibold))
+                .font(Theme.interfaceFont(13, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
             if !detail.isEmpty {

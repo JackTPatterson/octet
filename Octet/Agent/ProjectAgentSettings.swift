@@ -262,7 +262,7 @@ struct ProjectAgentSection: View {
             SidePanelSectionView(.setup,
                                  label: model.needsSharing ? "Share instructions"
                                      : AgentSetupSummary.summary(rules: model.localRules + model.sharedRules),
-                                 labelColor: model.needsSharing ? Color.orange : nil) {
+                                 labelColor: model.needsSharing ? Theme.warning : nil) {
                 VStack(alignment: .leading, spacing: 12) {
                     if model.needsSharing { instructions }
                     if !model.localRules.isEmpty || !model.sharedRules.isEmpty { rules }
@@ -274,7 +274,7 @@ struct ProjectAgentSection: View {
     private var instructions: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
-                OctetIcon("exclamationmark.triangle.fill", size: 12).foregroundStyle(Color.orange)
+                OctetIcon("exclamationmark.triangle.fill", size: 12).foregroundStyle(Theme.warning)
                 Text("Instructions").font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary)
             }
             Text(model.instructions.summary)

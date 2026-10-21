@@ -78,6 +78,17 @@ var executablePath: String {
 }
 
 switch arguments.first {
+case "issues":
+    Task {
+        do {
+            let data = try await IssueCommands.run(Array(arguments.dropFirst()))
+            FileHandle.standardOutput.write(data)
+            print("")
+            exit(0)
+        } catch { fail(error.localizedDescription) }
+    }
+    dispatchMain()
+
 case "hook":
     guard let agent = arguments.dropFirst().first, !agent.isEmpty else { fail("usage: octet-cli hook <agent>") }
     let input = FileHandle.standardInput.readDataToEndOfFile()
@@ -282,6 +293,17 @@ case "peer-mcp":
         }
     }
     exit(0)
+case "issues-mcp":
+    Task {
+        while let line = readLine(strippingNewline: true) {
+            if let reply = await IssueMCP.respond(to: line, call: { try await IssueCommands.run($0) }) {
+                print(reply)
+                fflush(stdout)
+            }
+        }
+        exit(0)
+    }
+    dispatchMain()
 case "terminal-mcp":
     // The sidebar terminal's one tool, for agents in Octet (stdio MCP).
     let socket = TerminalControl.resolveSocket(environment: environment)
@@ -380,5 +402,5 @@ case "mcp-permission":
     }
 
 default:
-    fail("usage: octet-cli <open [folder]|run <agent> [--in <folder>] [--prompt <text>]|send <text>|panes|read [--pane <id>] [--lines <n>]|peer …|peer-mcp|delegate-mcp|terminal read|terminal suggest|terminal-mcp|wait add|wait checkin|wait list|wait cancel|wait-mcp|hook <agent>|agent-watch|install-subagent-hook [agent]|uninstall-subagent-hook [agent]|mcp-permission --socket <path>>")
+    fail("usage: octet-cli <issues connections|containers|list|read --tracker github|linear|jira|open [folder]|run <agent> [--in <folder>] [--prompt <text>]|send <text>|panes|read [--pane <id>] [--lines <n>]|issues-mcp|peer …|peer-mcp|delegate-mcp|terminal read|terminal suggest|terminal-mcp|wait add|wait checkin|wait list|wait cancel|wait-mcp|hook <agent>|agent-watch|install-subagent-hook [agent]|uninstall-subagent-hook [agent]|mcp-permission --socket <path>>")
 }

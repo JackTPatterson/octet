@@ -41,8 +41,10 @@ enum PopupTerminal {
 
     """
 
-    /// Opens `command` (a shell when nil) in a popup, in the pane's folder.
+    /// Opens `command` (a shell when nil) in a popup, in the pane's folder,
+    /// shown over the terminal of the window in front.
     static func open(_ command: String?, store: SessionStore) {
+        let window = WindowRegistry.shared.key
         let folder = EngineSession.supportDirectory.appendingPathComponent("engine-plugins/octet-popup", isDirectory: true)
         let cwd = store.keyPaneId.flatMap { store.snapshot.workingDirectory(ofPane: $0) } ?? NSHomeDirectory()
         let client = store.client
@@ -58,7 +60,9 @@ enum PopupTerminal {
                 _ = try? client.call("plugin.link", ["path": folder.path])
                 var params: [String: Any] = ["plugin_id": pluginId, "entrypoint": "popup", "cwd": cwd, "focus": true]
                 if let command, !command.isEmpty { params["env"] = ["OCTET_POPUP_COMMAND": command] }
-                _ = try client.call("plugin.pane.open", params)
+                let opened = try client.call("plugin.pane.open", params)
+                let pane = ((opened["plugin_pane"] as? [String: Any])?["pane"] as? [String: Any])?["pane_id"] as? String
+                DispatchQueue.main.async { window?.popupPaneId = pane }
             } catch {
                 DispatchQueue.main.async {
                     ToastCenter.shared.fail(nil, "Couldn't open a popup", detail: String(describing: error))

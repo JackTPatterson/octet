@@ -49,7 +49,7 @@ struct UsageMeter: View {
         used >= 0.7 || agent.isEmpty ? color(used) : UsagePalette.color(agent)
     }
 
-    static var amber: Color { Color(hex: TerminalTheme.named(SettingsStore.shared.values.themeName).ansi[3]) }
+    static var amber: Color { Theme.warning }
 
     static func relative(_ date: Date) -> String {
         let formatter = RelativeDateTimeFormatter()

@@ -22,25 +22,26 @@ struct StatusBarSettings: View {
         SettingsGroup(title: "Chips") {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Drag chips to reorder them. A chip only shows when it has something to say.")
-                    .font(.system(size: 11))
+                    .font(Theme.interfaceFont(11))
                     .foregroundStyle(Theme.textTertiary)
                 SplashFlow(spacing: 6) {
                     ForEach(order, id: \.self) { id in
                         if let descriptor = byId[id] {
                             StatusChipPreview(descriptor: descriptor, action: .remove) { remove(id, from: order) }
                                 .opacity(dragging == id ? 0.35 : 1)
-                                .onDrag {
+                                // A type of Octet's own, so the chip's id is never text.
+                                .octetDragSource(.statusChip, began: {
                                     dragging = id
-                                    return NSItemProvider(object: id as NSString)
-                                }
-                                .onDrop(of: [.text], delegate: ChipDropDelegate(target: id, dragging: $dragging, order: order) { host.setStatusBarOrder($0) })
+                                    return true
+                                }, ended: { _ in dragging = nil })
+                                .onDrop(of: [OctetDragKind.statusChip.type], delegate: ChipDropDelegate(target: id, dragging: $dragging, order: order) { host.setStatusBarOrder($0) })
                         }
                     }
                 }
                 .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
                 .padding(12)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Theme.terminalBackground))
-                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.border))
+                .background(RoundedRectangle(cornerRadius: Theme.Radius.lg).fill(Theme.terminalBackground))
+                .overlay(RoundedRectangle(cornerRadius: Theme.Radius.lg).strokeBorder(Theme.border))
                 .overlay {
                     if order.isEmpty {
                         Text("No chips. Add some below.")
@@ -59,13 +60,13 @@ struct StatusBarSettings: View {
             VStack(alignment: .leading, spacing: 14) {
                 if available.isEmpty {
                     Text("Every chip is in the bar.")
-                        .font(.system(size: 11))
+                        .font(Theme.interfaceFont(11))
                         .foregroundStyle(Theme.textTertiary)
                 }
                 ForEach(sourceOrder(sources.keys), id: \.self) { source in
                     VStack(alignment: .leading, spacing: 6) {
                         Text(sourceName(source))
-                            .font(.system(size: 11, weight: .medium))
+                            .font(Theme.interfaceFont(11, weight: .medium))
                             .foregroundStyle(Theme.textSecondary)
                         SplashFlow(spacing: 6) {
                             ForEach(sources[source] ?? []) { descriptor in
@@ -77,7 +78,7 @@ struct StatusBarSettings: View {
                     }
                 }
                 Text("Plugins can add chips of their own. Status Chips, in the Marketplace's plugins, has Kubernetes, cloud, Docker, ports and more.")
-                    .font(.system(size: 11))
+                    .font(Theme.interfaceFont(11))
                     .foregroundStyle(Theme.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -158,7 +159,7 @@ private struct StatusChipPreview: View {
         case "builtin.pullRequest":
             OctetIcon("pull.request", size: 13).foregroundStyle(PullRequestTone.open.color)
         case "builtin.ci":
-            OctetIcon("checkmark", size: 11).foregroundStyle(Color(hex: AgentStateColor.done))
+            OctetIcon("checkmark", size: 11).foregroundStyle(Theme.success)
         default:
             StatusItemIcon(descriptor: descriptor, size: 13, tinted: true)
         }

@@ -32,24 +32,18 @@ enum PromptJumper {
         }
     }
 
-    /// ⌘Home (115), ⌘End (119), ⌘PgUp (116), ⌘PgDn (121).
+    /// ⌘Home (115), ⌘End (119), ⌘PgUp (116), ⌘PgDn (121), in the pane's
+    /// own terminal, which keeps its own scrollback.
     static func scroll(pane paneId: String, key: UInt16, store: SessionStore) {
-        let client = store.client
-        DispatchQueue.global(qos: .userInitiated).async {
-            guard let pane = (try? client.call("pane.get", ["pane_id": paneId]))?["pane"] as? [String: Any],
-                  let scroll = pane["scroll"] as? [String: Any],
-                  let current = (scroll["offset_from_bottom"] as? NSNumber)?.intValue,
-                  let maxOffset = (scroll["max_offset_from_bottom"] as? NSNumber)?.intValue,
-                  let viewport = (scroll["viewport_rows"] as? NSNumber)?.intValue else { return }
-            let page = max(1, viewport - 1)
-            let target: Int = switch key {
-            case 115: maxOffset
-            case 119: 0
-            case 116: min(maxOffset, current + page)
-            default: max(0, current - page)
-            }
-            _ = try? client.call("pane.scroll", ["pane_id": paneId, "offset_from_bottom": target])
+        guard let view = PaneMirrorView.view(of: paneId), let scroll = view.scroll else { return }
+        let page = max(1, scroll.viewportRows - 1)
+        let target: Int = switch key {
+        case 115: scroll.maxOffsetFromBottom
+        case 119: 0
+        case 116: min(scroll.maxOffsetFromBottom, scroll.offsetFromBottom + page)
+        default: max(0, scroll.offsetFromBottom - page)
         }
+        view.scroll(toOffsetFromBottom: target)
     }
 
     /// Takes the key in a pane that isn't running an agent (agents keep
@@ -57,13 +51,16 @@ enum PromptJumper {
     static func handle(_ direction: PromptJump.Direction, store: SessionStore) -> Bool {
         guard let paneId = store.keyPaneId,
               !store.snapshot.agents.contains(where: { $0.paneId == paneId && $0.agent != nil }) else { return false }
+        guard let scroll = PaneMirrorView.view(of: paneId)?.scroll else { return false }
         let client = store.client
+        // Offsets count up from the bottom, where the pane's terminal and the
+        // engine agree; rows count down from the top of the engine's own
+        // scrollback, which can run longer.
+        let current = scroll.offsetFromBottom, viewport = scroll.viewportRows
         DispatchQueue.global(qos: .userInitiated).async {
-            guard let pane = (try? client.call("pane.get", ["pane_id": paneId]))?["pane"] as? [String: Any],
-                  let scroll = pane["scroll"] as? [String: Any],
-                  let current = (scroll["offset_from_bottom"] as? NSNumber)?.intValue,
-                  let maxOffset = (scroll["max_offset_from_bottom"] as? NSNumber)?.intValue,
-                  let viewport = (scroll["viewport_rows"] as? NSNumber)?.intValue else { return }
+            guard let engine = (try? client.call("pane.get", ["pane_id": paneId]))
+                    .flatMap({ ($0["pane"] as? [String: Any])?["scroll"] as? [String: Any] }),
+                  let maxOffset = (engine["max_offset_from_bottom"] as? NSNumber)?.intValue else { return }
             let total = maxOffset + viewport
             // The shell's own marks when it has them, exact; else prompts
             // found by their shape.
@@ -79,7 +76,7 @@ enum PromptJumper {
             }
             guard let offset = PromptJump.offset(direction, rows: rows,
                                                  currentOffset: current, total: total, viewport: viewport) else { return }
-            _ = try? client.call("pane.scroll", ["pane_id": paneId, "offset_from_bottom": offset])
+            DispatchQueue.main.async { PaneMirrorView.view(of: paneId)?.scroll(toOffsetFromBottom: offset) }
         }
         return true
     }

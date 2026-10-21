@@ -25,7 +25,7 @@ struct TranscriptOutputPanel: View {
         let matches = CommandOutputSearch.matchingLines(lines, query: query)
         let running = call?.result == nil && session.conversation.isRunning
         ZStack {
-            Color.black.opacity(0.45)
+            Theme.scrim
                 .onTapGesture(perform: close)
                 .accessibilityHidden(true)
             VStack(spacing: 0) {
@@ -36,7 +36,7 @@ struct TranscriptOutputPanel: View {
                 output(lines: lines, matches: matches, running: running)
             }
             .frame(maxWidth: 980, maxHeight: 720)
-            .octetGlass(cornerRadius: 12, fill: Theme.terminalBackground)
+            .octetGlass(cornerRadius: Theme.Radius.card, fill: Theme.terminalBackground)
             .padding(28)
         }
         .onExitCommand(perform: close)

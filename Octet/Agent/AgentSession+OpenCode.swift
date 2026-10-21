@@ -73,7 +73,7 @@ extension AgentSession: OpenCodeServer.Listener {
             openCodeQueue = []
             conversation.isRunning = false
             conversation.lastError = message
-            notice(message)
+            notice(message, style: .error)
         }
     }
 
@@ -134,7 +134,7 @@ extension AgentSession: OpenCodeServer.Listener {
             guard let self, case .failure(let failure) = result else { return }
             self.conversation.isRunning = false
             self.conversation.lastError = failure.description
-            self.notice(failure.description)
+            self.notice(failure.description, style: .error)
         }
     }
 
@@ -163,7 +163,7 @@ extension AgentSession: OpenCodeServer.Listener {
                                       body: ["providerID": model.providerID, "modelID": model.modelID]) { [weak self] result in
             guard let self, case .failure(let failure) = result else { return }
             self.conversation.isRunning = false
-            self.notice("Couldn't compact the conversation: \(failure)")
+            self.notice("Couldn't compact the conversation: \(failure)", style: .error)
         }
     }
 
@@ -184,7 +184,7 @@ extension AgentSession: OpenCodeServer.Listener {
             OpenCodeServer.shared.request("POST", "session/\(id)/revert", directory: self.cwd,
                                           body: ["messageID": target]) { [weak self] result in
                 guard let self else { return }
-                if case .failure(let failure) = result { return self.notice("Couldn't undo: \(failure)") }
+                if case .failure(let failure) = result { return self.notice("Couldn't undo: \(failure)", style: .error) }
                 self.openCodeRevertMessage = target
                 self.restoreOpenCodeTranscript(force: true)
             }
@@ -196,7 +196,7 @@ extension AgentSession: OpenCodeServer.Listener {
         guard let id = threadId, openCodeRevertMessage != nil else { return notice("Nothing to redo.") }
         OpenCodeServer.shared.request("POST", "session/\(id)/unrevert", directory: cwd) { [weak self] result in
             guard let self else { return }
-            if case .failure(let failure) = result { return self.notice("Couldn't redo: \(failure)") }
+            if case .failure(let failure) = result { return self.notice("Couldn't redo: \(failure)", style: .error) }
             self.openCodeRevertMessage = nil
             self.restoreOpenCodeTranscript(force: true)
         }
@@ -239,7 +239,7 @@ extension AgentSession: OpenCodeServer.Listener {
         OpenCodeServer.shared.request("PATCH", "session/\(id)", directory: cwd,
                                       body: ["permission": OpenCodePermission.ruleset(permissionProfile)]) { [weak self] result in
             guard let self, case .failure(let failure) = result else { return }
-            self.notice("OpenCode didn't take the new permissions: \(failure)")
+            self.notice("OpenCode didn't take the new permissions: \(failure)", style: .error)
         }
     }
 
@@ -266,7 +266,7 @@ extension AgentSession: OpenCodeServer.Listener {
                 body["message"] = message
             }
             OpenCodeServer.shared.request("POST", "permission/\(requestId)/reply", directory: self.cwd, body: body) { result in
-                if case .failure(let failure) = result { self.notice("Couldn't answer OpenCode: \(failure)") }
+                if case .failure(let failure) = result { self.notice("Couldn't answer OpenCode: \(failure)", style: .error) }
             }
         }
     }
@@ -282,7 +282,7 @@ extension AgentSession: OpenCodeServer.Listener {
         }
         OpenCodeServer.shared.request("POST", "question/\(question.id)/reply", directory: cwd,
                                       body: ["answers": answers]) { [weak self] result in
-            if case .failure(let failure) = result { self?.notice("Couldn't answer OpenCode: \(failure)") }
+            if case .failure(let failure) = result { self?.notice("Couldn't answer OpenCode: \(failure)", style: .error) }
         }
         advanceQuestion(question.id)
     }

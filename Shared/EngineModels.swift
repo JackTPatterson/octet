@@ -173,11 +173,70 @@ struct EngineLayout: Codable, Equatable {
         enum CodingKeys: String, CodingKey { case paneId = "pane_id", rect }
     }
 
+    /// One divider, as the Octet engine's `pane.layout` reports it; stock
+    /// Herdr reports none.
+    struct Split: Codable, Equatable {
+        /// True when the divider runs between left and right (the split's
+        /// direction is `right`), false between top and bottom.
+        let sideBySide: Bool
+        let firstPaneIds: [String]
+        let secondPaneIds: [String]
+
+        enum CodingKeys: String, CodingKey {
+            case direction, firstPaneIds = "first_pane_ids", secondPaneIds = "second_pane_ids"
+        }
+
+        init(sideBySide: Bool, firstPaneIds: [String], secondPaneIds: [String]) {
+            self.sideBySide = sideBySide
+            self.firstPaneIds = firstPaneIds
+            self.secondPaneIds = secondPaneIds
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            sideBySide = try c.decodeIfPresent(String.self, forKey: .direction) != "down"
+            firstPaneIds = try c.decodeIfPresent([String].self, forKey: .firstPaneIds) ?? []
+            secondPaneIds = try c.decodeIfPresent([String].self, forKey: .secondPaneIds) ?? []
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(sideBySide ? "right" : "down", forKey: .direction)
+            try c.encode(firstPaneIds, forKey: .firstPaneIds)
+            try c.encode(secondPaneIds, forKey: .secondPaneIds)
+        }
+    }
+
     let tabId: String
     let area: Rect
     let panes: [Pane]
+    var splits: [Split] = []
+    /// One pane fills the tab (Toggle Zoom): the focused one.
+    var zoomed = false
+    var focusedPaneId: String?
 
-    enum CodingKeys: String, CodingKey { case tabId = "tab_id", area, panes }
+    init(tabId: String, area: Rect, panes: [Pane], splits: [Split] = [], zoomed: Bool = false, focusedPaneId: String? = nil) {
+        self.tabId = tabId
+        self.area = area
+        self.panes = panes
+        self.splits = splits
+        self.zoomed = zoomed
+        self.focusedPaneId = focusedPaneId
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case tabId = "tab_id", area, panes, splits, zoomed, focusedPaneId = "focused_pane_id"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        tabId = try c.decode(String.self, forKey: .tabId)
+        area = try c.decode(Rect.self, forKey: .area)
+        panes = try c.decode([Pane].self, forKey: .panes)
+        splits = (try? c.decodeIfPresent([Split].self, forKey: .splits)) ?? []
+        zoomed = (try? c.decodeIfPresent(Bool.self, forKey: .zoomed)) ?? false
+        focusedPaneId = try? c.decodeIfPresent(String.self, forKey: .focusedPaneId)
+    }
 
     /// A pane's frame in a view of `size` that shows the whole area.
     func frame(ofPane paneId: String, in size: CGSize) -> CGRect? {
@@ -277,6 +336,18 @@ struct EngineSnapshot: Codable, Equatable {
     func directory(ofWorkspace workspaceId: String) -> String? {
         let ordered = panes.filter { $0.workspaceId == workspaceId }
         return (ordered.first(where: \.focused) ?? ordered.first).flatMap { $0.foregroundCwd ?? $0.cwd }
+    }
+
+    /// `directory(ofWorkspace:)` for every workspace, in one pass over the panes.
+    var workspaceDirectories: [String: String] {
+        var first: [String: EnginePane] = [:]
+        var focused: [String: EnginePane] = [:]
+        for pane in panes {
+            if first[pane.workspaceId] == nil { first[pane.workspaceId] = pane }
+            if pane.focused, focused[pane.workspaceId] == nil { focused[pane.workspaceId] = pane }
+        }
+        return first.merging(focused) { _, focused in focused }
+            .compactMapValues { $0.foregroundCwd ?? $0.cwd }
     }
 }
 

@@ -99,7 +99,7 @@ private struct ColorSchemeTile: View {
     }
 
     @ViewBuilder private var preview: some View {
-        let shape = RoundedRectangle(cornerRadius: 8)
+        let shape = RoundedRectangle(cornerRadius: Theme.Radius.lg)
         Group {
             switch scheme {
             case .light: OctetWireframe(palette: light)

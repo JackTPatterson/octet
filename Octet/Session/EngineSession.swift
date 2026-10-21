@@ -41,28 +41,6 @@ struct EngineSession {
         )
     }
 
-    /// The session server always draws one tab row at the top; Octet clips it
-    /// and shows native tabs instead.
-    static let hiddenTopRows = 1
-
-    /// Shell command the terminal surface runs: the client, once the
-    /// terminal has its real size. The surface starts at a stand-in size
-    /// (800×600 pixels) and gets the window's a moment later; a client
-    /// attaching in that moment shrinks every pane to it and back, and a
-    /// full-screen program that misses the second resize stays drawn in a
-    /// corner. So wait (up to 2 s) for the first resize and for it to
-    /// settle, then become the client, still as a login process (`-` first
-    /// in its name), as the surface started it.
-    var command: String {
-        let wait = #"""
-        s=$(stty size 2>/dev/null); n=0
-        while [ $n -lt 40 ] && [ "$(stty size 2>/dev/null)" = "$s" ]; do /bin/sleep 0.05; n=$((n+1)); done
-        last=; while [ "$(stty size 2>/dev/null)" != "$last" ]; do last=$(stty size 2>/dev/null); /bin/sleep 0.1; done
-        exec -a "-$0" "$0" --session "$1"
-        """#
-        return "/bin/bash --noprofile --norc -c \(shellQuote(wait)) \(shellQuote(enginePath)) \(shellQuote(Self.name))"
-    }
-
     var environment: [String: String] {
         var env = TerminalEnvironment.colorCapability
         env[EngineProtocol.configPathVariable] = configPath
@@ -114,6 +92,21 @@ struct EngineSession {
         }
     }
 
+    /// The running server is older than this Octet and couldn't hand its
+    /// panes to the new engine: until it restarts, panes draw empty.
+    @MainActor
+    static func offerRestartAfterFailedUpgrade(enginePath: String, reason: String) {
+        ConfirmCenter.shared.ask(ConfirmCenter.Request(
+            title: "Restart the terminal server?",
+            message: "The terminal server still running is from an earlier version of Octet, and it couldn't hand its panes to the new one (\(reason)). Until it restarts, panes stay empty. Restarting ends everything running in them. Octet reopens afterwards.",
+            confirmTitle: "Restart Terminal Server",
+            cancelTitle: "Not Now",
+            destructive: true,
+            onConfirm: { _ in restartServer(enginePath: enginePath) },
+            onCancel: {}
+        ))
+    }
+
     /// Stops the session server, then relaunches Octet, which starts a fresh
     /// one with Octet's own environment.
     private static func restartServer(enginePath: String) {
@@ -125,6 +118,28 @@ struct EngineSession {
         relaunch.environment = TerminalEnvironment.sanitized(ProcessInfo.processInfo.environment)
         try? relaunch.run()
         NSApp.terminate(nil)
+    }
+
+    /// Starts the session server when none answers. It runs detached, so it
+    /// and everything in its panes outlive Octet.
+    func ensureServer() {
+        let socketPath = self.socketPath, enginePath = self.enginePath
+        var environment = TerminalEnvironment.sanitized(ProcessInfo.processInfo.environment)
+            .merging(self.environment) { $1 }
+        environment["HERDR_STARTUP_CWD"] = NSHomeDirectory()
+        DispatchQueue.global(qos: .userInitiated).async {
+            if (try? EngineSocketConnection(path: socketPath)) != nil { return }
+            let launch = Process()
+            launch.executableURL = URL(fileURLWithPath: "/bin/sh")
+            // The shell backgrounds the server and exits, so launchd adopts it.
+            // Only the server goes in the background: a whole `cd && …` list
+            // would leave a subshell behind, waiting on it.
+            launch.arguments = ["-c", #"cd "$HOME"; "$0" --session "$1" server </dev/null >/dev/null 2>&1 &"#,
+                                enginePath, Self.name]
+            launch.environment = environment
+            try? launch.run()
+            launch.waitUntilExit()
+        }
     }
 
     /// The engine bundled in Octet.app, or a standalone install when the

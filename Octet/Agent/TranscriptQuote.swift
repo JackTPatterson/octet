@@ -13,6 +13,13 @@ struct TranscriptActions {
     var openTurnDiff: (TurnChanges, String?) -> Void = { _, _ in }
     var openFile: (String) -> Void = { _ in }
     var openOutput: (String) -> Void = { _ in }
+    /// Runs a shell block's command in the focused terminal pane; nil
+    /// where there's no terminal to run it in.
+    var runInTerminal: ((String) -> Void)?
+    /// Who's speaking in replies, for VoiceOver.
+    var agentName = "Agent"
+    /// Asks for the last reply again.
+    var regenerate: () -> Void = {}
 }
 
 private struct TranscriptActionsKey: EnvironmentKey {
@@ -142,7 +149,7 @@ struct AssistantSelectionToolbar: View {
                 .help("Quote this passage and start a question about it")
         }
         .padding(3)
-        .octetGlass(cornerRadius: 10)
+        .octetGlass(cornerRadius: Theme.Radius.xl)
         .shadow(color: .black.opacity(0.25), radius: 8, y: 3)
         .fixedSize()
         .accessibilityElement(children: .contain)

@@ -11,10 +11,7 @@ struct PromptEditorView: View {
     var body: some View {
         if editor.isActive, let anchor = editor.anchor {
             // Match the terminal's own font so the line sits on the grid.
-            let family = settings.values.fontFamily
-            let font = family.isEmpty
-                ? Font.system(size: settings.values.fontSize, design: .monospaced)
-                : Font.custom(family, fixedSize: settings.values.fontSize)
+            let font = TerminalLook.font()
             // Every character in its own cell (two for a wide one), so the
             // line sits on the terminal's grid whatever the font's glyph
             // widths, and the caret lands between the right characters.
@@ -44,15 +41,20 @@ struct PromptEditorView: View {
                         .frame(width: CGFloat(cell.width) * anchor.cellWidth, height: anchor.cellHeight)
                         .offset(x: CGFloat(cell.column - shift) * anchor.cellWidth)
                 }
-                Rectangle()
-                    .fill(Theme.accent)
-                    .frame(width: max(1.5, anchor.cellWidth * 0.12), height: anchor.cellHeight)
+                caret(anchor)
                     .opacity(caretVisible ? 1 : 0)
                     .offset(x: CGFloat(caretColumn - shift) * anchor.cellWidth)
             }
             .frame(height: anchor.cellHeight, alignment: .topLeading)
             .clipped()
             .contentShape(Rectangle())
+            // One element for VoiceOver, not one per character: the line as
+            // its value, the suggestion as a hint.
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Command line")
+            .accessibilityValue(editor.line.text)
+            .accessibilityHint(suggestionHint)
+            .accessibilityAddTraits(.updatesFrequently)
             // A click puts the caret under the pointer.
             .onTapGesture(coordinateSpace: .local) { point in
                 let column = Int(point.x / max(anchor.cellWidth, 1)) + shift
@@ -67,6 +69,32 @@ struct PromptEditorView: View {
             }
             .onAppear { blink() }
         }
+    }
+
+    /// The caret in the terminal's own cursor colour and shape, so the line
+    /// reads as the terminal's: a bar is a bar, an underline an underline,
+    /// and a block a see-through cell so the character under it still shows.
+    @ViewBuilder
+    private func caret(_ anchor: OctetTerminalRuntime.CursorAnchor) -> some View {
+        let color = TerminalLook.cursorColor
+        switch settings.values.cursorStyle {
+        case .block:
+            Rectangle().fill(color.opacity(0.45))
+                .frame(width: anchor.cellWidth, height: anchor.cellHeight)
+        case .underline:
+            Rectangle().fill(color)
+                .frame(width: anchor.cellWidth, height: max(1.5, anchor.cellHeight * 0.1))
+                .frame(height: anchor.cellHeight, alignment: .bottom)
+        case .bar:
+            Rectangle().fill(color)
+                .frame(width: max(1.5, anchor.cellWidth * 0.12), height: anchor.cellHeight)
+        }
+    }
+
+    private var suggestionHint: String {
+        guard let suggestion = editor.suggestion, suggestion.hasPrefix(editor.line.text),
+              suggestion.count > editor.line.text.count else { return "" }
+        return "Suggests \(suggestion). Right arrow accepts it."
     }
 
     private struct Cell {
@@ -84,7 +112,7 @@ struct PromptEditorView: View {
         for span in ShellSyntax.spans(in: text) {
             let from = text.distance(from: text.startIndex, to: span.range.lowerBound)
             let to = text.distance(from: text.startIndex, to: span.range.upperBound)
-            for index in from..<min(to, colors.count) { colors[index] = color(for: span.role) }
+            for index in from..<min(to, colors.count) { colors[index] = span.role.color() }
         }
         var result: [Cell] = []
         var column = 0
@@ -101,24 +129,6 @@ struct PromptEditorView: View {
             }
         }
         return result
-    }
-
-    private func color(for role: ShellSyntax.Role) -> Color {
-        switch role {
-        case .command: Theme.accent
-        case .builtin: Theme.palette.color(\.syntaxBuiltin)
-        case .flag: Theme.palette.color(\.syntaxFlag)
-        case .string: Theme.palette.color(\.syntaxString)
-        case .path: Theme.palette.color(\.syntaxPath)
-        case .variable: Theme.palette.color(\.syntaxVariable)
-        case .assignment: Theme.palette.color(\.syntaxVariable)
-        case .reserved: Theme.palette.color(\.syntaxBuiltin)
-        case .expansion: Theme.palette.color(\.syntaxVariable)
-        case .glob: Theme.palette.color(\.syntaxPath)
-        case .redirect, .separator: Theme.textSecondary
-        case .comment: Theme.textTertiary
-        case .argument: Theme.textPrimary
-        }
     }
 
     private func blink() {

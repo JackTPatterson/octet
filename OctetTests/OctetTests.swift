@@ -1929,28 +1929,6 @@ final class TwinUsageTests: XCTestCase {
     }
 }
 
-final class RemoteMachineTests: XCTestCase {
-    func testMachineListingIsReadEitherShape() {
-        let array = RemoteMachines.parse(Data(#"[{"id":"m1","label":"builder","target":"jack@builder.local","enabled":true}]"#.utf8))
-        XCTAssertEqual(array.map(\.label), ["builder"])
-        XCTAssertEqual(array.first?.target, "jack@builder.local")
-
-        let wrapped = RemoteMachines.parse(Data(#"{"machines":[{"name":"homelab","ssh_target":"root@homelab.local","enabled":false}]}"#.utf8))
-        XCTAssertEqual(wrapped.first?.label, "homelab")
-        XCTAssertFalse(wrapped.first?.enabled ?? true)
-        // Nothing usable is no machines, not a crash.
-        XCTAssertTrue(RemoteMachines.parse(Data("No saved SSH machines.".utf8)).isEmpty)
-        XCTAssertTrue(RemoteMachines.parse(Data(#"[{"label":"broken"}]"#.utf8)).isEmpty)
-    }
-
-    func testOpeningAMachineRunsTheEngineAgainstIt() {
-        let machine = RemoteMachine(id: "m", label: "Build Box", target: "jack@box")
-        XCTAssertEqual(RemoteMachines.sessionName(for: machine), "octet-build-box")
-        XCTAssertEqual(machine.command(herdrPath: "/usr/local/bin/herdr", session: "octet-build-box"),
-                       ["/usr/local/bin/herdr", "--remote", "jack@box", "--session", "octet-build-box"])
-    }
-}
-
 final class TwinTailTests: XCTestCase {
     private func temporaryDirectory() throws -> String {
         let path = NSTemporaryDirectory() + "twin-tail-" + UUID().uuidString
@@ -2699,7 +2677,7 @@ final class NewTabFreshnessTests: XCTestCase {
 
     func testOneReadingOfOutputEndsItForGood() {
         var freshness = NewTabFreshness()
-        XCTAssertTrue(freshness.observe(tab: "t1", cursorRow: 0, rowsInUse: 1, at: at(0)))
+        XCTAssertFalse(freshness.observe(tab: "t1", cursorRow: 0, rowsInUse: 1, at: at(0)))
         // `ls` prints, the grid settles, and nothing more is reported.
         XCTAssertFalse(freshness.observe(tab: "t1", cursorRow: 7, rowsInUse: 8, at: at(settled + 2)))
         XCTAssertTrue(freshness.used.contains("t1"))
@@ -2709,9 +2687,10 @@ final class NewTabFreshnessTests: XCTestCase {
 
     func testANewTabShowsTheSplash() {
         var freshness = NewTabFreshness()
-        // Before the shell has drawn anything, and once its prompt is up.
-        XCTAssertTrue(freshness.observe(tab: "t1", cursorRow: 0, rowsInUse: 0, at: at(0)))
-        XCTAssertTrue(freshness.observe(tab: "t1", cursorRow: 0, rowsInUse: 1, at: at(0.1)))
+        // Neither an empty framebuffer nor an unsettled prompt shows the splash.
+        XCTAssertFalse(freshness.observe(tab: "t1", cursorRow: 0, rowsInUse: 0, at: at(0)))
+        XCTAssertFalse(freshness.observe(tab: "t1", cursorRow: 0, rowsInUse: 1, at: at(0.1)))
+        XCTAssertTrue(freshness.observe(tab: "t1", cursorRow: 0, rowsInUse: 1, at: at(settled)))
     }
 
     func testACommandWithNoOutputStillCounts() {
@@ -2726,7 +2705,7 @@ final class NewTabFreshnessTests: XCTestCase {
 
     func testATwoLinePromptIsStillFresh() {
         var freshness = NewTabFreshness()
-        XCTAssertTrue(freshness.observe(tab: "t1", cursorRow: 2, rowsInUse: 3, at: at(0)))
+        XCTAssertFalse(freshness.observe(tab: "t1", cursorRow: 2, rowsInUse: 3, at: at(0)))
         XCTAssertTrue(freshness.observe(tab: "t1", cursorRow: 2, rowsInUse: 3, at: at(settled)))
     }
 
@@ -2736,7 +2715,7 @@ final class NewTabFreshnessTests: XCTestCase {
         XCTAssertFalse(freshness.observe(tab: "t2", cursorRow: 20, rowsInUse: 21, at: at(0)))
         XCTAssertFalse(freshness.used.contains("t2"))
         // Then t2's own prompt draws.
-        XCTAssertTrue(freshness.observe(tab: "t2", cursorRow: 0, rowsInUse: 1, at: at(0.1)))
+        XCTAssertFalse(freshness.observe(tab: "t2", cursorRow: 0, rowsInUse: 1, at: at(0.1)))
         XCTAssertTrue(freshness.observe(tab: "t2", cursorRow: 0, rowsInUse: 1, at: at(settled)))
     }
 
@@ -2789,7 +2768,7 @@ final class NewTabFreshnessTests: XCTestCase {
         _ = freshness.observe(tab: "t1", cursorRow: 0, rowsInUse: 1, at: at(0))
         _ = freshness.observe(tab: "t1", cursorRow: 9, rowsInUse: 10, at: at(settled))
         XCTAssertTrue(freshness.used.contains("t1"))
-        XCTAssertTrue(freshness.observe(tab: "t2", cursorRow: 0, rowsInUse: 1, at: at(settled + 1)))
+        XCTAssertFalse(freshness.observe(tab: "t2", cursorRow: 0, rowsInUse: 1, at: at(settled + 1)))
         freshness.forget("t1")
         XCTAssertFalse(freshness.used.contains("t1"))
     }
@@ -2867,59 +2846,50 @@ final class SplitDropTests: XCTestCase {
         XCTAssertEqual(layout?.panes.map(\.id), ["w4:p3"])
         XCTAssertNil(PaneLayout.parse(["layout": ["area": ["x": 0, "y": 0, "width": 0, "height": 0], "panes": []]]))
     }
-}
 
-final class EngineNavigationTests: XCTestCase {
-    private typealias Stroke = EngineNavigation.Stroke
-    private let prefix = EngineNavigation.prefix
-
-    func testTheFirstNineAreOneJump() {
-        XCTAssertEqual(EngineNavigation.toTab(from: 0, to: 1), [prefix, Stroke(key: "digit2")])
-        XCTAssertEqual(EngineNavigation.toWorkspace(from: nil, to: 0), [prefix, Stroke(key: "digit1", ctrl: true)])
-        XCTAssertEqual(EngineNavigation.toWorkspace(from: 3, to: 8), [prefix, Stroke(key: "digit9", ctrl: true)])
+    func testRealCellsPlaceTheZones() {
+        // Cells 10×20 points, the grid drawn 4 points in and 30 down.
+        let cells = CellGeometry(cellSize: CGSize(width: 10, height: 20), contentLeft: 4, contentTop: 30)
+        let target = SplitDrop.target(at: CGPoint(x: 990, y: 520), in: CGSize(width: 1100, height: 1100), layout: single, cells: cells)
+        XCTAssertEqual(target?.edge, .right)
+        XCTAssertEqual(target?.highlight, CGRect(x: 504, y: 30, width: 500, height: 1000))
     }
 
-    func testBeingThereAlreadyIsNoKeys() {
-        XCTAssertTrue(EngineNavigation.toTab(from: 4, to: 4).isEmpty)
-        XCTAssertTrue(EngineNavigation.toTab(from: nil, to: -1).isEmpty)
+    func testADraggedPaneUsesDiagonalsWithADeadMiddle() {
+        let split = PaneLayout(area: CGRect(x: 0, y: 0, width: 101, height: 50), panes: [
+            .init(id: "left", rect: CGRect(x: 0, y: 0, width: 50, height: 50)),
+            .init(id: "right", rect: CGRect(x: 51, y: 0, width: 50, height: 50)),
+        ])
+        let wide = CGSize(width: 1010, height: 500)
+        // Over the other pane's top, well clear of its middle.
+        XCTAssertEqual(SplitDrop.target(at: CGPoint(x: 760, y: 40), in: wide, layout: split, moving: "left")?.edge, .top)
+        XCTAssertEqual(SplitDrop.target(at: CGPoint(x: 760, y: 40), in: wide, layout: split, moving: "left")?.title, "Move Up")
+        // Its middle does nothing.
+        XCTAssertNil(SplitDrop.target(at: CGPoint(x: 765, y: 250), in: wide, layout: split, moving: "left"))
+        // Nor does the pane it's dragged from.
+        XCTAssertNil(SplitDrop.target(at: CGPoint(x: 40, y: 250), in: wide, layout: split, moving: "left"))
+        // Left of "right" is where "left" already is: no zone.
+        XCTAssertNil(SplitDrop.target(at: CGPoint(x: 560, y: 250), in: wide, layout: split, moving: "left"))
+        XCTAssertEqual(SplitDrop.target(at: CGPoint(x: 1000, y: 250), in: wide, layout: split, moving: "left")?.edge, .right)
     }
 
-    func testPastNineItJumpsToTheNinthAndSteps() {
-        let next = [prefix, Stroke(key: "n")]
-        XCTAssertEqual(EngineNavigation.toTab(from: nil, to: 10), [prefix, Stroke(key: "digit9")] + next + next)
-        // From right next door, stepping is shorter than the jump.
-        XCTAssertEqual(EngineNavigation.toTab(from: 11, to: 10), [prefix, Stroke(key: "p")])
-        XCTAssertEqual(EngineNavigation.toWorkspace(from: 9, to: 10), [prefix, Stroke(key: "n", ctrl: true)])
+    func testTheWholeTabBandSplitsBesideEverything() {
+        let split = PaneLayout(area: CGRect(x: 0, y: 0, width: 101, height: 50), panes: [
+            .init(id: "left", rect: CGRect(x: 0, y: 0, width: 50, height: 50)),
+            .init(id: "right", rect: CGRect(x: 51, y: 0, width: 50, height: 50)),
+        ])
+        let wide = CGSize(width: 1010, height: 500)
+        let target = SplitDrop.target(at: CGPoint(x: 500, y: 495), in: wide, layout: split, wholeTab: true)
+        XCTAssertNil(target?.paneId)
+        XCTAssertEqual(target?.edge, .bottom)
+        XCTAssertEqual(target?.title, "Split Down of Everything")
+        // Off the band, a pane's own zone.
+        XCTAssertEqual(SplitDrop.target(at: CGPoint(x: 500, y: 400), in: wide, layout: split, wholeTab: true)?.paneId, "left")
     }
 
-    func testStrokesCarryWhatTheTerminalNeeds() {
-        XCTAssertNil(prefix.text)
-        XCTAssertEqual(prefix.codepoint, UInt32(("b" as Unicode.Scalar).value))
-        XCTAssertEqual(Stroke(key: "digit2").text, "2")
-        XCTAssertNil(Stroke(key: "digit2", alt: true).text)
-        XCTAssertNil(Stroke(key: "digit2", ctrl: true).text)
-        XCTAssertEqual(Stroke(key: "digit2", alt: true).codepoint, UInt32(("2" as Unicode.Scalar).value))
-    }
-
-    func testTheConfigBindsWhatThePlannerSends() {
-        let config = EngineNavigation.keysConfig
-        for binding in ["prefix = \"ctrl+b\"", "switch_tab = \"prefix+1..9\"", "\"prefix+ctrl+1..9\"",
-                        "\"prefix+ctrl+n\"", "\"prefix+ctrl+p\"", "next_tab = \"prefix+n\""] {
-            XCTAssertTrue(config.contains(binding), binding)
-        }
-    }
-
-    // Each create call's answer, as the engine gives it.
-    func testCreatedIdsComeOutOfEveryShape() {
-        XCTAssertEqual(EngineCreated(result: ["tab": ["tab_id": "w1:t2", "workspace_id": "w1"],
-                                              "root_pane": ["pane_id": "w1:p2"]]),
-                       EngineCreated(workspaceId: "w1", tabId: "w1:t2", paneId: "w1:p2"))
-        XCTAssertEqual(EngineCreated(result: ["workspace": ["workspace_id": "w2", "active_tab_id": "w2:t1"],
-                                              "tab": ["tab_id": "w2:t1", "workspace_id": "w2"]]).tabId, "w2:t1")
-        XCTAssertEqual(EngineCreated(result: ["layout": ["workspace_id": "w1", "tab_id": "w1:t3", "focused_pane_id": "w1:p3"]]),
-                       EngineCreated(workspaceId: "w1", tabId: "w1:t3", paneId: "w1:p3"))
-        XCTAssertEqual(EngineCreated(result: ["move_result": ["pane": ["pane_id": "w3:p1", "workspace_id": "w3", "tab_id": "w3:t1"]]]),
-                       EngineCreated(workspaceId: "w3", tabId: "w3:t1", paneId: "w3:p1"))
+    func testTheOwnTabSaysANewShellOpens() {
+        let target = SplitDrop.target(at: CGPoint(x: 950, y: 250), in: view, layout: single, action: .newShell)
+        XCTAssertEqual(target?.title, "New Shell Right")
     }
 }
 

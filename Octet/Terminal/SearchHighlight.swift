@@ -20,28 +20,18 @@ final class SearchHighlight: ObservableObject {
 
 struct SearchHighlightView: View {
     @ObservedObject var highlight = SearchHighlight.shared
-    let layout: EngineLayout?
-    /// Where the grid's first row is drawn.
-    let contentTop: CGFloat
-    /// The real cell size, when known; else worked out from the layout.
-    var cellSize: CGSize = .zero
-    var contentLeft: CGFloat = 0
+    @ObservedObject var geometry: PaneGeometry
 
     var body: some View {
-        GeometryReader { proxy in
-            if let box = highlight.box, let pane = layout?.panes.first(where: { $0.paneId == box.paneId }),
-               let frame = layout?.frame(ofPane: box.paneId, in: proxy.size), pane.rect.width > 0, pane.rect.height > 0,
-               (0..<pane.rect.height).contains(box.row) {
-                let cellWidth = cellSize.width > 0 ? cellSize.width : frame.width / CGFloat(pane.rect.width)
-                let cellHeight = cellSize.height > 0 ? cellSize.height : frame.height / CGFloat(pane.rect.height)
-                let shift = contentTop
-                let columns = max(1, (box.endColumn ?? pane.rect.width - 1) - box.startColumn + 1)
+        GeometryReader { _ in
+            if let box = highlight.box, let pane = geometry.panes[box.paneId], (0..<pane.rows).contains(box.row) {
+                let columns = max(1, (box.endColumn ?? pane.columns - 1) - box.startColumn + 1)
+                let origin = pane.origin(row: box.row, column: box.startColumn)
                 RoundedRectangle(cornerRadius: 2)
                     .fill(Theme.accent.opacity(0.28))
                     .overlay(RoundedRectangle(cornerRadius: 2).strokeBorder(Theme.accent, lineWidth: 1.5))
-                    .frame(width: CGFloat(columns) * cellWidth + 4, height: cellHeight + 2)
-                    .offset(x: CGFloat(pane.rect.x) * cellWidth + contentLeft + CGFloat(box.startColumn) * cellWidth - 2,
-                            y: shift + CGFloat(pane.rect.y + box.row) * cellHeight - 1)
+                    .frame(width: CGFloat(columns) * pane.cellSize.width + 4, height: pane.cellSize.height + 2)
+                    .offset(x: origin.x - 2, y: origin.y - 1)
                     .allowsHitTesting(false)
                     .onAppear { DebugSnapshot.overlay("search-highlight", true) }
                     .onDisappear { DebugSnapshot.overlay("search-highlight", false) }

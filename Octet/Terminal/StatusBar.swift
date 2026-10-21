@@ -25,6 +25,11 @@ struct StatusBar: View {
     @State private var ciShown = false
     /// The plugin item whose setup popover is open, by descriptor id.
     @State private var setupShown: String?
+    /// Where each item sits in the bar as scrolled, and the bar's width,
+    /// for the edge fades and the overflow menu.
+    @State private var spans: [String: StatusBarOverflow.Span] = [:]
+    @State private var barWidth: CGFloat = 0
+    @State private var overflowShown = false
 
     static let height: CGFloat = 30
 
@@ -77,15 +82,33 @@ struct StatusBar: View {
             descriptors[id].map { Self.draws($0, model: model, ssh: ssh, agent: agent) } ?? false
         }
         let dividers = StatusBarItems.dividers(before: shown)
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 2) {
-                ForEach(Array(shown.enumerated()), id: \.element) { index, id in
-                    if dividers.contains(index) { StatusBarDivider() }
-                    if let descriptor = descriptors[id] { item(for: descriptor) }
+        let edges = StatusBarOverflow.edges(of: shown.compactMap { spans[$0] }, width: barWidth)
+        HStack(spacing: 0) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 2) {
+                    ForEach(Array(shown.enumerated()), id: \.element) { index, id in
+                        if dividers.contains(index) { StatusBarDivider() }
+                        if let descriptor = descriptors[id] {
+                            item(for: descriptor).background(StatusItemSpanReader(id: id))
+                        }
+                    }
                 }
+                .padding(.horizontal, Theme.Space.sm)
+                .frame(height: Self.height)
             }
-            .padding(.horizontal, 6)
-            .frame(height: Self.height)
+            .coordinateSpace(name: StatusItemSpanReader.space)
+            .background(GeometryReader { proxy in Color.clear.preference(key: StatusBarWidthKey.self, value: proxy.size.width) })
+            .onPreferenceChange(StatusItemSpansKey.self) { spans = $0 }
+            .onPreferenceChange(StatusBarWidthKey.self) { barWidth = $0 }
+            .mask(edgeFades(edges))
+            if !edges.hidden.isEmpty {
+                overflowButton(edges.hidden.compactMap { descriptors[$0] })
+            }
+            // Awake, memory, ports and hosts stay at the right, outside the
+            // scrolling chips.
+            FooterStatus(store: store)
+                .layoutPriority(1)
+                .padding(.trailing, Theme.Space.sm)
         }
         .animation(motion.animation(.connections, .spring(response: 0.4, dampingFraction: 0.7)), value: ssh)
         .animation(motion.animation(.connections, .spring(response: 0.4, dampingFraction: 0.7)), value: model.remoteControlOn)
@@ -95,6 +118,31 @@ struct StatusBar: View {
         .overlay(alignment: .top) { Rectangle().fill(Theme.divider).frame(height: 1) }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Status bar")
+    }
+
+    /// Fades the bar out at an edge that has more items beyond it.
+    private func edgeFades(_ edges: StatusBarOverflow.Edges) -> some View {
+        HStack(spacing: 0) {
+            LinearGradient(colors: [.clear, .black], startPoint: .leading, endPoint: .trailing)
+                .frame(width: edges.leading ? Theme.Space.xl : 0)
+            Rectangle()
+            LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing)
+                .frame(width: edges.trailing ? Theme.Space.xl : 0)
+        }
+    }
+
+    /// The items that don't fit, one click away instead of a sideways scroll.
+    private func overflowButton(_ hidden: [StatusItemDescriptor]) -> some View {
+        OctetIconButton(icon: "ellipsis", help: hidden.count == 1 ? "1 more item" : "\(hidden.count) more items",
+                        active: overflowShown, compact: true) { overflowShown.toggle() }
+            .padding(.trailing, Theme.Space.sm)
+            .popover(isPresented: $overflowShown, arrowEdge: .top) {
+                VStack(alignment: .leading, spacing: Theme.Space.xxs) {
+                    ForEach(hidden, id: \.id) { descriptor in item(for: descriptor) }
+                }
+                .padding(Theme.Space.sm)
+                .background(Theme.terminalBackground)
+            }
     }
 
     /// Slides in from the leading edge as it arrives, for the connections
@@ -163,18 +211,8 @@ struct StatusBar: View {
             }
         case "builtin.branch":
             if let repo = model.repo, let branch = repo.branch {
-                Button { ui.showPlane(.git) } label: {
-                    StatusChip(tone: repo.detached ? .warning : .normal,
-                               help: (repo.detached ? "Detached at \(branch)" : "Branch \(branch)") + "\nClick to show Git") {
-                        OctetIcon("branch", size: 13)
-                        Text(repo.detached ? "HEAD \(branch)" : branch)
-                            .font(Theme.monoFont)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                }
-                .buttonStyle(.plain)
-                .modifier(LinkHover())
+                BranchPickerChip(top: repo.root, branch: branch, detached: repo.detached, style: .statusBar,
+                           changed: { model.refreshGitNow() })
                 .contextMenu {
                     Button("Show Git") { ui.showPlane(.git) }
                     Button("Copy Branch Name") { copy(branch) }
@@ -253,7 +291,7 @@ struct StatusBar: View {
                     last.duration.map { "took " + PromptMarks.format($0) }].compactMap { $0 }.joined(separator: " · ")
         return StatusChip(tone: succeeded ? .normal : .danger, help: help) {
             if succeeded {
-                OctetIcon("checkmark", size: 11).foregroundStyle(Color(hex: AgentStateColor.done))
+                OctetIcon("checkmark", size: 11).foregroundStyle(Theme.success)
             } else {
                 OctetIcon("xmark", size: 11)
                 Text("\(last.exitCode ?? -1)")
@@ -301,7 +339,7 @@ struct StatusBar: View {
                     LoadingLine(width: 10, color: StatusBarStyle.amber)
                     Text("CI \(ci.finished)/\(ci.runs.count)")
                 case .passed:
-                    OctetIcon("checkmark", size: 11).foregroundStyle(Color(hex: AgentStateColor.done))
+                    OctetIcon("checkmark", size: 11).foregroundStyle(Theme.success)
                     Text("CI")
                 case .failed:
                     OctetIcon("xmark", size: 11)
@@ -377,7 +415,7 @@ struct StatusBar: View {
     @ViewBuilder
     private func checksGlyph(_ pullRequest: GitHubPullRequest) -> some View {
         switch pullRequest.checks {
-        case .passing: OctetIcon("checkmark", size: 10).foregroundStyle(Color(hex: AgentStateColor.done))
+        case .passing: OctetIcon("checkmark", size: 10).foregroundStyle(Theme.success)
         case .failing: OctetIcon("xmark", size: 10).foregroundStyle(Theme.danger)
         case .pending: Circle().fill(StatusBarStyle.amber).frame(width: 5, height: 5)
         case .none: EmptyView()
@@ -515,39 +553,74 @@ struct StatusChip<Content: View>: View {
             .foregroundStyle(foreground)
             .padding(.horizontal, 7)
             .frame(height: 24)
-            .background(RoundedRectangle(cornerRadius: 6).fill(hovered ? Theme.hover : Color.clear))
-            .overlay { if glimmer { RemoteGlimmer(cornerRadius: 6) } }
-            .contentShape(RoundedRectangle(cornerRadius: 6))
+            .background(RoundedRectangle(cornerRadius: Theme.Radius.md).fill(hovered ? Theme.hover : Color.clear))
+            .overlay { if glimmer { RemoteGlimmer(cornerRadius: Theme.Radius.md) } }
+            .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
             .fixedSize()
             .onHover { hovered = $0 }
-            .help(help ?? "")
+            .modifier(OptionalHelp(text: help))
     }
 
     private var foreground: Color {
         switch tone {
         case .warning: StatusBarStyle.amber
         case .danger: Theme.danger
-        case .success: Color(hex: AgentStateColor.done)
+        case .success: Theme.success
         case .muted: Theme.textTertiary
         case .normal: tint ?? Theme.textSecondary
         }
     }
 }
 
-/// An SF Symbol drawn to sit in the same 13pt box as an OctetIcon.
+/// A tooltip only when there's something to say: an empty `.help("")`
+/// still takes the hover.
+struct OptionalHelp: ViewModifier {
+    let text: String?
+
+    func body(content: Content) -> some View {
+        if let text, !text.isEmpty { content.help(text) } else { content }
+    }
+}
+
+/// Reports where an item sits in the status bar as it scrolls.
+private struct StatusItemSpanReader: View {
+    static let space = "statusBar"
+    let id: String
+
+    var body: some View {
+        GeometryReader { proxy in
+            let frame = proxy.frame(in: .named(Self.space))
+            Color.clear.preference(key: StatusItemSpansKey.self,
+                                   value: [id: .init(id: id, minX: frame.minX, maxX: frame.maxX)])
+        }
+    }
+}
+
+private struct StatusItemSpansKey: PreferenceKey {
+    static let defaultValue: [String: StatusBarOverflow.Span] = [:]
+    static func reduce(value: inout [String: StatusBarOverflow.Span], nextValue: () -> [String: StatusBarOverflow.Span]) {
+        value.merge(nextValue()) { _, new in new }
+    }
+}
+
+private struct StatusBarWidthKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
+/// An SF Symbol sitting in the same 13pt box as an OctetIcon.
 struct StatusGlyph: View {
     let symbol: String
 
     var body: some View {
-        Image(systemName: symbol)
-            .font(.system(size: 10.5, weight: .medium))
+        OctetIcon(symbol, size: 12)
             .frame(width: 13, height: 13)
     }
 }
 
 /// An item that opens something: the pointing hand on hover, so it reads as
 /// a link and not as a label (the fill comes from the item itself).
-private struct LinkHover: ViewModifier {
+struct LinkHover: ViewModifier {
     var enabled = true
     @State private var pushed = false
 
@@ -584,8 +657,7 @@ struct StatusItemIcon: View {
         if let path = descriptor.iconPath {
             RuntimeIcon(badge: RuntimeBadge(id: descriptor.id, name: descriptor.name, iconPath: path, color: descriptor.color), size: size)
         } else if let symbol = descriptor.symbol {
-            Image(systemName: symbol)
-                .font(.system(size: size * 0.8, weight: .medium))
+            OctetIcon(symbol, size: size * 0.93)
                 .frame(width: size, height: size)
                 .foregroundStyle(tint)
         }
@@ -608,8 +680,7 @@ struct SSHHostChip: View {
 
     var body: some View {
         HStack(spacing: compact ? 3 : 5) {
-            Image(systemName: "network")
-                .font(.system(size: compact ? 8.5 : 10, weight: .semibold))
+            OctetIcon("network", size: compact ? 10 : 12)
             Text(compact ? target.host : target.display)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -642,27 +713,23 @@ struct SSHHostChip: View {
 /// this Mac, a stream of packets, the other machine, and its name.
 struct SSHConnectCard: View {
     let target: SSHTarget
+    @ObservedObject private var motion = MotionPreferences.shared
     @State private var start = Date()
     @State private var landed = false
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "laptopcomputer")
-                .font(.system(size: 17, weight: .medium))
+        HStack(spacing: Theme.Space.lg) {
+            OctetIcon("laptopcomputer", size: 20)
                 .foregroundStyle(Theme.textSecondary)
-            TimelineView(.animation) { timeline in
-                let phase = min(1, timeline.date.timeIntervalSince(start) / 1.2)
-                HStack(spacing: 5) {
-                    ForEach(0..<5, id: \.self) { dot in
-                        Circle()
-                            .fill(Theme.accent)
-                            .frame(width: 4, height: 4)
-                            .opacity(Self.pulse(dot, phase: phase))
-                    }
+            // With motion off the stream is drawn already arrived.
+            if motion.animates(.connections) {
+                TimelineView(.animation) { timeline in
+                    packets(phase: min(1, timeline.date.timeIntervalSince(start) / 1.2))
                 }
+            } else {
+                packets(phase: 1)
             }
-            Image(systemName: "server.rack")
-                .font(.system(size: 17, weight: .medium))
+            OctetIcon("server.rack", size: 20)
                 .foregroundStyle(Theme.accent)
                 .scaleEffect(landed ? 1 : 0.7)
             VStack(alignment: .leading, spacing: 1) {
@@ -676,17 +743,29 @@ struct SSHConnectCard: View {
                     .truncationMode(.middle)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Theme.card))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.accent.opacity(0.4)))
+        .padding(.horizontal, Theme.Space.xl)
+        .padding(.vertical, Theme.Space.md + 2)
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.xl).fill(Theme.card))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.xl).strokeBorder(Theme.accent.opacity(0.4)))
         .shadow(color: .black.opacity(0.3), radius: 16, y: 6)
         .onAppear {
             start = Date()
+            guard motion.animates(.connections) else { landed = true; return }
             withAnimation(.spring(response: 0.35, dampingFraction: 0.55).delay(0.9)) { landed = true }
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Connected to \(target.display)")
+    }
+
+    private func packets(phase: Double) -> some View {
+        HStack(spacing: 5) {
+            ForEach(0..<5, id: \.self) { dot in
+                Circle()
+                    .fill(Theme.accent)
+                    .frame(width: 4, height: 4)
+                    .opacity(Self.pulse(dot, phase: phase))
+            }
+        }
     }
 
     /// Each dot lights as the stream passes it, then settles on.
@@ -721,6 +800,7 @@ private struct CIPopover: View {
                 }
                 .buttonStyle(.plain)
                 .help("Check now")
+                .accessibilityLabel("Check now")
             }
             if !status.isHead {
                 Text("This commit has no runs yet (not pushed, or not started). These are for \(status.shortSha), the latest pushed.")
@@ -781,7 +861,7 @@ private struct CIRunRow: View {
         switch run.state {
         case .queued: Circle().strokeBorder(Theme.textTertiary, lineWidth: 1.2).frame(width: 8, height: 8)
         case .running: LoadingLine(width: 12, color: Theme.accent)
-        case .passed: Text("✓").font(Theme.monoFont).foregroundStyle(Color(hex: AgentStateColor.done))
+        case .passed: Text("✓").font(Theme.monoFont).foregroundStyle(Theme.success)
         case .failed: Text("✗").font(Theme.monoFont).foregroundStyle(Theme.danger)
         case .cancelled, .skipped: Text("–").font(Theme.monoFont).foregroundStyle(Theme.textTertiary)
         }

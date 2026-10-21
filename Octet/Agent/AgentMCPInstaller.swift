@@ -18,6 +18,9 @@ final class AgentMCPInstaller {
     }
 
     static let features = [
+        Feature(server: IssueMCP.serverName, subcommand: "issues-mcp", title: "the issue tracker tools") {
+            SettingsStore.shared.values.agentsReadIssues
+        },
         Feature(server: PeerMCP.serverName, subcommand: "peer-mcp", title: "the other-Macs tools") {
             SettingsStore.shared.values.peersEnabled
         },

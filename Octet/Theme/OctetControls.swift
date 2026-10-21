@@ -188,7 +188,7 @@ struct OctetButton: View {
     private var shadow: Color {
         switch kind {
         case .primary: Theme.accent.opacity(enabled ? 0.24 : 0)
-        case .destructive: Color(hex: "c62a2f").opacity(enabled ? 0.24 : 0)
+        case .destructive: Theme.danger.opacity(enabled ? 0.24 : 0)
         case .secondary: .black.opacity(enabled ? 0.12 : 0)
         case .ghost: .clear
         }
@@ -197,7 +197,7 @@ struct OctetButton: View {
     private var foreground: Color {
         switch kind {
         case .primary: Theme.onAccent
-        case .destructive: .white
+        case .destructive: Theme.onDanger
         case .secondary: Theme.textPrimary
         case .ghost: hovered ? Theme.textPrimary : Theme.textSecondary
         }
@@ -206,7 +206,7 @@ struct OctetButton: View {
     private var background: Color {
         switch kind {
         case .primary: Theme.accent.opacity(hovered ? 0.9 : 1)
-        case .destructive: Color(hex: "c62a2f").opacity(hovered ? 0.9 : 1)
+        case .destructive: Theme.danger.opacity(hovered ? 0.9 : 1)
         case .secondary: hovered ? Theme.hover : Theme.card
         case .ghost: hovered ? Theme.hover : .clear
         }
@@ -227,6 +227,9 @@ struct OctetTextField: View {
     /// Told when the field gains or loses focus, e.g. to commit a draft.
     /// After `onSubmit` so a trailing closure still means Return.
     var onFocusChange: ((Bool) -> Void)?
+    /// Changing this puts the cursor in the field, e.g. when Command-F is
+    /// pressed again; a non-zero value also focuses it as it appears.
+    var focusRequest = 0
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -252,6 +255,8 @@ struct OctetTextField: View {
         // A hairline at rest; focused, T3 Code's inset ring in the accent.
         .octetFieldShell(focused: focused, invalid: invalid)
         .onChange(of: focused) { _, now in onFocusChange?(now) }
+        .onChange(of: focusRequest) { _, _ in focused = true }
+        .onAppear { if focusRequest > 0 { focused = true } }
     }
 }
 
@@ -284,6 +289,12 @@ struct OctetDropdownSpec {
     var searchPlaceholder: String? = nil
     /// A panel drawn instead of the option list; it gets a close action.
     var panel: ((@escaping () -> Void) -> AnyView)?
+    var modelEffort: Binding<String?>? = nil
+    var modelEffortLevels: [String] = []
+    var modelDefaultEffort: String? = nil
+    var modelAgent: String? = nil
+    /// `panel`, told how much room there is below the button.
+    var sizedPanel: ((CGFloat, @escaping () -> Void) -> AnyView)? = nil
 }
 
 /// Which dropdown is open, shared by the buttons and the host.
@@ -306,6 +317,7 @@ struct OctetDropdown: View {
     var label: String
     @ObservedObject var state: OctetDropdownState
     @State private var hovered = false
+    @FocusState private var triggerFocused: Bool
 
     var body: some View {
         let open = state.openId == spec.id
@@ -317,10 +329,19 @@ struct OctetDropdown: View {
             state.openId = open ? nil : spec.id
         } label: {
             HStack(spacing: 5) {
+                if spec.id == "model", let brand = AgentBrand.forAgent(spec.modelAgent) {
+                    AgentLogo(brand: brand, size: 14)
+                }
                 Text(current)
+                    .contentTransition(.opacity)
                     .font(Theme.uiFont)
                     .foregroundStyle(dangerous ? Theme.danger : Theme.textPrimary)
                     .lineLimit(1)
+                if spec.id == "model", let effort = spec.modelEffort?.wrappedValue ?? spec.modelDefaultEffort,
+                   effort != spec.modelEffortLevels.first {
+                    OctetIcon("lightbulb.fill", size: 11).foregroundStyle(Color.white)
+                        .transition(.opacity.combined(with: .scale))
+                }
                 OctetIcon("chevron.down", size: 11)
                     .foregroundStyle(Theme.textTertiary)
                     .rotationEffect(.degrees(open ? 180 : 0))
@@ -334,6 +355,16 @@ struct OctetDropdown: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .focused($triggerFocused)
+        .onKeyPress(.downArrow) {
+            guard spec.id == "model" else { return .ignored }
+            state.specs[spec.id] = spec
+            state.openId = spec.id
+            return .handled
+        }
+        .onChange(of: state.openId) { old, new in
+            if spec.id == "model", old == spec.id, new == nil { triggerFocused = true }
+        }
         .onHover { hovered = $0 }
         .anchorPreference(key: DropdownAnchorKey.self, value: .bounds) { [spec.id: $0] }
         .onAppear { state.specs[spec.id] = spec }
@@ -387,33 +418,39 @@ private struct DropdownLayer: View {
 
     var body: some View {
         GeometryReader { proxy in
-            if let id = state.openId, let anchor = anchors[id], let spec = state.specs[id] {
-                let rect = proxy[anchor]
-                ZStack(alignment: .topLeading) {
+            ZStack(alignment: .topLeading) {
+                if let id = state.openId, let anchor = anchors[id], let spec = state.specs[id] {
+                    let rect = proxy[anchor]
+                    let opensAbove = rect.minY > proxy.size.height - rect.maxY
+                    let room = max(proxy.size.height - rect.maxY, rect.minY) - 12
                     Color.black.opacity(0.001)
                         .contentShape(Rectangle())
                         .onTapGesture { state.openId = nil }
-                    // Room on the roomier side; long menus scroll within it.
-                    let room = max(proxy.size.height - rect.maxY, rect.minY) - 12
+                        .transition(.opacity)
                     Group {
-                        if let panel = spec.panel {
+                        if let panel = spec.sizedPanel {
+                            panel(max(120, room)) { state.openId = nil }
+                        } else if let panel = spec.panel {
                             panel { state.openId = nil }
+                        } else if spec.id == "model" {
+                            AgentModelPicker(spec: spec, maxHeight: room) { state.openId = nil }
                         } else {
                             DropdownMenu(spec: spec, maxHeight: room) { state.openId = nil }
                         }
                     }
-                        .fixedSize()
-                        .alignmentGuide(.leading) { _ in -rect.minX }
-                        .alignmentGuide(.top) { menu in
-                            let below = rect.maxY + 4
-                            return below + menu.height <= proxy.size.height ? -below : -(rect.minY - 4 - menu.height)
-                        }
+                    .fixedSize()
+                    .transition(MotionPreferences.shared.animates(.palette)
+                        ? .opacity.combined(with: .scale(scale: 0.97, anchor: opensAbove ? .bottomLeading : .topLeading)) : .identity)
+                    .alignmentGuide(.leading) { menu in
+                        -max(0, min(rect.minX, proxy.size.width - menu.width))
+                    }
+                    .alignmentGuide(.top) { menu in
+                        opensAbove ? -(rect.minY - 4 - menu.height) : -(rect.maxY + 4)
+                    }
+                    .id(id)
                 }
-                .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
-                // Opens like T3 Code's popovers: from a touch smaller, fading in.
-                .transition(MotionPreferences.shared.animates(.palette)
-                    ? .opacity.combined(with: .scale(scale: 0.97, anchor: .top)) : .identity)
             }
+            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
         }
         .animation(MotionPreferences.shared.animation(.palette, .easeOut(duration: 0.15)), value: state.openId)
     }
@@ -502,7 +539,7 @@ private struct DropdownMenu: View {
                         .opacity(selected ? 1 : 0)
                     VStack(alignment: .leading, spacing: 1) {
                         HStack(spacing: 5) {
-                            if let glyph = option.glyph, !glyph.isEmpty { Text(glyph).font(.system(size: 10.5)) }
+                            if let glyph = option.glyph, !glyph.isEmpty { Text(glyph).font(Theme.Text.caption) }
                             Text(option.title).font(Theme.uiFont)
                         }
                         .foregroundStyle(option.shimmer ? .white : option.dangerous ? Theme.danger : option.tint ?? Theme.textPrimary)
@@ -524,7 +561,7 @@ private struct DropdownMenu: View {
                         Theme.cardSelected
                     }
                 }
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
                 .contentShape(Rectangle())
                 .onHover { if $0 { highlighted = option.id } }
                 .onTapGesture { choose(option.id) }

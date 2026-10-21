@@ -112,14 +112,6 @@ struct OctetApp: App {
         }
         .defaultSize(width: 720, height: 620)
         .windowResizability(.contentSize)
-        Window("Running Terminal Agents", id: "terminal-agents") {
-            AgentBoardView(store: store) { agent in
-                WindowRegistry.shared.key?.focus(AgentEvent(id: agent.paneId, kind: .finished, agent: agent.agent,
-                                       paneId: agent.paneId, tabId: agent.tabId,
-                                       workspaceId: agent.workspaceId, label: "", workedFor: nil, at: Date()))
-            }
-        }
-        .defaultSize(width: 620, height: 460)
     }
 
     /// Preserve the user's existing opt-in while repairing paths after an
@@ -232,8 +224,9 @@ struct OctetCommands: Commands {
                 .keyboardShortcut(OctetShortcut.newTab.keyboardShortcut)
             Button(OctetShortcut.newConversation.title) { KeyWindow.act { $0.newConversation() } }
                 .keyboardShortcut(OctetShortcut.newConversation.keyboardShortcut)
-            // Codex's has no shortcut of its own: ⌘⇧N belongs to Claude's,
-            // and a second chord for the same thing isn't worth the key.
+            // ⇧⌘N starts the default agent (Settings › Agents); each agent
+            // also has its own item, without a chord.
+            Button("New Claude Conversation") { KeyWindow.act { $0.newConversation(engine: .claude) } }
             Button("New Codex Conversation") { KeyWindow.act { $0.newConversation(engine: .codex) } }
             Button("New OpenCode Conversation") { KeyWindow.act { $0.newConversation(engine: .opencode) } }
             Button("New Pi Conversation") { KeyWindow.act { $0.newConversation(engine: .pi) } }
@@ -269,8 +262,8 @@ struct OctetCommands: Commands {
                 KeyWindow.act { $0.editor.save() }
             }
                 .keyboardShortcut(OctetShortcut.saveFile.keyboardShortcut)
-            Button("Save All") { KeyWindow.act { $0.editor.saveAll() } }
-                .keyboardShortcut("s", modifiers: [.command, .option])
+            Button(OctetShortcut.saveAll.title) { KeyWindow.act { $0.editor.saveAll() } }
+                .keyboardShortcut(OctetShortcut.saveAll.keyboardShortcut)
         }
         // Settings is a page in the window, as T3 Code's is.
         CommandGroup(replacing: .appSettings) {
@@ -305,7 +298,13 @@ struct OctetCommands: Commands {
         CommandGroup(after: .sidebar) {
             Button(OctetShortcut.palette.title) { KeyWindow.act { $0.ui.paletteVisible.toggle() } }
                 .keyboardShortcut(OctetShortcut.palette.keyboardShortcut)
-            Button(OctetShortcut.paletteAll.title) { KeyWindow.act { $0.ui.paletteVisible.toggle() } }
+            // The palette opened with the actions filter typed; again closes it.
+            Button(OctetShortcut.paletteAll.title) {
+                KeyWindow.act { window in
+                    if !window.ui.paletteVisible { window.ui.paletteQuery = PaletteKind.action.prefix }
+                    window.ui.paletteVisible.toggle()
+                }
+            }
                 .keyboardShortcut(OctetShortcut.paletteAll.keyboardShortcut)
             Button(OctetShortcut.visualTwin.title) { KeyWindow.act { $0.twin.toggle() } }
                 .keyboardShortcut(OctetShortcut.visualTwin.keyboardShortcut)
@@ -364,11 +363,32 @@ struct OctetCommands: Commands {
                 .keyboardShortcut(OctetShortcut.splitRight.keyboardShortcut)
             Button(OctetShortcut.splitDown.title) { KeyWindow.act { $0.splitPane(.down) } }
                 .keyboardShortcut(OctetShortcut.splitDown.keyboardShortcut)
+            Button("Split Left") { KeyWindow.act { $0.splitPane(beside: .left) } }
+            Button("Split Up") { KeyWindow.act { $0.splitPane(beside: .top) } }
             Button(OctetShortcut.toggleZoom.title) { KeyWindow.act { $0.toggleZoom() } }
                 .keyboardShortcut(OctetShortcut.toggleZoom.keyboardShortcut)
             Button("Close Pane") { KeyWindow.act { $0.closeFocusedPane() } }
+            Button(OctetShortcut.copyMode.title) { KeyWindow.act { $0.toggleCopyMode() } }
+                .keyboardShortcut(OctetShortcut.copyMode.keyboardShortcut)
+            Button("Rename Pane…") { KeyWindow.act { $0.ui.paletteStart = ["action.renamePane"]; $0.ui.paletteVisible = true } }
             Button("Move Pane to New Tab") { KeyWindow.act { $0.moveFocusedPaneToNewTab() } }
+            Button("Move Pane to New Window") { KeyWindow.act { $0.moveFocusedPaneToNewWindow() } }
             Divider()
+            Button(OctetShortcut.equalizePanes.title) { KeyWindow.act { $0.equalizePanes() } }
+                .keyboardShortcut(OctetShortcut.equalizePanes.keyboardShortcut)
+            Button(OctetShortcut.dividerLeft.title) { KeyWindow.act { $0.moveDivider(.left) } }
+                .keyboardShortcut(OctetShortcut.dividerLeft.keyboardShortcut)
+            Button(OctetShortcut.dividerRight.title) { KeyWindow.act { $0.moveDivider(.right) } }
+                .keyboardShortcut(OctetShortcut.dividerRight.keyboardShortcut)
+            Button(OctetShortcut.dividerUp.title) { KeyWindow.act { $0.moveDivider(.up) } }
+                .keyboardShortcut(OctetShortcut.dividerUp.keyboardShortcut)
+            Button(OctetShortcut.dividerDown.title) { KeyWindow.act { $0.moveDivider(.down) } }
+                .keyboardShortcut(OctetShortcut.dividerDown.keyboardShortcut)
+            Divider()
+            Button(OctetShortcut.nextPane.title) { KeyWindow.act { $0.cyclePane(by: 1) } }
+                .keyboardShortcut(OctetShortcut.nextPane.keyboardShortcut)
+            Button(OctetShortcut.previousPane.title) { KeyWindow.act { $0.cyclePane(by: -1) } }
+                .keyboardShortcut(OctetShortcut.previousPane.keyboardShortcut)
             Button(OctetShortcut.focusLeft.title) { KeyWindow.act { $0.focusPane(.left) } }
                 .keyboardShortcut(OctetShortcut.focusLeft.keyboardShortcut)
             Button(OctetShortcut.focusRight.title) { KeyWindow.act { $0.focusPane(.right) } }
@@ -407,7 +427,11 @@ struct OctetCommands: Commands {
         // Replaces SwiftUI's item that only says help isn't available.
         CommandGroup(replacing: .help) {
             Button("Octet Help") { OctetHelp.openReadme() }
-            KeyboardShortcutsMenuItem()
+            Button("Getting Started…") { FirstRunCenter.shared.present() }
+            // The cheat sheet over the window; Settings is where keys change.
+            Button(OctetShortcut.keyboardShortcuts.title) { KeyWindow.act { $0.ui.shortcutsVisible.toggle() } }
+                .keyboardShortcut(OctetShortcut.keyboardShortcuts.keyboardShortcut)
+            Button("Customize Keyboard Shortcuts…") { SettingsOpener.open(.keyboard) }
         }
     }
 }
@@ -645,17 +669,6 @@ struct SecureKeyboardEntryToggle: View {
 
     var body: some View {
         Toggle("Secure Keyboard Entry", isOn: $secure.global)
-    }
-}
-
-@MainActor
-enum AgentBoardWindow {
-    static let id = "terminal-agents"
-    static var opener: (() -> Void)?
-
-    static func open() {
-        NSApp.activate(ignoringOtherApps: true)
-        opener?()
     }
 }
 

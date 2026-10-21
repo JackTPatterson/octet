@@ -3,28 +3,71 @@ import XCTest
 final class OverviewLogicTests: XCTestCase {
     // MARK: Runtime state
 
-    func testStateIsReadFromTheDetailWord() {
-        XCTAssertEqual(RuntimeState.classify(detail: "Running"), .running)
-        XCTAssertEqual(RuntimeState.classify(detail: "94s"), .running)
-        XCTAssertEqual(RuntimeState.classify(detail: "2m 10s"), .running)
-        XCTAssertEqual(RuntimeState.classify(detail: "Needs input"), .waiting)
-        XCTAssertEqual(RuntimeState.classify(detail: "Waiting"), .waiting)
-        XCTAssertEqual(RuntimeState.classify(detail: "Failed"), .failed)
-        XCTAssertEqual(RuntimeState.classify(detail: "Exited with code 2"), .failed)
-        XCTAssertEqual(RuntimeState.classify(detail: "Finished"), .done)
+    func testStatesComeFromSignalsNotWords() {
+        XCTAssertEqual(RuntimeStates.subagent(isError: false, hasResult: false), .working)
+        XCTAssertEqual(RuntimeStates.subagent(isError: false, hasResult: true), .done)
+        XCTAssertEqual(RuntimeStates.subagent(isError: true, hasResult: true), .failed)
+        XCTAssertEqual(RuntimeStates.subagentTab(.blocked), .needsInput)
+        XCTAssertEqual(RuntimeStates.subagentTab(.unknown), .working)
+        XCTAssertEqual(RuntimeStates.subagentTab(.done), .done)
+        XCTAssertEqual(RuntimeStates.backgroundTask(isError: false, exitCode: nil), .working)
+        XCTAssertEqual(RuntimeStates.backgroundTask(isError: false, exitCode: 0), .done)
+        XCTAssertEqual(RuntimeStates.backgroundTask(isError: false, exitCode: 2), .failed)
+        XCTAssertEqual(RuntimeStates.backgroundTask(isError: true, exitCode: nil), .failed)
+    }
+
+    func testCountLineFollowsTheVocabulary() {
+        let counts = RuntimeCount.counts([.working, .needsApproval, .failed, .done, .done, .waiting])
+        XCTAssertEqual(counts.map(\.label), ["needs you", "failed", "working", "done"])
+        XCTAssertEqual(counts.map(\.count), [1, 1, 2, 2])
+        XCTAssertEqual(counts.first?.state, .needsApproval)
+        XCTAssertEqual(RuntimeCount.counts([.needsInput, .needsInput]).first?.label, "need you")
+        XCTAssertEqual(RuntimeCount.counts([]), [])
+    }
+
+    func testTodoMeterAndAgo() {
+        let short = TodoMeter([.completed, .inProgress, .pending])
+        XCTAssertEqual(short?.segments, [.completed, .inProgress, .pending])
+        XCTAssertEqual(short?.label, "1/3")
+        XCTAssertNil(TodoMeter([]))
+        let long = TodoMeter(Array(repeating: .completed, count: 15) + Array(repeating: .pending, count: 5))
+        XCTAssertEqual(long?.segments.count, 10)
+        XCTAssertEqual(long?.segments.filter { $0 == .completed }.count, 7)
+        XCTAssertEqual(long?.spoken, "15 of 20 tasks complete")
+        XCTAssertEqual(RuntimeText.ago(5), "just now")
+        XCTAssertEqual(RuntimeText.ago(240), "4m")
+        XCTAssertEqual(RuntimeText.ago(7300), "2h")
+        XCTAssertEqual(RuntimeText.ago(3 * 86_400), "3d")
+    }
+
+    func testHeaderBuckets() {
+        let parts = RuntimeCount.buckets([.failed, .working, .waiting, .done, .idle])
+        XCTAssertEqual(parts.map(\.bucket), [.needsYou, .working, .done])
+        XCTAssertEqual(parts.map(\.label), ["needs you", "working", "done"])
+        XCTAssertEqual(parts.map(\.count), [1, 2, 1])
+        XCTAssertEqual(parts.first?.state, .failed)
+    }
+
+    func testExitCodesAndCounts() {
+        XCTAssertEqual(RuntimeStates.exitCode(in: "swiftlint exited with code 2"), 2)
+        XCTAssertEqual(RuntimeStates.exitCode(in: "Exit code: 0"), 0)
+        XCTAssertNil(RuntimeStates.exitCode(in: "Command running in background with ID: b1"))
+        XCTAssertEqual(RuntimeStates.subagentCount(1), "1 subagent")
+        XCTAssertEqual(RuntimeStates.subagentCount(3), "3 subagents")
+        XCTAssertEqual(RuntimeText.firstLine(of: "\n first \nsecond"), "first")
     }
 
     func testGenericWordsAreLeftToTheIcon() {
-        XCTAssertNil(RuntimeState.label(forDetail: "Running"))
-        XCTAssertNil(RuntimeState.label(forDetail: "active"))
-        XCTAssertEqual(RuntimeState.label(forDetail: "Needs input"), "Needs input")
-        XCTAssertEqual(RuntimeState.label(forDetail: "1m 5s"), "1m 5s")
+        XCTAssertNil(RuntimeText.label(forDetail: "Running"))
+        XCTAssertNil(RuntimeText.label(forDetail: "active"))
+        XCTAssertEqual(RuntimeText.label(forDetail: "Needs input"), "Needs input")
+        XCTAssertEqual(RuntimeText.label(forDetail: "1m 5s"), "1m 5s")
     }
 
     func testLastLineSkipsBlanks() {
-        XCTAssertEqual(RuntimeState.lastLine(of: "one\ntwo\n\n  \n"), "two")
-        XCTAssertNil(RuntimeState.lastLine(of: " \n"))
-        XCTAssertNil(RuntimeState.lastLine(of: nil))
+        XCTAssertEqual(RuntimeText.lastLine(of: "one\ntwo\n\n  \n"), "two")
+        XCTAssertNil(RuntimeText.lastLine(of: " \n"))
+        XCTAssertNil(RuntimeText.lastLine(of: nil))
     }
 
     // MARK: Tree guides

@@ -9,10 +9,9 @@ extension PeerPresentation.Tone {
     /// something, red when it failed.
     var color: Color {
         switch self {
-        case .online: Color(hex: AgentStateColor.done)
+        case .online: Theme.success
         case .idle: Theme.textTertiary.opacity(0.55)
-        // No theme token for a caution; this amber reads on light and dark.
-        case .warning: Color(hex: "#c99a2e")
+        case .warning: Theme.warning
         case .error: Theme.danger
         }
     }
@@ -21,7 +20,7 @@ extension PeerPresentation.Tone {
     var textColor: Color {
         switch self {
         case .online, .idle: Theme.textTertiary
-        case .warning: Color(hex: "#c99a2e")
+        case .warning: Theme.warning
         case .error: Theme.danger
         }
     }
@@ -71,7 +70,7 @@ struct PeerChip: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 10, weight: .medium))
+            .font(Theme.interfaceFont(10, weight: .medium))
             .foregroundStyle(Theme.textSecondary)
             .padding(.horizontal, 6)
             .frame(height: 17)
@@ -80,8 +79,8 @@ struct PeerChip: View {
     }
 }
 
-/// A centred empty state: a glyph in a soft tile, a title, a line of what
-/// to do, and the action that does it.
+/// A centred empty state: Octet's shared one, sized for the Other Macs
+/// panel and settings page, which list beneath it rather than centring.
 struct PeerEmptyState<Action: View>: View {
     let icon: String
     let title: String
@@ -89,27 +88,7 @@ struct PeerEmptyState<Action: View>: View {
     @ViewBuilder var action: () -> Action
 
     var body: some View {
-        VStack(spacing: 10) {
-            Image(systemName: icon)
-                .font(.system(size: 17))
-                .foregroundStyle(Theme.textSecondary)
-                .frame(width: 38, height: 38)
-                .background(RoundedRectangle(cornerRadius: 10).fill(Theme.hover))
-                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.border.opacity(0.7), lineWidth: 1))
-            VStack(spacing: 4) {
-                Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.textPrimary)
-                Text(message)
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(Theme.textTertiary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 300)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            action()
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 22)
-        .padding(.horizontal, 16)
+        OctetEmptyState(icon: icon, title: title, message: message, fills: false, action: action)
     }
 }
 
@@ -188,7 +167,7 @@ struct PeerRowMenu<Content: View>: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .onHover { hovered = $0 }
-        .opacity(visible || hovered ? 1 : 0)
+        .hoverReveal(visible || hovered)
         .help(label)
         .accessibilityLabel(label)
     }
@@ -202,7 +181,7 @@ struct PeerSectionHeader<Trailing: View>: View {
     var body: some View {
         HStack(spacing: 6) {
             Text(title)
-                .font(.system(size: 11.5, weight: .medium))
+                .font(Theme.interfaceFont(11.5, weight: .medium))
                 .foregroundStyle(Theme.textSecondary)
                 .accessibilityAddTraits(.isHeader)
             Spacer(minLength: 4)

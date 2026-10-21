@@ -4,27 +4,37 @@ import SwiftUI
 /// An agent's Markdown reply, drawn natively block by block.
 struct MarkdownView: View {
     let text: String
+    /// Still arriving: its last code block may be cut off, so it isn't
+    /// offered to run.
+    var streaming = false
+    @Environment(\.transcriptFindMarks) private var marks
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(MarkdownBlock.parse(text).enumerated()), id: \.offset) { _, block in
-                blockView(block)
+            ForEach(Array(MarkdownCache.shared.blocks(text).enumerated()), id: \.offset) { index, block in
+                blockView(block, at: index)
             }
         }
     }
 
+    /// The words of a block, with the find bar's matches marked.
+    private func inline(_ text: String, at block: Int) -> AttributedString {
+        let rendered = Self.inline(text)
+        return marks?.mark(rendered, field: TranscriptFind.key(block: block)) ?? rendered
+    }
+
     @ViewBuilder
-    private func blockView(_ block: MarkdownBlock) -> some View {
+    private func blockView(_ block: MarkdownBlock, at index: Int) -> some View {
         switch block {
         case .paragraph(let text):
-            Text(Self.inline(text))
-                .font(.system(size: 13))
+            Text(inline(text, at: index))
+                .font(Theme.Text.transcript)
                 .foregroundStyle(Theme.textPrimary)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
         case .heading(let level, let text):
-            Text(Self.inline(text))
-                .font(.system(size: level <= 1 ? 17 : level == 2 ? 15 : 13.5, weight: .semibold))
+            Text(inline(text, at: index))
+                .font(level <= 1 ? Theme.Text.title2 : level == 2 ? Theme.Text.title3 : Theme.Text.transcriptMedium)
                 .foregroundStyle(Theme.textPrimary)
                 .textSelection(.enabled)
                 .padding(.top, 4)
@@ -32,27 +42,28 @@ struct MarkdownView: View {
         case .listItem(let ordinal, let depth, let text):
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(ordinal.map { "\($0)." } ?? "•")
-                    .font(.system(size: 13).monospacedDigit())
+                    .font(Theme.Text.transcript.monospacedDigit())
                     .foregroundStyle(Theme.textTertiary)
                     .frame(minWidth: 14, alignment: .trailing)
-                Text(Self.inline(text))
-                    .font(.system(size: 13))
+                Text(inline(text, at: index))
+                    .font(Theme.Text.transcript)
                     .foregroundStyle(Theme.textPrimary)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .padding(.leading, CGFloat(depth) * 16)
         case .quote(let text):
-            Text(Self.inline(text))
-                .font(.system(size: 13))
+            Text(inline(text, at: index))
+                .font(Theme.Text.transcript)
                 .foregroundStyle(Theme.textSecondary)
                 .textSelection(.enabled)
                 .padding(.leading, 10)
                 .overlay(alignment: .leading) { Rectangle().fill(Theme.border).frame(width: 2) }
         case .code(let language, let text):
-            CodePanel(text: text, language: language)
+            CodePanel(text: text, language: language, findField: TranscriptFind.key(block: index),
+                      runnable: streaming ? nil : ShellCodeBlock.runnable(language: language, text: text))
         case .table(let header, let rows):
-            MarkdownTable(header: header, rows: rows)
+            MarkdownTable(header: header, rows: rows, block: index)
         case .rule:
             Rectangle().fill(Theme.divider).frame(height: 1).padding(.vertical, 4)
         }
@@ -60,8 +71,7 @@ struct MarkdownView: View {
 
     /// Bold, italics, code spans and links, keeping line breaks.
     static func inline(_ text: String) -> AttributedString {
-        (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
-            ?? AttributedString(text)
+        TranscriptFind.inline(text)
     }
 }
 
@@ -77,20 +87,49 @@ struct CodePanel: View {
     var maxLines = 18
     /// Syntax colors for code; plain tint for output and JSON.
     var highlights = true
-    @State private var copied = false
+    /// Which of the find bar's fields this panel's text is, when it is searched.
+    var findField: Int?
+    /// The command a shell block runs, when it can be run as it stands.
+    var runnable: String?
+    @Environment(\.transcriptFindMarks) private var marks
+    @Environment(\.transcriptActions) private var actions
+    /// Past `shownLimit` characters, the rest is a click away.
+    @State private var showAll = false
+    static let shownLimit = 20_000
 
     static func highlighted(_ text: String) -> AttributedString {
+        let key = SettingsStore.shared.values.themeName + "\u{0}" + text
+        if let hit = highlightCache.object(forKey: key as NSString) { return hit.value }
         var state = CodeHighlighter.State()
         var result = AttributedString()
         for (index, line) in text.components(separatedBy: "\n").enumerated() {
             if index > 0 { result += AttributedString("\n") }
             result += CodeColors.attributed(line, state: &state)
         }
+        highlightCache.setObject(HighlightBox(result), forKey: key as NSString)
         return result
     }
 
+    private final class HighlightBox {
+        let value: AttributedString
+        init(_ value: AttributedString) { self.value = value }
+    }
+
+    /// Colored code by theme and text, so a redraw doesn't color it again.
+    nonisolated(unsafe) private static let highlightCache: NSCache<NSString, HighlightBox> = {
+        let cache = NSCache<NSString, HighlightBox>()
+        cache.countLimit = 300
+        return cache
+    }()
+
+    private func marked(_ text: AttributedString) -> AttributedString {
+        guard let findField, let marks else { return text }
+        return marks.mark(text, field: findField)
+    }
+
     var body: some View {
-        let shown = text.count > 20_000 ? String(text.prefix(20_000)) + "\n…" : text
+        let cut = !showAll && text.count > Self.shownLimit
+        let shown = cut ? String(text.prefix(Self.shownLimit)) : text
         let lines = shown.split(separator: "\n", omittingEmptySubsequences: false).count
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
@@ -99,21 +138,20 @@ struct CodePanel: View {
                     .font(Theme.captionFont)
                     .foregroundStyle(Theme.textTertiary)
                 Spacer()
-                Button {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(text, forType: .string)
-                    copied = true
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { copied = false }
-                } label: {
-                    HStack(spacing: 4) {
-                        OctetIcon(copied ? "checkmark" : "doc.on.doc", size: 12)
-                        Text(copied ? "Copied" : "Copy").font(Theme.captionFont)
+                if let runnable, let run = actions.runInTerminal {
+                    Button { run(runnable) } label: {
+                        HStack(spacing: 4) {
+                            OctetIcon("terminal", size: 12)
+                            Text("Run").font(Theme.Text.caption)
+                        }
+                        .foregroundStyle(Theme.textTertiary)
+                        .contentShape(Rectangle())
                     }
-                    .foregroundStyle(copied ? Theme.accent : Theme.textTertiary)
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
+                    .help("Run in the focused terminal pane")
+                    .accessibilityLabel("Run in terminal")
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Copy code")
+                TranscriptCopyButton(text: text, label: "Copy code")
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
@@ -123,7 +161,7 @@ struct CodePanel: View {
             GeometryReader { geometry in
                 ScrollView([.horizontal, .vertical], showsIndicators: false) {
                     Group {
-                        if highlights { Text(Self.highlighted(shown)) } else { Text(shown).foregroundStyle(tint) }
+                        if highlights { Text(marked(Self.highlighted(shown))) } else { Text(marked(AttributedString(shown))).foregroundStyle(tint) }
                     }
                         .font(Theme.monoFont)
                         .textSelection(.enabled)
@@ -134,10 +172,13 @@ struct CodePanel: View {
                 }
             }
             .frame(height: CGFloat(min(lines, maxLines)) * Self.lineHeight + 16)
+            if cut {
+                TranscriptShowMore(title: "Show all \(text.count.formatted()) characters") { showAll = true }
+            }
         }
         .background(Theme.terminalBackground)
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.border, lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.md).strokeBorder(Theme.border, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
     }
 }
 
@@ -176,17 +217,32 @@ struct DiffView: View {
     /// The file line the snippet starts at, when known.
     var startLine: Int?
     var maxLines = 24
+    /// Past `shownLimit` lines, the rest is a click away.
+    @State private var showAll = false
+    static let shownLimit = 400
 
     static let rowHeight: CGFloat = 21
     private static let radius: CGFloat = 5
 
     var body: some View {
-        let shown = Array(lines.prefix(400))
+        let shown = showAll ? lines : Array(lines.prefix(Self.shownLimit))
+        VStack(spacing: 0) {
+            table(shown)
+            if shown.count < lines.count {
+                TranscriptShowMore(title: "Show \(lines.count - shown.count) more lines") { showAll = true }
+            }
+        }
+        .background(Theme.terminalBackground)
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.lg).strokeBorder(Theme.border, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.lg))
+    }
+
+    private func table(_ shown: [LineDiff.Line]) -> some View {
         let highlighted = Self.highlight(shown)
         let offset = (startLine ?? 1) - 1
         let digits = String((shown.compactMap(\.number).max() ?? 1) + offset).count
         let gutter = CGFloat(digits) * 8 + 20
-        GeometryReader { geometry in
+        return GeometryReader { geometry in
             ScrollView([.horizontal, .vertical], showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(shown.enumerated()), id: \.offset) { index, line in
@@ -200,9 +256,6 @@ struct DiffView: View {
             }
         }
         .frame(height: CGFloat(min(shown.count, maxLines)) * Self.rowHeight + 12)
-        .background(Theme.terminalBackground)
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.border, lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(path.map { "Changes to \(($0 as NSString).lastPathComponent), " } ?? "")\(Self.summary(lines))")
     }
@@ -248,33 +301,37 @@ struct DiffView: View {
 struct MarkdownTable: View {
     let header: [String]
     let rows: [[String]]
+    /// The Markdown block this is, for the find bar's fields.
+    var block = 0
+    @Environment(\.transcriptFindMarks) private var marks
 
     var body: some View {
         let columns = header.count
         Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
             GridRow {
                 ForEach(0..<columns, id: \.self) { column in
-                    cell(header[column], bold: true)
+                    cell(header[column], bold: true, at: column)
                 }
             }
             .background(Theme.card)
-            ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+            ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
                 Divider().overlay(Theme.divider)
                 GridRow {
                     ForEach(0..<columns, id: \.self) { column in
-                        cell(column < row.count ? row[column] : "", bold: false)
+                        cell(column < row.count ? row[column] : "", bold: false, at: columns * (rowIndex + 1) + column)
                     }
                 }
             }
         }
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.border, lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.md).strokeBorder(Theme.border, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
         .fixedSize(horizontal: false, vertical: true)
     }
 
-    private func cell(_ text: String, bold: Bool) -> some View {
-        Text(MarkdownView.inline(text))
-            .font(.system(size: 12.5, weight: bold ? .semibold : .regular))
+    private func cell(_ text: String, bold: Bool, at cell: Int) -> some View {
+        let rendered = MarkdownView.inline(text)
+        return Text(marks?.mark(rendered, field: TranscriptFind.key(block: block, cell: cell)) ?? rendered)
+            .font(bold ? Theme.Text.bodyMedium : Theme.Text.body)
             .foregroundStyle(bold ? Theme.textPrimary : Theme.textSecondary)
             .textSelection(.enabled)
             .padding(.horizontal, 10)
@@ -298,5 +355,55 @@ struct MessageCopyMenu: View {
         NSPasteboard.general.setString(value, forType: .string)
         ClipboardWatcher.shared.acknowledge()
         ToastCenter.shared.info(title, detail: ClipboardPreview.summary(value))
+    }
+}
+
+/// The transcript's one copy control: the icon turns into a check for a
+/// moment once it's copied, with nothing else said.
+struct TranscriptCopyButton: View {
+    let text: String
+    var label = "Copy"
+    @State private var copied = false
+    @ObservedObject private var motion = MotionPreferences.shared
+
+    var body: some View {
+        Button {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+            ClipboardWatcher.shared.acknowledge()
+            motion.perform(.palette, .easeOut(duration: 0.15)) { copied = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                motion.perform(.palette, .easeOut(duration: 0.2)) { copied = false }
+            }
+        } label: {
+            OctetIcon(copied ? "checkmark" : "doc.on.doc", size: 12)
+                .foregroundStyle(copied ? Theme.accent : Theme.textTertiary)
+                .frame(width: 20, height: 18)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(copied ? "Copied" : label)
+        .accessibilityLabel(copied ? "Copied" : label)
+    }
+}
+
+/// Under a cut-off panel: the rest of it, on request.
+struct TranscriptShowMore: View {
+    let title: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                OctetIcon("chevron.down", size: 11)
+                Text(title).font(Theme.Text.caption)
+            }
+            .foregroundStyle(Theme.accent)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 5)
+            .background(Theme.card.opacity(0.5))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }

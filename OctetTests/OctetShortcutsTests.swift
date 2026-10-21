@@ -49,7 +49,8 @@ final class OctetShortcutsTests: XCTestCase {
 
     func testRebindableRowsExcludeTheSystemsAndTheTerminals() {
         let fixed = Set(Octet.OctetShortcut.all.filter { !$0.customizable }.map(\.id))
-        XCTAssertEqual(fixed, ["settings", "quit", "tabNumber", "copy", "paste", "terminalPrefix"])
+        XCTAssertEqual(fixed, ["settings", "quit", "tabNumber", "copy", "paste",
+                               "drawerSplitRight", "drawerSplitDown", "drawerNewTerminal", "drawerClose"])
         // ⌘1 can't be taken from Tab 1 by a recording.
         XCTAssertEqual(Octet.OctetShortcut.table.assign(Octet.ShortcutBinding(key: "1"), to: "newTab", overrides: [:]),
                        .reserved("Tab 1"))
@@ -70,5 +71,79 @@ final class OctetShortcutsTests: XCTestCase {
         XCTAssertEqual(parsed.errors, [])
         // The check can fail: a name the engine doesn't know is reported.
         XCTAssertFalse(TerminalEngine.Config(overrides: "keybind = super+no_such_key=unbind").errors.isEmpty)
+    }
+
+    /// Keys a part of the window handles itself (the browser's ⌘R, the
+    /// drawer's ⌘D) are listed, but never handed to the terminal's
+    /// pass-through, and their echoes of menu keys don't count as conflicts.
+    func testScopedKeysShareMenuKeysWithoutConflict() {
+        XCTAssertEqual(Octet.OctetShortcut.browserHardReload.defaultBinding, Octet.OctetShortcut.review.defaultBinding)
+        XCTAssertNil(Octet.OctetShortcut.table.conflicts(overrides: [:])["browserHardReload"])
+        // Rebinding the menu's Review to ⌘R leaves the browser's Reload alone.
+        guard case .assigned(let overrides, let displaced) = Octet.OctetShortcut.table.assign(
+            Octet.ShortcutBinding(key: "r"), to: "review", overrides: [:]) else { return XCTFail() }
+        XCTAssertEqual(displaced, [])
+        XCTAssertEqual(Octet.OctetShortcut.table.effective("browserReload", overrides: overrides), Octet.ShortcutBinding(key: "r"))
+        // Nothing in the pass-through is a key only a scope uses.
+        let passThrough = triggers(Octet.OctetShortcut.table.terminalPassThrough(overrides: [:]))
+        XCTAssertFalse(passThrough.contains(normalized("super+period")))
+        XCTAssertFalse(passThrough.contains(normalized("super+r")))
+    }
+
+    func testEveryGroupIsFoundBySearch() {
+        XCTAssertEqual(Octet.OctetShortcut.groups(matching: "").count, Octet.OctetShortcut.groups.count)
+        XCTAssertEqual(Octet.OctetShortcut.groups(matching: "browser").first?.shortcuts.count, 6)
+        for spelling in ["⇧⌘P", "⌘⇧P", "⌘⇧p"] {
+            let byKeys = Octet.OctetShortcut.groups(matching: spelling).flatMap(\.shortcuts).map(\.id)
+            XCTAssertEqual(byKeys, ["paletteAll"], spelling)
+        }
+        XCTAssertTrue(Octet.OctetShortcut.groups(matching: "⌘⇧").flatMap(\.shortcuts).contains { $0.id == "review" })
+    }
+
+    func testTabNumbersStopAtEightAndNineIsTheLast() {
+        XCTAssertEqual((0..<3).map { Octet.TabJump.number(index: $0, count: 3) }, [1, 2, 3])
+        XCTAssertEqual(Octet.TabJump.number(index: 7, count: 12), 8)
+        XCTAssertNil(Octet.TabJump.number(index: 8, count: 12))
+        XCTAssertEqual(Octet.TabJump.number(index: 11, count: 12), 9)
+        XCTAssertEqual(Octet.TabJump.number(index: 8, count: 9), 9)
+        XCTAssertNil(Octet.TabJump.number(index: 3, count: 3))
+        // The ninth is Last Tab, so its label follows a rebind of that.
+        XCTAssertEqual(Octet.TabJump.shortcut(index: 11, count: 12)?.id, "lastTab")
+    }
+
+    func testKeyCombosSplitIntoCapsAndReadAloud() {
+        XCTAssertEqual(Octet.KeyCombo.caps("⌃⌘↓"), ["⌃", "⌘", "↓"])
+        XCTAssertEqual(Octet.KeyCombo.caps("⌘1…⌘8"), ["⌘1…⌘8"])
+        XCTAssertEqual(Octet.KeyCombo.caps("esc"), ["esc"])
+        XCTAssertEqual(Octet.KeyCombo.spoken("⇧⌘P"), "Shift Command P")
+    }
+
+    @MainActor
+    func testPaletteDuplicateIdsAreFound() {
+        XCTAssertEqual(Octet.PaletteModel.duplicateIds(["a", "b", "a", "c", "b", "a"]), ["a", "b"])
+        XCTAssertEqual(Octet.PaletteModel.duplicateIds(["a", "b"]), [])
+    }
+
+    /// Every fixed palette action has an id of its own: a second row with
+    /// the same id is silently dropped by the palette.
+    @MainActor
+    func testPaletteActionIdsAreUnique() {
+        let store = SessionStore(client: Octet.EngineClient(socketPath: "/tmp/octet-unused-palette-test.sock"))
+        let window = WindowContext(spec: OctetWindowSpec(), store: store)
+        let ids = Octet.PaletteCatalog.actions(window: window).map(\.id)
+        XCTAssertEqual(Octet.PaletteModel.duplicateIds(ids), [])
+        XCTAssertTrue(ids.contains("action.pullRequests"))
+        XCTAssertTrue(ids.contains("action.pullRequestsPlane"))
+        XCTAssertTrue(ids.contains("action.keyboardShortcuts"))
+    }
+
+    func testTipsFillInTheirKeys() {
+        let tip = Octet.Tip(id: "t", title: "T", body: "{splitRight} splits; {gone} doesn't; {open")
+        XCTAssertEqual(tip.text { $0 == "splitRight" ? "⌘D" : nil }, "⌘D splits; its shortcut doesn't; {open")
+        // Every placeholder in the real deck names a shortcut that exists.
+        for tip in Octet.Tips.all {
+            XCTAssertFalse(tip.text { Octet.OctetShortcut.named($0)?.keys }.contains("its shortcut"), tip.id)
+            if !tip.shortcut.isEmpty { XCTAssertNotNil(Octet.OctetShortcut.named(tip.shortcut), tip.id) }
+        }
     }
 }

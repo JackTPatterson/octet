@@ -86,33 +86,22 @@ final class HintsSession: ObservableObject, Identifiable {
 
 struct HintsOverlay: View {
     @ObservedObject var session: HintsSession
-    let layout: EngineLayout?
-    /// Where the grid is drawn: text anchored to the bottom sits lower than
-    /// its row number says.
-    let contentTop: CGFloat
-    /// The real cell size, when known; else worked out from the layout.
-    var cellSize: CGSize = .zero
-    var contentLeft: CGFloat = 0
+    @ObservedObject var geometry: PaneGeometry
     let window: WindowContext
     @FocusState private var focused: Bool
 
     var body: some View {
-        GeometryReader { proxy in
-            let pane = layout?.panes.first { $0.paneId == session.paneId }
-            let frame = layout?.frame(ofPane: session.paneId, in: proxy.size)
+        GeometryReader { _ in
             ZStack(alignment: .topLeading) {
                 Color.black.opacity(0.18)
-                if let pane, let frame, pane.rect.width > 0, pane.rect.height > 0 {
-                    let cellWidth = cellSize.width > 0 ? cellSize.width : frame.width / CGFloat(pane.rect.width)
-                    let cellHeight = cellSize.height > 0 ? cellSize.height : frame.height / CGFloat(pane.rect.height)
-                    let shift = contentTop
+                if let pane = geometry.panes[session.paneId] {
                     ForEach(session.showing, id: \.label) { hint in
-                        label(hint)
-                            .offset(x: CGFloat(pane.rect.x) * cellWidth + contentLeft + CGFloat(hint.column) * cellWidth,
-                                    y: shift + CGFloat(pane.rect.y + hint.row) * cellHeight)
+                        let origin = pane.origin(row: hint.row, column: hint.column)
+                        label(hint).offset(x: origin.x, y: origin.y)
                     }
                 }
             }
+            .overlay(alignment: .bottom) { legend.padding(.bottom, Theme.Space.lg) }
         }
         .focusable()
         .focusEffectDisabled()
@@ -137,14 +126,33 @@ struct HintsOverlay: View {
         .onTapGesture { window.ui.hints = nil }
     }
 
+    /// What the keys do, under the labels: the modifiers aren't guessable.
+    private var legend: some View {
+        HStack(spacing: Theme.Space.xs) {
+            Text("Type a label to open it").foregroundStyle(Theme.textSecondary)
+            Keycap(text: "⇧").padding(.leading, Theme.Space.sm)
+            Text("copies").foregroundStyle(Theme.textTertiary)
+            Keycap(text: "⌥").padding(.leading, Theme.Space.sm)
+            Text("previews").foregroundStyle(Theme.textTertiary)
+            Keycap(text: "esc").padding(.leading, Theme.Space.sm)
+            Text("leaves").foregroundStyle(Theme.textTertiary)
+        }
+        .font(Theme.Text.caption)
+        .padding(.horizontal, Theme.Space.md)
+        .padding(.vertical, Theme.Space.sm)
+        .octetGlass(cornerRadius: Theme.Radius.xl, fill: Theme.terminalBackground)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Type a label to open it. Hold Shift to copy, Option to preview. Escape leaves.")
+    }
+
     private func label(_ hint: Hints.Hint) -> some View {
         HStack(spacing: 0) {
             Text(String(hint.label.prefix(session.typed.count))).foregroundStyle(Theme.onAccent.opacity(0.5))
             Text(String(hint.label.dropFirst(session.typed.count))).foregroundStyle(Theme.onAccent)
         }
-        .font(.system(size: 11, weight: .bold, design: .monospaced))
+        .font(TerminalLook.font(size: 11, weight: .bold))
         .padding(.horizontal, 3)
-        .background(RoundedRectangle(cornerRadius: 3).fill(hint.kind == .url ? Theme.accent : Color(hex: "E5B567")))
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.xs).fill(hint.kind == .url ? Theme.accent : Theme.warning))
         .shadow(color: .black.opacity(0.4), radius: 2)
     }
 }

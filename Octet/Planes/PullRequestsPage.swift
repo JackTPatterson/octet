@@ -316,8 +316,7 @@ struct PullRequestsPage: View {
             }
         }
         .background(Theme.terminalBackground)
-        .onAppear { model.start() }
-        .onDisappear { model.stop() }
+        .pollWhileSeen(true, start: model.start, stop: model.stop)
         .onExitCommand {
             // Esc clears a search first, then leaves.
             if !model.queryText.isEmpty { model.queryText = "" } else { close() }
@@ -493,7 +492,11 @@ private struct PullRequestsList: View {
                                 .padding(.bottom, 4)
                                 .padding(.horizontal, 8)
                             ForEach(section.items) { item in
-                                PullRequestsRow(item: item, stats: model.stats[item.id], selected: item.id == selectedId) {
+                                PullRequestRow(tone: item.tone, number: item.number, title: item.title, author: item.author,
+                                               repository: item.repository, updatedAt: item.updatedAt, isDraft: item.isDraft,
+                                               checks: model.stats[item.id]?.checks, additions: model.stats[item.id]?.additions,
+                                               deletions: model.stats[item.id]?.deletions, url: item.url,
+                                               selected: item.id == selectedId) {
                                     model.selectedId = item.id
                                 }
                                 .onAppear { model.want(item) }
@@ -509,8 +512,8 @@ private struct PullRequestsList: View {
             VStack(alignment: .leading, spacing: 14) {
                 ForEach(0..<6, id: \.self) { _ in
                     VStack(alignment: .leading, spacing: 6) {
-                        RoundedRectangle(cornerRadius: 4).fill(Theme.card).frame(height: 12)
-                        RoundedRectangle(cornerRadius: 4).fill(Theme.card).frame(width: 200, height: 10)
+                        RoundedRectangle(cornerRadius: Theme.Radius.sm).fill(Theme.card).frame(height: 12)
+                        RoundedRectangle(cornerRadius: Theme.Radius.sm).fill(Theme.card).frame(width: 200, height: 10)
                     }
                 }
                 Spacer()
@@ -536,81 +539,6 @@ private struct PullRequestsList: View {
 
 /// One PR: state glyph, number and title, checks and size; then who, where
 /// and when.
-private struct PullRequestsRow: View {
-    let item: PullRequestInboxItem
-    let stats: PullRequestStats?
-    let selected: Bool
-    let action: () -> Void
-    @State private var hovered = false
-
-    var body: some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 6) {
-                    OctetIcon(item.tone.icon, size: 13)
-                        .foregroundStyle(item.tone.color)
-                    Text(verbatim: "#\(item.number)")
-                        .font(Theme.uiFont.monospacedDigit())
-                        .foregroundStyle(Theme.textTertiary)
-                    Text(item.title)
-                        .font(Theme.uiFont)
-                        .foregroundStyle(Theme.textPrimary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    Spacer(minLength: 6)
-                    if let stats {
-                        if stats.checks.tone != .none {
-                            OctetIcon(PullRequestStyle.checksIcon(stats.checks.tone), size: 12)
-                                .foregroundStyle(PullRequestStyle.checksColor(stats.checks.tone))
-                                .help(stats.checks.text)
-                        }
-                        DiffStatLabel(added: stats.additions, removed: stats.deletions)
-                            .font(Theme.captionFont.monospacedDigit())
-                            .fixedSize()
-                    }
-                }
-                HStack(spacing: 6) {
-                    GitHubAvatar(login: item.author, size: 14)
-                    Text(item.author)
-                        .foregroundStyle(Theme.textSecondary)
-                        .lineLimit(1)
-                    Text(item.repository)
-                        .foregroundStyle(Theme.textTertiary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer(minLength: 6)
-                    Text(PullRequestJSON.ago(item.updatedAt))
-                        .foregroundStyle(Theme.textTertiary)
-                        .lineLimit(1)
-                        .fixedSize()
-                }
-                .font(Theme.captionFont)
-                .padding(.leading, 19)
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 7)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 8)
-                .fill(selected ? Theme.cardSelected : hovered ? Theme.hover : .clear))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovered = $0 }
-        .help(item.isDraft ? "Draft: \(item.title)" : item.title)
-        .accessibilityLabel("\(item.repository) #\(item.number) \(item.title) by \(item.author)\(item.isDraft ? ", draft" : "")")
-        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
-        .contextMenu {
-            if let url = item.url {
-                Button("Open on GitHub") { NSWorkspace.shared.open(url) }
-                Button("Copy Link") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(url.absoluteString, forType: .string)
-                }
-            }
-        }
-    }
-}
-
 // MARK: - Outline menu buttons
 
 /// The toolbar's outline buttons: a hairline border, no fill until hovered,

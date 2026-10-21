@@ -60,18 +60,23 @@ struct BroadcastBanner: View {
 
     var body: some View {
         if mode.isOn, mode.tabId == tabId {
-            HStack(spacing: 8) {
-                Image(systemName: "dot.radiowaves.left.and.right").font(.system(size: 11, weight: .semibold))
-                Text("Typing into all \(mode.paneCount) panes").font(Theme.uiFontMedium)
-                Text("⌥⌘I to stop").font(Theme.captionFont).opacity(0.75)
+            // A click stops it, so it's a button for the keyboard and VoiceOver.
+            Button { mode.stop() } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "dot.radiowaves.left.and.right").font(.system(size: 11, weight: .semibold))
+                    Text("Typing into all \(mode.paneCount) panes").font(Theme.uiFontMedium)
+                    Text("⌥⌘I to stop").font(Theme.captionFont).opacity(0.75)
+                }
+                .foregroundStyle(Theme.onAccent)
+                .padding(.horizontal, 12)
+                .frame(height: 26)
+                .background(Capsule().fill(Theme.accent))
+                .contentShape(Capsule())
             }
-            .foregroundStyle(Theme.onAccent)
-            .padding(.horizontal, 12)
-            .frame(height: 26)
-            .background(Capsule().fill(Theme.accent))
+            .buttonStyle(.plain)
+            .accessibilityHint("Stops typing into every pane")
             .shadow(color: .black.opacity(0.3), radius: 6, y: 2)
             .padding(.top, 8)
-            .onTapGesture { mode.stop() }
             .onAppear { DebugSnapshot.overlay("broadcast-mode", true) }
             .onDisappear { DebugSnapshot.overlay("broadcast-mode", false) }
         }
