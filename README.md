@@ -364,6 +364,14 @@ The Browser **More → Viewport size** menu offers Fit pane, Phone (390 × 844),
 
 The picker currently targets the top-level document; iframe contents and shadow-root internals are not traversed. Source-file mapping is not inferred from framework internals.
 
+## Browser Control
+
+Turn on **Browser Control** in Settings › Plugins to let agents drive the Browser pane. Octet adds an `octet-browser` MCP server (`octet-cli browser-mcp`) to Claude Code, Codex, Gemini, Qwen, OpenCode, Cursor and Copilot, and removes it when the plugin is turned off. Its 29 tools have chrome-devtools MCP's names and arguments: `new_page`, `navigate_page`, `take_snapshot`, `click`, `fill_form`, `type_text`, `press_key`, `upload_file`, `handle_dialog`, `take_screenshot`, `evaluate_script`, `list_console_messages`, `list_network_requests`, `emulate`, `performance_start_trace`, `lighthouse_audit` and the rest, so instructions written for that server carry over.
+
+They act on the pane's own WebKit page rather than a separate Chrome: each workspace's agent drives that workspace's page, the pane opens beside the terminal so you see what it does, localhost servers load, and sign-ins in the pane are used. A snapshot lists the page's accessibility tree with a uid per element, which the input tools take. Alerts, confirms and prompts wait for `handle_dialog` while an agent is driving.
+
+Differences from Chrome: input is dispatched as DOM events (no CSS `:hover`; sites that reject untrusted events may ignore it); there is one page per workspace, without tabs or isolated contexts; headers and bodies are captured for the document, `fetch` and XHR, with other resources from Resource Timing; performance recordings use the page's Performance APIs rather than a DevTools trace; `lighthouse_audit` runs a subset of Lighthouse's accessibility, SEO and best-practice checks in the page; network and CPU throttling are not available. Nothing is injected into pages while the plugin is off.
+
 ## Issues and agent access
 
 The Issues pane connects to multiple Linear workspaces and Jira sites using macOS Keychain. Jira supports Cloud, scoped tokens through Atlassian's gateway, and HTTPS Server/Data Center sites using a PAT or username/password. Choose Assigned to me or Reported by me, post comments, change status, or assign an issue to yourself. Start workspace creates an issue-named worktree and starts an installed Claude Code or Codex agent with the issue description; an existing matching worktree is reopened. The issue ID, URL, tracker and connection ID are saved in that checkout’s Git metadata (no credentials or tracked files). The project toolbar link opens the saved ticket. A branch already linked to a different issue/connection is not silently reassigned.
