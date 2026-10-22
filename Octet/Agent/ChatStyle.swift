@@ -63,18 +63,17 @@ enum ChatStyle {
 
     /// --chat-content-max-width (46rem), the column at ordinary widths.
     static let columnWidth: CGFloat = 736
-    /// T3 Code's "wide" content width (72rem), what a large monitor grows
-    /// the column to.
-    static let wideColumnWidth: CGFloat = 1152
+    /// The widest the column grows, so lines on an ultrawide stay readable.
+    static let wideColumnWidth: CGFloat = 1800
 
-    /// The column for a conversation `available` points wide: 736 until
-    /// the window has room to spare, then 60% of it, up to 1152, so an
-    /// ultrawide isn't a thin strip in a sea of black.
+    /// The column for a conversation `available` points wide: most of it
+    /// (85%), never narrower than 736 nor wider than 1800, so the sides
+    /// keep a margin without leaving the conversation a thin strip.
     static func columnWidth(for available: CGFloat) -> CGFloat {
-        min(wideColumnWidth, max(columnWidth, (available * 0.6).rounded()))
+        min(wideColumnWidth, max(columnWidth, (available * 0.85).rounded()))
     }
-    /// The timeline's and composer's side padding at sm and up (3rem).
-    static let gutter: CGFloat = 48
+    /// The timeline's and composer's side padding.
+    static let gutter: CGFloat = 32
     /// The header's own padding (px-5).
     static let headerPadding: CGFloat = 20
     /// --workspace-topbar-height.

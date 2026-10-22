@@ -509,6 +509,10 @@ private struct Transcript: View {
     @ObservedObject var bridge: ConversationBridge
     @EnvironmentObject private var window: WindowContext
     @State private var atBottom: Bool
+    /// Keeping up with the latest as it streams. Only scrolling up turns it
+    /// off; a reply growing past the bottom of the view doesn't. Reaching
+    /// the end again, Jump to Latest, or sending a message turns it back on.
+    @State private var following: Bool
     /// The tool call whose whole output is open over the transcript.
     @State private var outputItem: String?
     @State private var changesCache = TurnChangesCache()
@@ -539,6 +543,7 @@ private struct Transcript: View {
         }
         _position = State(initialValue: saved)
         _atBottom = State(initialValue: saved == nil)
+        _following = State(initialValue: saved == nil)
     }
 
     var body: some View {
@@ -619,7 +624,7 @@ private struct Transcript: View {
                     }
                     // Visible only when scrolled to the end.
                     Color.clear.frame(height: 1).id("bottom")
-                        .onAppear { atBottom = true }
+                        .onAppear { atBottom = true; following = true }
                         .onDisappear { atBottom = false }
                 }
                 // T3 Code's chat column: 46rem, centred, the page's gutters.
@@ -628,6 +633,7 @@ private struct Transcript: View {
                 .scrollTargetLayout()
             }
             .scrollPosition(id: $position, anchor: .top)
+            .modifier(TranscriptFollow(following: $following))
             // Opens at the latest, not the first message.
             .defaultScrollAnchor(.bottom)
             .octetScrollIndicators()
@@ -651,11 +657,13 @@ private struct Transcript: View {
             // At most every tenth of a second: once per streamed token kept
             // layout busy scrolling. The last change is always followed.
             .onChange(of: items) { _, _ in
-                guard atBottom, !scrollQueued else { return }
+                // Your own message brings the view back to the end.
+                if let last = items.last, case .user = last.kind, !last.queued { following = true }
+                guard following, !scrollQueued else { return }
                 scrollQueued = true
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                     scrollQueued = false
-                    if atBottom { proxy.scrollTo("bottom", anchor: .bottom) }
+                    if following { proxy.scrollTo("bottom", anchor: .bottom) }
                 }
             }
             // Find in conversation: go to the current match, once what it
@@ -715,10 +723,11 @@ private struct Transcript: View {
                 }
             }
             .overlay(alignment: .bottom) {
-                if !atBottom && !items.isEmpty {
+                if !atBottom && !following && !items.isEmpty {
                     let fresh = max(0, rows.count - (rowsWhenLeft ?? rows.count))
                     OctetButton(title: fresh > 0 ? "Jump to Latest · \(fresh) new" : "Jump to Latest",
                                 icon: "arrow.down", kind: .secondary, compact: true) {
+                        following = true
                         withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("bottom", anchor: .bottom) }
                     }
                     .shadow(color: .black.opacity(0.3), radius: 8, y: 3)
@@ -818,6 +827,35 @@ private struct Transcript: View {
                                message: parts.lines.joined(separator: "\n"),
                                actions: parts.actions.map { AgentBlockAction(title: $0.title, url: $0.url) },
                                resetAt: limit.resetsAt ?? AgentLimitText.resetDate(in: words), isLimit: true)
+    }
+}
+
+/// Stops following the stream when you scroll up, and starts again when
+/// you reach the end. Content growing under the view moves neither: only
+/// the offset moving up, landing away from the end, counts as leaving.
+private struct TranscriptFollow: ViewModifier {
+    @Binding var following: Bool
+
+    struct Reading: Equatable {
+        var offset: CGFloat
+        var fromEnd: CGFloat
+    }
+
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) {
+            content.onScrollGeometryChange(for: Reading.self) { geometry in
+                Reading(offset: geometry.contentOffset.y,
+                        fromEnd: geometry.contentSize.height - geometry.contentOffset.y - geometry.containerSize.height)
+            } action: { old, new in
+                if new.fromEnd < 24 {
+                    if !following { following = true }
+                } else if new.offset < old.offset - 1, new.fromEnd > 60, following {
+                    following = false
+                }
+            }
+        } else {
+            content
+        }
     }
 }
 
