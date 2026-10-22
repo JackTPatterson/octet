@@ -513,8 +513,17 @@ struct AgentConversation: Equatable {
         let uuid = (event["uuid"] as? String)?.lowercased()
         if let uuid, sentUserIds.contains(uuid) || items.contains(where: { $0.id.lowercased() == uuid }) { return }
         guard event["isSynthetic"] as? Bool != true, let text = Self.userText(message["content"]) else { return }
-        let images = Self.images(in: message["content"])
         let id = uuid ?? UUID().uuidString
+        // Claude Code replays the blocks it injects for itself too, a
+        // background agent finishing most of all: a quiet line, not a
+        // message from someone over Remote Control.
+        if let note = TwinNotes.summarise(text) {
+            items.append(AgentItem(id: id, kind: .notice(note)))
+            isRunning = true
+            return
+        }
+        guard !TwinRows.isNoise(text) else { return }
+        let images = Self.images(in: message["content"])
         noteUser(id)
         items.append(AgentItem(id: id,
                                kind: .user(images.isEmpty ? text : Self.strippingImageMarkers(text)),
@@ -879,11 +888,16 @@ extension AgentConversation {
             case "user":
                 guard let message = record["message"] as? [String: Any] else { continue }
                 if let text = Self.userText(message["content"]) {
-                    let images = Self.images(in: message["content"])
-                    let shown = images.isEmpty ? text : Self.strippingImageMarkers(text)
+                    // What Claude Code injected for itself, as the live stream draws it.
                     let id = record["uuid"] as? String ?? UUID().uuidString
-                    conversation.noteUser(id)
-                    conversation.items.append(AgentItem(id: id, kind: .user(shown), images: images))
+                    if let note = TwinNotes.summarise(text) {
+                        conversation.items.append(AgentItem(id: id, kind: .notice(note)))
+                    } else if !TwinRows.isNoise(text) {
+                        let images = Self.images(in: message["content"])
+                        let shown = images.isEmpty ? text : Self.strippingImageMarkers(text)
+                        conversation.noteUser(id)
+                        conversation.items.append(AgentItem(id: id, kind: .user(shown), images: images))
+                    }
                 } else {
                     conversation.apply(record)
                 }

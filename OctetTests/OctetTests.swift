@@ -3613,6 +3613,18 @@ final class RemoteControlStreamTests: XCTestCase {
         XCTAssertEqual(conversation.items.count, 1)
     }
 
+    func testABackgroundAgentFinishingIsALineNotARemoteMessage() {
+        var conversation = AgentConversation()
+        let block = "<task-notification>\n<task-id>af6</task-id>\n<status>completed</status>\n"
+            + "<summary>Agent \"Inventory notification copy\" finished</summary>\n</task-notification>"
+        conversation.apply(replay(block, uuid: "note-1"))
+        XCTAssertEqual(conversation.items.count, 1)
+        XCTAssertEqual(conversation.items[0].kind, .notice("Agent \"Inventory notification copy\" finished"))
+        XCTAssertFalse(conversation.items[0].remote)
+        conversation.apply(replay("<system-reminder>\nkeep going\n</system-reminder>", uuid: "note-2"))
+        XCTAssertEqual(conversation.items.count, 1)
+    }
+
     func testSyntheticAndCommandEchoesAreSkipped() {
         var conversation = AgentConversation()
         conversation.apply(replay("continue", uuid: "s-1", synthetic: true))
@@ -3825,5 +3837,36 @@ final class UsageWindowMergeTests: XCTestCase {
         // An allowed request with no utilization says nothing about use.
         XCTAssertTrue(AgentAccounts.claudeWindows(rateLimitInfo: ["status": "allowed", "rateLimitType": "five_hour"]).isEmpty)
         XCTAssertTrue(AgentAccounts.claudeWindows(rateLimitInfo: ["status": "rejected", "rateLimitType": "overage"]).isEmpty)
+    }
+}
+
+
+final class ChatAttachmentFormatTests: XCTestCase {
+    func testPastedTextAndFilesSurviveTheRoundTrip() {
+        let pasted = "line one\n```swift\nlet x = 1\n```\nline three"
+        let extras = [ComposerExtra(kind: .file("/repo/Sources/App.swift")), ComposerExtra(kind: .pasted(pasted))]
+        let sent = ChatAttachmentFormat.compose("Look at this", extras: extras, cwd: "/repo")
+        let parts = ChatAttachmentFormat.parse(sent)
+        XCTAssertEqual(parts.body, "Look at this")
+        XCTAssertEqual(parts.pasted, [pasted])
+        XCTAssertEqual(parts.files, ["Sources/App.swift"])
+    }
+
+    func testAMentionMidSentenceStaysInTheText() {
+        let parts = ChatAttachmentFormat.parse("Compare @a.swift with the old one")
+        XCTAssertEqual(parts.body, "Compare @a.swift with the old one")
+        XCTAssertTrue(parts.files.isEmpty)
+    }
+
+    func testOnlyLongPastesCollapse() {
+        XCTAssertFalse(ChatAttachmentFormat.collapses("a short line"))
+        XCTAssertTrue(ChatAttachmentFormat.collapses((1...12).map(String.init).joined(separator: "\n")))
+        XCTAssertTrue(ChatAttachmentFormat.collapses(String(repeating: "x", count: 1_200)))
+    }
+
+    func testAnInsertionIsFoundWhereverItLands() {
+        let found = ChatAttachmentFormat.insertion(from: "ab", to: "aXYZb")
+        XCTAssertEqual(found?.text, "XYZ")
+        XCTAssertNil(ChatAttachmentFormat.insertion(from: "abc", to: "ab"))
     }
 }

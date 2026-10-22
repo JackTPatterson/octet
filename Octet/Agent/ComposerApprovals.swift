@@ -85,10 +85,10 @@ struct QuestionBanner: View {
     var body: some View {
         if let draft = model.draft, draft.question.id == question.id {
             let item = draft.item
-            OctetPalettePanel {
+            ChatBanner {
                 VStack(alignment: .leading, spacing: Theme.Space.md) {
                     HStack(spacing: Theme.Space.sm) {
-                        OctetIcon("questionmark.circle", size: 13).foregroundStyle(Theme.accent)
+                        OctetIcon("questionmark.circle", size: 13).foregroundStyle(ChatStyle.primary)
                         Text(item.header.isEmpty ? "\(session.engine.displayName) asks" : item.header)
                             .font(Theme.Text.captionMedium)
                             .foregroundStyle(Theme.textSecondary)
@@ -129,12 +129,12 @@ struct QuestionBanner: View {
                                 .foregroundStyle(Theme.textTertiary)
                         }
                         Spacer()
-                        OctetButton(title: "Skip", kind: .ghost, compact: true) { session.rejectQuestion(question) }
+                        ChatButton(title: "Skip", kind: .ghost) { session.rejectQuestion(question) }
                             .help("Tell the agent you won't answer; its turn ends (Esc)")
                         if draft.index > 0 {
-                            OctetButton(title: "Back", kind: .secondary, compact: true) { model.back() }
+                            ChatButton(title: "Back", kind: .outline) { model.back() }
                         }
-                        OctetButton(title: draft.isLast ? "Answer" : "Next", kind: .primary, compact: true) {
+                        ChatButton(title: draft.isLast ? "Answer" : "Next", kind: .primary) {
                             model.next(session: session)
                         }
                         .disabled(draft.isLast ? !draft.isComplete : !draft.canAdvance)
@@ -157,10 +157,10 @@ struct QuestionBanner: View {
             HStack(alignment: .firstTextBaseline, spacing: Theme.Space.md) {
                 Text(number <= 9 ? "\(number)" : " ")
                     .font(Theme.Text.mono(10.5, weight: .medium))
-                    .foregroundStyle(selected ? Theme.onAccent : Theme.textSecondary)
+                    .foregroundStyle(selected ? ChatStyle.onPrimary : Theme.textSecondary)
                     .frame(width: 18, height: 18)
                     .background(RoundedRectangle(cornerRadius: item.multiple ? Theme.Radius.xs : 9)
-                        .fill(selected ? Theme.accent : Theme.hover))
+                        .fill(selected ? ChatStyle.primary : Theme.hover))
                 VStack(alignment: .leading, spacing: 1) {
                     Text(option.label).font(Theme.Text.transcript).foregroundStyle(Theme.textPrimary)
                     if !option.description.isEmpty {
@@ -169,7 +169,7 @@ struct QuestionBanner: View {
                     }
                 }
                 Spacer(minLength: 0)
-                if selected { OctetIcon("checkmark", size: 11).foregroundStyle(Theme.accent) }
+                if selected { OctetIcon("checkmark", size: 11).foregroundStyle(ChatStyle.primary) }
             }
             .padding(.vertical, Theme.Space.xs)
             .padding(.horizontal, Theme.Space.md)
@@ -235,7 +235,7 @@ struct PermissionBanner: View {
         } else {
             let kind = ApprovalKind(request)
             let name = AgentPermissionRules.displayName(request.toolName)
-            OctetPalettePanel {
+            ChatBanner(tone: .warning) {
                 VStack(alignment: .leading, spacing: Theme.Space.md) {
                     HStack(spacing: Theme.Space.sm) {
                         OctetIcon(kind.icon, size: 13).foregroundStyle(Theme.warning)
@@ -283,10 +283,10 @@ struct PermissionBanner: View {
                                         help: showInput ? "Hide the request's details" : "Show the request's details") {
                             showInput.toggle()
                         }
-                        OctetButton(title: "Deny", kind: .secondary, compact: true) { deny() }
+                        ChatButton(title: "Deny", kind: .outline) { deny() }
                             .help("Refuse this (Esc in the message box)")
                         allowMenu
-                        OctetButton(title: "Approve", kind: .primary, compact: true) {
+                        ChatButton(title: "Approve", kind: .primary) {
                             session.answerPermission(allow: true)
                             note = ""
                         }
@@ -362,10 +362,10 @@ struct PlanApprovalBanner: View {
     var body: some View {
         let plan = request.inputObject["plan"] as? String ?? ""
         let name = session.engine.displayName
-        OctetPalettePanel {
+        ChatBanner(tone: .warning) {
             VStack(alignment: .leading, spacing: Theme.Space.md) {
                 HStack(spacing: Theme.Space.sm) {
-                    OctetIcon("tool.todo", size: 13).foregroundStyle(Theme.accent)
+                    OctetIcon("tool.todo", size: 13).foregroundStyle(ChatStyle.primary)
                     Text("Ready to code?")
                         .font(Theme.Text.title3)
                         .foregroundStyle(Theme.textPrimary)
@@ -384,11 +384,11 @@ struct PlanApprovalBanner: View {
                     OctetTextField(placeholder: "What should change in the plan?", text: $feedback) {
                         keepPlanning()
                     }
-                    OctetButton(title: "Keep Planning", kind: .secondary, compact: true) { keepPlanning() }
+                    ChatButton(title: "Keep Planning", kind: .outline) { keepPlanning() }
                         .help("Stay in plan mode and tell \(name) what to change")
-                    OctetButton(title: "Approve", kind: .secondary, compact: true) { approve(.default) }
+                    ChatButton(title: "Approve", kind: .outline) { approve(.default) }
                         .help("Start work, asking before each edit")
-                    OctetButton(title: "Approve & Auto-Accept Edits", kind: .primary, compact: true) { approve(.acceptEdits) }
+                    ChatButton(title: "Approve & Auto-Accept Edits", kind: .primary) { approve(.acceptEdits) }
                         .keyboardShortcut(.return, modifiers: .command)
                         .help("Start work, accepting file edits without asking (⌘Return)")
                 }

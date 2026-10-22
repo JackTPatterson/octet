@@ -502,7 +502,14 @@ struct NativePaneGrid: NSViewRepresentable {
                 if let livePanes, !livePanes.contains(id) {
                     drop(id)
                 } else if !view.isHidden {
-                    if window?.firstResponder === view.surface { hidKeys = true }
+                    // Let go of the keys before hiding: hiding the first
+                    // responder sends AppKit through every key view in the
+                    // window looking for the next one, which takeFocus
+                    // below picks anyway.
+                    if window?.firstResponder === view.surface {
+                        hidKeys = true
+                        window?.makeFirstResponder(nil)
+                    }
                     view.setShown(false)
                 }
             }

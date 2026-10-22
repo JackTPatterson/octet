@@ -18,8 +18,6 @@ struct ConversationView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ConversationHeader(session: session, client: client)
-            Rectangle().fill(Theme.divider).frame(height: 1)
             Transcript(session: session, find: session.find, bridge: bridge)
                 .overlay(alignment: .topTrailing) {
                     if session.find.isOpen {
@@ -37,6 +35,7 @@ struct ConversationView: View {
             // one clipped stack lets a new panel rise from behind the composer
             // instead of appearing as a detached card above it.
             VStack(spacing: 0) {
+                VStack(spacing: 0) {
                 ComposerQueueDrawer(session: session, bridge: bridge)
                 WaitSuggestionBanner(session: session)
                 CheckInSuggestionBanner(session: session)
@@ -67,15 +66,18 @@ struct ConversationView: View {
                 if !session.piWidgets.isEmpty {
                     PiWidgets(widgets: session.piWidgets)
                 }
+                }
+                .chatColumn()
                 Composer(session: session, dropdowns: dropdowns, bridge: bridge, questions: questions)
                     .zIndex(1)
+                ConversationContextStrip(session: session)
             }
             .clipped()
         }
         .onChange(of: session.pendingQuestion?.id, initial: true) { _, _ in questions.sync(session.pendingQuestion) }
         .animation(motion.animation(.approvals, .smooth(duration: 0.26)), value: session.pendingPermission?.id)
         .animation(motion.animation(.approvals, .smooth(duration: 0.26)), value: session.pendingQuestion?.id)
-        .background(Theme.terminalBackground)
+        .background(ChatStyle.page)
         .modifier(EscapeStopsTurn(session: session, blocked: enlarged != nil || dropdowns.openId != nil,
                                   inMainArea: !window.isBeside("conversation:" + session.id)))
         .octetDropdownHost(dropdowns)
@@ -159,12 +161,15 @@ enum ConversationDebug {
 }
 #endif
 
-// MARK: - Header
+// MARK: - Context strip
 
-private struct ConversationHeader: View {
+/// Where the conversation is working, under the composer, after T3 Code's
+/// context strip: the branch or worktree, its pull request and changes,
+/// and whether the last edits were checked, small and muted. The thread's
+/// own title is the tab's, so there is no header above the transcript.
+private struct ConversationContextStrip: View {
     @EnvironmentObject private var window: WindowContext
     @ObservedObject var session: AgentSession
-    let client: EngineClient
     @ObservedObject private var accounts = AccountStore.shared
     /// Read when a turn ends, not on every streamed word.
     @State private var verification: Verification = .noEdits
@@ -182,24 +187,17 @@ private struct ConversationHeader: View {
             // conversation knows.
             if accounts.accounts["claude"]?.kind != .subscription, let cost = conversation.costUSD {
                 Text(String(format: "$%.2f", cost))
-                    .font(Theme.captionFont.monospacedDigit())
-                    .foregroundStyle(Theme.textTertiary)
+                    .font(ChatStyle.meta.monospacedDigit())
+                    .foregroundStyle(ChatStyle.faintIcon)
                     .help("Cost so far at API prices")
             }
-            // Once it's on, the chip under the composer shows it instead.
-            if session.engine == .claude, session.remoteControlAvailable,
-               session.remoteControl == .off || session.remoteControl.isFailed {
-                RemoteControlButton(session: session)
-            }
-            OctetButton(title: "Open in Terminal", icon: "terminal", kind: .ghost, compact: true) {
-                session.openInTerminal(window: window)
-            }
-            .disabled(conversation.items.isEmpty)
-                .help("Continue this conversation in \(session.engine.displayName)'s own interface, in a new tab")
         }
-        .padding(.horizontal, 16)
-        .frame(height: 36)
-        .background(Theme.chrome)
+        .font(ChatStyle.meta)
+        .frame(height: 20)
+        .padding(.horizontal, 22 + 8)
+        .padding(.top, -12)
+        .padding(.bottom, 10)
+        .chatColumn()
         .onChange(of: conversation.isRunning, initial: true) { _, running in
             if !running { verification = Verification.assess(session.conversation.items) }
         }
@@ -211,70 +209,6 @@ private struct ConversationHeader: View {
 
     private var branch: String? {
         workspace?.worktree?.branch ?? window.store.branches[session.workspaceId]
-    }
-}
-
-/// Turns on Remote Control: continue this conversation from claude.ai or
-/// the Claude app, with what's sent there arriving here.
-private struct RemoteControlButton: View {
-    @ObservedObject var session: AgentSession
-
-    var body: some View {
-        OctetButton(title: "Remote Control", icon: "remote", kind: .ghost, compact: true) {
-            session.setRemoteControl(true)
-        }
-        .help("Continue this conversation from claude.ai or the Claude app. Messages sent there show up here.")
-    }
-}
-
-/// The composer's Remote Control chip, while it's on: a light passes over
-/// it, the way the conversation is live somewhere else too. Its menu opens
-/// the session on claude.ai, copies the link, or turns it off.
-private struct RemoteControlChip: View {
-    @ObservedObject var session: AgentSession
-    @Environment(\.openURL) private var openURL
-    @State private var hovered = false
-
-    var body: some View {
-        let url: URL? = if case .on(let url) = session.remoteControl { url } else { nil }
-        let connecting = session.remoteControl == .connecting
-        Menu {
-            if let url {
-                Button("Open in claude.ai") { openURL(url) }
-                Button("Copy Link") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(url.absoluteString, forType: .string)
-                    ClipboardWatcher.shared.acknowledge()
-                    ToastCenter.shared.info("Copied the Remote Control link", detail: url.absoluteString)
-                }
-                Divider()
-            }
-            Button(connecting ? "Cancel" : "Turn Off Remote Control") { session.setRemoteControl(false) }
-        } label: {
-            HStack(spacing: 5) {
-                Circle()
-                    .fill(connecting ? Theme.textTertiary : RemoteGlimmer.tint)
-                    .frame(width: 6, height: 6)
-                Text(connecting ? "Connecting…" : "Remote")
-                    .font(Theme.captionFont.weight(.medium))
-                    .foregroundStyle(connecting ? Theme.textSecondary : Theme.textPrimary)
-            }
-            .padding(.horizontal, 9)
-            .frame(height: 24)
-            .background(connecting ? (hovered ? Theme.hover : Theme.card) : RemoteGlimmer.tint.opacity(hovered ? 0.2 : 0.14))
-            .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius + 1)
-                .strokeBorder(connecting ? Theme.border : RemoteGlimmer.tint.opacity(0.45), lineWidth: 1))
-            .overlay { if !connecting { RemoteGlimmer(cornerRadius: Theme.rowRadius + 1) } }
-            .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius + 1))
-            .contentShape(Rectangle())
-        }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .onHover { hovered = $0 }
-        .help(connecting ? "Starting Remote Control" : "Remote Control is on: this conversation is open in claude.ai and the Claude app")
-        .accessibilityLabel(connecting ? "Remote Control connecting" : "Remote Control on")
     }
 }
 
@@ -312,25 +246,17 @@ private struct ProjectLocation: View {
     @State private var loadingPullRequest = false
 
     var body: some View {
-        HStack(spacing: 7) {
-            HStack(spacing: 4) {
-                OctetIcon("folder", size: 11)
-                Text(directory)
-                    .font(Theme.monoFont)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-            .foregroundStyle(Theme.textSecondary)
-            .help(directory)
+        // The folder is the breadcrumb's; this says where in it.
+        HStack(spacing: 10) {
             if let label = sourceLabel {
                 HStack(spacing: 4) {
-                    OctetIcon(worktree == nil ? "arrow.triangle.branch" : "square.stack.3d.up", size: 10)
+                    OctetIcon(worktree == nil ? "arrow.triangle.branch" : "square.stack.3d.up", size: 11)
                     Text(label)
-                        .font(Theme.captionFont)
+                        .font(ChatStyle.meta)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
-                .foregroundStyle(Theme.success)
+                .foregroundStyle(ChatStyle.mutedText)
                 .help(sourceHelp)
             }
             if let pullRequest {
@@ -437,7 +363,7 @@ private struct ProjectLocation: View {
         if pullRequest.reviewDecision == "CHANGES_REQUESTED" || pullRequest.checks == .failing {
             return Theme.danger
         }
-        if pullRequest.checks == .pending { return Theme.accent }
+        if pullRequest.checks == .pending { return ChatStyle.primary }
         return Theme.success
     }
 }
@@ -696,10 +622,9 @@ private struct Transcript: View {
                         .onAppear { atBottom = true }
                         .onDisappear { atBottom = false }
                 }
-                .padding(.leading, 20)
-                .padding(.trailing, 28)
-                .padding(.vertical, 16)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                // T3 Code's chat column: 46rem, centred, the page's gutters.
+                .padding(.vertical, 24)
+                .chatColumn()
                 .scrollTargetLayout()
             }
             .scrollPosition(id: $position, anchor: .top)
@@ -907,10 +832,10 @@ private struct SuggestedCommandsPanel: View {
 
     var body: some View {
         if !dismissed {
-            OctetPalettePanel {
+            ChatBanner {
                 VStack(alignment: .leading, spacing: 9) {
                     HStack(spacing: 7) {
-                        OctetIcon("terminal", size: 13).foregroundStyle(Theme.accent)
+                        OctetIcon("terminal", size: 13).foregroundStyle(ChatStyle.primary)
                         Text(commands.count == 1 ? "Run the suggested command?" : "Run the suggested commands?")
                             .font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary)
                         Spacer()
@@ -955,12 +880,12 @@ private struct ShellModeStrip: View {
     var body: some View {
         if typingCommand || session.shellRunning != nil || !session.shellRuns.isEmpty {
             HStack(spacing: 7) {
-                OctetIcon("terminal", size: 12).foregroundStyle(Theme.accent)
+                OctetIcon("terminal", size: 12).foregroundStyle(ChatStyle.primary)
                 if let running = session.shellRunning {
                     LoadingLine(width: 14)
                     Text("Running `\(running)`").lineLimit(1).truncationMode(.middle)
                     Spacer(minLength: 4)
-                    Button("Stop") { session.stopShell() }.buttonStyle(.plain).foregroundStyle(Theme.accent)
+                    Button("Stop") { session.stopShell() }.buttonStyle(.plain).foregroundStyle(ChatStyle.primary)
                     Keycap(text: "esc")
                 } else if typingCommand {
                     Text("Runs in \(abbreviateHome(session.cwd)); its output goes to \(session.engine.displayName) with your next message")
@@ -972,7 +897,7 @@ private struct ShellModeStrip: View {
                                     : "\(count) commands' output goes with your next message")
                         .lineLimit(1)
                     Spacer(minLength: 4)
-                    Button("Don't Send") { session.dropShellRuns() }.buttonStyle(.plain).foregroundStyle(Theme.accent)
+                    Button("Don't Send") { session.dropShellRuns() }.buttonStyle(.plain).foregroundStyle(ChatStyle.primary)
                 }
             }
             .font(Theme.captionFont)
@@ -1161,45 +1086,7 @@ struct ItemRow: View, Equatable {
     var body: some View {
         switch item.kind {
         case .user(let text):
-            VStack(alignment: .leading, spacing: 8) {
-                if item.queued {
-                    HStack(spacing: 5) {
-                        OctetIcon("clock", size: 11)
-                        Text("Queued")
-                    }
-                    .font(Theme.captionFont)
-                    .foregroundStyle(Theme.accent)
-                }
-                if item.remote {
-                    HStack(spacing: 5) {
-                        OctetIcon("remote", size: 11)
-                        Text("Sent over Remote Control")
-                    }
-                    .font(Theme.captionFont)
-                    .foregroundStyle(Theme.textTertiary)
-                }
-                if !item.images.isEmpty { ImageGallery(images: item.images) }
-                if !text.isEmpty {
-                    FoundText(text)
-                        .font(Theme.Text.transcript)
-                        .foregroundStyle(Theme.textPrimary)
-                        .textSelection(.enabled)
-                }
-            }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("You: " + text + (item.images.isEmpty ? "" : ", \(item.images.count) \(item.images.count == 1 ? "image" : "images")"))
-                // T3 Code's message bubble: right-aligned, 18pt round, no border.
-                .padding(12)
-                .background(item.queued ? Theme.accent.opacity(0.07) : Theme.card)
-                .overlay {
-                    if item.queued {
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .strokeBorder(Theme.accent.opacity(0.35), lineWidth: 1)
-                    }
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                .frame(maxWidth: 560, alignment: .trailing)
-                .frame(maxWidth: .infinity, alignment: .trailing)
+            UserMessage(item: item, text: text)
         case .text(let text):
             AssistantMessage(text: text, streaming: running && isLast, canRegenerate: canRegenerate)
         case .thinking(let text):
@@ -1222,6 +1109,72 @@ struct ItemRow: View, Equatable {
     }
 }
 
+/// Your message: what it carried (images, files, pasted text) as tiles
+/// above, then the words in T3 Code's bubble, right-aligned, 18pt round.
+private struct UserMessage: View {
+    let item: AgentItem
+    let text: String
+    @Environment(\.transcriptActions) private var actions
+
+    var body: some View {
+        let parts = ChatAttachmentFormat.parse(text)
+        VStack(alignment: .trailing, spacing: 6) {
+            if !item.images.isEmpty || !parts.files.isEmpty || !parts.pasted.isEmpty {
+                SentAttachments(images: item.images, parts: parts, cwd: actions.cwd)
+                    .frame(maxWidth: 560, alignment: .trailing)
+            }
+            if !parts.body.isEmpty || item.queued || item.remote {
+                bubble(parts.body)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("You: " + parts.body
+            + (item.images.isEmpty ? "" : ", \(item.images.count) \(item.images.count == 1 ? "image" : "images")")
+            + (parts.files.isEmpty ? "" : ", \(parts.files.count) \(parts.files.count == 1 ? "file" : "files")")
+            + (parts.pasted.isEmpty ? "" : ", pasted text"))
+    }
+
+    private func bubble(_ body: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if item.queued {
+                HStack(spacing: 5) {
+                    OctetIcon("clock", size: 11)
+                    Text("Queued")
+                }
+                .font(Theme.captionFont)
+                .foregroundStyle(ChatStyle.primary)
+            }
+            if item.remote {
+                HStack(spacing: 5) {
+                    OctetIcon("remote", size: 11)
+                    Text("Sent over Remote Control")
+                }
+                .font(Theme.captionFont)
+                .foregroundStyle(Theme.textTertiary)
+            }
+            if !body.isEmpty {
+                FoundText(body)
+                    .font(ChatStyle.body)
+                    .lineSpacing(ChatStyle.bodyLineSpacing)
+                    .foregroundStyle(ChatStyle.text)
+                    .textSelection(.enabled)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(item.queued ? ChatStyle.primary.opacity(0.07) : ChatStyle.bubble)
+        .overlay {
+            if item.queued {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(ChatStyle.primary.opacity(0.35), lineWidth: 1)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .frame(maxWidth: 560, alignment: .trailing)
+    }
+}
+
 /// Compaction is a conversation lifecycle event, not a low-priority log line.
 /// Give it a stable place in the transcript while context is summarized.
 private struct CompactionNotice: View {
@@ -1231,12 +1184,12 @@ private struct CompactionNotice: View {
     var body: some View {
         HStack(alignment: .top, spacing: 9) {
             ZStack {
-                Circle().fill(Theme.accent.opacity(0.14))
+                Circle().fill(ChatStyle.primary.opacity(0.14))
                 if !complete && running {
                     LoadingLine(width: 12)
                 } else {
                     OctetIcon(complete ? "checkmark" : "arrow.counterclockwise.circle", size: 13)
-                        .foregroundStyle(Theme.accent)
+                        .foregroundStyle(ChatStyle.primary)
                 }
             }
             .frame(width: 22, height: 22)
@@ -1369,9 +1322,13 @@ struct ToolCard: View {
         let artifact = call.artifact
         let subtitle = todos.map { list in "\(list.filter { $0.state == .completed }.count) of \(list.count) done" }
             ?? artifact?.summary ?? call.summary
-        Disclosure(title: call.displayName, subtitle: subtitle, tint: call.isError ? Theme.danger : Theme.textSecondary,
+        // A file's name rather than its whole path; the path is a hover away.
+        let shown = call.filePath.map { subtitle.replacingOccurrences(of: $0, with: ($0 as NSString).lastPathComponent) } ?? subtitle
+        WorkLogDisclosure(title: call.displayName, subtitle: shown, subtitleIsCode: call.filePath == nil,
+                   tint: call.isError ? ChatStyle.removed : ChatStyle.secondaryText,
                    icon: call.iconName, logo: artifact == nil ? LanguageLogo(path: call.filePath) : nil,
-                   highlightsShell: call.name.caseInsensitiveCompare("Monitor") == .orderedSame,
+                   highlightsShell: call.name.caseInsensitiveCompare("Bash") == .orderedSame
+                       || call.name.caseInsensitiveCompare("Monitor") == .orderedSame,
                    initiallyOpen: diff != nil || todos != nil || !call.resultImages.isEmpty
                        || (artifact?.url != nil && !call.isError),
                    trailing: { status(diff) }) {
@@ -1412,19 +1369,15 @@ struct ToolCard: View {
                 }
             }
         }
-        // T3 Code's work log: a quiet line, no box, a fill under the pointer.
-        .padding(.horizontal, 6)
-        .padding(.vertical, 4)
-        .background(RoundedRectangle(cornerRadius: Theme.controlRadius).fill(hovered ? Theme.hover.opacity(0.6) : .clear))
-        .onHover { hovered = $0 }
+        .help(call.filePath ?? "")
     }
 
     @ViewBuilder private func status(_ diff: [LineDiff.Line]?) -> some View {
         HStack(spacing: 6) {
             if let diff {
                 Text(DiffView.summary(diff))
-                    .font(Theme.captionFont.monospacedDigit())
-                    .foregroundStyle(Theme.textTertiary)
+                    .font(ChatStyle.meta.monospacedDigit())
+                    .foregroundStyle(ChatStyle.mutedText)
             }
             if call.result == nil && running {
                 LoadingLine(width: 14)
@@ -1433,8 +1386,6 @@ struct ToolCard: View {
                 Text("Interrupted").font(Theme.Text.caption).foregroundStyle(Theme.warning)
             } else if call.isError {
                 OctetIcon("exclamationmark.triangle.fill", size: 13).foregroundStyle(Theme.danger)
-            } else if call.result != nil {
-                OctetIcon("checkmark", size: 13).foregroundStyle(Theme.textTertiary)
             }
         }
     }
@@ -1586,6 +1537,8 @@ private struct Composer: View {
     @State private var setAside: (text: String, attachments: [AgentSession.Attachment])?
     /// Attached files went in as @ paths, for the note under the box.
     @State private var attachedPaths = false
+    /// Files and long pastes going with the message, as tiles.
+    @State private var extras: [ComposerExtra] = []
     @State private var text = ""
     @State private var spaceHold = SpaceHold()
     @ObservedObject private var voice = VoiceInput.shared
@@ -1638,10 +1591,9 @@ private struct Composer: View {
     }
 
     /// Files picked, dropped or pasted: images go along as images; any
-    /// other file goes in the message as a path the agent can read, as
-    /// Orca does, since none of the agents take arbitrary files inline.
+    /// other file becomes a tile that goes in the message as a path the
+    /// agent can read, since none of the agents take arbitrary files inline.
     private func attach(files urls: [URL]) {
-        var paths: [String] = []
         var failed: [String] = []
         for url in urls {
             if let type = UTType(filenameExtension: url.pathExtension), type.conforms(to: .image) {
@@ -1650,14 +1602,9 @@ private struct Composer: View {
                 } else {
                     failed.append(url.lastPathComponent)
                 }
-            } else {
-                paths.append(AgentComposerSyntax.mentionPath(url.path, cwd: session.cwd))
+            } else if !extras.contains(where: { $0.kind == .file(url.path) }) {
+                extras.append(ComposerExtra(kind: .file(url.path)))
             }
-        }
-        if !paths.isEmpty {
-            let mentions = paths.map { "@" + $0 }.joined(separator: " ")
-            text = text.isEmpty || text.hasSuffix(" ") || text.hasSuffix("\n") ? text + mentions + " " : text + " " + mentions + " "
-            attachedPaths = true
         }
         if !failed.isEmpty {
             ToastCenter.shared.fail(nil, "Couldn't attach \(failed.joined(separator: ", "))", detail: "The image couldn't be read.")
@@ -1862,312 +1809,352 @@ private struct Composer: View {
         let references = referenceSuggestions
         let plan = followUpPlan
         let length = ComposerPromptLength.check(text, contextLeft: contextLeft)
-        VStack(spacing: 8) {
-            if let plan, !running {
-                PlanFollowUpBanner(plan: plan,
-                                   hasDraft: !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                                   implement: { implement(plan) },
-                                   refine: { refine(plan) },
-                                   dismiss: { withAnimation(.easeOut(duration: 0.18)) { dismissedPlan = plan.id } })
-                    .transition(.opacity.combined(with: .offset(y: 6)))
-            }
-            if let editing = bridge.editing {
-                EditingBanner(purpose: editing, revertableFiles: bridge.lastDraftRevertable,
-                              running: running, engine: session.engine.displayName,
-                              setRevert: { revert in
-                                  if case .resend(let id, _) = editing { bridge.editing = .resend(itemId: id, revertFiles: revert) }
-                              },
-                              cancel: cancelEditing)
-                    .transition(.opacity.combined(with: .offset(y: 6)))
-            }
-            if !matches.isEmpty {
-                SlashSuggestions(commands: matches,
-                                 highlighted: min(highlighted, matches.count - 1),
-                                 highlight: { highlighted = $0 }) { accept($0) }
-                    // Grows up out of the message field, and folds back into it.
-                    .transition(motion.animates(.palette)
-                        ? .asymmetric(insertion: .opacity.combined(with: .offset(y: 8)),
-                                      removal: .opacity.combined(with: .offset(y: 4)))
-                        : .identity)
-            }
-            if references.isEmpty, let query = referenceQuery, AgentComposerSyntax.mention(in: text, caret: caret) != nil {
-                NoReferenceMatches(query: query)
-            }
-            if !references.isEmpty {
-                ReferenceSuggestions(references: references,
-                                     highlighted: min(highlighted, references.count - 1),
-                                     highlight: { highlighted = $0 }) { accept($0) }
-                    .transition(motion.animates(.palette)
-                        ? .asymmetric(insertion: .opacity.combined(with: .offset(y: 8)),
-                                      removal: .opacity.combined(with: .offset(y: 4)))
-                        : .identity)
-            }
-            if !attachments.isEmpty {
-                AttachmentStrip(images: attachments.map(\.data)) { index in attachments.remove(at: index) }
-            }
-            if showsFileNote {
-                Text("Files are added to your message as paths the agent can read.")
-                    .font(Theme.Text.caption)
-                    .foregroundStyle(Theme.textTertiary)
-                    .padding(.horizontal, 5)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            ShellModeStrip(session: session, typingCommand: text.hasPrefix("!") && session.engine != .opencode)
-            ZStack(alignment: .topLeading) {
-                if text.isEmpty {
-                    Text(placeholder(plan: plan))
-                        .font(Theme.Text.transcript)
+        let mentionOpen = referenceQuery != nil && AgentComposerSyntax.mention(in: text, caret: caret) != nil
+        VStack(spacing: 0) {
+            commandMenu(matches: matches, references: references, mentionOpen: mentionOpen)
+            VStack(spacing: 8) {
+                if let plan, !running {
+                    PlanFollowUpBanner(plan: plan,
+                                       hasDraft: !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                                       implement: { implement(plan) },
+                                       refine: { refine(plan) },
+                                       dismiss: { withAnimation(.easeOut(duration: 0.18)) { dismissedPlan = plan.id } })
+                        .transition(.opacity.combined(with: .offset(y: 6)))
+                }
+                if let editing = bridge.editing {
+                    EditingBanner(purpose: editing, revertableFiles: bridge.lastDraftRevertable,
+                                  running: running, engine: session.engine.displayName,
+                                  setRevert: { revert in
+                                      if case .resend(let id, _) = editing { bridge.editing = .resend(itemId: id, revertFiles: revert) }
+                                  },
+                                  cancel: cancelEditing)
+                        .transition(.opacity.combined(with: .offset(y: 6)))
+                }
+                if !attachments.isEmpty || !extras.isEmpty {
+                    ComposerAttachmentTray(images: attachments, extras: extras, cwd: session.cwd,
+                                           removeImage: { attachments.remove(at: $0) },
+                                           removeExtra: { extra in extras.removeAll { $0.id == extra.id } })
+                }
+                if showsFileNote {
+                    Text("Files are added to your message as paths the agent can read.")
+                        .font(Theme.Text.caption)
                         .foregroundStyle(Theme.textTertiary)
-                        .padding(.leading, 5)
-                        .padding(.top, 1)
-                        .allowsHitTesting(false)
+                        .padding(.horizontal, 5)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                TextEditor(text: $text)
-                    .font(Theme.Text.transcript)
-                    .foregroundStyle(Theme.textPrimary)
-                    .scrollContentBackground(.hidden)
-                    .focused($focused)
-                    .frame(minHeight: 22, maxHeight: 160)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .overlay(alignment: .topLeading) {
-                        if spaceHold.listening { ListeningIndicator(heard: voice.partial) }
+                ShellModeStrip(session: session, typingCommand: text.hasPrefix("!") && session.engine != .opencode)
+                ZStack(alignment: .topLeading) {
+                    if text.isEmpty {
+                        Text(placeholder(plan: plan))
+                            .font(ChatStyle.prompt)
+                            .lineSpacing(ChatStyle.bodyLineSpacing)
+                            .foregroundStyle(ChatStyle.placeholder)
+                            .padding(.leading, 5)
+                            .padding(.top, 1)
+                            .allowsHitTesting(false)
                     }
-                    .onKeyPress(.space, phases: [.down, .repeat, .up]) { press in
-                        holdSpace(press)
-                    }
-                    .onChange(of: focused) { _, isFocused in
-                        // ⌘S stashes while the message box has the keyboard.
-                        if isFocused {
-                            ComposerStash.focus(session.id) {
-                                ComposerStash.stash(text: $text, attachments: $attachments, project: session.cwd)
+                    TextEditor(text: $text)
+                        .font(ChatStyle.prompt)
+                        .lineSpacing(ChatStyle.bodyLineSpacing)
+                        .foregroundStyle(ChatStyle.text)
+                        .scrollContentBackground(.hidden)
+                        .scrollIndicators(.never)
+                        .focused($focused)
+                        // T3 Code's editor: 70pt tall at rest, scrolling past 208.
+                        .frame(minHeight: 62, maxHeight: 208)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .overlay(alignment: .topLeading) {
+                            if spaceHold.listening { ListeningIndicator(heard: voice.partial) }
+                        }
+                        .onKeyPress(.space, phases: [.down, .repeat, .up]) { press in
+                            holdSpace(press)
+                        }
+                        .onChange(of: focused) { _, isFocused in
+                            // Files and images dropped on the box become tiles
+                            // (the composer's own drop), not their paths typed in.
+                            if isFocused { DispatchQueue.main.async { ComposerCaret.textView?.unregisterDraggedTypes() } }
+                            // ⌘S stashes while the message box has the keyboard.
+                            if isFocused {
+                                ComposerStash.focus(session.id) {
+                                    ComposerStash.stash(text: $text, attachments: $attachments, project: session.cwd)
+                                }
+                            } else {
+                                ComposerStash.blur(session.id)
                             }
-                        } else {
-                            ComposerStash.blur(session.id)
+                            // Space's release goes elsewhere once focus does.
+                            guard !isFocused, spaceHold.listening else { return }
+                            _ = spaceHold.up()
+                            voice.stop { said in text = SpaceHold.inserting(said, into: text) }
                         }
-                        // Space's release goes elsewhere once focus does.
-                        guard !isFocused, spaceHold.listening else { return }
-                        _ = spaceHold.up()
-                        voice.stop { said in text = SpaceHold.inserting(said, into: text) }
-                    }
-                    .onKeyPress(.return, phases: .down) { press in
-                        // An input method composing text (Japanese, Chinese,
-                        // Korean, accents) takes Return to confirm it.
-                        if ComposerCaret.textView?.hasMarkedText() == true { return .ignored }
-                        // Return sends (or takes the highlighted command); Shift-Return adds a line.
-                        guard !press.modifiers.contains(.shift) else { return .ignored }
-                        let matches = suggestions
-                        if !references.isEmpty {
-                            accept(references[min(highlighted, references.count - 1)])
-                        } else if !matches.isEmpty {
-                            accept(matches[min(highlighted, matches.count - 1)])
-                        } else {
-                            submit(commandHeld: press.modifiers.contains(.command))
-                        }
-                        return .handled
-                    }
-                    .onKeyPress(.tab, phases: .down) { press in
-                        // Shift-Tab cycles how the agent asks, as in Claude Code.
-                        if press.modifiers.contains(.shift) { return cycleMode() ? .handled : .ignored }
-                        let matches = suggestions
-                        if !references.isEmpty {
-                            accept(references[min(highlighted, references.count - 1)])
-                        } else if !matches.isEmpty {
-                            accept(matches[min(highlighted, matches.count - 1)])
-                        } else {
-                            // Tab cycles OpenCode's agents, as in its own interface.
-                            return cycleOpenCodeAgent() ? .handled : .ignored
-                        }
-                        return .handled
-                    }
-                    .onKeyPress(phases: .down) { press in
-                        // A question's options by number, while the box is empty.
-                        guard text.isEmpty, press.modifiers.isDisjoint(with: [.command, .control, .option]),
-                              session.pendingPermission == nil, session.pendingQuestion != nil,
-                              let digit = Int(press.characters), (1...9).contains(digit) else { return .ignored }
-                        return questions.pick(number: digit, session: session) ? .handled : .ignored
-                    }
-                    .onKeyPress(keys: [.leftArrow]) { press in sendToBackground(press) }
-                    .onKeyPress(.upArrow, phases: [.down, .repeat]) { press in
-                        // ⌘↑ in an empty box: the prompt before, in the transcript.
-                        if ComposerKeys.isCommandOnly(press.modifiers), text.isEmpty {
-                            bridge.jumpToPrompt(.previous)
+                        .onKeyPress(.return, phases: .down) { press in
+                            // An input method composing text (Japanese, Chinese,
+                            // Korean, accents) takes Return to confirm it.
+                            if ComposerCaret.textView?.hasMarkedText() == true { return .ignored }
+                            // Return sends (or takes the highlighted command); Shift-Return adds a line.
+                            guard !press.modifiers.contains(.shift) else { return .ignored }
+                            let matches = suggestions
+                            if !references.isEmpty {
+                                accept(references[min(highlighted, references.count - 1)])
+                            } else if !matches.isEmpty {
+                                accept(matches[min(highlighted, matches.count - 1)])
+                            } else {
+                                submit(commandHeld: press.modifiers.contains(.command))
+                            }
                             return .handled
                         }
-                        let count = referenceSuggestions.isEmpty ? suggestions.count : referenceSuggestions.count
-                        guard count > 0 else {
-                            // Earlier prompts, as a shell's history.
-                            guard press.modifiers.isDisjoint(with: [.shift, .command, .option, .control]) else { return .ignored }
-                            return walkHistory(.back)
-                        }
-                        highlighted = (min(highlighted, count - 1) - 1 + count) % count
-                        return .handled
-                    }
-                    .onKeyPress(.downArrow, phases: [.down, .repeat]) { press in
-                        if ComposerKeys.isCommandOnly(press.modifiers), text.isEmpty {
-                            bridge.jumpToPrompt(.next)
+                        .onKeyPress(.tab, phases: .down) { press in
+                            // Shift-Tab cycles how the agent asks, as in Claude Code.
+                            if press.modifiers.contains(.shift) { return cycleMode() ? .handled : .ignored }
+                            let matches = suggestions
+                            if !references.isEmpty {
+                                accept(references[min(highlighted, references.count - 1)])
+                            } else if !matches.isEmpty {
+                                accept(matches[min(highlighted, matches.count - 1)])
+                            } else {
+                                // Tab cycles OpenCode's agents, as in its own interface.
+                                return cycleOpenCodeAgent() ? .handled : .ignored
+                            }
                             return .handled
                         }
-                        let count = referenceSuggestions.isEmpty ? suggestions.count : referenceSuggestions.count
-                        guard count > 0 else {
-                            guard press.modifiers.isDisjoint(with: [.shift, .command, .option, .control]) else { return .ignored }
-                            return walkHistory(.forward)
+                        .onKeyPress(phases: .down) { press in
+                            // A question's options by number, while the box is empty.
+                            guard text.isEmpty, press.modifiers.isDisjoint(with: [.command, .control, .option]),
+                                  session.pendingPermission == nil, session.pendingQuestion != nil,
+                                  let digit = Int(press.characters), (1...9).contains(digit) else { return .ignored }
+                            return questions.pick(number: digit, session: session) ? .handled : .ignored
                         }
-                        highlighted = (min(highlighted, count - 1) + 1) % count
-                        return .handled
-                    }
-                    .onKeyPress(.escape) {
-                        if !suggestions.isEmpty || !referenceSuggestions.isEmpty {
-                            dismissedFor = text
-                            referenceSuggestions = []
+                        .onKeyPress(keys: [.leftArrow]) { press in sendToBackground(press) }
+                        .onKeyPress(.upArrow, phases: [.down, .repeat]) { press in
+                            // ⌘↑ in an empty box: the prompt before, in the transcript.
+                            if ComposerKeys.isCommandOnly(press.modifiers), text.isEmpty {
+                                bridge.jumpToPrompt(.previous)
+                                return .handled
+                            }
+                            let count = referenceSuggestions.isEmpty ? suggestions.count : referenceSuggestions.count
+                            guard count > 0 else {
+                                // Earlier prompts, as a shell's history.
+                                guard press.modifiers.isDisjoint(with: [.shift, .command, .option, .control]) else { return .ignored }
+                                return walkHistory(.back)
+                            }
+                            highlighted = (min(highlighted, count - 1) - 1 + count) % count
+                            return .handled
+                        }
+                        .onKeyPress(.downArrow, phases: [.down, .repeat]) { press in
+                            if ComposerKeys.isCommandOnly(press.modifiers), text.isEmpty {
+                                bridge.jumpToPrompt(.next)
+                                return .handled
+                            }
+                            let count = referenceSuggestions.isEmpty ? suggestions.count : referenceSuggestions.count
+                            guard count > 0 else {
+                                guard press.modifiers.isDisjoint(with: [.shift, .command, .option, .control]) else { return .ignored }
+                                return walkHistory(.forward)
+                            }
+                            highlighted = (min(highlighted, count - 1) + 1) % count
+                            return .handled
+                        }
+                        .onKeyPress(.escape) {
+                            if !suggestions.isEmpty || !referenceSuggestions.isEmpty {
+                                dismissedFor = text
+                                referenceSuggestions = []
+                                refreshSuggestions()
+                                return .handled
+                            }
+                            if bridge.editing != nil {
+                                cancelEditing()
+                                return .handled
+                            }
+                            // A `!` command running stops first.
+                            if session.shellRunning != nil {
+                                session.stopShell()
+                                return .handled
+                            }
+                            // What the agent is waiting on is answered no.
+                            if session.pendingPermission != nil {
+                                session.answerPermission(allow: false)
+                                return .handled
+                            }
+                            if let question = session.pendingQuestion {
+                                session.rejectQuestion(question)
+                                return .handled
+                            }
+                            // As the hint says: Esc stops the turn, at once.
+                            guard running else { return .ignored }
+                            session.interrupt()
+                            return .handled
+                        }
+                        .onChange(of: text) { old, new in
+                            // A long paste becomes a tile, as ChatGPT does,
+                            // rather than a wall of text in the box.
+                            // Files dragged in that still landed as their paths
+                            // become tiles too.
+                            if let inserted = ChatAttachmentFormat.insertion(from: old, to: new),
+                               let dragged = NSPasteboard(name: .drag).readObjects(forClasses: [NSURL.self],
+                                   options: [.urlReadingFileURLsOnly: true]) as? [URL], !dragged.isEmpty,
+                               dragged.allSatisfy({ inserted.text.contains($0.path) || inserted.text.contains($0.absoluteString) }) {
+                                text = old
+                                attach(files: dragged)
+                                return
+                            }
+                            if let pasted = ChatAttachmentFormat.insertion(from: old, to: new),
+                               ChatAttachmentFormat.collapses(pasted.text),
+                               NSPasteboard.general.string(forType: .string).map({ pasted.text.contains($0) || $0.contains(pasted.text) }) == true {
+                                extras.append(ComposerExtra(kind: .pasted(pasted.text)))
+                                text = old
+                                return
+                            }
+                            highlighted = 0
                             refreshSuggestions()
-                            return .handled
+                            refreshReferences()
                         }
-                        if bridge.editing != nil {
-                            cancelEditing()
-                            return .handled
+                        .onChange(of: bridge.draft?.id) { _, _ in takeDraft() }
+                        .onChange(of: session.editorRequest?.id) { _, _ in
+                            guard let request = session.editorRequest else { return }
+                            session.editorRequestTaken = request.id
+                            text = request.applied(to: text)
+                            focused = true
                         }
-                        // A `!` command running stops first.
-                        if session.shellRunning != nil {
-                            session.stopShell()
-                            return .handled
+                        .onAppear {
+                            guard let request = session.editorRequest, session.editorRequestTaken != request.id else { return }
+                            session.editorRequestTaken = request.id
+                            text = request.applied(to: text)
+                            focused = true
                         }
-                        // What the agent is waiting on is answered no.
-                        if session.pendingPermission != nil {
-                            session.answerPermission(allow: false)
-                            return .handled
-                        }
-                        if let question = session.pendingQuestion {
-                            session.rejectQuestion(question)
-                            return .handled
-                        }
-                        // As the hint says: Esc stops the turn, at once.
-                        guard running else { return .ignored }
-                        session.interrupt()
-                        return .handled
-                    }
-                    .onChange(of: text) { _, _ in
-                        highlighted = 0
-                        refreshSuggestions()
-                        refreshReferences()
-                    }
-                    .onChange(of: bridge.draft?.id) { _, _ in takeDraft() }
-                    .onChange(of: session.editorRequest?.id) { _, _ in
-                        guard let request = session.editorRequest else { return }
-                        session.editorRequestTaken = request.id
-                        text = request.applied(to: text)
-                        focused = true
-                    }
-                    .onAppear {
-                        guard let request = session.editorRequest, session.editorRequestTaken != request.id else { return }
-                        session.editorRequestTaken = request.id
-                        text = request.applied(to: text)
-                        focused = true
-                    }
-                    .accessibilityLabel("Message \(session.engine.displayName)")
-            }
-            if length != .fine {
-                PromptLengthNotice(verdict: length)
-            }
-            HStack(spacing: 6) {
-                // Model, effort and permission mode are Claude Code's own
-                // settings, passed as flags when Octet starts it. Codex reads
-                // its config and runs its own approvals, so it shows none.
-                if session.engine == .claude {
-                OctetDropdown(spec: OctetDropdownSpec(
-                    id: "model",
-                    options: AgentSession.models.map {
-                        OctetDropdownOption(id: $0.id, title: $0.title, detail: $0.detail, section: $0.family)
-                    },
-                    selected: session.model,
-                    select: { session.model = $0 },
-                    searchPlaceholder: "Search models…",
-                    modelEffort: AgentSession.supportsEffort(model: session.model) ? $session.effort : nil,
-                    modelEffortLevels: AgentSession.model(session.model)?.efforts ?? AgentSession.efforts,
-                    modelDefaultEffort: AgentSession.defaultEffort(model: session.model),
-                    modelAgent: session.engine.agent
-                ), label: "Model", state: dropdowns)
-                OctetDropdownAnchor(spec: OctetDropdownSpec(
-                    id: "mode",
-                    options: AgentSession.PermissionMode.allCases.map {
-                        OctetDropdownOption(id: $0.rawValue, title: $0.title, detail: Self.modeDetail[$0],
-                                           dangerous: $0 == .bypassPermissions,
-                                           tint: $0 == .default ? nil : ModeStyle.color($0), glyph: ModeStyle.glyph($0))
-                    },
-                    selected: session.permissionMode.rawValue,
-                    select: { choice in
-                        let mode = AgentSession.PermissionMode(rawValue: choice) ?? .default
-                        guard mode == .bypassPermissions, session.permissionMode != mode else {
-                            session.permissionMode = mode
-                            return
-                        }
-                        // Bypass runs every tool without asking: confirm first.
-                        ConfirmCenter.shared.ask(
-                            title: "Bypass all permission checks?",
-                            message: "Claude will run commands, edit and delete files, and use every tool without asking you first, for the rest of this conversation. Use it only in a folder you can afford to lose changes in.",
-                            confirmTitle: "Bypass Permissions",
-                            destructive: true
-                        ) { _ in session.permissionMode = .bypassPermissions }
-                    }
-                ), state: dropdowns) { open in
-                    ModeChip(mode: session.permissionMode, open: open)
+                        .accessibilityLabel("Message \(session.engine.displayName)")
                 }
-                .accessibilityLabel("Permission mode")
-                .accessibilityValue(session.permissionMode.title)
-                .help("How Claude asks before using tools. Changes apply from the next message.")
-                if session.remoteControlEngaged {
-                    RemoteControlChip(session: session)
+                if length != .fine {
+                    PromptLengthNotice(verdict: length)
                 }
-                } else if session.engine == .codex {
-                    CodexControls(session: session, dropdowns: dropdowns)
-                } else if session.engine == .opencode {
-                    OpenCodeControls(session: session, dropdowns: dropdowns)
-                } else if session.engine == .pi {
-                    PiControls(session: session, dropdowns: dropdowns)
-                } else if session.engine == .qwen {
-                    QwenControls(session: session, dropdowns: dropdowns)
-                } else if let brand = AgentBrand.forAgent(session.engine.agent) {
-                    HStack(spacing: 5) {
-                        AgentLogo(brand: brand, size: 12)
-                        Text("Using \(session.engine.displayName) settings")
-                            .font(Theme.captionFont)
-                            .foregroundStyle(Theme.textSecondary)
+                HStack(spacing: 6) {
+                    // Model, effort and permission mode are Claude Code's own
+                    // settings, passed as flags when Octet starts it. Codex reads
+                    // its config and runs its own approvals, so it shows none.
+                    if session.engine == .claude {
+                    OctetDropdown(spec: OctetDropdownSpec(
+                        id: "model",
+                        options: AgentSession.models.map {
+                            OctetDropdownOption(id: $0.id, title: $0.title, detail: $0.detail, section: $0.family)
+                        },
+                        selected: session.model,
+                        select: { session.model = $0 },
+                        searchPlaceholder: "Search models…",
+                        modelEffort: AgentSession.supportsEffort(model: session.model) ? $session.effort : nil,
+                        modelEffortLevels: AgentSession.model(session.model)?.efforts ?? AgentSession.efforts,
+                        modelDefaultEffort: AgentSession.defaultEffort(model: session.model),
+                        modelAgent: session.engine.agent
+                    ), label: "Model", state: dropdowns)
+                    OctetDropdownAnchor(spec: OctetDropdownSpec(
+                        id: "mode",
+                        options: AgentSession.PermissionMode.allCases.map {
+                            OctetDropdownOption(id: $0.rawValue, title: $0.title, detail: Self.modeDetail[$0],
+                                               dangerous: $0 == .bypassPermissions,
+                                               tint: $0 == .default ? nil : ModeStyle.color($0), glyph: ModeStyle.glyph($0))
+                        },
+                        selected: session.permissionMode.rawValue,
+                        select: { choice in
+                            let mode = AgentSession.PermissionMode(rawValue: choice) ?? .default
+                            guard mode == .bypassPermissions, session.permissionMode != mode else {
+                                session.permissionMode = mode
+                                return
+                            }
+                            // Bypass runs every tool without asking: confirm first.
+                            ConfirmCenter.shared.ask(
+                                title: "Bypass all permission checks?",
+                                message: "Claude will run commands, edit and delete files, and use every tool without asking you first, for the rest of this conversation. Use it only in a folder you can afford to lose changes in.",
+                                confirmTitle: "Bypass Permissions",
+                                destructive: true
+                            ) { _ in session.permissionMode = .bypassPermissions }
+                        }
+                    ), state: dropdowns) { open in
+                        ModeChip(mode: session.permissionMode, open: open)
                     }
-                }
-                OctetIconButton(icon: "paperclip", help: "Attach files or images (or paste or drop them here)") { pickFiles() }
-                ComposerStashControls(project: session.cwd, text: $text, attachments: $attachments, dropdowns: dropdowns)
-                MCPProblemChip(session: session)
-                Spacer()
-                ContextWindowControl(session: session, dropdowns: dropdowns) {
-                    window.newConversation(engine: session.engine)
-                }
-                let empty = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty
-                if running {
-                    RoundComposerButton(kind: .stop) { session.interrupt() }
-                        .keyboardShortcut(OctetShortcut.stopTurn.keyboardShortcut)
-                        .help(OctetShortcut.stopTurn.keys.map { "Stop this turn (Esc or \($0))" } ?? "Stop this turn (Esc)")
-                        .accessibilityLabel("Stop")
-                }
-                if !running || !empty {
-                    let kind = sendKind(running: running)
-                    RoundComposerButton(kind: kind) { submit(commandHeld: NSEvent.modifierFlags.contains(.command)) }
-                        .disabled(empty)
-                        .help(sendHelp(kind))
-                        .accessibilityLabel(kind == .steer ? "Steer" : kind == .queue ? "Queue" : bridge.editing == nil ? "Send" : "Update")
+                    .accessibilityLabel("Permission mode")
+                    .accessibilityValue(session.permissionMode.title)
+                    .help("How Claude asks before using tools. Changes apply from the next message.")
+                    } else if session.engine == .codex {
+                        CodexControls(session: session, dropdowns: dropdowns)
+                    } else if session.engine == .opencode {
+                        OpenCodeControls(session: session, dropdowns: dropdowns)
+                    } else if session.engine == .pi {
+                        PiControls(session: session, dropdowns: dropdowns)
+                    } else if session.engine == .qwen {
+                        QwenControls(session: session, dropdowns: dropdowns)
+                    } else if let brand = AgentBrand.forAgent(session.engine.agent) {
+                        HStack(spacing: 5) {
+                            AgentLogo(brand: brand, size: 12)
+                            Text("Using \(session.engine.displayName) settings")
+                                .font(Theme.captionFont)
+                                .foregroundStyle(Theme.textSecondary)
+                        }
+                    }
+                    ComposerStashControls(project: session.cwd, text: $text, attachments: $attachments, dropdowns: dropdowns)
+                    MCPProblemChip(session: session)
+                    Spacer()
+                    ContextWindowControl(session: session, dropdowns: dropdowns) {
+                        window.newConversation(engine: session.engine)
+                    }
+                    // Remote Control (lit while it's on), the agent's own
+                    // interface in a new tab, and attaching: one icon family.
+                    HStack(spacing: 2) {
+                        if session.engine == .claude, session.remoteControlAvailable || session.remoteControlEngaged {
+                            RemoteControlControl(session: session, dropdowns: dropdowns)
+                        }
+                        ChatSymbolButton(symbol: "apple.terminal",
+                                         help: "Continue this conversation in \(session.engine.displayName)'s own interface, in a new tab") {
+                            session.openInTerminal(window: window)
+                        }
+                        .disabled(session.conversation.items.isEmpty)
+                        ChatSymbolButton(symbol: "paperclip", help: "Attach files or images (or paste or drop them here)") { pickFiles() }
+                    }
+                    let empty = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty && extras.isEmpty
+                    if running {
+                        RoundComposerButton(kind: .stop) { session.interrupt() }
+                            .keyboardShortcut(OctetShortcut.stopTurn.keyboardShortcut)
+                            .help(OctetShortcut.stopTurn.keys.map { "Stop this turn (Esc or \($0))" } ?? "Stop this turn (Esc)")
+                            .accessibilityLabel("Stop")
+                    }
+                    if !running || !empty {
+                        let kind = sendKind(running: running)
+                        RoundComposerButton(kind: kind) { submit(commandHeld: NSEvent.modifierFlags.contains(.command)) }
+                            .disabled(empty)
+                            .help(sendHelp(kind))
+                            .accessibilityLabel(kind == .steer ? "Steer" : kind == .queue ? "Queue" : bridge.editing == nil ? "Send" : "Update")
+                    }
                 }
             }
+            // T3 Code's composer: a card floating in the chat column, rounded,
+            // with a hairline and a soft drop under it.
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
+            .padding(.bottom, 16)
+            .background(RoundedRectangle(cornerRadius: ChatStyle.composerRadius, style: .continuous).fill(ChatStyle.card))
+            .overlay(RoundedRectangle(cornerRadius: ChatStyle.composerRadius, style: .continuous)
+                .strokeBorder(ChatStyle.composerOutline, lineWidth: 1))
+            // The inner top highlight; dark mode has no drop shadow.
+            .overlay(alignment: .top) {
+                Capsule().fill(Color.white.opacity(Theme.isLight ? 0 : 0.03)).frame(height: 1)
+                    .padding(.horizontal, ChatStyle.composerRadius)
+            }
+            .shadow(color: .black.opacity(Theme.isLight ? 0.4 : 0), radius: 14, y: 12)
         }
-        // Flat and flush with the conversation's sides, as the rest of
-        // Octet's chrome is: a strip with a divider above, not a card.
-        .padding(.horizontal, 16)
-        .padding(.top, 12)
-        .padding(.bottom, 12)
-        .background(Theme.card)
-        .overlay(alignment: .top) { Rectangle().fill(Theme.divider).frame(height: 1) }
+        .padding(.top, 8)
+        .padding(.bottom, 20)
+        .chatColumn()
         .onAppear {
             #if DEBUG
             if ConversationDebug.openDropdown == "reference" {
                 text = "@"
                 refreshReferences()
+            }
+            // Verification hook: tiles in the box, and a sent message carrying them.
+            if ConversationDebug.openDropdown == "attachments" {
+                let sample = (1...24).map { "line \($0) of the stack trace that was pasted in" }.joined(separator: "\n")
+                extras = [ComposerExtra(kind: .file(session.cwd + "/README.md")),
+                          ComposerExtra(kind: .file(session.cwd + "/report.pdf")),
+                          ComposerExtra(kind: .pasted(sample))]
+                text = "Why does this crash on launch?"
+                session.conversation.items.append(AgentItem(id: "debug-sent", kind: .user(
+                    ChatAttachmentFormat.compose("Here's the failing log and the spec, can you take a look?",
+                                                 extras: extras, cwd: session.cwd))))
             }
             ComposerDebugHooks.run(ConversationDebug.openDropdown, session: session, dropdowns: dropdowns) { text = $0 }
             #endif
@@ -2185,6 +2172,33 @@ private struct Composer: View {
         .onDrop(of: [.image, .fileURL], isTargeted: nil) { providers in load(providers) }
     }
 
+    /// `/` and `@` open T3 Code's command menu: a banner on the card's top
+    /// edge, growing up out of it.
+    @ViewBuilder
+    private func commandMenu(matches: [SlashCommandSearch.Result], references: [AgentComposerSyntax.Reference],
+                             mentionOpen: Bool) -> some View {
+        if !matches.isEmpty || !references.isEmpty || mentionOpen {
+            ChatBanner {
+                if !matches.isEmpty {
+                    SlashSuggestions(commands: matches,
+                                     highlighted: min(highlighted, matches.count - 1),
+                                     highlight: { highlighted = $0 }) { accept($0) }
+                } else if !references.isEmpty {
+                    ReferenceSuggestions(references: references,
+                                         highlighted: min(highlighted, references.count - 1),
+                                         highlight: { highlighted = $0 }) { accept($0) }
+                } else if let query = referenceQuery {
+                    NoReferenceMatches(query: query)
+                }
+            }
+            .padding(.bottom, 8)
+            .transition(motion.animates(.palette)
+                ? .asymmetric(insertion: .opacity.combined(with: .offset(y: 8)),
+                              removal: .opacity.combined(with: .offset(y: 4)))
+                : .identity)
+        }
+    }
+
     /// A paste or drop: image data as an image, files by URL (images as
     /// images, anything else as a path). Says whether any of it could be
     /// taken; what fails to load is said, not dropped silently.
@@ -2193,7 +2207,7 @@ private struct Composer: View {
     /// conversation to the background. A plain ← only, and not mid-turn:
     /// moving restarts the agent, which would cut the turn off.
     private func sendToBackground(_ press: KeyPress) -> KeyPress.Result {
-        guard text.isEmpty, attachments.isEmpty, !session.conversation.isRunning,
+        guard text.isEmpty, attachments.isEmpty, extras.isEmpty, !session.conversation.isRunning,
               press.modifiers.isDisjoint(with: [.command, .control, .option, .shift]) else { return .ignored }
         AgentCenter.shared.sendToBackground(session)
         return .handled
@@ -2327,7 +2341,9 @@ private struct Composer: View {
     ]
 
     private func submit(confirmedLength: Bool = false, commandHeld: Bool = false) {
-        let message = text
+        // Pasted text and files go as the agent reads them; the bubble
+        // shows them as tiles again.
+        let message = ChatAttachmentFormat.compose(text, extras: extras, cwd: session.cwd)
         // The question the agent asked takes what's typed as its answer.
         if session.pendingPermission == nil, session.pendingQuestion != nil, questions.draft != nil, bridge.editing == nil {
             let typed = message.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2336,6 +2352,7 @@ private struct Composer: View {
             return
         }
         guard !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty else { return }
+        let sentExtras = extras
         // A very long prompt asks first, where T3 Code's length check stops one.
         if !confirmedLength, case .tooLong(_, let why) = ComposerPromptLength.check(message, contextLeft: contextLeft) {
             ConfirmCenter.shared.ask(
@@ -2349,6 +2366,7 @@ private struct Composer: View {
         switch bridge.editing {
         case .editHeld(let id):
             session.updateHeld(id, text: message, attachments: attachments)
+            extras = []
             cancelEditing()
             return
         case .resend(let itemId, let revertFiles):
@@ -2358,6 +2376,7 @@ private struct Composer: View {
                 return
             }
             let images = attachments
+            extras = []
             cancelEditing()
             PromptHistoryStore.shared.record(message, project: session.cwd)
             MessageResend.resend(itemId, text: message, attachments: images, revertFiles: revertFiles, in: session)
@@ -2368,7 +2387,7 @@ private struct Composer: View {
         PromptHistoryStore.shared.record(message, project: session.cwd)
         historyCursor.reset()
         refiningPlan = false
-        if attachments.isEmpty,
+        if attachments.isEmpty, extras.isEmpty,
            let (command, arguments) = SlashCommands.invoked(message.trimmingCharacters(in: .whitespacesAndNewlines),
                                                              in: session.slashCommands),
            command.handling != .agent {
@@ -2377,6 +2396,7 @@ private struct Composer: View {
         }
         text = ""
         attachedPaths = false
+        extras = []
         let images = attachments
         attachments = []
         // Mid-turn: steer by default where the engine can, ⌘ flipping it.
@@ -2385,7 +2405,8 @@ private struct Composer: View {
         let sent = session.send(ReviewNotesOutbox.shared.attach(to: message, cwd: session.cwd), attachments: images, delivery: delivery)
         // The agent wouldn't start: the draft comes back rather than vanishing.
         if !sent, text.isEmpty, attachments.isEmpty {
-            text = message
+            text = ChatAttachmentFormat.parse(message).body
+            extras = sentExtras
             attachments = images
         }
     }
@@ -2404,7 +2425,7 @@ private struct EditingBanner: View {
 
     var body: some View {
         HStack(spacing: Theme.Space.md) {
-            OctetIcon("pencil", size: 12).foregroundStyle(Theme.accent)
+            OctetIcon("pencil", size: 12).foregroundStyle(ChatStyle.primary)
             switch purpose {
             case .editHeld:
                 Text("Editing a queued message").font(Theme.Text.bodyMedium).foregroundStyle(Theme.textSecondary)
@@ -2428,8 +2449,8 @@ private struct EditingBanner: View {
         .padding(.leading, 10)
         .padding(.trailing, 4)
         .padding(.vertical, 3)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.accent.opacity(0.08)))
-        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).strokeBorder(Theme.accent.opacity(0.25), lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(ChatStyle.primary.opacity(0.08)))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).strokeBorder(ChatStyle.primary.opacity(0.25), lineWidth: 1))
         .accessibilityElement(children: .contain)
     }
 }
@@ -2439,18 +2460,13 @@ private struct NoReferenceMatches: View {
     let query: String
 
     var body: some View {
-        OctetPalettePanel(divider: .bottom) {
-            HStack(spacing: 9) {
-                OctetIcon("doc", size: 12).foregroundStyle(Theme.textTertiary)
-                Text(query.isEmpty ? "No files here" : "No matching files")
-                    .font(Theme.Text.body)
-                    .foregroundStyle(Theme.textTertiary)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-        }
-        .accessibilityLabel("No matching files")
+        Text(query.isEmpty ? "No matching files or folders." : "No files or folders match “\(query)”.")
+            .font(ChatStyle.meta)
+            .foregroundStyle(ChatStyle.secondaryText)
+            .padding(.horizontal, 20)
+            .padding(.top, 14)
+            .padding(.bottom, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -2664,8 +2680,9 @@ private struct PiWidgets: View {
     }
 }
 
-/// Slash commands matching what's typed, above the message field, with the
-/// letters that matched lit.
+/// Slash commands matching what's typed, after T3 Code's command menu:
+/// the command in 12pt medium with the matched letters lit, what it does
+/// beside it, where it comes from at the end.
 private struct SlashSuggestions: View {
     let commands: [SlashCommandSearch.Result]
     let highlighted: Int
@@ -2673,43 +2690,20 @@ private struct SlashSuggestions: View {
     let choose: (SlashCommandSearch.Result) -> Void
 
     var body: some View {
-        OctetPalettePanel(divider: .bottom) {
-            OctetAnimatedList(items: commands, highlighted: highlighted, highlight: highlight, choose: choose) { result, _ in
-                let command = result.command
-                HStack(spacing: 10) {
-                    MatchHighlightedText(text: command.insertion, indices: result.nameIndices,
-                                         base: result.nameIndices.isEmpty ? Theme.textPrimary : Theme.textTertiary,
-                                         lit: Theme.textPrimary)
-                        .font(Theme.monoFont)
-                        .fixedSize()
-                    if !command.argumentHint.isEmpty {
-                        Text(command.argumentHint)
-                            .font(Theme.monoFont)
-                            .foregroundStyle(Theme.textTertiary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                            .layoutPriority(-1)
-                    }
-                    if !command.summary.isEmpty {
-                        MatchHighlightedText(text: command.summary, indices: result.summaryIndices,
-                                             base: Theme.textTertiary, lit: Theme.textPrimary)
-                            .font(Theme.captionFont)
-                            .lineLimit(1)
-                    }
-                    Spacer(minLength: 8)
-                    if !command.origin.label.isEmpty {
-                        Text(command.origin.label)
-                            .font(Theme.captionFont)
-                            .foregroundStyle(Theme.textTertiary)
-                    }
-                }
-            }
-            .padding(.bottom, 4)
+        ChatCommandList(items: commands, highlighted: highlighted, highlight: highlight, choose: choose) { result, _ in
+            let command = result.command
+            ChatCommandRow(icon: { EmptyView() }, label: {
+                MatchHighlightedText(text: command.insertion, indices: result.nameIndices,
+                                     base: result.nameIndices.isEmpty ? ChatStyle.text : ChatStyle.secondaryText,
+                                     lit: ChatStyle.text)
+            }, description: command.summary.isEmpty ? command.argumentHint : command.summary,
+               badge: command.origin.label)
         }
     }
 }
 
-/// Workspace files matching the unfinished @ mention in the composer.
+/// Workspace files matching the unfinished @ mention: the file's own icon
+/// and name, its folder beside it.
 private struct ReferenceSuggestions: View {
     let references: [AgentComposerSyntax.Reference]
     let highlighted: Int
@@ -2717,56 +2711,23 @@ private struct ReferenceSuggestions: View {
     let choose: (AgentComposerSyntax.Reference) -> Void
 
     var body: some View {
-        OctetPalettePanel(divider: .bottom) {
-            OctetAnimatedList(items: references, highlighted: highlighted, highlight: highlight, choose: choose) { reference, _ in
-                HStack(spacing: 9) {
-                    OctetIcon("doc", size: 12).foregroundStyle(Theme.textTertiary)
-                    Text("@" + reference.path)
-                        .font(Theme.monoFont)
-                        .foregroundStyle(Theme.textPrimary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer(minLength: 8)
-                }
-            }
-            .padding(.bottom, 4)
-        }
-    }
-}
-
-/// Thumbnails of attached images; removable while composing.
-private struct AttachmentStrip: View {
-    let images: [Data]
-    var remove: ((Int) -> Void)?
-
-    var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(Array(images.enumerated()), id: \.offset) { index, data in
-                    if let image = NSImage(data: data) {
-                        Image(nsImage: image)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: 64, height: 64)
-                            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
-                            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.md).strokeBorder(Theme.border, lineWidth: 1))
-                            .overlay(alignment: .topTrailing) {
-                                if let remove {
-                                    Button { remove(index) } label: {
-                                        OctetIcon("xmark", size: 13)
-                                            .foregroundStyle(Theme.textPrimary)
-                                            .frame(width: 18, height: 18)
-                                            .background(Circle().fill(Theme.card))
-                                    }
-                                    .buttonStyle(.plain)
-                                    .padding(3)
-                                    .accessibilityLabel("Remove image")
-                                }
-                            }
-                            .accessibilityLabel("Attached image \(index + 1)")
+        ChatCommandList(items: references, highlighted: highlighted, highlight: highlight, choose: choose) { reference, _ in
+            let name = (reference.path as NSString).lastPathComponent
+            let folder = (reference.path as NSString).deletingLastPathComponent
+            ChatCommandRow(icon: {
+                Group {
+                    if reference.path.hasSuffix("/") {
+                        OctetIcon("folder", size: 16).foregroundStyle(ChatStyle.secondaryText)
+                    } else if let logo = LanguageLogo(path: reference.path, size: 14) {
+                        logo
+                    } else {
+                        OctetIcon("doc", size: 16).foregroundStyle(ChatStyle.secondaryText)
                     }
                 }
-            }
+                .frame(width: 16)
+            }, label: {
+                Text(name.isEmpty ? reference.path : name)
+            }, description: folder)
         }
     }
 }
@@ -3163,7 +3124,7 @@ private struct AssistantMessage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            MarkdownView(text: text, streaming: streaming)
+            MarkdownView(text: text, streaming: streaming, chat: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 // Selecting part of the reply offers to quote it, after T3 Code.
                 .overlay {
@@ -3248,14 +3209,15 @@ private struct RoundComposerButton: View {
     var body: some View {
         Button(action: action) {
             ZStack {
-                Circle().fill(kind == .stop ? Theme.danger.opacity(0.9) : Theme.accent)
+                Circle().fill(kind == .stop ? ChatStyle.removed.opacity(hovered && enabled ? 1 : 0.9)
+                              : hovered && enabled ? ChatStyle.primaryHover : ChatStyle.primary)
                 switch kind {
                 case .stop:
-                    RoundedRectangle(cornerRadius: 2.5).fill(Color.white).frame(width: 10, height: 10)
+                    RoundedRectangle(cornerRadius: 1.5).fill(Color.white).frame(width: 8, height: 8)
                 default:
                     Image(systemName: Self.symbol(kind))
-                        .font(Theme.Text.mono(13, weight: .semibold))
-                        .foregroundStyle(Theme.onAccent)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(ChatStyle.onPrimary)
                         .contentTransition(.symbolEffect(.replace))
                 }
             }
@@ -3263,8 +3225,8 @@ private struct RoundComposerButton: View {
                 // The lit top edge filled buttons have.
                 Capsule().fill(Color.white.opacity(0.18)).frame(width: 14, height: 1).padding(.top, 1)
             }
-            .frame(width: 30, height: 30)
-            .shadow(color: (kind == .stop ? Theme.danger : Theme.accent).opacity(enabled ? 0.28 : 0), radius: 2, y: 1)
+            .frame(width: ChatStyle.sendSize, height: ChatStyle.sendSize)
+            .shadow(color: (kind == .stop ? ChatStyle.removed : ChatStyle.primary).opacity(enabled ? 0.24 : 0), radius: 1, y: 1)
             .scaleEffect(hovered && enabled ? 1.05 : 1)
             .opacity(enabled ? 1 : 0.64)
             .contentShape(Circle())

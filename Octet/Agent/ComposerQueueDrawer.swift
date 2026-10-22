@@ -13,7 +13,7 @@ struct ComposerQueueDrawer: View {
         let held = session.heldPrompts
         let legacy = session.queuedMessages
         if !held.isEmpty || !legacy.isEmpty {
-            OctetPalettePanel {
+            ChatBanner {
                 VStack(alignment: .leading, spacing: 0) {
                     header(count: held.count + legacy.count)
                     if expanded {
@@ -87,7 +87,7 @@ private struct HeldPromptRow: View {
                     Text(editing ? "Editing in the message box"
                          : prompt.attachments.count == 1 ? "1 image" : "\(prompt.attachments.count) images")
                         .font(Theme.Text.caption)
-                        .foregroundStyle(editing ? Theme.accent : Theme.textTertiary)
+                        .foregroundStyle(editing ? ChatStyle.primary : Theme.textTertiary)
                 }
             }
             Spacer(minLength: Theme.Space.sm)
@@ -134,9 +134,9 @@ private struct HeldPromptRow: View {
     private var handle: some View {
         Text("\(position + 1)")
             .font(Theme.Text.mono(10.5, weight: .medium))
-            .foregroundStyle(handleFocused ? Theme.onAccent : Theme.textTertiary)
+            .foregroundStyle(handleFocused ? ChatStyle.onPrimary : Theme.textTertiary)
             .frame(width: 18, height: 18)
-            .background(RoundedRectangle(cornerRadius: Theme.Radius.xs).fill(handleFocused ? Theme.accent : Theme.hover))
+            .background(RoundedRectangle(cornerRadius: Theme.Radius.xs).fill(handleFocused ? ChatStyle.primary : Theme.hover))
             .padding(.top, 1)
             .focusable()
             .focused($handleFocused)

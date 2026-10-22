@@ -82,28 +82,28 @@ struct EffortChip: View {
     @State private var hovered = false
 
     var body: some View {
-        HStack(spacing: 5) {
-            Text("Effort").font(Theme.captionFont).foregroundStyle(EffortStyle.isTop(level) ? .white.opacity(0.8) : Theme.textTertiary)
+        // A composer control, after T3 Code's: the level keeps its colour,
+        // and ultracode its moving purple.
+        let top = EffortStyle.isTop(level)
+        HStack(spacing: 6) {
+            Text("Effort").foregroundStyle(top ? .white.opacity(0.8) : (hovered || open ? ChatStyle.text : ChatStyle.secondaryText))
             if let level {
-                EffortName(level: level, color: EffortStyle.isTop(level) ? .white : EffortStyle.color(level))
+                EffortName(level: level, size: 13, color: top ? .white : EffortStyle.color(level))
             } else {
-                Text(implicit.map { "default · \($0)" } ?? "default")
-                    .font(Theme.Text.mono(12))
-                    .foregroundStyle(Theme.textSecondary)
+                Text(implicit.map { "Default · \($0)" } ?? "Default")
+                    .foregroundStyle(ChatStyle.mutedText)
             }
-            OctetIcon("chevron.down", size: 11)
-                .foregroundStyle(EffortStyle.isTop(level) ? .white.opacity(0.8) : Theme.textTertiary)
+            OctetIcon("chevron.down", size: 14)
+                .foregroundStyle(top ? .white.opacity(0.8) : ChatStyle.mutedText)
                 .rotationEffect(.degrees(open ? 180 : 0))
         }
-        .padding(.horizontal, 9)
-        .frame(height: 24)
+        .chatComposerControl(active: !top && (hovered || open))
         .background {
-            if EffortStyle.isTop(level) { UltracodeBackground(cell: CGSize(width: 6, height: 8)) }
-            else { hovered || open ? Theme.hover : Theme.card }
+            if top {
+                UltracodeBackground(cell: CGSize(width: 6, height: 8))
+                    .clipShape(RoundedRectangle(cornerRadius: ChatStyle.controlRadius, style: .continuous))
+            }
         }
-        .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius + 1)
-            .strokeBorder(open ? EffortStyle.color(level).opacity(0.7) : Theme.border, lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius + 1))
         .onHover { hovered = $0 }
     }
 }
@@ -152,22 +152,19 @@ struct ModeChip: View {
 
     var body: some View {
         let tint = ModeStyle.color(mode)
-        HStack(spacing: 5) {
+        // A composer control, after T3 Code's; a mode other than the
+        // default keeps its colour on the words so it's never missed.
+        HStack(spacing: 6) {
             if !ModeStyle.glyph(mode).isEmpty {
-                Text(ModeStyle.glyph(mode)).font(Theme.Text.caption)
+                Text(ModeStyle.glyph(mode)).font(ChatStyle.meta)
             }
-            Text(ModeStyle.label(mode)).font(Theme.Text.mono(12))
-            OctetIcon("chevron.down", size: 11)
-                .foregroundStyle(Theme.textTertiary)
+            Text(ModeStyle.label(mode).capitalizedFirst)
+            OctetIcon("chevron.down", size: 14)
+                .foregroundStyle(ChatStyle.mutedText)
                 .rotationEffect(.degrees(open ? 180 : 0))
         }
-        .foregroundStyle(tint)
-        .padding(.horizontal, 9)
-        .frame(height: 24)
-        .background(mode == .default ? (hovered || open ? Theme.hover : Theme.card) : tint.opacity(hovered || open ? 0.2 : 0.12))
-        .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius + 1)
-            .strokeBorder(mode == .default ? (open ? Theme.accent.opacity(0.6) : Theme.border) : tint.opacity(0.6), lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius + 1))
+        .foregroundStyle(mode == .default ? (hovered || open ? ChatStyle.text : ChatStyle.secondaryText) : tint)
+        .chatComposerControl(active: hovered || open)
         .onHover { hovered = $0 }
     }
 }
@@ -282,8 +279,8 @@ struct EffortSliderPanel: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text("Effort")
-                    .font(Theme.captionFont)
-                    .foregroundStyle(ultra ? .white.opacity(0.75) : Theme.textTertiary)
+                    .font(ChatStyle.meta)
+                    .foregroundStyle(ultra ? .white.opacity(0.75) : ChatStyle.secondaryText)
                 if let level {
                     EffortName(level: level, size: 14, color: tint)
                 } else {
@@ -298,41 +295,35 @@ struct EffortSliderPanel: View {
                 }
                 Spacer()
                 if level != nil {
-                    Button("Default") { set(nil) }
-                        .buttonStyle(.plain)
-                        .font(Theme.captionFont)
-                        .foregroundStyle(ultra ? .white.opacity(0.8) : Theme.textTertiary)
+                    ChatButton(title: "Default", kind: .ghost) { set(nil) }
                 }
             }
             slider(tint: tint, ultra: ultra, implicitOnly: level == nil)
             Text(level.flatMap { detail[$0] }
                  ?? implicit.map { "The model's default. \(detail[$0] ?? "")" } ?? "The agent picks its own effort")
-                .font(Theme.captionFont)
-                .foregroundStyle(ultra ? .white.opacity(0.8) : Theme.textSecondary)
+                .font(ChatStyle.meta)
+                .foregroundStyle(ultra ? .white.opacity(0.8) : ChatStyle.mutedText)
                 .contentTransition(.opacity)
             if let level, EffortStyle.warned.contains(level) {
                 HStack(alignment: .top, spacing: 6) {
                     OctetIcon("exclamationmark.triangle.fill", size: 13)
                     Text(EffortStyle.warning)
-                        .font(Theme.captionFont)
+                        .font(ChatStyle.meta)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                .foregroundStyle(ultra ? .white : Theme.warning)
+                .foregroundStyle(ultra ? .white : ChatStyle.warning)
                 .transition(.opacity)
                 .accessibilityElement(children: .combine)
             }
         }
-        .padding(14)
-        .frame(width: trackWidth + 28)
+        .padding(16)
+        .frame(width: trackWidth + 32)
+        // T3 Code's popover, with ultracode's purple moving under it.
         .background {
-            ZStack {
-                Theme.card
-                UltracodeBackground().opacity(ultra ? 1 : 0)
-            }
+            UltracodeBackground().opacity(ultra ? 1 : 0)
+                .clipShape(RoundedRectangle(cornerRadius: ChatStyle.cardRadius, style: .continuous))
         }
-        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.xl).strokeBorder(ultra ? Color.white.opacity(0.2) : Theme.border, lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.xl))
-        .shadow(color: .black.opacity(0.35), radius: 16, y: 6)
+        .chatPopover()
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: level)
         .focusable()
         .focusEffectDisabled()
@@ -358,14 +349,14 @@ struct EffortSliderPanel: View {
         let index = (level ?? implicit).flatMap { levels.firstIndex(of: $0) }
         let x = index.map { CGFloat($0) / count * trackWidth } ?? 0
         return ZStack(alignment: .leading) {
-            Capsule().fill(ultra ? Color.white.opacity(0.25) : Theme.border).frame(width: trackWidth, height: 6)
+            Capsule().fill(ultra ? Color.white.opacity(0.25) : ChatStyle.bubble).frame(width: trackWidth, height: 6)
             // Max keeps its rainbow in the name; the slider goes plain white.
             Capsule().fill(isMax ? Color.white : tint)
                 .opacity(implicitOnly ? 0.45 : 1)
                 .frame(width: index == nil ? 0 : max(6, x), height: 6)
             ForEach(0..<levels.count, id: \.self) { stop in
                 Circle()
-                    .fill(index.map { stop <= $0 } == true ? Color.clear : (ultra ? Color.white.opacity(0.5) : Theme.textTertiary))
+                    .fill(index.map { stop <= $0 } == true ? Color.clear : (ultra ? Color.white.opacity(0.5) : ChatStyle.faintIcon))
                     .frame(width: 4, height: 4)
                     .offset(x: CGFloat(stop) / count * trackWidth - 2)
             }
@@ -373,7 +364,7 @@ struct EffortSliderPanel: View {
                 // A ring when the level is only the default; filled once chosen.
                 let knob = isMax ? Color.white : tint
                 Circle()
-                    .fill(implicitOnly ? Theme.card : knob)
+                    .fill(implicitOnly ? ChatStyle.card : knob)
                     .overlay(Circle().strokeBorder(implicitOnly ? knob : Color.white.opacity(0.9), lineWidth: 2))
                     .frame(width: 16, height: 16)
                     .shadow(color: knob.opacity(implicitOnly ? 0 : 0.6), radius: 4)

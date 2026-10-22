@@ -7,7 +7,8 @@ import SwiftUI
 struct TurnChangedFilesCard: View {
     let changes: TurnChanges
     @Environment(\.transcriptActions) private var actions
-    @State private var open = true
+    /// Folded to its summary line until asked, as T3 Code's card is.
+    @State private var open = false
     @State private var collapsedFolders: Set<String> = []
     @State private var previewing: Set<String> = []
 
@@ -20,7 +21,7 @@ struct TurnChangedFilesCard: View {
             header(hasFolders: !folders.isEmpty, allCollapsed: !folders.isEmpty && folders.allSatisfy(collapsedFolders.contains),
                    folders: folders)
             if open {
-                Rectangle().fill(Theme.divider).frame(height: 1)
+                Rectangle().fill(ChatStyle.border).frame(height: 1)
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Self.rows(tree, collapsed: collapsedFolders), id: \.node.id) { row in
                         rowView(row.node, depth: row.depth)
@@ -35,24 +36,28 @@ struct TurnChangedFilesCard: View {
                 .padding(.vertical, 4)
             }
         }
-        .background(Theme.card.opacity(0.55))
-        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.lg).strokeBorder(Theme.border, lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.lg))
+        .background(ChatStyle.card)
+        .clipShape(RoundedRectangle(cornerRadius: ChatStyle.cardRadius, style: .continuous))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Files changed in turn \(changes.number)")
     }
 
+    /// T3 Code's summary line: the count and its +/−, "Show files" to
+    /// unfold the tree, and Open diff at the end.
     private func header(hasFolders: Bool, allCollapsed: Bool, folders: [String]) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
             Button { withAnimation(.easeOut(duration: 0.15)) { open.toggle() } } label: {
-                HStack(spacing: 6) {
+                HStack(spacing: 8) {
                     OctetIcon("chevron.right", size: 11)
                         .rotationEffect(.degrees(open ? 90 : 0))
-                        .foregroundStyle(Theme.textTertiary)
+                        .foregroundStyle(ChatStyle.mutedText)
                     Text("\(changes.files.count) changed \(changes.files.count == 1 ? "file" : "files")")
-                        .font(Theme.uiFontMedium)
-                        .foregroundStyle(Theme.textPrimary)
-                    DiffStatLabel(added: changes.added, removed: changes.removed)
+                        .font(ChatStyle.bodyMedium)
+                        .foregroundStyle(ChatStyle.text)
+                    DiffStatLabel(added: changes.added, removed: changes.removed, font: ChatStyle.body)
+                    Text(open ? "Hide files" : "Show files")
+                        .font(ChatStyle.meta)
+                        .foregroundStyle(ChatStyle.mutedText)
                 }
                 .contentShape(Rectangle())
             }
@@ -65,14 +70,12 @@ struct TurnChangedFilesCard: View {
                     collapsedFolders = allCollapsed ? [] : Set(folders)
                 }
             }
-            OctetButton(title: "Open Diff", icon: "doc.diff", kind: .ghost, compact: true) {
-                actions.openTurnDiff(changes, nil)
-            }
-            .help("Show this turn's changes in the Diff plane")
+            ChatOutlineButton(title: "Open diff", icon: "doc.diff") { actions.openTurnDiff(changes, nil) }
+                .help("Show this turn's changes in the Diff plane")
         }
-        .padding(.leading, 10)
-        .padding(.trailing, 6)
-        .frame(height: 34)
+        .padding(.leading, 16)
+        .padding(.trailing, 10)
+        .frame(height: 46)
     }
 
     @ViewBuilder

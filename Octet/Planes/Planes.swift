@@ -190,6 +190,8 @@ struct PlaneRail: View {
                                           active: ui.activePlane?.id == plane.id, ui: ui, selection: selection)
                                 .id(plane.id)
                         }
+                        // Adding one sits right under the planes there are.
+                        addButton
                     }
                     .padding(.vertical, 6)
                 }
@@ -202,19 +204,21 @@ struct PlaneRail: View {
                     }
                 }
             }
-            Rectangle().fill(Theme.divider).frame(height: 1)
-            OctetIconButton(icon: "plus", help: "Add a plane", compact: true) { adding.toggle() }
-                .frame(width: 42, height: 40)
-                .accessibilityLabel("Add a plane")
-                .popover(isPresented: $adding, arrowEdge: .leading) {
-                    PlanePicker(ui: ui) { adding = false }
-                        .padding(6)
-                        .frame(width: 280)
-                        .background(Theme.chrome)
-                }
         }
         .frame(width: 44)
         .background(Theme.chrome)
+    }
+
+    private var addButton: some View {
+        OctetIconButton(icon: "plus", help: "Add a plane", compact: true) { adding.toggle() }
+            .frame(width: 42, height: 36)
+            .accessibilityLabel("Add a plane")
+            .popover(isPresented: $adding, arrowEdge: .leading) {
+                PlanePicker(ui: ui) { adding = false }
+                    .padding(6)
+                    .frame(width: 280)
+                    .background(Theme.chrome)
+            }
     }
 }
 

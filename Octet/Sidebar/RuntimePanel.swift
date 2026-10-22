@@ -107,7 +107,11 @@ struct RuntimePanel: View {
         .onChange(of: scopeID) { _, _ in
             // Details belong to one tab/conversation. Never let a row opened
             // in the previous scope stay open while the new list loads.
-            withoutLayoutAnimation { ui.runtimeExpandedEntryIDs = [] }
+            // activateWorkspacePanel has usually emptied it already; writing
+            // it again would redraw the window for nothing.
+            if !ui.runtimeExpandedEntryIDs.isEmpty {
+                withoutLayoutAnimation { ui.runtimeExpandedEntryIDs = [] }
+            }
             flashingEntryIDs = []
             collapsedBranches = []
             ui.seenRuntimeEntryIDs.formUnion(entries.map(\.id))

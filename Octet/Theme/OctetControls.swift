@@ -328,31 +328,25 @@ struct OctetDropdown: View {
             state.specs[spec.id] = spec
             state.openId = open ? nil : spec.id
         } label: {
-            HStack(spacing: 5) {
+            HStack(spacing: 6) {
                 if spec.id == "model", let brand = AgentBrand.forAgent(spec.modelAgent) {
-                    AgentLogo(brand: brand, size: 14)
+                    AgentLogo(brand: brand, size: 16)
                 }
                 Text(current)
                     .contentTransition(.opacity)
-                    .font(Theme.uiFont)
-                    .foregroundStyle(dangerous ? Theme.danger : Theme.textPrimary)
+                    .foregroundStyle(dangerous ? Theme.danger : open || hovered ? ChatStyle.text : ChatStyle.secondaryText)
                     .lineLimit(1)
                 if spec.id == "model", let effort = spec.modelEffort?.wrappedValue ?? spec.modelDefaultEffort,
                    effort != spec.modelEffortLevels.first {
                     OctetIcon("lightbulb.fill", size: 11).foregroundStyle(Color.white)
                         .transition(.opacity.combined(with: .scale))
                 }
-                OctetIcon("chevron.down", size: 11)
-                    .foregroundStyle(Theme.textTertiary)
+                OctetIcon("chevron.down", size: 14)
+                    .foregroundStyle(ChatStyle.mutedText)
                     .rotationEffect(.degrees(open ? 180 : 0))
             }
-            .padding(.horizontal, 9)
-            .frame(height: 24)
-            .background(open || hovered ? Theme.hover : Theme.card)
-            .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius + 1)
-                .strokeBorder(dangerous ? Theme.danger.opacity(0.7) : open ? Theme.accent.opacity(0.6) : Theme.border, lineWidth: 1))
-            .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius + 1))
-            .contentShape(Rectangle())
+            // The conversation composer's control, after T3 Code's.
+            .chatComposerControl(active: open || hovered)
         }
         .buttonStyle(.plain)
         .focused($triggerFocused)

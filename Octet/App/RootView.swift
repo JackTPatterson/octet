@@ -932,6 +932,12 @@ struct RootView: View {
                     statusBar.debugShowSample(ci: overall)
                 }
             }
+            // "footer:<awake|resources|ports|hosts>" opens that status popover.
+            if let open = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], open.hasPrefix("footer:") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    window.chromeDropdowns.openId = "footer-" + open.dropFirst("footer:".count)
+                }
+            }
             // "usage" opens the usage page; "usage:tokens:week" also picks
             // its mode and period.
             if let open = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], open.hasPrefix("usage") {
@@ -1486,7 +1492,9 @@ struct RootView: View {
                        gutter: PaneCards.gutter,
                        geometry: paneGeometry,
                        viewport: { tab, columns, rows in store.setViewport(tab: tab, columns: columns, rows: rows) }) { pane in
-            window.activateSplitSurface()
+            // A pane takes focus while the grid is being updated: publishing
+            // then would make SwiftUI draw everything again inside this draw.
+            DispatchQueue.main.async { window.activateSplitSurface() }
             guard pane != window.focusedPaneId else { return }
             store.call("pane.focus", ["pane_id": pane], failure: "Couldn't focus the pane") { _ in }
         }
@@ -1951,79 +1959,31 @@ private struct TitleBar: View {
     /// Redraws the key hints when a shortcut is rebound.
     @ObservedObject private var shortcuts = ShortcutOverrides.shared
     @State private var isFullScreen = false
+    /// The bar and its two side groups, so the centred search fits between
+    /// them instead of sitting on top of them in a narrow window.
+    @State private var barWidth: CGFloat = 0
+    @State private var leadingWidth: CGFloat = 0
+    @State private var trailingWidth: CGFloat = 0
+
+    /// As wide as the room either side of centre allows, up to 420.
+    private var searchWidth: CGFloat {
+        min(420, barWidth - 2 * max(leadingWidth, trailingWidth) - 16)
+    }
 
     var body: some View {
         HStack(spacing: 8) {
-            // Room for the traffic lights, which hide in full screen.
-            Color.clear.frame(width: isFullScreen ? 4 : 70)
-            Button {
-                ui.sidebarVisible.toggle()
-            } label: {
-                OctetIcon("sidebar.left", size: 18)
-                    .foregroundStyle(ui.sidebarVisible ? Theme.textPrimary : Theme.textSecondary)
-                    .frame(width: 28, height: 24)
-                    .background(ui.sidebarVisible ? Theme.cardSelected : Color.clear)
-                    .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
-            }
-            .buttonStyle(.plain)
-            .help(OctetShortcut.toggleSidebar.help("Toggle Sidebar"))
-            .accessibilityLabel(ui.sidebarVisible ? "Hide sidebar" : "Show sidebar")
-            // Pane layouts from plugins (Pane Layouts ships with Octet).
-            LayoutPickerButton()
-            // Whether Octet or an agent tool has an update waiting.
-            UpdatesButton().padding(.leading, 4)
+            HStack(spacing: 8) { leadingControls }
+                .fixedSize()
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { leadingWidth = $0 }
             Spacer()
-            // A connected engine is the normal state and says nothing worth a
-            // badge; only the wait for one does.
-            if !store.isConnected { connectingIndicator }
-            // Every tab's agents, wherever they run.
-            AgentsHubButton(store: store)
-                .environmentObject(window.panelContext)
-            // The Usage page, then what the agents have left: its chips open
-            // their card on hover.
-            OctetIconButton(icon: "chart.bar.xaxis", help: "Usage", active: ui.usageBreakdownVisible) {
-                MotionPreferences.shared.perform(.palette, .easeOut(duration: 0.15)) {
-                    ui.usageBreakdownVisible.toggle()
-                }
-            }
-            AccountChips(runningAgents: runningAgents) { ui.usageBreakdownVisible = true }
-                .padding(.trailing, 2)
-            // The window's right panel, its toggle mirroring the sidebar's.
-            Button {
-                ui.sidePanelVisible.toggle()
-            } label: {
-                OctetIcon("sidebar.right", size: 18)
-                    .foregroundStyle(ui.sidePanelVisible ? Theme.textPrimary : Theme.textSecondary)
-                    .frame(width: 28, height: 24)
-                    .background(ui.sidePanelVisible ? Theme.cardSelected : Color.clear)
-                    .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
-            }
-            .buttonStyle(.plain)
-            .help(OctetShortcut.togglePanel.help(ui.sidePanelVisible ? "Hide the panel" : "Show the panel"))
-            .accessibilityLabel(ui.sidePanelVisible ? "Hide panel" : "Show panel")
-            .padding(.trailing, 8)
+            HStack(spacing: 8) { trailingControls }
+                .fixedSize()
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { trailingWidth = $0 }
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { barWidth = $0 }
         // Centered on the window, not between the uneven side groups.
         .overlay {
-            Button {
-                ui.paletteVisible = true
-            } label: {
-                HStack(spacing: 8) {
-                    OctetIcon("magnifyingglass", size: 15)
-                    Text(titleText).font(Theme.uiFontMedium).lineLimit(1)
-                    Spacer(minLength: 8)
-                    if let keys = OctetShortcut.palette.keys { KeyCombo(keys: keys) }
-                }
-                .foregroundStyle(Theme.textSecondary)
-                .padding(.horizontal, 10)
-                .frame(width: 420, height: 26)
-                .background(Theme.card)
-                .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius).strokeBorder(Theme.border, lineWidth: 1))
-                .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
-            }
-            .buttonStyle(.plain)
-            .help(OctetShortcut.palette.help("Command Palette"))
-            .accessibilityLabel("Search, \(titleText)")
+            if searchWidth >= 44 { searchButton }
         }
         .frame(height: Theme.titleBarHeight)
         .background {
@@ -2035,6 +1995,85 @@ private struct TitleBar: View {
             }
         }
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.divider).frame(height: 1) }
+    }
+
+    @ViewBuilder
+    private var leadingControls: some View {
+        // Room for the traffic lights, which hide in full screen.
+        Color.clear.frame(width: isFullScreen ? 4 : 70)
+        Button {
+            ui.sidebarVisible.toggle()
+        } label: {
+            OctetIcon("sidebar.left", size: 18)
+                .foregroundStyle(ui.sidebarVisible ? Theme.textPrimary : Theme.textSecondary)
+                .frame(width: 28, height: 24)
+                .background(ui.sidebarVisible ? Theme.cardSelected : Color.clear)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
+        }
+        .buttonStyle(.plain)
+        .help(OctetShortcut.toggleSidebar.help("Toggle Sidebar"))
+        .accessibilityLabel(ui.sidebarVisible ? "Hide sidebar" : "Show sidebar")
+        // Pane layouts from plugins (Pane Layouts ships with Octet).
+        LayoutPickerButton()
+        // Whether Octet or an agent tool has an update waiting.
+        UpdatesButton().padding(.leading, 4)
+    }
+
+    @ViewBuilder
+    private var trailingControls: some View {
+        // A connected engine is the normal state and says nothing worth a
+        // badge; only the wait for one does.
+        if !store.isConnected { connectingIndicator }
+        // Every tab's agents, wherever they run.
+        AgentsHubButton(store: store)
+            .environmentObject(window.panelContext)
+        // The Usage page, then what the agents have left: its chips open
+        // their card on hover.
+        OctetIconButton(icon: "chart.bar.xaxis", help: "Usage", active: ui.usageBreakdownVisible) {
+            MotionPreferences.shared.perform(.palette, .easeOut(duration: 0.15)) {
+                ui.usageBreakdownVisible.toggle()
+            }
+        }
+        AccountChips(runningAgents: runningAgents) { ui.usageBreakdownVisible = true }
+            .padding(.trailing, 2)
+        // The window's right panel, its toggle mirroring the sidebar's.
+        Button {
+            ui.sidePanelVisible.toggle()
+        } label: {
+            OctetIcon("sidebar.right", size: 18)
+                .foregroundStyle(ui.sidePanelVisible ? Theme.textPrimary : Theme.textSecondary)
+                .frame(width: 28, height: 24)
+                .background(ui.sidePanelVisible ? Theme.cardSelected : Color.clear)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
+        }
+        .buttonStyle(.plain)
+        .help(OctetShortcut.togglePanel.help(ui.sidePanelVisible ? "Hide the panel" : "Show the panel"))
+        .accessibilityLabel(ui.sidePanelVisible ? "Hide panel" : "Show panel")
+        .padding(.trailing, 8)
+    }
+
+    private var searchButton: some View {
+        Button {
+            ui.paletteVisible = true
+        } label: {
+            HStack(spacing: 8) {
+                OctetIcon("magnifyingglass", size: 15)
+                if searchWidth >= 120 {
+                    Text(titleText).font(Theme.uiFontMedium).lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                if searchWidth >= 240, let keys = OctetShortcut.palette.keys { KeyCombo(keys: keys) }
+            }
+            .foregroundStyle(Theme.textSecondary)
+            .padding(.horizontal, 10)
+            .frame(width: searchWidth, height: 26)
+            .background(Theme.card)
+            .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius).strokeBorder(Theme.border, lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius))
+        }
+        .buttonStyle(.plain)
+        .help(OctetShortcut.palette.help("Command Palette"))
+        .accessibilityLabel("Search, \(titleText)")
     }
 
     private var runningAgents: Set<String> {

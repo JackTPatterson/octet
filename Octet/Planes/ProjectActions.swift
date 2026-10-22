@@ -50,16 +50,23 @@ final class ProjectActionsStore: ObservableObject {
     }
 
     func refreshConfiguration(root: String, checkout: String? = nil) {
+        let key = checkout ?? root
+        let loaded: [ProjectAction]
+        let failure: String?
         do {
-            let config = try ProjectConfiguration.load(checkout: checkout ?? root, root: root)
-            repositoryActions[checkout ?? root] = (config.actions ?? []).map {
+            let config = try ProjectConfiguration.load(checkout: key, root: root)
+            loaded = (config.actions ?? []).map {
                 ProjectAction(id: $0.id, name: $0.name, command: $0.command, icon: $0.icon ?? "play")
             }
-            configurationErrors[checkout ?? root] = nil
+            failure = nil
         } catch {
-            repositoryActions[checkout ?? root] = []
-            configurationErrors[checkout ?? root] = error.localizedDescription
+            loaded = []
+            failure = error.localizedDescription
         }
+        // Every workspace switch reads this again; only a real change may
+        // redraw the windows that watch it.
+        if repositoryActions[key] != loaded { repositoryActions[key] = loaded }
+        if configurationErrors[key] != failure { configurationErrors[key] = failure }
     }
 
     func actions(for root: String, checkout: String? = nil) -> [ProjectAction] {

@@ -20,51 +20,52 @@ struct ToolRunRow: View {
         let failed = calls.filter(\.isError).count
         let interrupted = !running && calls.contains { $0.result == nil }
         let summary = ToolRunSummary.text(calls, live: live)
-        VStack(alignment: .leading, spacing: Theme.Space.xs) {
-            Button { expanded.toggle() } label: {
-                HStack(spacing: Theme.Space.sm) {
-                    OctetIcon("chevron.right", size: 11)
-                        .rotationEffect(.degrees(expanded ? 90 : 0))
-                        .foregroundStyle(Theme.textTertiary)
-                    OctetIcon(failed > 0 ? "exclamationmark.triangle.fill" : "tool.other", size: 14)
-                        .foregroundStyle(failed > 0 ? Theme.danger : Theme.textTertiary)
+        // T3 Code's group header: "Ran 3 commands", its icon in the work
+        // log's column, the chevron at the end.
+        VStack(alignment: .leading, spacing: 0) {
+            Button { withAnimation(.easeOut(duration: 0.2)) { expanded.toggle() } } label: {
+                HStack(spacing: 6) {
+                    OctetIcon(failed > 0 ? "exclamationmark.triangle.fill" : "tool.other", size: 16)
+                        .foregroundStyle(failed > 0 ? ChatStyle.removed : ChatStyle.faintIcon)
+                        .frame(width: ChatStyle.workIconColumn)
                     Text(summary)
-                        .font(Theme.Text.bodyMedium)
-                        .foregroundStyle(Theme.textSecondary)
+                        .font(ChatStyle.body)
+                        .foregroundStyle(ChatStyle.secondaryText)
                         .lineLimit(1)
                         .truncationMode(.tail)
                     if failed > 0 {
                         Text(failed == 1 ? "1 failed" : "\(failed) failed")
-                            .font(Theme.Text.caption)
-                            .foregroundStyle(Theme.danger)
+                            .font(ChatStyle.meta)
+                            .foregroundStyle(ChatStyle.removed)
                     }
                     if interrupted {
-                        Text("Interrupted").font(Theme.Text.caption).foregroundStyle(Theme.warning)
+                        Text("Interrupted").font(ChatStyle.meta).foregroundStyle(ChatStyle.warning)
                     }
-                    Spacer(minLength: Theme.Space.xs)
+                    Spacer(minLength: 4)
                     if live { LoadingLine(width: 14) }
+                    OctetIcon("chevron.right", size: 12)
+                        .foregroundStyle(ChatStyle.faintIcon)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                        .frame(width: 16, height: 16)
                 }
+                .frame(minHeight: ChatStyle.workRowHeight)
+                .padding(2)
+                .background(RoundedRectangle(cornerRadius: ChatStyle.controlRadius, style: .continuous)
+                    .fill(hovered ? ChatStyle.hover : .clear))
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 4)
-            .background(RoundedRectangle(cornerRadius: Theme.controlRadius).fill(hovered ? Theme.hover.opacity(0.6) : .clear))
             .onHover { hovered = $0 }
             .accessibilityLabel(summary + (failed > 0 ? ", \(failed) failed" : "") + (interrupted ? ", interrupted" : ""))
             .accessibilityValue(expanded ? "Expanded" : "Collapsed")
             .accessibilityHint("Shows each tool call")
             if expanded {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 0) {
                     ForEach(items) { item in
                         ItemRow(item: item, running: running).equatable()
                             .environment(\.transcriptFindMarks, marks(item.id))
                             .id(item.id)
                     }
-                }
-                .padding(.leading, 14)
-                .overlay(alignment: .leading) {
-                    Rectangle().fill(Theme.border).frame(width: 1).padding(.leading, 5)
                 }
             }
         }
@@ -99,11 +100,12 @@ struct ThinkingBlock: View {
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Thinking")
         } else {
-            Disclosure(title: duration.map { "Thought for \(AgentElapsed.text($0))" } ?? "Thought",
-                       tint: Theme.textTertiary) {
+            WorkLogDisclosure(title: duration.map { "Thought for \(AgentElapsed.text($0))" } ?? "Thought",
+                              icon: "brain") {
                 FoundText(text)
-                    .font(Theme.Text.body)
-                    .foregroundStyle(Theme.textTertiary)
+                    .font(ChatStyle.body)
+                    .lineSpacing(ChatStyle.bodyLineSpacing)
+                    .foregroundStyle(ChatStyle.text)
                     .textSelection(.enabled)
             }
         }
@@ -121,30 +123,35 @@ struct ThinkingBlock: View {
 struct WorkingLine: View {
     @ObservedObject var session: AgentSession
 
+    // T3 Code's working row: "Working for 12s" in the muted colour on a
+    // 24pt line, with a hairline under it, in the chat column.
     var body: some View {
-        HStack(spacing: Theme.Space.md) {
-            LoadingLine(width: 14)
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
             if let started = session.turnStartedAt {
                 TimelineView(.periodic(from: started, by: 1)) { context in
                     Text("Working for \(AgentElapsed.text(context.date.timeIntervalSince(started)))")
-                        .font(Theme.Text.bodyMedium.monospacedDigit())
-                        .foregroundStyle(Theme.textSecondary)
+                        .font(ChatStyle.body.monospacedDigit())
+                        .foregroundStyle(ChatStyle.mutedText)
                 }
             } else {
-                Text("Working").font(Theme.Text.bodyMedium).foregroundStyle(Theme.textSecondary)
+                Text("Working").font(ChatStyle.body).foregroundStyle(ChatStyle.mutedText)
             }
             AgentActivityText(text: session.activity)
-                .font(Theme.Text.body)
-                .foregroundStyle(Theme.textTertiary)
+                .font(ChatStyle.body)
+                .foregroundStyle(ChatStyle.faintIcon)
                 .lineLimit(1)
                 .truncationMode(.middle)
-            Spacer(minLength: Theme.Space.md)
+            Spacer(minLength: 8)
             Text("Esc to stop")
-                .font(Theme.Text.caption)
-                .foregroundStyle(Theme.textTertiary)
+                .font(ChatStyle.meta)
+                .foregroundStyle(ChatStyle.faintIcon)
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 6)
+        .frame(minHeight: ChatStyle.workRowHeight)
+        .padding(.horizontal, 4)
+        .padding(.top, 4)
+        .padding(.bottom, 8)
+        .overlay(alignment: .bottom) { Rectangle().fill(ChatStyle.rowRule).frame(height: 1) }
+        .chatColumn()
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.updatesFrequently)
     }

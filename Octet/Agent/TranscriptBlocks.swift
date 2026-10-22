@@ -7,10 +7,17 @@ struct MarkdownView: View {
     /// Still arriving: its last code block may be cut off, so it isn't
     /// offered to run.
     var streaming = false
+    /// Drawn in a conversation: T3 Code's chat type (14pt, relaxed lines)
+    /// rather than the size the rest of Octet's Markdown uses.
+    var chat = false
     @Environment(\.transcriptFindMarks) private var marks
 
+    private var bodyFont: Font { chat ? ChatStyle.body : Theme.Text.transcript }
+    private var bodyColor: Color { chat ? ChatStyle.prose : Theme.textPrimary }
+    private var lineSpacing: CGFloat { chat ? ChatStyle.bodyLineSpacing : 0 }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: chat ? 12 : 8) {
             ForEach(Array(MarkdownCache.shared.blocks(text).enumerated()), id: \.offset) { index, block in
                 blockView(block, at: index)
             }
@@ -28,33 +35,36 @@ struct MarkdownView: View {
         switch block {
         case .paragraph(let text):
             Text(inline(text, at: index))
-                .font(Theme.Text.transcript)
-                .foregroundStyle(Theme.textPrimary)
+                .font(bodyFont)
+                .lineSpacing(lineSpacing)
+                .foregroundStyle(bodyColor)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
         case .heading(let level, let text):
             Text(inline(text, at: index))
-                .font(level <= 1 ? Theme.Text.title2 : level == 2 ? Theme.Text.title3 : Theme.Text.transcriptMedium)
-                .foregroundStyle(Theme.textPrimary)
+                .font(level <= 1 ? Theme.Text.title2 : level == 2 ? Theme.Text.title3
+                      : chat ? ChatStyle.bodyMedium : Theme.Text.transcriptMedium)
+                .foregroundStyle(bodyColor)
                 .textSelection(.enabled)
                 .padding(.top, 4)
                 .accessibilityAddTraits(.isHeader)
         case .listItem(let ordinal, let depth, let text):
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(ordinal.map { "\($0)." } ?? "•")
-                    .font(Theme.Text.transcript.monospacedDigit())
-                    .foregroundStyle(Theme.textTertiary)
+                    .font(bodyFont.monospacedDigit())
+                    .foregroundStyle(chat ? ChatStyle.mutedText : Theme.textTertiary)
                     .frame(minWidth: 14, alignment: .trailing)
                 Text(inline(text, at: index))
-                    .font(Theme.Text.transcript)
-                    .foregroundStyle(Theme.textPrimary)
+                    .font(bodyFont)
+                    .lineSpacing(lineSpacing)
+                    .foregroundStyle(bodyColor)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(.leading, CGFloat(depth) * 16)
+            .padding(.leading, CGFloat(depth) * 16 + (chat ? 8 : 0))
         case .quote(let text):
             Text(inline(text, at: index))
-                .font(Theme.Text.transcript)
+                .font(bodyFont)
                 .foregroundStyle(Theme.textSecondary)
                 .textSelection(.enabled)
                 .padding(.leading, 10)
@@ -232,9 +242,9 @@ struct DiffView: View {
                 TranscriptShowMore(title: "Show \(lines.count - shown.count) more lines") { showAll = true }
             }
         }
-        .background(Theme.terminalBackground)
-        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.lg).strokeBorder(Theme.border, lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.lg))
+        .background(ChatStyle.card)
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(ChatStyle.border, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     private func table(_ shown: [LineDiff.Line]) -> some View {
@@ -262,9 +272,12 @@ struct DiffView: View {
 
     private func row(_ line: LineDiff.Line, text: AttributedString, index: Int, in all: [LineDiff.Line],
                      number: Int?, gutter: CGFloat, width: CGFloat) -> some View {
+        // Drawn as the Diff plane draws its lines, so a change reads the
+        // same in the conversation as beside it.
         let edges = DiffStyle.edges(all.map { DiffLineKind($0.kind) }, at: index)
         return DiffLineRow(kind: DiffLineKind(line.kind), number: number, text: text, gutter: gutter,
                            first: edges.first, last: edges.last, minWidth: width)
+            .opacity(line.kind == .context ? 0.85 : 1)
     }
 
     /// Syntax colors per line, carrying block-comment state down the diff.
@@ -377,7 +390,7 @@ struct TranscriptCopyButton: View {
             }
         } label: {
             OctetIcon(copied ? "checkmark" : "doc.on.doc", size: 12)
-                .foregroundStyle(copied ? Theme.accent : Theme.textTertiary)
+                .foregroundStyle(copied ? ChatStyle.primary : Theme.textTertiary)
                 .frame(width: 20, height: 18)
                 .contentShape(Rectangle())
         }
@@ -398,7 +411,7 @@ struct TranscriptShowMore: View {
                 OctetIcon("chevron.down", size: 11)
                 Text(title).font(Theme.Text.caption)
             }
-            .foregroundStyle(Theme.accent)
+            .foregroundStyle(ChatStyle.primary)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 5)
             .background(Theme.card.opacity(0.5))

@@ -1015,7 +1015,8 @@ final class WindowContext: ObservableObject, Identifiable {
         let owner = splitParent ?? self
         let target = surface ?? self
         guard target === owner || target === owner.splitContext else { return }
-        owner.focusedSplitContextID = target === owner ? nil : target.id
+        let focusedID = target === owner ? nil : target.id
+        if owner.focusedSplitContextID != focusedID { owner.focusedSplitContextID = focusedID }
         owner.ui.activateWorkspacePanel(target.focusedWorkspace?.workspaceId,
                                         preserveWindowState: owner.splitContext != nil)
         WindowRegistry.shared.becameKey(target)
