@@ -244,14 +244,48 @@ enum AgentSessionFiles {
         return best?.id
     }
 
+    /// The session a running Claude Code is on, exactly: Claude Code keeps a
+    /// record per process (`sessions/<pid>.json` under its home) naming its
+    /// session, which follows /clear and /resume. Read for the pane's
+    /// foreground job, from `pane.process_info`. Nil when no Claude process
+    /// there has one (an older Claude Code, another agent).
+    static func claudeSession(processInfo result: [String: Any], cwd: String?, home: String = NSHomeDirectory()) -> String? {
+        guard let info = result["process_info"] as? [String: Any] else { return nil }
+        var pids: [Int] = []
+        if let group = info["foreground_process_group_id"] as? Int { pids.append(group) }
+        for process in info["foreground_processes"] as? [[String: Any]] ?? [] {
+            guard let pid = process["pid"] as? Int, !pids.contains(pid) else { continue }
+            let words = [process["argv0"] as? String, process["name"] as? String, process["cmdline"] as? String]
+                .compactMap { $0?.lowercased() }
+            if words.contains(where: { ($0 as NSString).lastPathComponent.hasPrefix("claude") || $0.contains("/claude ") }) {
+                pids.append(pid)
+            }
+        }
+        let homes = [AccountProfiles.claudeHome(forCwd: cwd, home: home), home + "/.claude"]
+        for pid in pids {
+            for claudeHome in homes {
+                let path = claudeHome + "/sessions/\(pid).json"
+                guard let data = FileManager.default.contents(atPath: path),
+                      let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      record["pid"] as? Int == pid,
+                      let id = record["sessionId"] as? String, !id.isEmpty else { continue }
+                return id
+            }
+        }
+        return nil
+    }
+
     /// Session ids for every Claude/Codex agent without an integration
     /// report, newest-started agent first so each claims a distinct session.
     static func infer(
         agents: [EngineAgent],
         firstSeen: [String: Date],
+        excluding taken: Set<String> = [],
         now: Date = Date()
     ) -> [String: String] {
-        var claimed = Set<String>()
+        // Sessions known to be someone else's (another pane's exact one,
+        // Octet's own conversations) are never handed out.
+        var claimed = taken
         var result: [String: String] = [:]
         let candidates = agents
             .filter { $0.sessionReference == nil && $0.terminalId != nil && !$0.searchCwds.isEmpty }

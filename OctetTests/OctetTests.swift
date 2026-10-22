@@ -3870,3 +3870,26 @@ final class ChatAttachmentFormatTests: XCTestCase {
         XCTAssertNil(ChatAttachmentFormat.insertion(from: "abc", to: "ab"))
     }
 }
+
+final class ClaudeLiveSessionTests: XCTestCase {
+    func testThePaneGetsTheSessionItsOwnProcessNames() throws {
+        let home = NSTemporaryDirectory() + "claude-live-" + UUID().uuidString
+        try FileManager.default.createDirectory(atPath: home + "/.claude/sessions", withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: home) }
+        try Data(#"{"pid": 4242, "sessionId": "right-one", "cwd": "/repo"}"#.utf8)
+            .write(to: URL(fileURLWithPath: home + "/.claude/sessions/4242.json"))
+        try Data(#"{"pid": 777, "sessionId": "someone-else", "cwd": "/repo"}"#.utf8)
+            .write(to: URL(fileURLWithPath: home + "/.claude/sessions/777.json"))
+        let info: [String: Any] = ["process_info": [
+            "foreground_process_group_id": 4242,
+            "foreground_processes": [["pid": 4242, "name": "claude", "argv0": "claude"]],
+        ]]
+        XCTAssertEqual(AgentSessionFiles.claudeSession(processInfo: info, cwd: "/repo", home: home), "right-one")
+        let shell: [String: Any] = ["process_info": ["foreground_process_group_id": 9, "foreground_processes": []]]
+        XCTAssertNil(AgentSessionFiles.claudeSession(processInfo: shell, cwd: "/repo", home: home))
+    }
+
+    func testAGuessNeverTakesASessionAlreadyClaimed() {
+        XCTAssertTrue(AgentSessionFiles.infer(agents: [], firstSeen: [:], excluding: ["taken"]).isEmpty)
+    }
+}

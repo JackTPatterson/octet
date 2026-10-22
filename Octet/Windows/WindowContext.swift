@@ -1109,7 +1109,13 @@ final class WindowContext: ObservableObject, Identifiable {
         guard let workspaceId = agent.workspaceId ?? focusedWorkspace?.workspaceId else { return }
         let snapshot = store.snapshot
         let cwd = agent.effectiveCwd ?? snapshot.directory(ofWorkspace: workspaceId) ?? NSHomeDirectory()
-        let sessionId = agent.sessionReference ?? agent.terminalId.flatMap { store.recovery.sessionId(forTerminal: $0) }
+        // The session this pane is really on. Claude Code names it in its
+        // per-process record; the journal's folder-based guess comes last,
+        // since panes sharing a folder (or Octet's own conversations there)
+        // could hand it someone else's session.
+        let live = (try? store.client.call("pane.process_info", ["pane_id": agent.paneId]))
+            .flatMap { AgentSessionFiles.claudeSession(processInfo: $0, cwd: agent.effectiveCwd ?? cwd) }
+        let sessionId = live ?? agent.sessionReference ?? agent.terminalId.flatMap { store.recovery.sessionId(forTerminal: $0) }
         let label = snapshot.tabs.first { $0.tabId == agent.tabId }.map { TabAutoName.display(label: $0.label, number: $0.number) }
         let title = label.flatMap { TabAutoName.isUnnamed($0) ? nil : $0 }
         beginAgentUIHandoff(engine.agent, workspaceId: workspaceId,

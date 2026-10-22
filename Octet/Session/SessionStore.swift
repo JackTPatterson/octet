@@ -626,6 +626,9 @@ final class SessionStore: ObservableObject {
     func refresh(then: (@MainActor () -> Void)? = nil) {
         let client = self.client
         let inference = recovery.inferenceRequest()
+        // Octet's own conversations write their sessions in the same
+        // folders: never mistake one for a terminal's.
+        let nativeSessions = inference == nil ? [] : Set(AgentCenter.shared.sessions.map(\.sessionId))
         let chosenPane = processPane?()
         refreshSequence += 1
         let sequence = refreshSequence
@@ -671,7 +674,23 @@ final class SessionStore: ObservableObject {
             }
             let branches = Self.readBranches(snapshot)
             let locations = Self.readLocations(snapshot)
-            let inferred = inference.map { AgentSessionFiles.infer(agents: snapshot.agents, firstSeen: $0) }
+            let inferred = inference.map { firstSeen -> [String: String] in
+                // Claude Code names its session per process: read that for
+                // each Claude pane, and guess from session files only for
+                // the rest, never handing out a session already taken.
+                var exact: [String: String] = [:]
+                for agent in snapshot.agents where AgentBrand.forAgent(agent.agent)?.id == "claude" {
+                    guard let terminal = agent.terminalId, agent.sessionReference == nil,
+                          let info = try? client.call("pane.process_info", ["pane_id": agent.paneId]),
+                          let id = AgentSessionFiles.claudeSession(processInfo: info, cwd: agent.effectiveCwd ?? agent.cwd)
+                    else { continue }
+                    exact[terminal] = id
+                }
+                let rest = snapshot.agents.filter { $0.terminalId.map { exact[$0] == nil } ?? true }
+                return AgentSessionFiles.infer(agents: rest, firstSeen: firstSeen,
+                                               excluding: Set(exact.values).union(nativeSessions))
+                    .merging(exact) { _, known in known }
+            }
             DispatchQueue.main.async {
                 guard let self, sequence > self.appliedDetailSequence else { return }
                 self.appliedDetailSequence = sequence
