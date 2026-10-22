@@ -1007,23 +1007,16 @@ enum PaletteCatalog {
     }
 
     static func linkPluginFolder(store: SessionStore) {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.message = "Choose a plugin folder (the one holding its manifest)"
-        if panel.runModal() == .OK, let url = panel.url {
-            store.linkPlugin(path: url.path)
+        PathPickerCenter.shared.pick("Link a Plugin", message: "Choose a plugin folder (the one holding its manifest)",
+                                     prompt: "Link") { urls in
+            if let url = urls.first { store.linkPlugin(path: url.path) }
         }
     }
 
     static func openFolder(window: WindowContext) {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
-        panel.directoryURL = URL(fileURLWithPath: NSHomeDirectory() + "/Developer")
-        if panel.runModal() == .OK, let url = panel.url {
-            window.openProject(path: url.path)
+        PathPickerCenter.shared.pick("Open Folder as Workspace", message: "Choose a project folder",
+                                     start: NSHomeDirectory() + "/Developer", in: window.nsWindow) { urls in
+            if let url = urls.first { window.openProject(path: url.path) }
         }
     }
 }

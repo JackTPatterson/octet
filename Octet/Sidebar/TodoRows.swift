@@ -281,14 +281,12 @@ struct TodoListRow: View {
                     TodoDispatch.send(item, in: kind, to: target, model: model, window: window)
                 }
             }
-            Menu { menuItems } label: {
+            OctetMenuButton({ menuList }) {
                 OctetIcon("ellipsis", size: 12)
                     .foregroundStyle(Theme.textSecondary)
                     .frame(width: 18, height: 18)
                     .contentShape(Rectangle())
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
             .fixedSize()
             .help("More")
             .accessibilityLabel("More actions")
@@ -332,6 +330,42 @@ struct TodoListRow: View {
         }
         Divider()
         Button("Delete", role: .destructive) { model.delete(item, in: kind) }
+    }
+
+    /// `menuItems` as an Octet menu, for the "More" button.
+    private var menuList: [OctetMenuItem] {
+        let targets = TodoDispatch.targets(in: window)
+        var items: [OctetMenuItem] = [.action("Edit") { beginEditing() }]
+        if item.status != .inProgress {
+            items.append(.action("Mark In Progress") { model.set(item, in: kind, to: .inProgress) })
+        }
+        items.append(.divider)
+        if !targets.isEmpty {
+            items.append(.submenu("Send To", targets.map { target in
+                OctetMenuItem.action(target.name) { TodoDispatch.send(item, in: kind, to: target, model: model, window: window) }
+            }))
+        }
+        items.append(.submenu("Start a Conversation", TodoDispatch.engines.map { engine in
+            OctetMenuItem.action(engine.displayName) { TodoDispatch.start(item, in: kind, engine: engine, model: model, window: window) }
+        }))
+        items.append(.action("Wait on This…") { waitOn() })
+        items.append(.action(model.link(for: item)?.issueKey == nil ? "Link to Issue…" : "Change Linked Issue…") {
+            issueKey = model.link(for: item)?.issueKey ?? ""
+            linking = true
+        })
+        if model.link(for: item)?.issueKey != nil {
+            items.append(.action("Unlink Issue") { model.updateLink(item) { $0.issueKey = nil; $0.issueURL = nil } })
+        }
+        items.append(.divider)
+        items.append(.action(kind == .mine ? "Move to \(ProjectTodos.fileNames[0])" : "Move to My Todos",
+                             enabled: !(kind == .mine && model.projectRoot == nil)) { model.transfer(item, from: kind) })
+        items.append(.action("Copy") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(item.text, forType: .string)
+        })
+        items.append(.divider)
+        items.append(.action("Delete", destructive: true) { model.delete(item, in: kind) })
+        return items
     }
 
     @ViewBuilder

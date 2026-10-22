@@ -283,13 +283,10 @@ struct MarketplaceView: View {
     }
 
     private func importPrompts() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.prompt = "Import"
-        panel.message = "Choose a folder of .md prompts"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        store.importPrompts(from: url, installIn: store.scopeHosts(for: .prompts))
+        PathPickerCenter.shared.pick("Import Prompts", message: "Choose a folder of .md prompts", prompt: "Import") { urls in
+            guard let url = urls.first else { return }
+            store.importPrompts(from: url, installIn: store.scopeHosts(for: .prompts))
+        }
     }
 
     // MARK: Content

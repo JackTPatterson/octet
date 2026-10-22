@@ -1649,19 +1649,14 @@ private struct Composer: View {
         }
     }
 
-    /// The file picker, as a sheet on the window rather than a modal that
-    /// blocks everything else.
+    /// Octet's own file picker, starting in the conversation's folder.
     private func pickFiles() {
-        let panel = NSOpenPanel()
-        panel.allowsMultipleSelection = true
-        panel.canChooseDirectories = false
-        panel.message = "Images go along with the message. Other files are added as paths the agent can read."
-        panel.directoryURL = URL(fileURLWithPath: session.cwd)
-        let finish: (NSApplication.ModalResponse) -> Void = { response in
-            guard response == .OK else { return }
-            attach(files: panel.urls)
+        PathPickerCenter.shared.pick("Attach Files",
+                                     message: "Images go along with the message; other files as paths the agent can read. Space marks several.",
+                                     prompt: "Attach", mode: .files(multiple: true), start: session.cwd,
+                                     in: window.nsWindow) { urls in
+            if !urls.isEmpty { attach(files: urls) }
         }
-        if let window = NSApp.keyWindow { panel.beginSheetModal(for: window, completionHandler: finish) } else { panel.begin(completionHandler: finish) }
     }
 
     /// Commands matching a `/` at the start of the message, until a space,

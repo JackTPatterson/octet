@@ -17,6 +17,7 @@ struct RootView: View {
     /// What draws from it observes it itself (FocusedGridReader, overlays).
     @State private var paneGeometry = PaneGeometry()
     @StateObject private var splash = NewTabSplashModel()
+    @ObservedObject private var pathPicker = PathPickerCenter.shared
     @StateObject private var statusBar = StatusBarModel()
     @StateObject private var liveScroll = LiveScrollWatcher()
     /// The terminal client went away (a crash, the session server stopping):
@@ -61,6 +62,9 @@ struct RootView: View {
             else { layered }
         }
         .octetDropdownHost(window.chromeDropdowns)
+        // Choosing files and folders, in Octet's own picker.
+        .overlay { PathPickerHost(window: window.nsWindow) }
+        .animation(.easeOut(duration: 0.15), value: pathPicker.request?.id)
         .onChange(of: ui.paletteVisible) { _, visible in
             DebugSnapshot.overlay("palette", visible)
             if visible {
@@ -930,6 +934,14 @@ struct RootView: View {
                     default: .passed
                     }
                     statusBar.debugShowSample(ci: overall)
+                }
+            }
+            // "picker" or "picker:folder" opens Octet's file picker on the repo.
+            if let open = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], open.hasPrefix("picker") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    PathPickerCenter.shared.pick(open == "picker:folder" ? "Open Folder as Workspace" : "Attach Files",
+                                                 message: "Verification sample", mode: open == "picker:folder" ? .folder : .files(multiple: true),
+                                                 start: NSHomeDirectory() + "/Developer/apps/herd", in: window.nsWindow) { _ in }
                 }
             }
             // "footer:<awake|resources|ports|hosts>" opens that status popover.

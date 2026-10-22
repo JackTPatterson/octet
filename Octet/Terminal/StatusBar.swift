@@ -221,15 +221,12 @@ struct StatusBar: View {
         case "builtin.worktree":
             if let repo = model.repo, repo.linkedWorktree {
                 // A click offers what's worth doing from a worktree.
-                Menu { worktreeActions(repo) } label: {
+                OctetMenuButton({ worktreeMenuItems(repo) }) {
                     StatusChip(help: "Worktree at \(repo.root)") {
                         OctetIcon("square.stack.3d.up", size: 13)
                         Text((repo.root as NSString).lastPathComponent).lineLimit(1)
                     }
                 }
-                .menuStyle(.button)
-                .buttonStyle(.plain)
-                .menuIndicator(.hidden)
                 .fixedSize()
                 .contextMenu { worktreeActions(repo) }
             }
@@ -507,6 +504,21 @@ struct StatusBar: View {
         Divider()
         Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: repo.root)]) }
         Button("Copy Path") { copy(repo.root) }
+    }
+
+    /// `worktreeActions` as Octet menu items, for the chip's click.
+    private func worktreeMenuItems(_ repo: StatusBarModel.Repo) -> [OctetMenuItem] {
+        var items: [OctetMenuItem] = []
+        if let main = GitBranch.mainCheckout(ofWorktreeGitDir: repo.gitDir) {
+            items.append(.action("Open Main Checkout") { WindowRegistry.shared.key?.openProject(path: main) })
+        }
+        items.append(.action("Show Worktrees") { ui.showPlane(.git) })
+        items.append(.divider)
+        items.append(.action("Reveal in Finder") {
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: repo.root)])
+        })
+        items.append(.action("Copy Path") { copy(repo.root) })
+        return items
     }
 
     private func copy(_ text: String) {

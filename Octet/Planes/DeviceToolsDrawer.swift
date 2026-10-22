@@ -125,16 +125,21 @@ struct DeviceToolsDrawer: View {
                 OctetTextField(placeholder: "Longitude", text: $longitude)
             }
             HStack(spacing: 6) {
-                Menu("Preset") {
-                    ForEach(DeviceLocationPreset.all) { preset in
-                        Button(preset.name) {
+                OctetMenuButton({
+                    DeviceLocationPreset.all.map { preset in
+                        OctetMenuItem.action(preset.name) {
                             latitude = String(preset.latitude)
                             longitude = String(preset.longitude)
                             model.setLocation(latitude: preset.latitude, longitude: preset.longitude)
                         }
                     }
+                }) {
+                    HStack(spacing: 4) {
+                        Text("Preset")
+                        OctetIcon("chevron.down", size: 9).foregroundStyle(Theme.textTertiary)
+                    }
+                    .contentShape(Rectangle())
                 }
-                .menuStyle(.borderlessButton)
                 .fixedSize()
                 .font(Theme.uiFont)
                 Spacer(minLength: 4)

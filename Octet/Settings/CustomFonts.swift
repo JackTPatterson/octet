@@ -13,16 +13,12 @@ enum CustomFonts {
 
     /// Asks for font files, installs them, and says which families they add.
     static func add(then done: @escaping ([String]) -> Void) {
-        let panel = NSOpenPanel()
-        panel.title = "Add Fonts"
-        panel.prompt = "Add"
-        panel.allowsMultipleSelection = true
-        panel.canChooseDirectories = false
-        panel.allowedContentTypes = [.font]
-        panel.begin { response in
-            guard response == .OK else { return }
-            let urls = panel.urls
-            MainActor.assumeIsolated { done(install(urls)) }
+        PathPickerCenter.shared.pick("Add Fonts", message: "Space marks several. Fonts go into ~/Library/Fonts.",
+                                     prompt: "Add", mode: .files(multiple: true),
+                                     start: NSHomeDirectory() + "/Downloads",
+                                     extensions: ["ttf", "otf", "ttc", "otc", "dfont", "woff", "woff2"]) { urls in
+            guard !urls.isEmpty else { return }
+            done(install(urls))
         }
     }
 

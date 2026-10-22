@@ -608,19 +608,17 @@ private struct AppearanceSettings: View {
             return
         }
         // Nothing found where terminals keep it: let them point at the file.
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.prompt = "Import"
-        panel.message = "Choose a terminal config or theme file"
-        guard panel.runModal() == .OK, let url = panel.url,
-              let text = try? String(contentsOf: url, encoding: .utf8) else { return }
-        guard let theme = TerminalThemeImport.parse(text, name: url.deletingPathExtension().lastPathComponent) else {
-            ToastCenter.shared.fail(nil, "No colours in that file",
-                                    detail: "Octet looks for background, foreground and palette entries")
-            return
+        PathPickerCenter.shared.pick("Import Theme", message: "Choose a terminal config or theme file",
+                                     prompt: "Import", mode: .files(multiple: false),
+                                     start: NSHomeDirectory() + "/.config") { urls in
+            guard let url = urls.first, let text = try? String(contentsOf: url, encoding: .utf8) else { return }
+            guard let theme = TerminalThemeImport.parse(text, name: url.deletingPathExtension().lastPathComponent) else {
+                ToastCenter.shared.fail(nil, "No colours in that file",
+                                        detail: "Octet looks for background, foreground and palette entries")
+                return
+            }
+            adopt(theme)
         }
-        adopt(theme)
     }
 
     private func adopt(_ theme: TerminalTheme) {

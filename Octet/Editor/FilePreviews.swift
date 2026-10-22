@@ -503,18 +503,18 @@ struct NoPreviewCard: View {
                 OctetButton(title: "Reveal in Finder", icon: "folder", compact: true) {
                     NSWorkspace.shared.activateFileViewerSelecting([url])
                 }
-                Menu {
-                    Button("Default App") { NSWorkspace.shared.open(url) }
-                    if !apps.isEmpty { Divider() }
-                    ForEach(apps, id: \.self) { app in
-                        Button(FileManager.default.displayName(atPath: app.path)) {
+                OctetMenuButton({
+                    var items: [OctetMenuItem] = [.action("Default App") { NSWorkspace.shared.open(url) }]
+                    if !apps.isEmpty { items.append(.divider) }
+                    for app in apps {
+                        items.append(.action(FileManager.default.displayName(atPath: app.path)) {
                             NSWorkspace.shared.open([url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
-                        }
+                        })
                     }
-                } label: {
+                    return items
+                }) {
                     Text("Open With").font(Theme.uiFontMedium)
                 }
-                .menuStyle(.borderlessButton)
                 .fixedSize()
             }
         }

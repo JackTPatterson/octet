@@ -624,3 +624,21 @@ extension OctetMenuItem {
         return text + (named[key] ?? key.uppercased())
     }
 }
+
+/// A button that opens an Octet menu where it's clicked, in place of
+/// SwiftUI's `Menu`, which shows the system's. `items` is read at the
+/// click, so it reflects the state then.
+struct OctetMenuButton<Label: View>: View {
+    let items: () -> [OctetMenuItem]
+    @ViewBuilder let label: () -> Label
+
+    init(_ items: @escaping () -> [OctetMenuItem], @ViewBuilder label: @escaping () -> Label) {
+        self.items = items
+        self.label = label
+    }
+
+    var body: some View {
+        Button { OctetContextMenu.present(items()) } label: { label() }
+            .buttonStyle(.plain)
+    }
+}

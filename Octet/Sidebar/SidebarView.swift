@@ -258,15 +258,11 @@ struct SidebarView: View {
     }
 
     private func pickFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
-        panel.prompt = "Open"
-        panel.message = "Choose a folder to start a workspace in"
-        if let filteredGroup { panel.directoryURL = URL(fileURLWithPath: filteredGroup.id) }
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        window.newWorkspace(cwd: url.path)
+        PathPickerCenter.shared.pick("New Workspace", message: "Choose a folder to start a workspace in",
+                                     start: filteredGroup?.id, in: window.nsWindow) { urls in
+            guard let url = urls.first else { return }
+            window.newWorkspace(cwd: url.path)
+        }
     }
 
     /// The workspaces the query finds, under their groups' names, then the
@@ -717,7 +713,7 @@ private struct WorkspaceCard: View {
             peek.source(hovering && !isSelected && !renaming
                         && TabDrag.shared.item == nil)
         }
-        .popover(isPresented: $peek.isShown, arrowEdge: .trailing) {
+        .hoverPopover(isPresented: $peek.isShown) {
             WorkspacePeek(store: store, workspace: workspace) { peek.close() }
                 .environmentObject(window)
                 .onHover { peek.card($0) }

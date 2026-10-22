@@ -144,17 +144,16 @@ private struct ShortcutRow: View {
     /// Fades in with the pointer, T3 Code's quiet secondary actions.
     @ViewBuilder private var rowMenu: some View {
         if shortcut.customizable {
-            Menu {
-                Button("Reset to Default", action: reset).disabled(!isCustom)
-                Button("Remove") { save(nil) }.disabled(shortcut.binding == nil)
-            } label: {
+            OctetMenuButton({
+                [
+                    .action("Reset to Default", enabled: isCustom, reset),
+                    .action("Remove", enabled: shortcut.binding != nil) { save(nil) },
+                ]
+            }) {
                 OctetIcon("ellipsis", size: 14)
                     .frame(width: 22, height: 22)
                     .contentShape(Rectangle())
             }
-            .menuStyle(.button)
-            .buttonStyle(.plain)
-            .menuIndicator(.hidden)
             .fixedSize()
             .foregroundStyle(Theme.textTertiary)
             .hoverReveal(hovered)

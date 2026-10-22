@@ -401,55 +401,25 @@ private struct PullRequestsList: View {
 
     private var toolbar: some View {
         HStack(spacing: 6) {
-            Menu {
-                Picker("Sort", selection: $model.sort) {
-                    ForEach(PullRequestSort.allCases) { Text($0.title).tag($0) }
+            OctetMenuButton({
+                PullRequestSort.allCases.map { sort in
+                    OctetMenuItem.action(sort.title, icon: model.sort == sort ? "checkmark" : nil) { model.sort = sort }
                 }
-                .pickerStyle(.inline)
-                .labelsHidden()
-            } label: {
+            }) {
                 OutlineMenuLabel(icon: "arrow.down", title: "Sort", active: model.sort != .updated)
             }
-            .outlineMenu()
+            .fixedSize()
             .help("Sort: \(model.sort.title)")
 
-            Menu {
-                Section("State") {
-                    toneToggle(.open, "Open")
-                    toneToggle(.draft, "Draft")
-                    toneToggle(.closed, "Closed")
-                    toneToggle(.merged, "Merged")
-                }
-                Section {
-                    Toggle("Review requested", isOn: $model.filters.reviewRequested)
-                    Toggle("Checks failing", isOn: $model.filters.checksFailing)
-                }
-                if !model.filters.isDefault {
-                    Divider()
-                    Button("Reset Filters") { model.filters = PullRequestFilters() }
-                }
-            } label: {
+            OctetMenuButton(filterItems) {
                 OutlineMenuLabel(icon: "slider.horizontal.3", title: "Filters", active: !model.filters.isDefault)
             }
-            .outlineMenu()
+            .fixedSize()
 
-            Menu {
-                Button { model.scope = .all } label: { checked(model.scope == .all, "All repositories") }
-                Button { model.scope = .project } label: {
-                    checked(model.scope == .project, model.projectRepository.map { "This project (\($0))" } ?? "This project")
-                }
-                .disabled(model.directory == nil)
-                let repositories = model.repositories
-                if !repositories.isEmpty {
-                    Divider()
-                    ForEach(repositories, id: \.self) { name in
-                        Button { model.scope = .repository(name) } label: { checked(model.scope == .repository(name), name) }
-                    }
-                }
-            } label: {
+            OctetMenuButton(scopeItems) {
                 OutlineMenuLabel(icon: "folder", title: model.scope.title, active: model.scope != .all)
             }
-            .outlineMenu()
+            .fixedSize()
             .help("Where to look")
 
             Spacer(minLength: 0)
@@ -458,17 +428,53 @@ private struct PullRequestsList: View {
         }
     }
 
-    private func toneToggle(_ tone: PullRequestTone, _ title: String) -> some View {
-        Toggle(title, isOn: Binding(
-            get: { model.filters.tones.contains(tone) },
-            set: { on in
-                if on { model.filters.tones.insert(tone) } else { model.filters.tones.remove(tone) }
-            }))
+    private func filterItems() -> [OctetMenuItem] {
+        var items: [OctetMenuItem] = [
+            .header("State"),
+            toneItem(.open, "Open"),
+            toneItem(.draft, "Draft"),
+            toneItem(.closed, "Closed"),
+            toneItem(.merged, "Merged"),
+            .divider,
+            .action("Review requested", icon: model.filters.reviewRequested ? "checkmark" : nil) {
+                model.filters.reviewRequested.toggle()
+            },
+            .action("Checks failing", icon: model.filters.checksFailing ? "checkmark" : nil) {
+                model.filters.checksFailing.toggle()
+            },
+        ]
+        if !model.filters.isDefault {
+            items.append(.divider)
+            items.append(.action("Reset Filters") { model.filters = PullRequestFilters() })
+        }
+        return items
     }
 
-    @ViewBuilder
-    private func checked(_ on: Bool, _ title: String) -> some View {
-        if on { Label(title, systemImage: "checkmark") } else { Text(title) }
+    private func toneItem(_ tone: PullRequestTone, _ title: String) -> OctetMenuItem {
+        let on = model.filters.tones.contains(tone)
+        return .action(title, icon: on ? "checkmark" : nil) {
+            if on { model.filters.tones.remove(tone) } else { model.filters.tones.insert(tone) }
+        }
+    }
+
+    private func scopeItems() -> [OctetMenuItem] {
+        var items: [OctetMenuItem] = [
+            .action("All repositories", icon: model.scope == .all ? "checkmark" : nil) { model.scope = .all },
+            .action(model.projectRepository.map { "This project (\($0))" } ?? "This project",
+                    icon: model.scope == .project ? "checkmark" : nil, enabled: model.directory != nil) {
+                model.scope = .project
+            },
+        ]
+        let repositories = model.repositories
+        if !repositories.isEmpty {
+            items.append(.divider)
+            for name in repositories {
+                items.append(.action(name, icon: model.scope == .repository(name) ? "checkmark" : nil) {
+                    model.scope = .repository(name)
+                })
+            }
+        }
+        return items
     }
 
     // MARK: Rows
@@ -563,14 +569,5 @@ private struct OutlineMenuLabel: View {
             .strokeBorder(active ? Theme.textTertiary : Theme.border, lineWidth: 1))
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
-    }
-}
-
-private extension View {
-    func outlineMenu() -> some View {
-        self.menuStyle(.button)
-            .buttonStyle(.plain)
-            .menuIndicator(.hidden)
-            .fixedSize()
     }
 }

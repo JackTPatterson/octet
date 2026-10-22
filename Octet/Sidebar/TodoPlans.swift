@@ -182,11 +182,9 @@ struct ProposedPlanCard: View {
                 Text(proposed.plan.title ?? "Proposed plan")
                     .font(Theme.Text.bodyMedium).foregroundStyle(Theme.textPrimary).lineLimit(1)
                 Spacer(minLength: Theme.Space.xs)
-                Menu { menuItems } label: {
+                OctetMenuButton({ menuList }) {
                     OctetIcon("ellipsis", size: 12).foregroundStyle(Theme.textSecondary).frame(width: 18, height: 18)
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
                 .fixedSize()
                 .help("More")
                 .accessibilityLabel("Plan actions")
@@ -222,6 +220,20 @@ struct ProposedPlanCard: View {
         }
         Button("Save to \(ProjectTodos.fileNames[0]) as a Checklist") { model.saveToProject(proposed.plan) }
             .disabled(model.projectRoot == nil)
+    }
+
+    /// `menuItems` as an Octet menu, for the "More" button.
+    private var menuList: [OctetMenuItem] {
+        [
+            .action("Implement") { implement() },
+            .action("Copy") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(proposed.plan.markdown, forType: .string)
+            },
+            .action("Save to \(ProjectTodos.fileNames[0]) as a Checklist", enabled: model.projectRoot != nil) {
+                model.saveToProject(proposed.plan)
+            },
+        ]
     }
 
     /// Out of plan mode, asking before edits, and the plan sent to carry
@@ -273,11 +285,9 @@ struct TodoLinkedSection: View {
                 if let status = issue.status {
                     Text(status).font(Theme.Text.micro).foregroundStyle(issue.closed ? Theme.success : Theme.textTertiary)
                 }
-                Menu { issueMenu(issue) } label: {
+                OctetMenuButton({ issueMenuList(issue) }) {
                     OctetIcon("ellipsis", size: 12).foregroundStyle(Theme.textSecondary).frame(width: 18, height: 18)
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
                 .fixedSize()
                 .accessibilityLabel("Issue actions")
             }
@@ -312,6 +322,20 @@ struct TodoLinkedSection: View {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(Self.prompt(issue), forType: .string)
         }
+    }
+
+    /// `issueMenu` as an Octet menu, for the row's "…" button.
+    private func issueMenuList(_ issue: TodoModel.LinkedIssue) -> [OctetMenuItem] {
+        var items: [OctetMenuItem] = []
+        if let url = issue.link.url { items.append(.action("Open \(issue.link.key)") { NSWorkspace.shared.open(url) }) }
+        items.append(.submenu("Start a Conversation", TodoDispatch.engines.map { engine in
+            OctetMenuItem.action(engine.displayName) { startConversation(engine, issue: issue) }
+        }))
+        items.append(.action("Copy Prompt") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(Self.prompt(issue), forType: .string)
+        })
+        return items
     }
 
     /// Orca's read-the-ticket opener, with the issue named.

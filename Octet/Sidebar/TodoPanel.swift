@@ -194,29 +194,30 @@ private struct TodoFilterMenu: View {
     @ObservedObject var model: TodoModel
 
     var body: some View {
-        Menu {
-            Toggle("Show Done", isOn: $model.filter.showDone)
-            Divider()
-            Section("Sources") {
-                ForEach(TodoModel.Source.allCases) { source in
-                    Toggle(source.title, isOn: Binding(
-                        get: { model.filter.shows(source) },
-                        set: { shown in
-                            if shown { model.filter.hidden.remove(source.rawValue) } else { model.filter.hidden.insert(source.rawValue) }
-                        }))
-                }
-            }
-        } label: {
+        OctetMenuButton({ items }) {
             OctetIcon("line.3.horizontal.decrease", size: 13)
                 .foregroundStyle(model.filter == TodoModel.Filter() ? Theme.textTertiary : Theme.accent)
                 .frame(width: 22, height: 22)
                 .contentShape(Rectangle())
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
         .fixedSize()
         .help("Filter todos")
         .accessibilityLabel("Filter todos")
+    }
+
+    private var items: [OctetMenuItem] {
+        var items: [OctetMenuItem] = [
+            .action("Show Done", icon: model.filter.showDone ? "checkmark" : nil) { model.filter.showDone.toggle() },
+            .divider,
+            .header("Sources"),
+        ]
+        for source in TodoModel.Source.allCases {
+            let shown = model.filter.shows(source)
+            items.append(.action(source.title, icon: shown ? "checkmark" : nil) {
+                if shown { model.filter.hidden.insert(source.rawValue) } else { model.filter.hidden.remove(source.rawValue) }
+            })
+        }
+        return items
     }
 }
 

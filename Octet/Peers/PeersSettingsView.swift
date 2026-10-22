@@ -157,21 +157,22 @@ private struct PeerSettingsRow: View {
                         options: PeerTrust.allCases.map { ($0, $0.title) }, width: 228)
                 .accessibilityLabel("What \(peer.name) may do here")
             PeerRowMenu(label: "More for \(peer.name)", visible: hovered) {
-                Button("Show Agents") {
-                    PeerPanelModel.shared.focusMachine = peer.name
-                    PeerWindow.show()
-                }
-                Button("New Task…") {
-                    PeerPanelModel.shared.startTaskOn = peer.name
-                    PeerWindow.show()
-                }
-                .disabled(!state.online)
-                Button("Copy Key") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(peer.fingerprint, forType: .string)
-                }
-                Divider()
-                Button("Forget \(peer.name)…", role: .destructive) { forget(peer) }
+                [
+                    .action("Show Agents") {
+                        PeerPanelModel.shared.focusMachine = peer.name
+                        PeerWindow.show()
+                    },
+                    .action("New Task…", enabled: state.online) {
+                        PeerPanelModel.shared.startTaskOn = peer.name
+                        PeerWindow.show()
+                    },
+                    .action("Copy Key") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(peer.fingerprint, forType: .string)
+                    },
+                    .divider,
+                    .action("Forget \(peer.name)…", destructive: true) { forget(peer) },
+                ]
             }
         }
         .padding(.horizontal, 16)

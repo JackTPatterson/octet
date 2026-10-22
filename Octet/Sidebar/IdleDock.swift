@@ -139,14 +139,9 @@ struct IdleDock: View {
         if !idle.selection.isEmpty {
             Text("\(idle.selection.count) picked").font(Theme.captionFont).foregroundStyle(Theme.accent)
         }
-        Menu {
-            actions
-        } label: {
+        OctetMenuButton({ actions }) {
             OctetIcon("ellipsis", size: 12).frame(width: 18, height: 18).contentShape(Rectangle())
         }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
         .fixedSize()
         .foregroundStyle(Theme.textTertiary)
         .hoverReveal(hovered || !idle.selection.isEmpty)
@@ -154,29 +149,29 @@ struct IdleDock: View {
         .accessibilityLabel("Idle actions")
     }
 
-    @ViewBuilder private var actions: some View {
+    private var actions: [OctetMenuItem] {
         let all = window.idleWorkspaces
         let picked = all.filter { idle.selection.contains($0.workspaceId) }
+        var items: [OctetMenuItem] = []
         if !picked.isEmpty {
-            Button("Close \(picked.count) Picked…") { idle.close(picked) }
-            Button("Sleep \(picked.count) Picked") { idle.sleep(picked) }
-            Button("Clear Picks") { idle.selection = [] }
-            Divider()
+            items.append(.action("Close \(picked.count) Picked…") { idle.close(picked) })
+            items.append(.action("Sleep \(picked.count) Picked") { idle.sleep(picked) })
+            items.append(.action("Clear Picks") { idle.selection = [] })
+            items.append(.divider)
         }
-        Button("Close All Idle…") { idle.close(all) }
-            .disabled(all.isEmpty)
-        Button("Sleep All Idle") { idle.sleep(all) }
-            .disabled(all.isEmpty)
+        items.append(.action("Close All Idle…", enabled: !all.isEmpty) { idle.close(all) })
+        items.append(.action("Sleep All Idle", enabled: !all.isEmpty) { idle.sleep(all) })
         let ports = idle.idlePorts
         if !ports.isEmpty {
-            Button("Stop \(ports.count == 1 ? "the Server" : "\(ports.count) Servers") in Idle…") { idle.stopIdleServers() }
+            items.append(.action("Stop \(ports.count == 1 ? "the Server" : "\(ports.count) Servers") in Idle…") { idle.stopIdleServers() })
         }
         if !idle.sleeping.isEmpty {
-            Divider()
-            Button("Forget \(Recap.count(idle.sleeping.count, "Sleeping Workspace"))…") { idle.confirmForget(idle.sleeping) }
+            items.append(.divider)
+            items.append(.action("Forget \(Recap.count(idle.sleeping.count, "Sleeping Workspace"))…") { idle.confirmForget(idle.sleeping) })
         }
-        Divider()
-        Text("⌘-click rows to pick several")
+        items.append(.divider)
+        items.append(.header("⌘-click rows to pick several"))
+        return items
     }
 
     static func thresholdLabel(_ seconds: TimeInterval) -> String {
@@ -304,14 +299,9 @@ private struct SnoozeButton: View {
     let snoozed: Bool
 
     var body: some View {
-        Menu {
-            SnoozeMenuItems(store: store, workspaceId: workspaceId)
-        } label: {
+        OctetMenuButton({ WorkspaceMenu.snoozeItems(store: store, workspaceId: workspaceId) }) {
             OctetIcon("clock", size: 13).frame(width: 22, height: 22).contentShape(Rectangle())
         }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
         .fixedSize()
         .foregroundStyle(Theme.textSecondary)
         .help(snoozed ? "Snooze for a different time" : "Snooze: back by itself at a time")
@@ -409,7 +399,7 @@ private struct IdleRow: View {
             TabDrag.shared.begin(workspace: id, from: window)
             return true
         }, moved: { TabDrag.shared.moved(to: $0) }, ended: { TabDrag.shared.ended($0) })
-        .popover(isPresented: $peek.isShown, arrowEdge: .trailing) {
+        .hoverPopover(isPresented: $peek.isShown) {
             IdleHoverCard(store: store, workspace: workspace) { peek.close() }
                 .onHover { peek.card($0) }
         }

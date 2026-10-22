@@ -372,21 +372,18 @@ private struct DeviceControlsRail: View {
                             help: dark ? "Switch to Light Mode" : "Switch to Dark Mode", large: true) {
                 model.setDark(!dark)
             }
-            Menu {
-                ForEach(DeviceTextSize.allCases) { size in
-                    Button {
+            OctetMenuButton({
+                DeviceTextSize.allCases.map { size in
+                    OctetMenuItem.action(size.title, icon: model.textSize == size ? "checkmark" : nil) {
                         model.setTextSize(size)
-                    } label: {
-                        if model.textSize == size { Label(size.title, systemImage: "checkmark") } else { Text(size.title) }
                     }
                 }
-            } label: {
+            }) {
                 OctetIcon("device.textsize", size: 15)
                     .foregroundStyle(Theme.textSecondary)
                     .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
             .fixedSize()
             .help("Text Size")
             .accessibilityLabel("Text Size")
@@ -400,23 +397,26 @@ private struct DeviceControlsRail: View {
                             action: sendScreenshot)
                 .disabled(!agentAccess)
             Spacer(minLength: 4)
-            Menu {
+            OctetMenuButton({
+                var items: [OctetMenuItem] = []
                 if device.platform == .ios {
-                    Button("Open in Simulator App") { model.openInSimulatorApp() }
+                    items.append(.action("Open in Simulator App") { model.openInSimulatorApp() })
                 }
-                Button("Float Device Over Terminal", action: float)
-                Divider()
-                Button("Choose Another Device") { model.choosePicker() }
-                Button("Set Up Devices…") { model.setupShowing = true }
-                Divider()
-                Button("Power Off Device", role: .destructive) { model.powerOff() }
-            } label: {
+                items += [
+                    .action("Float Device Over Terminal", float),
+                    .divider,
+                    .action("Choose Another Device") { model.choosePicker() },
+                    .action("Set Up Devices…") { model.setupShowing = true },
+                    .divider,
+                    .action("Power Off Device", destructive: true) { model.powerOff() },
+                ]
+                return items
+            }) {
                 OctetIcon("ellipsis", size: 15)
                     .foregroundStyle(Theme.textSecondary)
                     .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
             .fixedSize()
             .help("More")
             .accessibilityLabel("More")

@@ -461,16 +461,14 @@ private struct PullRequestCheckoutMenu: View {
     var body: some View {
         let checkedOut = model.isCheckedOut
         let busy = model.busy.contains("checkout")
-        Menu {
-            if checkedOut {
-                Button("Checked Out") {}.disabled(true)
-            } else {
-                Button { model.checkOut() } label: {
-                    Text("In This Repository")
-                    Text("Switches the branch you're working in, like gh pr checkout.")
-                }
-            }
-        } label: {
+        OctetMenuButton({
+            checkedOut
+                ? [OctetMenuItem.action("Checked Out", enabled: false) {}]
+                : [OctetMenuItem.action("In This Repository",
+                                        help: "Switches the branch you're working in, like gh pr checkout.") {
+                    model.checkOut()
+                }]
+        }) {
             HStack(spacing: 5) {
                 OctetIcon(checkedOut ? "check" : "branch", size: 12)
                 if !narrow {
@@ -487,9 +485,6 @@ private struct PullRequestCheckoutMenu: View {
             .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius + 1).strokeBorder(Theme.border, lineWidth: 1))
             .contentShape(Rectangle())
         }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
         .fixedSize()
         .onHover { hovered = $0 }
         .help(checkedOut ? "This branch is checked out here" : "Check out this pull request's branch")
@@ -505,62 +500,63 @@ private struct PullRequestMoreMenu: View {
 
     var body: some View {
         let primary = detail.primary(method: model.mergeMethod)
-        Menu {
-            Button("Refresh") { model.refresh() }
-            Button("Ask About This PR") { askAgent(detail.askPrompt()) }
-            Button { askAgent(detail.explainPrompt()) } label: {
-                Text("Explain This PR")
-                Text("A walk through the diff and what to read closely.")
-            }
-            if detail.isOpen {
-                Divider()
-                if detail.isDraft {
-                    Button("Ready for Review") { model.markReady() }
-                } else {
-                    Button("Convert to Draft") { model.convertToDraft() }
-                }
-                if case .autoMerge = primary {
-                    Button("Merge Now") { confirmMergeNow() }
-                }
-                if detail.autoMerge != nil {
-                    Button("Disable Auto-Merge") { model.disableAutoMerge() }
-                } else if !detail.isDraft {
-                    Button("Enable Auto-Merge") { model.enableAutoMerge() }
-                }
-                Divider()
-                Picker("Merge Method", selection: Binding(get: { model.mergeMethod }, set: { model.choose($0) })) {
-                    ForEach(model.allowedMethods, id: \.self) { method in
-                        Text(method.title).tag(method)
-                    }
-                }
-                .pickerStyle(.inline)
-            }
-            Divider()
-            Button("Open on GitHub") { model.open(detail.url) }
-            Button("Copy Link") { model.copy(detail.url?.absoluteString ?? "", "link") }
-            Button("Copy PR Number") { model.copy("#\(detail.number)", "#\(detail.number)") }
-            if detail.state != "MERGED" {
-                Divider()
-                if detail.isOpen {
-                    Button("Close Pull Request…", role: .destructive) { confirmClose() }
-                } else {
-                    Button("Reopen Pull Request") { model.reopen() }
-                }
-            }
-        } label: {
+        OctetMenuButton({ items(primary: primary) }) {
             OctetIcon("ellipsis", size: 14)
                 .foregroundStyle(hovered ? Theme.textPrimary : Theme.textSecondary)
                 .frame(width: 24, height: 24)
                 .background(RoundedRectangle(cornerRadius: Theme.Radius.md).fill(hovered ? Theme.hover : .clear))
                 .contentShape(Rectangle())
         }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
         .fixedSize()
         .onHover { hovered = $0 }
         .help("More")
         .accessibilityLabel("More pull request actions")
+    }
+
+    private func items(primary: PullRequestDetail.Primary) -> [OctetMenuItem] {
+        var items: [OctetMenuItem] = [
+            .action("Refresh") { model.refresh() },
+            .action("Ask About This PR") { askAgent(detail.askPrompt()) },
+            .action("Explain This PR", help: "A walk through the diff and what to read closely.") {
+                askAgent(detail.explainPrompt())
+            },
+        ]
+        if detail.isOpen {
+            items.append(.divider)
+            if detail.isDraft {
+                items.append(.action("Ready for Review") { model.markReady() })
+            } else {
+                items.append(.action("Convert to Draft") { model.convertToDraft() })
+            }
+            if case .autoMerge = primary {
+                items.append(.action("Merge Now") { confirmMergeNow() })
+            }
+            if detail.autoMerge != nil {
+                items.append(.action("Disable Auto-Merge") { model.disableAutoMerge() })
+            } else if !detail.isDraft {
+                items.append(.action("Enable Auto-Merge") { model.enableAutoMerge() })
+            }
+            items.append(.divider)
+            items.append(.header("Merge Method"))
+            for method in model.allowedMethods {
+                items.append(.action(method.title, icon: model.mergeMethod == method ? "checkmark" : nil) {
+                    model.choose(method)
+                })
+            }
+        }
+        items.append(.divider)
+        items.append(.action("Open on GitHub") { model.open(detail.url) })
+        items.append(.action("Copy Link") { model.copy(detail.url?.absoluteString ?? "", "link") })
+        items.append(.action("Copy PR Number") { model.copy("#\(detail.number)", "#\(detail.number)") })
+        if detail.state != "MERGED" {
+            items.append(.divider)
+            if detail.isOpen {
+                items.append(.action("Close Pull Request…", destructive: true) { confirmClose() })
+            } else {
+                items.append(.action("Reopen Pull Request") { model.reopen() })
+            }
+        }
+        return items
     }
 
     private func confirmClose() {

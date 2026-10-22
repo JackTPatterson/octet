@@ -318,28 +318,28 @@ struct PermissionBanner: View {
 
     /// The allows that reach past this one request.
     private var allowMenu: some View {
-        Menu {
-            Button(AgentSession.sessionAllowTitle(request)) {
-                session.answerPermission(allow: true, forSession: true)
-                note = ""
-            }
-            .help("Allow this now and stop asking about it until the conversation closes")
+        OctetMenuButton({
+            var items: [OctetMenuItem] = [
+                .action(AgentSession.sessionAllowTitle(request),
+                        help: "Allow this now and stop asking about it until the conversation closes") {
+                    session.answerPermission(allow: true, forSession: true)
+                    note = ""
+                },
+            ]
             if let rule = session.alwaysRule(for: request) {
-                Button(rule.title + " in This Project") {
+                items.append(.action(rule.title + " in This Project",
+                                     help: "Saved to .claude/settings.local.json, where it can be removed") {
                     session.answerPermission(allow: true, always: true)
                     note = ""
-                }
-                .help("Saved to .claude/settings.local.json, where it can be removed")
+                })
             }
-        } label: {
+            return items
+        }) {
             OctetIcon("chevron.down", size: 11)
                 .foregroundStyle(Theme.textSecondary)
                 .frame(width: 24, height: 24)
                 .contentShape(Rectangle())
         }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
         .fixedSize()
         .help("Always allow for this session, or in this project")
         .accessibilityLabel("More ways to allow")

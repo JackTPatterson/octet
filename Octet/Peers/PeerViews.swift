@@ -146,25 +146,20 @@ struct PeerIssueBanner: View {
 
 /// A row's actions behind an ellipsis that shows on hover, as T3 Code's
 /// environment rows keep theirs out of sight until wanted.
-struct PeerRowMenu<Content: View>: View {
+struct PeerRowMenu: View {
     let label: String
     let visible: Bool
-    @ViewBuilder var content: () -> Content
+    let items: () -> [OctetMenuItem]
     @State private var hovered = false
 
     var body: some View {
-        Menu {
-            content()
-        } label: {
+        OctetMenuButton(items) {
             OctetIcon("ellipsis", size: 14)
                 .foregroundStyle(hovered ? Theme.textPrimary : Theme.textSecondary)
                 .frame(width: 24, height: 24)
                 .background(RoundedRectangle(cornerRadius: Theme.controlRadius).fill(hovered ? Theme.hover : .clear))
                 .contentShape(Rectangle())
         }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
         .fixedSize()
         .onHover { hovered = $0 }
         .hoverReveal(visible || hovered)

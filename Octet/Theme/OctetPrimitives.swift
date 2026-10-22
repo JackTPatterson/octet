@@ -328,13 +328,13 @@ struct OctetSelect<Value: Hashable>: View {
     }
 
     var body: some View {
-        Menu {
-            Picker("", selection: $selection) {
-                ForEach(options, id: \.value) { option in Text(option.title).tag(option.value) }
+        OctetMenuButton({
+            options.map { option in
+                OctetMenuItem.action(option.title, icon: option.value == selection ? "checkmark" : nil) {
+                    selection = option.value
+                }
             }
-            .pickerStyle(.inline)
-            .labelsHidden()
-        } label: {
+        }) {
             HStack(spacing: 6) {
                 Text(current)
                     .font(Theme.Text.transcript)
@@ -354,9 +354,6 @@ struct OctetSelect<Value: Hashable>: View {
             }
             .contentShape(Rectangle())
         }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
         .fixedSize(horizontal: width == nil, vertical: true)
         .onHover { hovered = $0 }
         .accessibilityValue(current)

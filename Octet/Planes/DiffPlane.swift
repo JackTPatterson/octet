@@ -171,26 +171,26 @@ private struct DiffPlaneBody: View {
 
     // MARK: - Header
 
+    private func compareItems() -> [OctetMenuItem] {
+        func choice(_ title: String, _ base: ReviewDiff.Base) -> OctetMenuItem {
+            .action(title, icon: model.base == base ? "checkmark" : nil) { model.base = base }
+        }
+        var items = [choice("Uncommitted", .uncommitted), choice("This Branch", .branch)]
+        // An agent's turns, from the checkpoints Octet takes as each
+        // starts, after T3 Code's turn diffs.
+        if !turns.isEmpty {
+            items.append(.divider)
+            items.append(.header("Turns"))
+            for turn in turns.prefix(20) {
+                items.append(choice("\(turn.title) · \(turn.date.formatted(.relative(presentation: .named)))", turn.base))
+            }
+        }
+        return items
+    }
+
     private var header: some View {
         HStack(spacing: 6) {
-            Menu {
-                Picker("Compare", selection: $model.base) {
-                    Text("Uncommitted").tag(ReviewDiff.Base.uncommitted)
-                    Text("This Branch").tag(ReviewDiff.Base.branch)
-                }
-                .pickerStyle(.inline)
-                .labelsHidden()
-                // An agent's turns, from the checkpoints Octet takes as each
-                // starts, after T3 Code's turn diffs.
-                if !turns.isEmpty {
-                    Picker("Turns", selection: $model.base) {
-                        ForEach(turns.prefix(20), id: \.title) { turn in
-                            Text("\(turn.title) · \(turn.date.formatted(.relative(presentation: .named)))").tag(turn.base)
-                        }
-                    }
-                    .pickerStyle(.inline)
-                }
-            } label: {
+            OctetMenuButton(compareItems) {
                 HStack(spacing: 4) {
                     Text(scopeTitle)
                         .font(Theme.uiFontMedium)
@@ -202,9 +202,6 @@ private struct DiffPlaneBody: View {
                 .background(RoundedRectangle(cornerRadius: Theme.Radius.md).fill(Theme.card))
                 .contentShape(Rectangle())
             }
-            .menuStyle(.button)
-            .buttonStyle(.plain)
-            .menuIndicator(.hidden)
             .fixedSize()
             .help("Compare against HEAD, or against where this branch left the default branch")
             if let diff = model.diff, !diff.files.isEmpty {

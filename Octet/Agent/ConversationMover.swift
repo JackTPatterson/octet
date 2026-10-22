@@ -5,19 +5,15 @@ import AppKit
 /// that says how it went. See `AgentSession.move(to:)`.
 @MainActor
 enum ConversationMover {
-    /// Asks for the folder; nil when cancelled.
-    static func pickFolder(startingAt directory: String) -> String? {
-        let panel = NSOpenPanel()
-        panel.title = "Move the Conversation"
-        panel.message = "Choose the folder to carry on in. Claude Code resumes the conversation there."
-        panel.prompt = "Move"
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.canCreateDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.directoryURL = URL(fileURLWithPath: directory)
-        guard panel.runModal() == .OK, let url = panel.url else { return nil }
-        return url.standardizedFileURL.path
+    /// Asks for the folder (one typed that isn't there yet can be made);
+    /// nothing happens when cancelled.
+    static func pickFolder(startingAt directory: String, window: WindowContext, then picked: @escaping (String) -> Void) {
+        PathPickerCenter.shared.pick("Move the Conversation",
+                                     message: "Choose the folder to carry on in. Claude Code resumes the conversation there.",
+                                     prompt: "Move", start: directory, canCreateFolder: true, in: window.nsWindow) { urls in
+            guard let url = urls.first else { return }
+            picked(url.standardizedFileURL.path)
+        }
     }
 
     /// Moves every conversation that can be moved to `folder`, into the
@@ -51,7 +47,8 @@ enum ConversationMover {
 
     /// Picks a folder and moves `sessions` there.
     static func moveAfterPicking(_ sessions: [AgentSession], from directory: String, window: WindowContext) {
-        guard let folder = pickFolder(startingAt: directory) else { return }
-        move(sessions, to: folder, window: window)
+        pickFolder(startingAt: directory, window: window) { folder in
+            move(sessions, to: folder, window: window)
+        }
     }
 }
