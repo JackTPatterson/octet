@@ -2050,19 +2050,10 @@ private struct Composer: View {
                                                tint: $0 == .default ? nil : ModeStyle.color($0), glyph: ModeStyle.glyph($0))
                         },
                         selected: session.permissionMode.rawValue,
-                        select: { choice in
-                            let mode = AgentSession.PermissionMode(rawValue: choice) ?? .default
-                            guard mode == .bypassPermissions, session.permissionMode != mode else {
-                                session.permissionMode = mode
-                                return
-                            }
-                            // Bypass runs every tool without asking: confirm first.
-                            ConfirmCenter.shared.ask(
-                                title: "Bypass all permission checks?",
-                                message: "Claude will run commands, edit and delete files, and use every tool without asking you first, for the rest of this conversation. Use it only in a folder you can afford to lose changes in.",
-                                confirmTitle: "Bypass Permissions",
-                                destructive: true
-                            ) { _ in session.permissionMode = .bypassPermissions }
+                        select: { choice in setMode(AgentSession.PermissionMode(rawValue: choice) ?? .default) },
+                        panel: { close in
+                            AnyView(PermissionModePanel(selected: session.permissionMode, detail: Self.modeDetail,
+                                                        choose: { setMode($0) }, close: close))
                         }
                     ), state: dropdowns) { open in
                         ModeChip(mode: session.permissionMode, open: open)
@@ -2330,6 +2321,20 @@ private struct Composer: View {
         let next = agents[(current + 1) % agents.count]
         session.agentName = next.name == agents[0].name ? nil : next.name
         return true
+    }
+
+    /// Bypass runs every tool without asking: it's confirmed first.
+    private func setMode(_ mode: AgentSession.PermissionMode) {
+        guard mode == .bypassPermissions, session.permissionMode != mode else {
+            session.permissionMode = mode
+            return
+        }
+        ConfirmCenter.shared.ask(
+            title: "Bypass all permission checks?",
+            message: "Claude will run commands, edit and delete files, and use every tool without asking you first, for the rest of this conversation. Use it only in a folder you can afford to lose changes in.",
+            confirmTitle: "Bypass Permissions",
+            destructive: true
+        ) { _ in session.permissionMode = .bypassPermissions }
     }
 
     static let modeDetail: [AgentSession.PermissionMode: String] = [

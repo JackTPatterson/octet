@@ -162,6 +162,8 @@ extension View {
 extension String {
     /// "auto mode on" as a control's label: "Auto mode on".
     var capitalizedFirst: String { prefix(1).uppercased() + dropFirst() }
+    /// "auto mode on" without its "on", for a chip that's plainly a setting.
+    var droppingOn: String { hasSuffix(" on") ? String(dropLast(3)) : self }
 }
 
 /// T3 Code's ghost icon button (size="icon-sm"): 28pt square, a 16pt icon

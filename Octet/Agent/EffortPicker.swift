@@ -158,7 +158,7 @@ struct ModeChip: View {
             if !ModeStyle.glyph(mode).isEmpty {
                 Text(ModeStyle.glyph(mode)).font(ChatStyle.meta)
             }
-            Text(ModeStyle.label(mode).capitalizedFirst)
+            Text(ModeStyle.label(mode).droppingOn.capitalizedFirst)
             OctetIcon("chevron.down", size: 14)
                 .foregroundStyle(ChatStyle.mutedText)
                 .rotationEffect(.degrees(open ? 180 : 0))
@@ -219,22 +219,18 @@ struct SandboxChip: View {
     var body: some View {
         let tint = SandboxStyle.color(profile)
         let plain = profile == nil || profile == ":read-only"
-        HStack(spacing: 5) {
+        // A composer control, like ModeChip's.
+        HStack(spacing: 6) {
             if !SandboxStyle.glyph(profile).isEmpty {
-                Text(SandboxStyle.glyph(profile)).font(Theme.Text.caption)
+                Text(SandboxStyle.glyph(profile)).font(ChatStyle.meta)
             }
-            Text(SandboxStyle.label(profile, profiles: profiles)).font(Theme.Text.mono(12))
-            OctetIcon("chevron.down", size: 11)
-                .foregroundStyle(Theme.textTertiary)
+            Text(SandboxStyle.label(profile, profiles: profiles).droppingOn.capitalizedFirst)
+            OctetIcon("chevron.down", size: 14)
+                .foregroundStyle(ChatStyle.mutedText)
                 .rotationEffect(.degrees(open ? 180 : 0))
         }
-        .foregroundStyle(profile == nil ? Theme.textSecondary : tint)
-        .padding(.horizontal, 9)
-        .frame(height: 24)
-        .background(plain ? (hovered || open ? Theme.hover : Theme.card) : tint.opacity(hovered || open ? 0.2 : 0.12))
-        .overlay(RoundedRectangle(cornerRadius: Theme.rowRadius + 1)
-            .strokeBorder(plain ? (open ? Theme.accent.opacity(0.6) : Theme.border) : tint.opacity(0.6), lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: Theme.rowRadius + 1))
+        .foregroundStyle(plain ? (hovered || open ? ChatStyle.text : ChatStyle.secondaryText) : tint)
+        .chatComposerControl(active: hovered || open)
         .onHover { hovered = $0 }
     }
 }

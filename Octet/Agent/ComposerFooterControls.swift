@@ -195,3 +195,132 @@ private struct StatusPill: View {
         .background(Capsule().fill(tint.opacity(0.12)))
     }
 }
+
+/// The permission-mode picker: each mode with its icon on a square in its
+/// colour, what it does in a line, a check on the one in use; bypass set
+/// apart at the foot, in red. ↑/↓ move, Return picks, Esc closes.
+struct PermissionModePanel: View {
+    let selected: AgentSession.PermissionMode
+    let detail: [AgentSession.PermissionMode: String]
+    let choose: (AgentSession.PermissionMode) -> Void
+    let close: () -> Void
+    @State private var highlighted: AgentSession.PermissionMode?
+    @FocusState private var focused: Bool
+    @ObservedObject private var motion = MotionPreferences.shared
+
+    private let safe: [AgentSession.PermissionMode] = [.default, .acceptEdits, .plan, .auto]
+    private var all: [AgentSession.PermissionMode] { safe + [.bypassPermissions] }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Permissions")
+                    .font(Theme.interfaceFont(13, weight: .semibold))
+                    .foregroundStyle(ChatStyle.text)
+                Text("How the agent asks before using tools. Applies from your next message.")
+                    .font(Theme.interfaceFont(11))
+                    .foregroundStyle(ChatStyle.mutedText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 14)
+            .padding(.bottom, 8)
+            VStack(spacing: 0) {
+                ForEach(safe, id: \.self) { mode in row(mode) }
+            }
+            .padding(.horizontal, 6)
+            Rectangle().fill(ChatStyle.border).frame(height: 1).padding(.vertical, 6)
+            row(.bypassPermissions).padding(.horizontal, 6)
+            Rectangle().fill(ChatStyle.border).frame(height: 1).padding(.top, 6)
+            HStack(spacing: 6) {
+                Text("⇧⇥").font(Theme.interfaceFont(10.5, weight: .medium))
+                    .padding(.horizontal, 5).frame(height: 18)
+                    .background(RoundedRectangle(cornerRadius: 4, style: .continuous).fill(ChatStyle.bubble))
+                Text("cycles modes")
+            }
+            .font(Theme.interfaceFont(11))
+            .foregroundStyle(ChatStyle.mutedText)
+            .padding(.horizontal, 16)
+            .frame(height: 34)
+        }
+        .frame(width: 300)
+        .chatPopover()
+        .focusable()
+        .focusEffectDisabled()
+        .focused($focused)
+        .onAppear {
+            highlighted = selected
+            DispatchQueue.main.async { focused = true }
+        }
+        .onKeyPress(.upArrow) { move(-1); return .handled }
+        .onKeyPress(.downArrow) { move(1); return .handled }
+        .onKeyPress(.return) { if let highlighted { pick(highlighted) }; return .handled }
+        .onExitCommand(perform: close)
+        .animation(motion.animation(.palette, .easeOut(duration: 0.14)), value: highlighted)
+    }
+
+    private func row(_ mode: AgentSession.PermissionMode) -> some View {
+        let tint = Self.tint(mode)
+        let lit = highlighted == mode
+        let isSelected = selected == mode
+        return Button { pick(mode) } label: {
+            HStack(spacing: 10) {
+                Image(systemName: Self.symbol(mode))
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .frame(width: 28, height: 28)
+                    .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(tint.opacity(0.14)))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(mode == .default ? "Ask before changes" : mode.title)
+                        .font(ChatStyle.metaMedium)
+                        .foregroundStyle(mode == .bypassPermissions ? ChatStyle.removed : ChatStyle.text)
+                    Text(detail[mode] ?? "")
+                        .font(Theme.interfaceFont(11))
+                        .foregroundStyle(ChatStyle.mutedText)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 6)
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(ChatStyle.primary)
+                }
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 44)
+            .background(RoundedRectangle(cornerRadius: ChatStyle.controlRadius, style: .continuous)
+                .fill(lit ? ChatStyle.hover : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { if $0 { highlighted = mode } }
+        .accessibilityLabel(mode.title)
+        .accessibilityValue(isSelected ? "Selected" : "")
+        .accessibilityHint(detail[mode] ?? "")
+    }
+
+    private func move(_ delta: Int) {
+        let index = highlighted.flatMap { all.firstIndex(of: $0) } ?? 0
+        highlighted = all[(index + delta + all.count) % all.count]
+    }
+
+    private func pick(_ mode: AgentSession.PermissionMode) {
+        close()
+        choose(mode)
+    }
+
+    /// Ask in the plain colour; the rest in the colours the chip uses.
+    static func tint(_ mode: AgentSession.PermissionMode) -> Color {
+        mode == .default ? ChatStyle.secondaryText : ModeStyle.color(mode)
+    }
+
+    static func symbol(_ mode: AgentSession.PermissionMode) -> String {
+        switch mode {
+        case .default: "hand.raised.fill"
+        case .acceptEdits: "pencil.line"
+        case .plan: "list.bullet.clipboard.fill"
+        case .auto: "sparkles"
+        case .bypassPermissions: "exclamationmark.triangle.fill"
+        }
+    }
+}
