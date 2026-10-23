@@ -632,14 +632,20 @@ private struct WorkspaceCard: View {
         // The agent's state; with no agent here, a running server's logo
         // takes the empty state's place. The project's favicon is on the
         // group's header, not on each of its workspaces.
+        // Only a state that needs a look (a question, a failure, done) takes
+        // the gutter; otherwise the title sits flush and the mark slides in.
+        let serviceLogo = status == .unknown
+            ? LanguageLogo(service: ports.lazy.compactMap { portsWatcher.services[$0] }.first, size: 13) : nil
+        let showsMark: Bool = {
+            if serviceLogo != nil { return true }
+            switch status {
+            case .needsInput, .needsApproval, .failed, .planReady, .done: return true
+            default: return false
+            }
+        }()
         let mark = Group {
-            if status == .unknown,
-               let logo = LanguageLogo(service: ports.lazy.compactMap { portsWatcher.services[$0] }.first, size: 13) {
-                logo.help("Serving on localhost")
-            } else if status == .working {
-                // The sub-row below carries what the agent is doing: the title
-                // line has no loading line of its own.
-                Color.clear
+            if let serviceLogo {
+                serviceLogo.help("Serving on localhost")
             } else {
                 AgentStateGlyph(state: status)
             }
@@ -647,7 +653,10 @@ private struct WorkspaceCard: View {
         .frame(width: 16)
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
-                mark
+                if showsMark {
+                    mark.transition(motion.animates(.sidebar)
+                        ? .move(edge: .leading).combined(with: .opacity) : .identity)
+                }
                 if renaming {
                     InlineRenameField(initial: workspace.label, placeholder: "Workspace name") { label in
                         renaming = false
@@ -677,7 +686,6 @@ private struct WorkspaceCard: View {
                     .foregroundStyle(Theme.textTertiary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                    .padding(.leading, 22)
             }
             if let from = store.movedWorkspaces[workspace.workspaceId] {
                 HStack(spacing: 4) {
@@ -705,6 +713,7 @@ private struct WorkspaceCard: View {
                                    hue: store.workspaceColor(workspace.workspaceId)?.hex ?? brand?.hueHex))
         .clipShape(RoundedRectangle(cornerRadius: Theme.controlRadius))
         .animation(.easeOut(duration: 0.15), value: hovered)
+        .animation(motion.animation(.sidebar, .smooth(duration: 0.25)), value: showsMark)
         .contentShape(Rectangle())
         .onHover { hovering in
             hovered = hovering

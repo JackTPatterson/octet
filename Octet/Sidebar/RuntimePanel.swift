@@ -367,7 +367,7 @@ struct RuntimePanel: View {
                 var detail: String?
                 if let session {
                     if let permission = session.pendingPermission {
-                        detail = permission.toolName == "ExitPlanMode" ? "Wants to go ahead with its plan" : "Asks to use \(permission.toolName)"
+                        detail = ComposerPlanFollowUp.isPlanTool(permission.toolName) ? "Wants to go ahead with its plan" : "Asks to use \(permission.toolName)"
                     } else {
                         detail = session.pendingQuestion != nil ? "Has a question for you" : session.lastReplyPreview
                     }
@@ -845,9 +845,9 @@ struct RuntimePanel: View {
     /// as the edge pulls back (AffectUI's agent tree).
     private static let rowTransition = AnyTransition.asymmetric(
         insertion: .opacity.combined(with: .offset(y: 6)).combined(with: .scale(scale: 0.98, anchor: .top))
-            .animation(.timingCurve(0.32, 0.72, 0.24, 1, duration: 0.36)),
+            .animation(TreeEdgeStyle.draw(length: 40).delay(TreeEdgeStyle.portLead)),
         removal: .opacity.combined(with: .offset(y: 4)).combined(with: .scale(scale: 0.97, anchor: .top))
-            .animation(.timingCurve(0.32, 0.72, 0.24, 1, duration: 0.28)))
+            .animation(TreeEdgeStyle.retract))
 
     private func revealNewEntries(_ ids: [String]) {
         let current = Set(ids)

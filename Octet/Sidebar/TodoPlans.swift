@@ -240,11 +240,7 @@ struct ProposedPlanCard: View {
     /// out, as the composer's banner does.
     private func implement() {
         guard let session = AgentCenter.shared.sessions.first(where: { $0.id == proposed.sessionId }) else { return }
-        switch session.engine {
-        case .claude: session.permissionMode = .default
-        case .opencode: session.agentName = nil
-        default: break
-        }
+        session.setPlanning(false, askingBeforeEdits: true)
         session.send(ComposerPlanFollowUp.implementationPrompt(proposed.plan))
         model.refresh()
     }

@@ -163,7 +163,7 @@ struct BrowserPlane: View {
             .header("Zoom  \(PreviewZoom.label(page.zoom))"),
             .action("Zoom In", icon: "plus", shortcut: OctetShortcut.browserZoomIn.keys, enabled: page.zoom < PreviewZoom.steps.last!) { page.zoomIn() },
             .action("Zoom Out", icon: "minus", shortcut: OctetShortcut.browserZoomOut.keys, enabled: page.zoom > PreviewZoom.steps.first!) { page.zoomOut() },
-            .action("Reset Zoom", icon: "arrow.counterclockwise.circle", shortcut: OctetShortcut.browserResetZoom.keys,
+            .action("Reset Zoom", icon: "arrow.counterclockwise", shortcut: OctetShortcut.browserResetZoom.keys,
                     enabled: abs(page.zoom - 1) > 0.001) { page.setZoom(1) },
             .divider,
         ]

@@ -436,7 +436,7 @@ enum PaletteCatalog {
         // sessions that aren't running.
         items.append(action("recoverSessions",
                             store.recoveryCenter.hasSetAside ? "Recover Lost Sessions…" : "Recover Agent Sessions…",
-                            "arrow.counterclockwise.circle",
+                            "arrow.counterclockwise",
                             keywords: ["resume", "restore", "recover", "recovery", "claude", "codex", "terminal",
                                        "crash", "restart", "history", "lost"]) {
             store.recoveryCenter.reopen()

@@ -252,6 +252,34 @@ final class ComposerFeaturesTests: XCTestCase {
                                                      planMode: true, running: false))
     }
 
+    func testEveryAgentsPlanCallIsOffered() throws {
+        // Qwen's plan tool, by its own name.
+        let qwen = [AgentItem(id: "u", kind: .user("Plan it")),
+                    tool("p", "exit_plan_mode", plan: "# Qwen plan\n\n1. a\n2. b")]
+        XCTAssertEqual(try XCTUnwrap(ComposerPlanFollowUp.latestPlan(in: qwen, planMode: true, running: false)).title,
+                       "Qwen plan")
+        // Codex's plan item comes through its stream as the same call.
+        var conversation = AgentConversation()
+        conversation.appendUser("Plan it")
+        conversation.applyCodex(["method": "item/completed", "params": ["item": [
+            "id": "plan-1", "type": "plan", "text": "# Codex plan\n\n1. Read\n2. Change",
+        ]]])
+        let plan = try XCTUnwrap(ComposerPlanFollowUp.latestPlan(in: conversation.items, planMode: true, running: false))
+        XCTAssertEqual(plan.id, "plan-1")
+        XCTAssertEqual(plan.markdown, "# Codex plan\n\n1. Read\n2. Change")
+    }
+
+    func testThePlanInstructionsStayOutOfTheTranscript() {
+        let sent = ComposerPlanFollowUp.withDirective("Plan the fix")
+        XCTAssertTrue(sent.hasPrefix(ComposerPlanFollowUp.directive))
+        XCTAssertEqual(ComposerPlanFollowUp.strippingDirective(sent), "Plan the fix")
+        XCTAssertEqual(ComposerPlanFollowUp.strippingDirective("Plan the fix"), "Plan the fix")
+        var conversation = AgentConversation()
+        conversation.restorePi([["role": "user", "content": sent]])
+        guard case .user(let shown) = conversation.items.first?.kind else { return XCTFail("no user row") }
+        XCTAssertEqual(shown, "Plan the fix")
+    }
+
     func testWorkAfterThePlanOrAPlainAnswerOffersNothing() {
         let worked = [
             AgentItem(id: "u", kind: .user("Plan the fix")),

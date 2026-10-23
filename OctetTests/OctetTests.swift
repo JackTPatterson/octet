@@ -790,6 +790,19 @@ final class AgentRecoveryTests: XCTestCase {
         XCTAssertEqual(record.resumeCommand, "claude --resume 'it'\"'\"'s'")
     }
 
+    func testATerminalsSessionIsTheAgentsOwn() {
+        // The terminal ran Claude Code, then Codex: each agent gets its own.
+        func record(_ agent: String, _ id: String, at seen: TimeInterval) -> AgentSessionRecord {
+            AgentSessionRecord(agent: agent, sessionId: id, cwd: "/r", workspaceLabel: "r", tabLabel: "t", terminalId: "term",
+                               firstSeen: Date(timeIntervalSince1970: seen - 1), lastSeen: Date(timeIntervalSince1970: seen))
+        }
+        let journal = [record("claude", "claude-old", at: 5), record("claude", "claude-new", at: 9), record("codex", "thread-1", at: 7)]
+        XCTAssertEqual(AgentRecovery.sessionId(in: journal, terminal: "term", agent: "codex"), "thread-1")
+        XCTAssertEqual(AgentRecovery.sessionId(in: journal, terminal: "term", agent: "claude"), "claude-new")
+        XCTAssertNil(AgentRecovery.sessionId(in: journal, terminal: "term", agent: "pi"))
+        XCTAssertNil(AgentRecovery.sessionId(in: journal, terminal: "other", agent: "codex"))
+    }
+
     func testResumeRequestRunsTheCommandInALoginShell() {
         let record = AgentSessionRecord(agent: "codex", sessionId: "abc", cwd: "/work/app", workspaceLabel: "app",
                                         tabLabel: "review", terminalId: "t", firstSeen: Date(), lastSeen: Date())

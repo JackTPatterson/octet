@@ -57,7 +57,7 @@ enum TranscriptTimeline {
     static func folds(_ call: AgentToolCall) -> Bool {
         if !call.resultImages.isEmpty { return false }
         switch call.name {
-        case "TodoWrite", "Task", "Agent", "ExitPlanMode", "AskUserQuestion",
+        case "TodoWrite", "Task", "Agent", "ExitPlanMode", "exit_plan_mode", "AskUserQuestion",
              "Artifact", "ArtifactComments", "ArtifactData":
             return false
         default:

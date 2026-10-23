@@ -494,10 +494,8 @@ struct RuntimeGlyph: View {
             OctetIcon("eye", size: size).foregroundStyle(entry.tint)
         } else if entry.kind == .task {
             OctetIcon("clock.arrow.circlepath", size: size).foregroundStyle(entry.tint)
-        } else if entry.kind == .agent, let brand = AgentBrand.forAgent(entry.agentID) {
-            AgentLogo(brand: brand, size: size)
         } else if entry.kind == .agent {
-            OctetIcon("tool.agent", size: size).foregroundStyle(entry.tint)
+            AgentLogoDisc(brand: AgentBrand.forAgent(entry.agentID), diameter: size + 6)
         } else {
             OctetIcon("terminal", size: size).foregroundStyle(entry.tint)
         }
@@ -571,7 +569,7 @@ struct RuntimeGroupHeader: View {
     private var mark: some View {
         Group {
             if let brand = AgentBrand.forAgent(group.agentID) {
-                AgentLogo(brand: brand, size: 14)
+                AgentLogoDisc(brand: brand)
             } else {
                 OctetIcon("terminal", size: 13).foregroundStyle(Theme.textTertiary)
             }
@@ -611,13 +609,7 @@ struct RuntimeAttentionCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
             HStack(spacing: Theme.Space.sm) {
-                Group {
-                    if let brand = AgentBrand.forAgent(item.agentID) {
-                        AgentLogo(brand: brand, size: 14)
-                    } else {
-                        OctetIcon("tool.agent", size: 14).foregroundStyle(Theme.textTertiary)
-                    }
-                }
+                AgentLogoDisc(brand: AgentBrand.forAgent(item.agentID))
                 .overlay(alignment: .bottomTrailing) {
                     AgentStateGlyph(state: item.state, size: 7)
                         .frame(width: 10, height: 10)

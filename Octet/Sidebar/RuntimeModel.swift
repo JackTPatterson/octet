@@ -494,7 +494,7 @@ final class RuntimeModel: ObservableObject {
                   let input = call.inputObject else { return nil }
             let requested = input["run_in_background"] as? Bool == true
                 || input["background"] as? Bool == true
-            let reported = call.result?.localizedCaseInsensitiveContains("background") == true
+            let reported = RuntimeStates.launchedInBackground(call.result)
             guard requested || reported else { return nil }
             let command = input["command"] as? String ?? call.input
             let description = input["description"] as? String

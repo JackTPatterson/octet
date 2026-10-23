@@ -68,9 +68,9 @@ struct ConversationView: View {
                 }
                 }
                 .chatColumn()
+                ConversationContextStrip(session: session)
                 Composer(session: session, dropdowns: dropdowns, bridge: bridge, questions: questions)
                     .zIndex(1)
-                ConversationContextStrip(session: session)
             }
             .clipped()
         }
@@ -78,6 +78,7 @@ struct ConversationView: View {
         .animation(motion.animation(.approvals, .smooth(duration: 0.26)), value: session.pendingPermission?.id)
         .animation(motion.animation(.approvals, .smooth(duration: 0.26)), value: session.pendingQuestion?.id)
         .background(ChatStyle.page)
+        .overlay { ChatColumnEdges() }
         .modifier(EscapeStopsTurn(session: session, blocked: enlarged != nil || dropdowns.openId != nil,
                                   inMainArea: !window.isBeside("conversation:" + session.id)))
         .octetDropdownHost(dropdowns)
@@ -176,8 +177,10 @@ private struct ConversationContextStrip: View {
 
     var body: some View {
         let conversation = session.conversation
+        let showsCost = accounts.accounts["claude"]?.kind != .subscription && conversation.costUSD != nil
+        let showsBadge = !conversation.isRunning && verification != .noEdits
         HStack(spacing: 10) {
-            ProjectLocation(directory: session.cwd, branch: branch, worktree: workspace?.worktree)
+            // Branch and working-tree changes are the status bar's.
             Spacer(minLength: 8)
             if !conversation.isRunning, verification != .noEdits {
                 VerificationBadge(verification: verification, compact: true)
@@ -195,9 +198,12 @@ private struct ConversationContextStrip: View {
         .font(ChatStyle.meta)
         .frame(height: 20)
         .padding(.horizontal, 22 + 8)
-        .padding(.top, -12)
-        .padding(.bottom, 10)
+        .padding(.top, 4)
+        .padding(.bottom, 2)
         .chatColumn()
+        // Nothing to say: no strip at all, not an empty band.
+        .frame(height: showsCost || showsBadge ? nil : 0)
+        .clipped()
         .onChange(of: conversation.isRunning, initial: true) { _, running in
             if !running { verification = Verification.assess(session.conversation.items) }
         }
@@ -1226,7 +1232,7 @@ private struct CompactionNotice: View {
                 if !complete && running {
                     LoadingLine(width: 12)
                 } else {
-                    OctetIcon(complete ? "checkmark" : "arrow.counterclockwise.circle", size: 13)
+                    OctetIcon(complete ? "checkmark" : "arrow.counterclockwise", size: 13)
                         .foregroundStyle(ChatStyle.primary)
                 }
             }
@@ -1683,12 +1689,7 @@ private struct Composer: View {
     /// The plan the last turn ended on, while still in plan mode.
     private var followUpPlan: ComposerPlanFollowUp.Plan? {
         guard session.pendingPermission == nil, session.pendingQuestion == nil else { return nil }
-        let planMode = switch session.engine {
-        case .claude: session.permissionMode == .plan
-        case .opencode: session.agentName?.lowercased() == "plan"
-        default: false
-        }
-        guard let plan = ComposerPlanFollowUp.latestPlan(in: session.conversation.items, planMode: planMode,
+        guard let plan = ComposerPlanFollowUp.latestPlan(in: session.conversation.items, planMode: session.isPlanning,
                                                          running: session.conversation.isRunning),
               plan.id != dismissedPlan else { return nil }
         return plan
@@ -1698,11 +1699,7 @@ private struct Composer: View {
         dismissedPlan = plan.id
         refiningPlan = false
         // Out of plan mode, asking before edits, as Approve does.
-        switch session.engine {
-        case .claude: session.permissionMode = .default
-        case .opencode: session.agentName = nil
-        default: break
-        }
+        session.setPlanning(false, askingBeforeEdits: true)
         session.send(ComposerPlanFollowUp.implementationPrompt(plan))
     }
 
@@ -1893,8 +1890,8 @@ private struct Composer: View {
                         .scrollContentBackground(.hidden)
                         .scrollIndicators(.never)
                         .focused($focused)
-                        // T3 Code's editor: 70pt tall at rest, scrolling past 208.
-                        .frame(minHeight: 62, maxHeight: 208)
+                        // One line and a half at rest, scrolling past 208.
+                        .frame(minHeight: 34, maxHeight: 208)
                         .fixedSize(horizontal: false, vertical: true)
                         .overlay(alignment: .topLeading) {
                             if spaceHold.listening { ListeningIndicator(heard: voice.partial) }
@@ -2117,14 +2114,14 @@ private struct Composer: View {
                         window.newConversation(engine: session.engine)
                     }
                     // Remote Control (lit while it's on), the agent's own
-                    // interface in a new tab, and attaching: one icon family.
+                    // interface in the terminal, and attaching: one icon family.
                     HStack(spacing: 2) {
                         if session.engine == .claude, session.remoteControlAvailable || session.remoteControlEngaged {
                             RemoteControlControl(session: session, dropdowns: dropdowns)
                         }
                         ChatSymbolButton(symbol: "apple.terminal",
-                                         help: "Continue this conversation in \(session.engine.displayName)'s own interface, in a new tab") {
-                            session.openInTerminal(window: window)
+                                         help: "Continue this conversation in \(session.engine.displayName)'s own interface, in its terminal tab") {
+                            window.continueInTerminal(session)
                         }
                         .disabled(session.conversation.items.isEmpty)
                         ChatSymbolButton(symbol: "paperclip", help: "Attach files or images (or paste or drop them here)") { pickFiles() }
@@ -2148,11 +2145,11 @@ private struct Composer: View {
             // T3 Code's composer: a card floating in the chat column, rounded,
             // with a hairline and a soft drop under it.
             .padding(.horizontal, 16)
-            .padding(.top, 16)
-            .padding(.bottom, 16)
-            .background(RoundedRectangle(cornerRadius: ChatStyle.composerRadius, style: .continuous).fill(ChatStyle.card))
-            .overlay(RoundedRectangle(cornerRadius: ChatStyle.composerRadius, style: .continuous)
-                .strokeBorder(ChatStyle.composerOutline, lineWidth: 1))
+            .padding(.top, 12)
+            .padding(.bottom, 10)
+            .frame(maxWidth: .infinity)
+            .background(composerShape.fill(ChatStyle.card))
+            .overlay(composerShape.strokeBorder(ChatStyle.composerOutline, lineWidth: 1))
             // The inner top highlight; dark mode has no drop shadow.
             .overlay(alignment: .top) {
                 Capsule().fill(Color.white.opacity(Theme.isLight ? 0 : 0.03)).frame(height: 1)
@@ -2161,8 +2158,6 @@ private struct Composer: View {
             .shadow(color: .black.opacity(Theme.isLight ? 0.4 : 0), radius: 14, y: 12)
         }
         .padding(.top, 8)
-        .padding(.bottom, 20)
-        .chatColumn()
         .onAppear {
             #if DEBUG
             if ConversationDebug.openDropdown == "reference" {
@@ -2194,6 +2189,13 @@ private struct Composer: View {
         .animation(motion.animation(.palette, .smooth(duration: 0.2)), value: plan?.id)
         .onPasteCommand(of: [.image, .fileURL]) { providers in _ = load(providers) }
         .onDrop(of: [.image, .fileURL], isTargeted: nil) { providers in load(providers) }
+    }
+
+    /// Docked to the pane's sides and bottom, so only the top corners round.
+    private var composerShape: UnevenRoundedRectangle {
+        UnevenRoundedRectangle(topLeadingRadius: ChatStyle.composerRadius, bottomLeadingRadius: 0,
+                               bottomTrailingRadius: 0, topTrailingRadius: ChatStyle.composerRadius,
+                               style: .continuous)
     }
 
     /// `/` and `@` open T3 Code's command menu: a banner on the card's top
@@ -2327,9 +2329,10 @@ private struct Composer: View {
         setAside = nil
     }
 
-    /// Shift-Tab: Claude's and Qwen's permission modes, and OpenCode's two
+    /// Shift-Tab: Claude's and Qwen's permission modes, OpenCode's two
     /// asking presets (allowing everything is only ever picked, never cycled
-    /// into). Codex's sandboxes aren't cycled. Says whether it did anything.
+    /// into), and plan mode on or off for Codex and Pi, whose own settings
+    /// have no mode to cycle. Says whether it did anything.
     private func cycleMode() -> Bool {
         switch session.engine {
         case .claude, .qwen:
@@ -2341,7 +2344,8 @@ private struct Composer: View {
             session.permissionProfile = session.permissionProfile == "ask" ? nil : "ask"
             return true
         case .codex, .pi:
-            return false
+            session.setPlanning(!session.isPlanning)
+            return true
         }
     }
 
@@ -2871,6 +2875,7 @@ private struct CodexControls: View {
             modelAgent: session.engine.agent
         ), label: "Model", state: dropdowns)
         .disabled(catalog.models.isEmpty)
+        PlanModeToggle(session: session)
 
         if !catalog.profiles.isEmpty {
             let options = [OctetDropdownOption(id: SandboxStyle.unset, title: "From your config",
@@ -3038,6 +3043,7 @@ private struct PiControls: View {
         .help(session.piModels.isEmpty
               ? "Pi has no authenticated models yet. Configure a provider with pi /login."
               : "Pi models available through your configured providers. Applies at once.")
+        PlanModeToggle(session: session)
 
         if session.piThinkingLevels.count > 1 || session.piThinkingLevels.first != "off" {
             let details = Dictionary(uniqueKeysWithValues: session.piThinkingLevels.map { level in

@@ -581,6 +581,8 @@ extension TerminalEngine {
 
             // Octet: a plain click on a dev server's address can preview it.
             openLocalLinkOnPlainClick(event, pressedAt: leftPressedAt)
+            // Octet: ⌘-click on a file path opens it beside the terminal.
+            openFileOnCommandClick(event, pressedAt: leftPressedAt)
             leftPressedAt = nil
         }
 

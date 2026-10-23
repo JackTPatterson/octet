@@ -53,7 +53,6 @@ struct WorkspaceAgentsList: View {
                     }
                 }
             }
-            .padding(.leading, 22)
         }
     }
 }
@@ -103,11 +102,17 @@ private struct WorkspaceAgentTaskRow: View {
     let timeHelp: String
     let action: () -> Void
     @State private var hovered = false
+    @ObservedObject private var motion = MotionPreferences.shared
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 7) {
-                AgentStateGlyph(status: status, size: 9).frame(width: 12)
+                // Only a state that needs a look takes the gutter.
+                if AgentState(status).needsGlyph {
+                    AgentStateGlyph(status: status, size: 9).frame(width: 12)
+                        .transition(motion.animates(.sidebar)
+                            ? .move(edge: .leading).combined(with: .opacity) : .identity)
+                }
                 if let brand { AgentLogo(brand: brand, size: 14) }
                 Text(title)
                     .font(Theme.Text.body)
@@ -132,8 +137,21 @@ private struct WorkspaceAgentTaskRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .animation(motion.animation(.sidebar, .smooth(duration: 0.25)), value: AgentState(status).needsGlyph)
         .onHover { hovered = $0 }
         .help("\(brand?.displayName ?? "Agent") · \(stateLabel(status))\n\(title)")
         .accessibilityLabel("\(brand?.displayName ?? "Agent"), \(stateLabel(status)), \(title)")
+    }
+}
+
+
+extension AgentState {
+    /// A question, an approval, a failure, a plan or a finished turn: the
+    /// states whose glyph earns the sidebar's gutter.
+    var needsGlyph: Bool {
+        switch self {
+        case .needsInput, .needsApproval, .failed, .planReady, .done: true
+        default: false
+        }
     }
 }

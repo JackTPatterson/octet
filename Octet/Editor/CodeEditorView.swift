@@ -49,9 +49,8 @@ struct CodeEditorView: View {
 
     private var editorTabs: some View {
         HStack(spacing: 0) {
-            OctetIconButton(icon: "folder", help: workspace.fileTreeVisible ? "Hide Files" : "Show Files",
-                            active: workspace.fileTreeVisible) { workspace.fileTreeVisible.toggle() }
-                .padding(.horizontal, 5)
+            EditorFilesToggle(workspace: workspace)
+                .padding(.horizontal, 6)
             Rectangle().fill(Theme.divider).frame(width: 1, height: 32)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 0) {
@@ -99,15 +98,26 @@ private struct EditorDocumentView: View {
     @AppStorage("octet.editor.tableMode") private var tableMode = SourceMode.preview.rawValue
     /// What the viewer says about its file, e.g. “1200 × 800 · 340 KB”.
     @State private var detail = ""
+    /// The header's width: narrow (beside a terminal), the view switch
+    /// drops its words so the file's name keeps its room.
+    @State private var headerWidth: CGFloat = 1_000
 
+    /// Stored by these raw values, from when they read Edit and Preview.
     enum MarkdownMode: String, CaseIterable, Identifiable {
         case edit, split, preview
         var id: String { rawValue }
         var title: String {
             switch self {
-            case .edit: "Edit"
+            case .edit: "Code"
             case .split: "Split"
-            case .preview: "Preview"
+            case .preview: "Viewer"
+            }
+        }
+        var icon: String {
+            switch self {
+            case .edit: "code"
+            case .split: "rectangle.split.2x1"
+            case .preview: "eye"
             }
         }
     }
@@ -144,11 +154,13 @@ private struct EditorDocumentView: View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
                 if lone {
-                    OctetIconButton(icon: "folder", help: workspace.fileTreeVisible ? "Hide Files" : "Show Files",
-                                    active: workspace.fileTreeVisible, compact: true) { workspace.fileTreeVisible.toggle() }
-                        .padding(.leading, 6)
+                    // Set apart from the path, so it doesn't read as its root.
+                    EditorFilesToggle(workspace: workspace)
+                        .padding(.horizontal, 5)
+                    Rectangle().fill(Theme.divider).frame(width: 1, height: 14)
                 }
                 FileBreadcrumbs(url: document.url, root: rootDirectory, reveal: revealFolder)
+                viewSwitch
                 if lone {
                     HStack(spacing: 2) {
                         OctetIconButton(icon: "plus", help: "Open File (⌘O)", compact: true) { workspace.filePickerVisible = true }
@@ -160,6 +172,9 @@ private struct EditorDocumentView: View {
                     .padding(.trailing, 6)
                 }
             }
+            .background(Theme.terminalBackground)
+            .overlay(alignment: .bottom) { Rectangle().fill(Theme.divider).frame(height: 1) }
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { headerWidth = $0 }
             if document.changedOnDisk { ChangedOnDiskBanner(document: document) }
             content
             footer
@@ -193,10 +208,34 @@ private struct EditorDocumentView: View {
                 }
                 if mode == .split { Rectangle().fill(Theme.divider).frame(width: 1) }
                 if mode != .edit {
-                    MarkdownPreview(text: document.text, baseURL: document.url.deletingLastPathComponent())
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    MarkdownWebPreview(text: document.text, baseURL: document.url.deletingLastPathComponent()) { url in
+                        workspace.open(url)
+                    }
+                    .background(Theme.terminalBackground)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
+        }
+    }
+
+    /// How the file shows, in the header where it's seen: the Markdown's
+    /// code, both side by side, or the rendered viewer; an SVG's or table's
+    /// viewer or its code.
+    @ViewBuilder
+    private var viewSwitch: some View {
+        if isMarkdown {
+            EditorViewSwitch(selection: $markdownMode,
+                             items: MarkdownMode.allCases.map { ($0.rawValue, $0.title, $0.icon) },
+                             iconsOnly: headerWidth < 720)
+                .help("The Markdown's code, both side by side, or the rendered viewer")
+                .padding(.horizontal, 6)
+        } else if let sourceMode {
+            EditorViewSwitch(selection: sourceMode,
+                             items: [(SourceMode.source.rawValue, "Code", "code"),
+                                     (SourceMode.preview.rawValue, "Viewer", "eye")],
+                             iconsOnly: headerWidth < 720)
+                .help(document.mode == .svg ? "The image's code, or the image" : "The table's code, or the table")
+                .padding(.horizontal, 6)
         }
     }
 
@@ -206,16 +245,6 @@ private struct EditorDocumentView: View {
                 Text(detail.isEmpty ? previewFileSize(document.url) : detail)
             }
             Spacer()
-            if isMarkdown {
-                OctetSegmented(selection: $markdownMode,
-                               items: MarkdownMode.allCases.map { ($0.rawValue, $0.title) })
-                .help("Edit the Markdown, see it rendered, or both side by side")
-            }
-            if let sourceMode {
-                OctetSegmented(selection: sourceMode, items: [(SourceMode.preview.rawValue, "Preview"),
-                                                              (SourceMode.source.rawValue, "Source")])
-                .help(document.mode == .svg ? "See the image, or edit its source" : "See the table, or edit its source")
-            }
             if let error = document.lastError {
                 OctetIcon("xmark.circle.fill", size: 12).foregroundStyle(Theme.danger)
                 Text(error).lineLimit(1)
@@ -236,6 +265,75 @@ private struct EditorDocumentView: View {
         .layoutPriority(1)
         .background(Theme.chrome)
         .overlay(alignment: .top) { Rectangle().fill(Theme.divider).frame(height: 1) }
+    }
+}
+
+/// Shows or hides the editor's file tree: the navigator mark Xcode and
+/// Finder use, lit while the tree is open.
+private struct EditorFilesToggle: View {
+    @ObservedObject var workspace: EditorWorkspace
+    @State private var hovered = false
+
+    var body: some View {
+        let open = workspace.fileTreeVisible
+        Button { workspace.fileTreeVisible.toggle() } label: {
+            OctetIcon("files.navigator", size: 13)
+                .foregroundStyle(open || hovered ? Theme.textPrimary : Theme.textTertiary)
+                .frame(width: 24, height: 20)
+                .background(RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(open ? Theme.cardSelected : hovered ? Theme.hover : .clear))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
+        .help(open ? "Hide Files" : "Show Files")
+        .accessibilityLabel("Files")
+        .accessibilityValue(open ? "Shown" : "Hidden")
+    }
+}
+
+/// A compact segmented switch for the editor's header: each way to see the
+/// file as an icon and a word, the one in use raised.
+private struct EditorViewSwitch: View {
+    @Binding var selection: String
+    let items: [(value: String, title: String, icon: String)]
+    /// Narrow: icons alone, each named in its tooltip.
+    var iconsOnly = false
+    @State private var hovered: String?
+
+    var body: some View {
+        HStack(spacing: 1) {
+            ForEach(items, id: \.value) { item in
+                let chosen = item.value == selection
+                Button {
+                    MotionPreferences.shared.perform(.sidebar) { selection = item.value }
+                } label: {
+                    HStack(spacing: 4) {
+                        OctetIcon(item.icon, size: 11)
+                        if !iconsOnly { Text(item.title).font(Theme.captionFont.weight(.medium)) }
+                    }
+                    .foregroundStyle(chosen || hovered == item.value ? Theme.textPrimary : Theme.textTertiary)
+                    .padding(.horizontal, 7)
+                    .frame(height: 18)
+                    .background {
+                        if chosen {
+                            RoundedRectangle(cornerRadius: 4, style: .continuous).fill(Theme.cardSelected)
+                        } else if hovered == item.value {
+                            RoundedRectangle(cornerRadius: 4, style: .continuous).fill(Theme.hover)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .onHover { hovered = $0 ? item.value : (hovered == item.value ? nil : hovered) }
+                .help(iconsOnly ? item.title : "")
+                .accessibilityLabel(item.title)
+                .accessibilityAddTraits(chosen ? [.isButton, .isSelected] : .isButton)
+            }
+        }
+        .padding(2)
+        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.hover.opacity(0.5)))
+        .fixedSize()
     }
 }
 
@@ -292,34 +390,6 @@ private struct ChangedOnDiskBanner: View {
         request.alternateTitle = "Reload from Disk"
         request.onAlternate = { [weak document] in document?.reloadDiscardingChanges() }
         ConfirmCenter.shared.ask(request)
-    }
-}
-
-/// A Markdown file as it reads: headings, lists, quotes, code, tables and
-/// links, drawn with the same blocks as agents' replies. Links open in the
-/// browser; relative ones resolve against the file's folder.
-private struct MarkdownPreview: View {
-    let text: String
-    let baseURL: URL
-
-    var body: some View {
-        ScrollView {
-            MarkdownView(text: text)
-                .frame(maxWidth: 760, alignment: .leading)
-                .padding(.horizontal, 28)
-                .padding(.vertical, 22)
-                .frame(maxWidth: .infinity, alignment: .center)
-        }
-        .octetScrollIndicators()
-        .background(Theme.terminalBackground)
-        .environment(\.openURL, OpenURLAction { url in
-            if url.scheme == nil, let resolved = URL(string: url.relativeString, relativeTo: baseURL) {
-                NSWorkspace.shared.open(resolved.absoluteURL)
-            } else {
-                NSWorkspace.shared.open(url)
-            }
-            return .handled
-        })
     }
 }
 

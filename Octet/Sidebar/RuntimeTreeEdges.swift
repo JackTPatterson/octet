@@ -45,11 +45,26 @@ enum TreeEdgeStyle {
     static let lineWidth: CGFloat = 1
     static let portRadius: CGFloat = 2.75
     static let corner: CGFloat = 5.5
-    /// The mark is 14pt in its frame: the port sits this far under its
-    /// centre, just below the mark.
-    static let portDrop: CGFloat = 7 + 5.5
-    static let ease = Animation.timingCurve(0.32, 0.72, 0.24, 1, duration: 0.42)
-    static let retract = Animation.timingCurve(0.32, 0.72, 0.24, 1, duration: 0.28)
+    /// The mark is a 20pt disc: the port sits this far under its centre,
+    /// clear of the disc's edge.
+    static let portDrop: CGFloat = 10 + 4.5
+    /// Drawing out: quick off the port, settling into the child's mark
+    /// (an expo-style ease-out). Longer edges take a little longer, so a
+    /// long one doesn't streak and a short one doesn't crawl.
+    static func draw(length: CGFloat) -> Animation {
+        .timingCurve(0.16, 1, 0.3, 1, duration: 0.34 + 0.22 * min(1, length / 160))
+    }
+    /// Pulling back in: gathering speed into the port (ease-in), and quicker
+    /// than drawing out, as leaving should be.
+    static let retract = Animation.timingCurve(0.5, 0, 0.75, 0.4, duration: 0.22)
+    /// Following rows as they move: the spring the rows themselves move on,
+    /// so an edge never lags or jumps ahead of its mark.
+    static let follow = Animation.spring(response: 0.32, dampingFraction: 0.86)
+    /// A port springs in a beat before its edges leave it, and goes once
+    /// they've pulled back in.
+    static let portIn = Animation.spring(response: 0.26, dampingFraction: 0.72)
+    static let portOut = Animation.timingCurve(0.5, 0, 0.75, 0.4, duration: 0.16).delay(0.16)
+    static let portLead = 0.08
     static let stagger = 0.06
 }
 
@@ -73,7 +88,7 @@ private struct TreeEdgeLayer: View {
         ZStack(alignment: .topLeading) {
             ForEach(edges) { edge in
                 TreeEdgeView(port: edge.port, end: edge.end,
-                             delay: Double(siblingIndex[edge.id] ?? 0) * TreeEdgeStyle.stagger)
+                             delay: TreeEdgeStyle.portLead + Double(siblingIndex[edge.id] ?? 0) * TreeEdgeStyle.stagger)
                     .transition(.asymmetric(
                         insertion: .identity,
                         removal: .modifier(active: TreeEdgeTrim(progress: 0), identity: TreeEdgeTrim(progress: 1))
@@ -83,10 +98,15 @@ private struct TreeEdgeLayer: View {
             ForEach(ports.sorted { $0.key < $1.key }, id: \.key) { _, port in
                 TreePort()
                     .position(port)
-                    .transition(.opacity.animation(.easeOut(duration: 0.28)))
+                    .transition(.asymmetric(
+                        insertion: .scale(scale: 0.2).combined(with: .opacity).animation(TreeEdgeStyle.portIn),
+                        removal: .scale(scale: 0.2).combined(with: .opacity).animation(TreeEdgeStyle.portOut)))
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        // Rows moving carry their edges and ports with them, on the rows' spring.
+        .animation(MotionPreferences.shared.animation(.sidebar, TreeEdgeStyle.follow),
+                   value: edges.map { [$0.port.x, $0.port.y, $0.end.x, $0.end.y] })
     }
 
     private struct Edge: Identifiable {
@@ -123,7 +143,8 @@ private struct TreeEdgeView: View {
             .stroke(TreeEdgeStyle.ink, style: StrokeStyle(lineWidth: TreeEdgeStyle.lineWidth, lineCap: .round))
             .onAppear {
                 guard motion.animates(.sidebar) else { drawn = true; return }
-                withAnimation(TreeEdgeStyle.ease.delay(delay)) { drawn = true }
+                let length = max(0, end.y - port.y) + max(0, end.x - port.x)
+                withAnimation(TreeEdgeStyle.draw(length: length).delay(delay)) { drawn = true }
             }
     }
 }

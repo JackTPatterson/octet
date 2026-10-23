@@ -230,7 +230,7 @@ struct PermissionBanner: View {
     @State private var showInput = false
 
     var body: some View {
-        if request.toolName == "ExitPlanMode" {
+        if ComposerPlanFollowUp.isPlanTool(request.toolName) {
             PlanApprovalBanner(session: session, request: request)
         } else {
             let kind = ApprovalKind(request)

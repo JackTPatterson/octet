@@ -4,6 +4,26 @@
         <title>Octet</title>
         <item>
             <title>0.1.0</title>
+            <pubDate>Fri, 23 Oct 2026 14:41:13 -0400</pubDate>
+            <link>https://github.com/JackTPatterson/octet</link>
+            <sparkle:version>29</sparkle:version>
+            <sparkle:shortVersionString>0.1.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/JackTPatterson/octet/releases/download/v0.1.0-beta.29/Octet-0.1.0-beta.29-arm64.zip" length="30999696" type="application/octet-stream" sparkle:edSignature="xKN33EpfZw92lkVnYp4gzEoCoSU5dIw+kfigYw8RRO1inNb5sYRScvAAZeAQR+IxkaCJ3zAgi7a7GJXRfcFsCA=="/>
+        </item>
+        <item>
+            <title>0.1.0</title>
+            <pubDate>Thu, 22 Oct 2026 11:43:41 -0400</pubDate>
+            <link>https://github.com/JackTPatterson/octet</link>
+            <sparkle:version>28</sparkle:version>
+            <sparkle:shortVersionString>0.1.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/JackTPatterson/octet/releases/download/v0.1.0-beta.28/Octet-0.1.0-beta.28-arm64.zip" length="30934302" type="application/octet-stream" sparkle:edSignature="UfRC0t2gph7i4y13ARWIeyz9uj2sWd9MvqiFiLskRxXyLY5hMAg7Tjrd4f5b/clyIuWT+CNpCog+EuC8SEVRAA=="/>
+        </item>
+        <item>
+            <title>0.1.0</title>
             <pubDate>Thu, 22 Oct 2026 10:08:43 -0400</pubDate>
             <link>https://github.com/JackTPatterson/octet</link>
             <sparkle:version>27</sparkle:version>
@@ -11,26 +31,6 @@
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
             <enclosure url="https://github.com/JackTPatterson/octet/releases/download/v0.1.0-beta.27/Octet-0.1.0-beta.27-arm64.zip" length="30936952" type="application/octet-stream" sparkle:edSignature="JfpPR9Ba/i0oi1yMZUxq5db9bcO9GOPVn5xn7Rr193V2KxVNDprnNwZ2R0MbLL4taIeAHGEid2Kq1GEEyoqODQ=="/>
-        </item>
-        <item>
-            <title>0.1.0</title>
-            <pubDate>Wed, 21 Oct 2026 17:33:09 -0400</pubDate>
-            <link>https://github.com/JackTPatterson/octet</link>
-            <sparkle:version>26</sparkle:version>
-            <sparkle:shortVersionString>0.1.0</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/JackTPatterson/octet/releases/download/v0.1.0-beta.26/Octet-0.1.0-beta.26-arm64.zip" length="30753444" type="application/octet-stream" sparkle:edSignature="8HYGJZbMoriC+GNvWttxPRYSJK2hlk70bbuSj7N4bg/M5S+sJOrTU9UPnNaF52yttuZZBmukDs8nLRLb6btHCQ=="/>
-        </item>
-        <item>
-            <title>0.1.0</title>
-            <pubDate>Wed, 21 Oct 2026 13:24:02 -0400</pubDate>
-            <link>https://github.com/JackTPatterson/octet</link>
-            <sparkle:version>25</sparkle:version>
-            <sparkle:shortVersionString>0.1.0</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/JackTPatterson/octet/releases/download/v0.1.0-beta.25/Octet-0.1.0-beta.25-arm64.zip" length="30577343" type="application/octet-stream" sparkle:edSignature="FtVDufIzjkIMMST2aspwUk6kbcpzz26V37oNJqnvx2MSCWViCCHvE8UZCnJz1jnrxyucl0iGZZbPM/pWVvsDDg=="/>
         </item>
     </channel>
 </rss>

@@ -233,7 +233,7 @@ final class WaitCenter: ObservableObject {
         // The agent still running in a terminal, waiting at its prompt.
         if let sessionId = wait.origin.sessionId,
            let agent = store.snapshot.agents.first(where: { agent in
-               agent.sessionReference == sessionId || agent.terminalId.flatMap(store.recovery.sessionId(forTerminal:)) == sessionId
+               agent.sessionReference == sessionId || store.recovery.journalSessionId(of: agent) == sessionId
            }),
            agent.agentStatus == .idle || agent.agentStatus == .done {
             let client = store.client
@@ -361,7 +361,7 @@ final class WaitCenter: ObservableObject {
         } else if let workspaceId, let store,
                   let agent = store.primaryAgent(in: store.snapshot.agents(inWorkspace: workspaceId)) {
             origin.agent = AgentBrand.forAgent(agent.agent)?.id ?? agent.agent
-            origin.sessionId = agent.sessionReference ?? agent.terminalId.flatMap(store.recovery.sessionId(forTerminal:))
+            origin.sessionId = store.recovery.sessionId(of: agent)
         }
         return origin
     }
@@ -482,7 +482,7 @@ final class WaitCenter: ObservableObject {
                                      workspaceId: paneInfo.workspaceId, workspaceLabel: workspace?.label)
             if let agent = snapshot.agents.first(where: { $0.paneId == pane }) {
                 origin.agent = AgentBrand.forAgent(agent.agent)?.id ?? agent.agent
-                origin.sessionId = agent.sessionReference ?? agent.terminalId.flatMap(store.recovery.sessionId(forTerminal:))
+                origin.sessionId = store.recovery.sessionId(of: agent)
                 if let agentCwd = agent.cwd { origin.cwd = agentCwd }
             }
             return origin

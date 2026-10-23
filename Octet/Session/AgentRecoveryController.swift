@@ -92,8 +92,23 @@ final class AgentRecoveryController: ObservableObject {
 
     /// The session a running agent's terminal is on, once Octet has seen its
     /// id: from the agent's own report, or its session files.
-    func sessionId(forTerminal terminalId: String) -> String? {
-        journal.records.first { $0.terminalId == terminalId }?.sessionId
+    /// The session `agent` is on: what the session server reports for it,
+    /// else the newest the journal has for its terminal, each only when it's
+    /// this agent's own.
+    func sessionId(of agent: EngineAgent) -> String? {
+        reportedSessionId(of: agent) ?? journalSessionId(of: agent)
+    }
+
+    /// The journal's newest session for `agent`'s terminal, by the same agent.
+    func journalSessionId(of agent: EngineAgent) -> String? {
+        guard let terminal = agent.terminalId, let kind = agent.agent else { return nil }
+        return AgentRecovery.sessionId(in: journal.records, terminal: terminal, agent: kind)
+    }
+
+    private func reportedSessionId(of agent: EngineAgent) -> String? {
+        guard let reference = agent.agentSession, let value = reference.value else { return nil }
+        guard let owner = reference.agent, let kind = agent.agent else { return value }
+        return AgentRecovery.kind(owner) == AgentRecovery.kind(kind) ? value : nil
     }
 
     /// Past sessions with a known id that aren't running, newest first, for

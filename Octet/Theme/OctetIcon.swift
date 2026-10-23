@@ -68,6 +68,7 @@ struct OctetIcon: View {
         "tool.search": .init("search-normal"),
         "tool.web": .init("global-search"),
         "tool.fetch": .init("global"),
+        "code": .init("code-1"),
         "tool.run": .init("code-1"),
         "tool.agent": .init("profile-2user"),
         "tool.todo": .init("task-square"),
@@ -96,6 +97,8 @@ struct OctetIcon: View {
         "sparkle.magnifyingglass": .init("search-status"),
         "terminal": .init("terminal-square"),
         "sidebar.left": .symbol("rectangle.leftthird.inset.filled"),
+        // The editor's file tree, as Xcode's and Finder's navigator toggles.
+        "files.navigator": .symbol("sidebar.left"),
         "chevron.down": .init("arrow-down-02"),
         "chevron.left": .init("arrow-left-02"),
         "chevron.right": .init("arrow-right-02"),
@@ -115,8 +118,7 @@ struct OctetIcon: View {
         "rotate.ccw": .init("rotate-right", mirrored: true),
         /// T3 Code's undo-2: a row's Reset to Default.
         "undo": .symbol("arrow.uturn.backward"),
-        "arrow.counterclockwise.circle": .init("refresh-circle"),
-        "arrow.counterclockwise.circle.fill": .init("refresh-circle"),
+        "arrow.counterclockwise": .init("rotate-right", mirrored: true),
         "clock.arrow.circlepath": .init("clock"),
         "clock": .init("clock"),
         "arrow.up.left.and.arrow.down.right": .init("maximize-4"),

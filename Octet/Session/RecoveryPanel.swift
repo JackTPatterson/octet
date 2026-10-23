@@ -6,10 +6,16 @@ import SwiftUI
 /// A floating glass card, after T3 Code's dialogs, that stays out of the
 /// terminal's way: no Return/Esc shortcuts, since the panel isn't modal and
 /// those keys belong to the terminal you keep typing in.
+///
+/// Rows are two lines, so a screenful fits: the name, then where it ran and
+/// what it last said. What can't come back sits in its own folded section
+/// at the end rather than among what can.
 struct RecoveryPanel: View {
     @ObservedObject var center: RecoveryCenter
-    @State private var collapsed: Set<String> = []
+    @State private var collapsed: Set<String> = [RecoveryPanel.unavailableGroup]
     @State private var expanded: Set<String> = []
+
+    private static let unavailableGroup = "unavailable"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -17,14 +23,13 @@ struct RecoveryPanel: View {
             if center.items.isEmpty {
                 emptyState
             } else {
-                if center.restorable.count > 1, !center.isFinished { selectionBar }
                 Rectangle().fill(Theme.divider).frame(height: 1)
                 list
             }
             Rectangle().fill(Theme.divider).frame(height: 1)
             footer
         }
-        .frame(width: 440)
+        .frame(width: 460)
         .octetGlass(cornerRadius: 14, fill: Theme.card)
         .environment(\.colorScheme, Theme.colorScheme)
         .onChange(of: center.items.map(\.id)) { _, ids in
@@ -35,17 +40,10 @@ struct RecoveryPanel: View {
     // MARK: - Header
 
     private var header: some View {
-        HStack(alignment: .top, spacing: 12) {
-            ZStack {
-                RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous)
-                    .fill(Theme.accent.opacity(0.14))
-                OctetIcon(center.isFinished ? "checkmark" : "arrow.counterclockwise.circle", size: 15)
-                    .foregroundStyle(Theme.accent)
-            }
-            .frame(width: 30, height: 30)
-            VStack(alignment: .leading, spacing: 3) {
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(Theme.interfaceFont(13, weight: .semibold))
+                    .font(Theme.interfaceFont(14, weight: .semibold))
                     .foregroundStyle(Theme.textPrimary)
                 Text(subtitle)
                     .font(Theme.captionFont)
@@ -57,9 +55,9 @@ struct RecoveryPanel: View {
                 MotionPreferences.shared.perform(.palette) { center.close() }
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 14)
-        .padding(.bottom, 12)
+        .padding(.leading, 16)
+        .padding(.trailing, 12)
+        .padding(.vertical, 12)
     }
 
     private var title: String {
@@ -87,72 +85,77 @@ struct RecoveryPanel: View {
         if center.mode == .history {
             return "Not running now. Resume any of them in its workspace."
         }
-        let lost = items.filter { $0.status != .restored }
+        let lost = items.filter { $0.status != .restored && !$0.status.isUnavailable }
         return "\(RecoveryList.countPhrase(lost)) stopped when the terminal server did."
-    }
-
-    // MARK: - Selection
-
-    private var selectionBar: some View {
-        HStack(spacing: 8) {
-            Toggle(isOn: Binding(get: { center.allSelected }, set: { center.selectAll($0) })) {
-                Text("Select all")
-            }
-            .toggleStyle(OctetCheckboxStyle())
-            .disabled(center.isRestoring)
-            Spacer()
-            Text("\(center.chosen.count) of \(center.restorable.count) selected")
-                .font(Theme.captionFont.monospacedDigit())
-                .foregroundStyle(Theme.textTertiary)
-        }
-        .padding(.horizontal, 16)
-        .padding(.bottom, 10)
     }
 
     // MARK: - List
 
     private var list: some View {
-        let groups = RecoveryList.groups(center.items)
+        let open = center.items.filter { !$0.status.isUnavailable }
+        let unavailable = center.items.filter(\.status.isUnavailable)
         return ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                ForEach(groups) { group in
-                    OctetCollapsible(
-                        title: group.title,
-                        open: Binding(get: { !collapsed.contains(group.id) },
-                                      set: { open in if open { collapsed.remove(group.id) } else { collapsed.insert(group.id) } }),
-                        trailing: {
-                            Text("\(group.items.count)")
-                                .font(Theme.captionFont.monospacedDigit())
-                                .foregroundStyle(Theme.textTertiary)
-                        }
-                    ) {
-                        VStack(spacing: 2) {
-                            ForEach(group.items) { item in
-                                RecoveryItemRow(
-                                    item: item,
-                                    selected: center.selected.contains(item.id),
-                                    expanded: expanded.contains(item.id),
-                                    busy: center.isRestoring,
-                                    toggle: { center.toggle(item.id) },
-                                    toggleError: {
-                                        if expanded.contains(item.id) { expanded.remove(item.id) } else { expanded.insert(item.id) }
-                                    },
-                                    restore: { center.restore([item.id]) },
-                                    dismiss: { MotionPreferences.shared.perform(.palette) { center.dismiss(item.id) } },
-                                    copy: { center.copyCommand(item) }
-                                )
-                                .transition(.opacity)
-                            }
-                        }
-                        .padding(.bottom, 6)
-                    }
-                    .padding(.horizontal, 10)
+            LazyVStack(alignment: .leading, spacing: 0, pinnedViews: []) {
+                ForEach(RecoveryList.groups(open)) { group in
+                    section(id: group.id, title: group.title, items: group.items, selectable: true)
+                }
+                if !unavailable.isEmpty {
+                    section(id: Self.unavailableGroup, title: "Can't be restored", items: unavailable, selectable: false)
                 }
             }
-            .padding(.bottom, 4)
+            .padding(.vertical, 6)
         }
-        .frame(maxHeight: 360)
+        .frame(maxHeight: 400)
         .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func section(id: String, title: String, items: [RecoveryItem], selectable: Bool) -> some View {
+        let isOpen = !collapsed.contains(id)
+        let ids = items.filter(\.status.canRestore).map(\.id)
+        return VStack(alignment: .leading, spacing: 1) {
+            RecoverySectionHeader(
+                title: title,
+                count: items.count,
+                open: isOpen,
+                check: selectable && !ids.isEmpty && !center.isFinished ? checkState(ids) : nil,
+                busy: center.isRestoring,
+                toggleOpen: {
+                    MotionPreferences.shared.perform(.palette) {
+                        if isOpen { collapsed.insert(id) } else { collapsed.remove(id) }
+                    }
+                },
+                toggleCheck: { select(ids, checkState(ids) != .on) }
+            )
+            if isOpen {
+                ForEach(items) { item in
+                    RecoveryItemRow(
+                        item: item,
+                        selected: center.selected.contains(item.id),
+                        expanded: expanded.contains(item.id),
+                        busy: center.isRestoring,
+                        toggle: { center.toggle(item.id) },
+                        toggleError: {
+                            if expanded.contains(item.id) { expanded.remove(item.id) } else { expanded.insert(item.id) }
+                        },
+                        restore: { center.restore([item.id]) },
+                        dismiss: { MotionPreferences.shared.perform(.palette) { center.dismiss(item.id) } },
+                        copy: { center.copyCommand(item) }
+                    )
+                    .transition(.opacity)
+                }
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.bottom, 4)
+    }
+
+    private func checkState(_ ids: [String]) -> RecoveryCheck.State {
+        let chosen = ids.filter(center.selected.contains).count
+        return chosen == 0 ? .off : chosen == ids.count ? .on : .mixed
+    }
+
+    private func select(_ ids: [String], _ on: Bool) {
+        if on { center.selected.formUnion(ids) } else { center.selected.subtract(ids) }
     }
 
     // MARK: - Empty
@@ -192,6 +195,16 @@ struct RecoveryPanel: View {
                     MotionPreferences.shared.perform(.palette) { center.close() }
                 }
             } else {
+                if center.restorable.count > 1 {
+                    RecoveryCheck(state: checkState(center.restorable.map(\.id)), busy: center.isRestoring) {
+                        center.selectAll(!center.allSelected)
+                    }
+                    .accessibilityLabel("Select all")
+                    Text("\(center.chosen.count) of \(center.restorable.count)")
+                        .font(Theme.captionFont.monospacedDigit())
+                        .foregroundStyle(Theme.textTertiary)
+                }
+                Spacer()
                 if center.mode == .history {
                     OctetButton(title: "Close", kind: .ghost) {
                         MotionPreferences.shared.perform(.palette) { center.close() }
@@ -202,22 +215,101 @@ struct RecoveryPanel: View {
                     }
                     .help("Set them aside. Recover Sessions in the palette or File menu brings them back.")
                 }
-                Spacer()
                 OctetButton(
                     title: RecoveryList.restoreTitle(selected: center.chosen.count, restorable: center.restorable.count),
-                    icon: "arrow.counterclockwise.circle",
+                    icon: "arrow.counterclockwise",
                     kind: .primary
                 ) { center.restoreChosen() }
                 .disabled(center.chosen.isEmpty)
             }
         }
-        .padding(.horizontal, 16)
+        .padding(.leading, 16)
+        .padding(.trailing, 12)
         .frame(height: 52)
     }
 }
 
-/// One session or terminal: its mark, name, folder, when it was last seen,
-/// what it last said, and how it stands.
+/// A checkbox with a third state, for a group or the whole list when only
+/// some of it is chosen.
+private struct RecoveryCheck: View {
+    enum State { case off, mixed, on }
+
+    let state: State
+    let busy: Bool
+    let action: () -> Void
+    @SwiftUI.State private var hovered = false
+
+    var body: some View {
+        let lit = state != .off
+        let shape = RoundedRectangle(cornerRadius: Theme.Radius.sm)
+        Button(action: action) {
+            ZStack {
+                shape.fill(lit ? Theme.accent : Theme.terminalBackground.opacity(0.7))
+                shape.strokeBorder(lit ? Theme.accent : hovered ? Theme.textTertiary : Theme.border, lineWidth: 1)
+                switch state {
+                case .on: OctetIcon("check", size: 11).foregroundStyle(Theme.onAccent)
+                case .mixed: Capsule().fill(Theme.onAccent).frame(width: 8, height: 2)
+                case .off: EmptyView()
+                }
+            }
+            .frame(width: 16, height: 16)
+            .contentShape(Rectangle())
+            .animation(.easeOut(duration: 0.1), value: state)
+        }
+        .buttonStyle(.plain)
+        .disabled(busy)
+        .opacity(busy ? 0.64 : 1)
+        .onHover { hovered = $0 && !busy }
+        .accessibilityValue(state == .on ? "Checked" : state == .mixed ? "Some checked" : "Unchecked")
+    }
+}
+
+/// A workspace's heading: its name and count, folding its rows away, with a
+/// checkbox for all of them.
+private struct RecoverySectionHeader: View {
+    let title: String
+    let count: Int
+    let open: Bool
+    let check: RecoveryCheck.State?
+    let busy: Bool
+    let toggleOpen: () -> Void
+    let toggleCheck: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            if let check {
+                RecoveryCheck(state: check, busy: busy, action: toggleCheck)
+                    .accessibilityLabel("Select \(title)")
+            }
+            Button(action: toggleOpen) {
+                HStack(spacing: 6) {
+                    Text(title.uppercased())
+                        .font(Theme.interfaceFont(11, weight: .semibold))
+                        .tracking(0.6)
+                        .foregroundStyle(Theme.textTertiary)
+                        .lineLimit(1)
+                    Text("\(count)")
+                        .font(Theme.interfaceFont(11).monospacedDigit())
+                        .foregroundStyle(Theme.textTertiary.opacity(0.8))
+                    Spacer(minLength: 4)
+                    OctetIcon("chevron.right", size: 9)
+                        .foregroundStyle(Theme.textTertiary)
+                        .rotationEffect(.degrees(open ? 90 : 0))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(title)
+            .accessibilityValue(open ? "Expanded" : "Collapsed")
+        }
+        .padding(.horizontal, 8)
+        .padding(.top, 8)
+        .padding(.bottom, 4)
+    }
+}
+
+/// One session or terminal on two lines: its mark and name, then where it
+/// ran and what it last said. The age gives way to its actions on hover.
 private struct RecoveryItemRow: View {
     let item: RecoveryItem
     let selected: Bool
@@ -234,7 +326,7 @@ private struct RecoveryItemRow: View {
         HStack(alignment: .top, spacing: 10) {
             checkbox
             mark
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(item.title)
                         .font(item.terminalRecord != nil ? Theme.monoFont : Theme.uiFontMedium)
@@ -247,43 +339,21 @@ private struct RecoveryItemRow: View {
                             .lineLimit(1)
                     }
                     Spacer(minLength: 4)
-                    // The row's actions take the age's place while it's
-                    // hovered, so they cost the text no room at rest.
-                    if item.status.canRestore, hovered || item.status.isFailed, !busy {
-                        actions
-                    } else {
-                        Text(WorkspaceActivity.ageLabel(since: item.lastSeen))
-                            .font(Theme.captionFont.monospacedDigit())
-                            .foregroundStyle(Theme.textTertiary)
-                            .frame(height: 22)
-                            .help(item.lastSeen.formatted(date: .abbreviated, time: .shortened))
-                    }
+                    trailing
                 }
-                Text(abbreviateHome(item.cwd))
-                    .font(Theme.captionFont)
-                    .foregroundStyle(Theme.textTertiary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .help(item.cwd)
-                if let preview = item.preview, !item.status.isUnavailable {
-                    Text(preview)
-                        .font(Theme.uiFont)
-                        .foregroundStyle(Theme.textSecondary)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 1)
-                }
-                statusLine
+                .frame(height: 20)
+                subline
+                if expanded, case .failed(let error) = item.status { errorDetail(error) }
             }
-            trailing
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 8)
+        .padding(.vertical, 6)
         .background(RoundedRectangle(cornerRadius: Theme.controlRadius, style: .continuous)
             .fill(hovered && item.status.canRestore ? Theme.hover.opacity(0.7) : .clear))
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
         .onTapGesture { if item.status.canRestore, !busy { toggle() } }
+        .help([item.cwd, item.preview].compactMap { $0 }.joined(separator: "\n\n"))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(item.title), \(abbreviateHome(item.cwd))")
         // The row's buttons show on hover; these reach them without it.
@@ -302,7 +372,7 @@ private struct RecoveryItemRow: View {
             Toggle(isOn: Binding(get: { selected }, set: { _ in toggle() })) { EmptyView() }
                 .toggleStyle(OctetCheckboxStyle())
                 .disabled(busy)
-                .padding(.top, 1)
+                .padding(.top, 2)
                 .accessibilityLabel("Include \(item.title)")
         } else {
             Color.clear.frame(width: 16, height: 16)
@@ -313,9 +383,9 @@ private struct RecoveryItemRow: View {
         ZStack {
             RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Theme.hover)
             if let brand = item.agent.flatMap(AgentBrand.forAgent) {
-                AgentLogo(brand: brand, size: 13)
+                AgentLogo(brand: brand, size: 12)
             } else {
-                OctetIcon("terminal", size: 12).foregroundStyle(Theme.textSecondary)
+                OctetIcon("terminal", size: 11).foregroundStyle(Theme.textSecondary)
             }
         }
         .frame(width: 20, height: 20)
@@ -323,73 +393,89 @@ private struct RecoveryItemRow: View {
         .help(item.agent.flatMap(AgentBrand.forAgent)?.displayName ?? "Terminal")
     }
 
+    /// The folder's last two parts, so rows in one workspace tell apart.
+    private var place: String {
+        let parts = abbreviateHome(item.cwd).split(separator: "/", omittingEmptySubsequences: false)
+        return parts.count > 2 ? parts.suffix(2).joined(separator: "/") : parts.joined(separator: "/")
+    }
+
     @ViewBuilder
-    private var statusLine: some View {
+    private var subline: some View {
         switch item.status {
-        case .failed(let error):
-            VStack(alignment: .leading, spacing: 6) {
-                Button(action: toggleError) {
-                    HStack(spacing: 4) {
-                        OctetIcon("exclamationmark.triangle.fill", size: 11)
-                        Text("Couldn't restore")
-                            .font(Theme.captionFont.weight(.medium))
-                        OctetIcon("chevron.right", size: 9)
-                            .rotationEffect(.degrees(expanded ? 90 : 0))
-                    }
-                    .foregroundStyle(Theme.danger)
-                    .contentShape(Rectangle())
+        case .failed:
+            Button(action: toggleError) {
+                HStack(spacing: 4) {
+                    OctetIcon("exclamationmark.triangle.fill", size: 10)
+                    Text("Couldn't restore")
+                        .font(Theme.captionFont.weight(.medium))
+                    Text(expanded ? "Hide details" : "Details")
+                        .font(Theme.captionFont)
+                        .underline()
                 }
-                .buttonStyle(.plain)
-                .accessibilityValue(expanded ? "Details shown" : "Details hidden")
-                if expanded {
-                    Text(error)
-                        .font(Theme.monoFont)
-                        .foregroundStyle(Theme.textSecondary)
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
-                            .fill(Theme.terminalBackground.opacity(0.6)))
-                        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
-                            .strokeBorder(Theme.danger.opacity(0.35), lineWidth: 1))
-                }
+                .foregroundStyle(Theme.danger)
+                .contentShape(Rectangle())
             }
-            .padding(.top, 2)
+            .buttonStyle(.plain)
+            .accessibilityValue(expanded ? "Details shown" : "Details hidden")
         case .unavailable(let reason):
-            Text(reason)
+            Text("\(place) · \(reason)")
                 .font(Theme.captionFont)
                 .foregroundStyle(Theme.textTertiary)
-                .padding(.top, 1)
+                .lineLimit(1)
+                .truncationMode(.middle)
         default:
-            EmptyView()
+            (Text(place).foregroundStyle(Theme.textTertiary)
+                + Text(item.preview.map { "  " + Self.oneLine($0) } ?? "").foregroundStyle(Theme.textSecondary))
+                .font(Theme.captionFont)
+                .lineLimit(1)
+                .truncationMode(.tail)
         }
+    }
+
+    private static func oneLine(_ text: String) -> String {
+        text.split(whereSeparator: \.isNewline).joined(separator: " ")
+    }
+
+    private func errorDetail(_ error: String) -> some View {
+        Text(error)
+            .font(Theme.monoFont)
+            .foregroundStyle(Theme.textSecondary)
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
+                .fill(Theme.terminalBackground.opacity(0.6)))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
+                .strokeBorder(Theme.danger.opacity(0.35), lineWidth: 1))
+            .padding(.top, 4)
     }
 
     @ViewBuilder
     private var trailing: some View {
-        Group {
-            switch item.status {
-            case .restoring:
-                RecoverySpinner().frame(width: 22, height: 22)
-                    .accessibilityLabel("Restoring")
-            case .restored:
-                OctetIcon("checkmark.circle.fill", size: 15)
-                    .foregroundStyle(Theme.accent)
-                    .frame(width: 22, height: 22)
-                    .accessibilityLabel("Restored")
-            case .unavailable:
-                HStack(spacing: 2) {
-                    Text("Unavailable")
-                        .font(Theme.captionFont)
-                        .foregroundStyle(Theme.textTertiary)
-                        .padding(.horizontal, 6)
-                        .frame(height: 18)
-                        .background(Capsule().fill(Theme.hover))
-                    if hovered { OctetIconButton(icon: "xmark", help: "Dismiss", compact: true, action: dismiss) }
-                }
-            case .ready, .failed:
-                EmptyView()
+        switch item.status {
+        case .restoring:
+            RecoverySpinner().frame(width: 22, height: 22)
+                .accessibilityLabel("Restoring")
+        case .restored:
+            OctetIcon("checkmark.circle.fill", size: 14)
+                .foregroundStyle(Theme.accent)
+                .frame(width: 22, height: 22)
+                .accessibilityLabel("Restored")
+        case .unavailable:
+            if hovered {
+                OctetIconButton(icon: "xmark", help: "Dismiss", compact: true, action: dismiss)
+            }
+        case .ready, .failed:
+            // Actions take the age's place while hovered (or failed), so
+            // they cost the text no room at rest.
+            if hovered || item.status.isFailed, !busy {
+                actions
+            } else {
+                Text(WorkspaceActivity.ageLabel(since: item.lastSeen))
+                    .font(Theme.captionFont.monospacedDigit())
+                    .foregroundStyle(Theme.textTertiary)
+                    .help(item.lastSeen.formatted(date: .abbreviated, time: .shortened))
             }
         }
     }
@@ -400,7 +486,7 @@ private struct RecoveryItemRow: View {
                 OctetIconButton(icon: "doc.on.doc", help: item.command.map { "Copy \($0)" } ?? "Copy the resume command",
                                 compact: true, action: copy)
             }
-            OctetIconButton(icon: item.status.isFailed ? "arrow.clockwise" : "arrow.counterclockwise.circle",
+            OctetIconButton(icon: item.status.isFailed ? "arrow.clockwise" : "arrow.counterclockwise",
                             help: item.status.isFailed ? "Try again" : "Restore", compact: true, action: restore)
             OctetIconButton(icon: "xmark", help: "Dismiss", compact: true, action: dismiss)
         }

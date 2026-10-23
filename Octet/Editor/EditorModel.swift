@@ -188,7 +188,7 @@ final class EditorWorkspace: ObservableObject {
     @Published private(set) var documents: [EditorDocument] = []
     @Published var activeID: String?
     @Published var isPresented = false
-    @Published var fileTreeVisible = true
+    @Published var fileTreeVisible = false
     @Published var filePickerVisible = false
     @Published var presentation: Presentation = .split
     var requestedPresentation: Presentation = .split

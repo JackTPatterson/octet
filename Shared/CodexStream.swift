@@ -154,6 +154,19 @@ extension AgentConversation {
             } else {
                 items.append(AgentItem(id: id, kind: .thinking(text)))
             }
+        case "plan":
+            // Plan mode's proposed plan, as Claude's ExitPlanMode call, so
+            // the plan follow-up and the todo panel read both alike.
+            let text = (item["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return }
+            var call = AgentToolCall(name: "ExitPlanMode", summary: "", input: text)
+            call.inputData = try? JSONSerialization.data(withJSONObject: ["plan": text])
+            call.result = ""
+            if let position = items.firstIndex(where: { $0.id == id }) {
+                items[position].kind = .tool(call)
+            } else {
+                items.append(AgentItem(id: id, kind: .tool(call)))
+            }
         default:
             applyCodexTool(id: id, item: item)
         }

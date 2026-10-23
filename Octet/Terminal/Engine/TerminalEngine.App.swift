@@ -476,13 +476,34 @@ extension TerminalEngine {
                 return true
             }
 
-            switch action.kind {
+            // Octet: a file opens in Octet's editor, beside the terminal it
+            // was clicked in. ⇧⌘-click, a folder, or a file the editor can't
+            // show opens as before.
+            if TerminalFileLink.mayBeFile(action.url), !NSEvent.modifierFlags.contains(.shift) {
+                let link = action.url
+                let kind = action.kind
+                DispatchQueue.main.async { [weak surfaceView] in
+                    MainActor.assumeIsolated {
+                        guard !TerminalLinkRouter.openFile(link, from: surfaceView) else { return }
+                        openOutside(url, kind: kind)
+                    }
+                }
+                return true
+            }
+            openOutside(url, kind: action.kind)
+            return true
+        }
+
+        /// Ghostty's own handling: a text file in the default editor for
+        /// its kind, anything else in its default app.
+        private static func openOutside(_ url: URL, kind: TerminalEngine.Action.OpenURL.Kind) {
+            switch kind {
             case .text:
                 // Open with the default editor for the extension or just system text editor
                 let editor = NSWorkspace.shared.urlForApplication(toOpen: url)
                 if let textEditor = editor {
                     NSWorkspace.shared.open([url], withApplicationAt: textEditor, configuration: NSWorkspace.OpenConfiguration())
-                    return true
+                    return
                 }
 
             case .html:
@@ -495,7 +516,6 @@ extension TerminalEngine {
 
             // Open with the default application for the URL
             NSWorkspace.shared.open(url)
-            return true
         }
     }
 }

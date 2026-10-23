@@ -127,7 +127,7 @@ final class GitPanelModel: ObservableObject {
             return Records()
         }
         if agent.isSubagentViewer { return Records(toolUseId: agent.subagentToolUseId) }
-        let session = agent.sessionReference ?? agent.terminalId.flatMap { window.store.recovery.sessionId(forTerminal: $0) }
+        let session = window.store.recovery.sessionId(of: agent)
         var records = Records(cwds: agent.searchCwds + [pane.cwd].compactMap { $0 })
         switch AgentBrand.forAgent(agent.agent)?.id {
         case "claude": records.claudeSession = session

@@ -169,6 +169,32 @@ struct ModeChip: View {
     }
 }
 
+/// Plan mode for agents whose own settings have no mode for it (Codex, Pi),
+/// marked as Claude Code's plan mode is: on, the agent reads and plans and
+/// changes nothing. ⇧⇥ toggles it too.
+struct PlanModeToggle: View {
+    @ObservedObject var session: AgentSession
+    @State private var hovered = false
+
+    var body: some View {
+        let on = session.isPlanning
+        Button { session.setPlanning(!on) } label: {
+            HStack(spacing: 6) {
+                Text(ModeStyle.glyph(.plan)).font(ChatStyle.meta)
+                Text("Plan")
+            }
+            .foregroundStyle(on ? ModeStyle.color(.plan) : hovered ? ChatStyle.text : ChatStyle.secondaryText)
+            .chatComposerControl(active: hovered || on)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
+        .help(on ? "Plan mode: reads and plans, changes nothing. Click or ⇧⇥ to leave it."
+                 : "Plan mode: reads and plans, changes nothing. Applies from your next message. ⇧⇥")
+        .accessibilityLabel("Plan mode")
+        .accessibilityValue(on ? "On" : "Off")
+    }
+}
+
 /// Codex's sandboxes marked the way Claude Code's modes are: the safest one
 /// unmarked, anything that writes without asking in its own color, and the
 /// one with no sandbox at all in the same red as bypass.

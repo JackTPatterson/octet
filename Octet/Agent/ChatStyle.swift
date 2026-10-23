@@ -61,17 +61,8 @@ enum ChatStyle {
 
     // MARK: Metrics
 
-    /// --chat-content-max-width (46rem), the column at ordinary widths.
+    /// --chat-content-max-width (46rem), the narrowest column.
     static let columnWidth: CGFloat = 736
-    /// The widest the column grows, so lines on an ultrawide stay readable.
-    static let wideColumnWidth: CGFloat = 1800
-
-    /// The column for a conversation `available` points wide: most of it
-    /// (85%), never narrower than 736 nor wider than 1800, so the sides
-    /// keep a margin without leaving the conversation a thin strip.
-    static func columnWidth(for available: CGFloat) -> CGFloat {
-        min(wideColumnWidth, max(columnWidth, (available * 0.85).rounded()))
-    }
     /// The timeline's and composer's side padding.
     static let gutter: CGFloat = 32
     /// The header's own padding (px-5).
@@ -95,11 +86,12 @@ enum ChatStyle {
 /// part of the conversation measures the same full width, so the
 /// transcript, banners and composer stay lined up as the column grows.
 struct ChatColumn: ViewModifier {
+    @ObservedObject private var sizing = ChatColumnSizing.shared
     @State private var available: CGFloat = 0
 
     func body(content: Content) -> some View {
         content
-            .frame(maxWidth: ChatStyle.columnWidth(for: available))
+            .frame(maxWidth: sizing.width(for: available))
             .padding(.horizontal, ChatStyle.gutter)
             .frame(maxWidth: .infinity)
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { available = $0 }
@@ -108,6 +100,150 @@ struct ChatColumn: ViewModifier {
 
 extension View {
     func chatColumn() -> some View { modifier(ChatColumn()) }
+}
+
+/// How wide the chat column is, set by dragging its edge: a narrower
+/// reading column, the usual one, or the whole width. One choice for every
+/// conversation, kept across launches.
+@MainActor
+final class ChatColumnSizing: ObservableObject {
+    static let shared = ChatColumnSizing()
+
+    enum Snap: String, CaseIterable { case narrow, standard, full }
+
+    @Published var snap: Snap {
+        didSet { UserDefaults.standard.set(snap.rawValue, forKey: Self.key) }
+    }
+
+    private static let key = "octet.chatColumn.snap"
+
+    private init() {
+        snap = UserDefaults.standard.string(forKey: Self.key).flatMap(Snap.init) ?? .standard
+    }
+
+    func width(for available: CGFloat) -> CGFloat { Self.width(of: snap, in: available) }
+
+    /// `snap`'s column in a conversation `available` points wide, the
+    /// three evenly spaced: the 46rem column, the whole width between the
+    /// gutters, and the usual one halfway between them.
+    static func width(of snap: Snap, in available: CGFloat) -> CGFloat {
+        let full = max(0, available - 2 * ChatStyle.gutter)
+        let narrow = min(ChatStyle.columnWidth, full)
+        switch snap {
+        case .narrow: return narrow
+        case .standard: return ((narrow + full) / 2).rounded()
+        case .full: return full
+        }
+    }
+
+    /// The snap whose column is nearest `width`.
+    static func nearest(to width: CGFloat, in available: CGFloat) -> Snap {
+        Snap.allCases.min { abs(Self.width(of: $0, in: available) - width) < abs(Self.width(of: $1, in: available) - width) }
+            ?? .standard
+    }
+}
+
+/// Invisible strips just outside the chat column's two edges. Hovering one
+/// shows a grip; dragging it moves the column between its snap widths as the
+/// pointer passes them, both edges at once since the column stays centred.
+/// Esc puts it back, and a double-click goes back to the usual width.
+struct ChatColumnEdges: View {
+    @ObservedObject private var sizing = ChatColumnSizing.shared
+    @ObservedObject private var motion = MotionPreferences.shared
+    @State private var hovered: Edge?
+    @State private var startSnap: ChatColumnSizing.Snap?
+
+    enum Edge { case leading, trailing }
+
+    private static let strip: CGFloat = 12
+    /// Clear of the find bar along the top.
+    private static let topInset: CGFloat = 44
+
+    var body: some View {
+        GeometryReader { geometry in
+            let available = geometry.size.width
+            let column = min(sizing.width(for: available), available - 2 * ChatStyle.gutter)
+            let half = max(0, column / 2)
+            let centre = available / 2
+            ZStack(alignment: .topLeading) {
+                strip(.leading, available: available)
+                    .offset(x: max(0, centre - half - Self.strip - 2))
+                strip(.trailing, available: available)
+                    .offset(x: min(available - Self.strip, centre + half + 2))
+            }
+            .frame(width: available, height: geometry.size.height, alignment: .topLeading)
+        }
+        .coordinateSpace(name: "chatColumnEdges")
+        .padding(.top, Self.topInset)
+        .onDisappear {
+            if hovered != nil { NSCursor.pop() }
+            hovered = nil
+            if startSnap != nil { ResizeCancel.shared.end() }
+            startSnap = nil
+        }
+    }
+
+    private func strip(_ edge: Edge, available: CGFloat) -> some View {
+        let lit = hovered == edge || startSnap != nil
+        return Color.clear
+            .frame(width: Self.strip)
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .overlay {
+                Capsule()
+                    .fill(startSnap != nil ? Theme.accent : ChatStyle.faintIcon)
+                    .frame(width: 4, height: 44)
+                    .opacity(lit ? 1 : 0)
+                    .animation(.easeOut(duration: 0.12), value: lit)
+            }
+            .onHover { inside in
+                if inside, hovered == nil {
+                    hovered = edge
+                    NSCursor.resizeLeftRight.push()
+                } else if !inside, hovered == edge {
+                    hovered = nil
+                    NSCursor.pop()
+                }
+            }
+            .gesture(
+                DragGesture(minimumDistance: 1, coordinateSpace: .named("chatColumnEdges"))
+                    .onChanged { drag in
+                        if startSnap == nil {
+                            let start = sizing.snap
+                            startSnap = start
+                            ResizeCancel.shared.begin { settle(start) }
+                        }
+                        guard ResizeCancel.shared.isLive else { return }
+                        NSCursor.resizeLeftRight.set()
+                        settle(ChatColumnSizing.nearest(to: 2 * abs(drag.location.x - available / 2), in: available))
+                    }
+                    .onEnded { drag in
+                        if ResizeCancel.shared.isLive {
+                            // A flick carries on to where it was headed.
+                            settle(ChatColumnSizing.nearest(to: 2 * abs(drag.predictedEndLocation.x - available / 2),
+                                                            in: available))
+                        }
+                        startSnap = nil
+                        ResizeCancel.shared.end()
+                    }
+            )
+            .onTapGesture(count: 2) { settle(.standard) }
+            .help("Drag to widen the conversation. Double-click to reset.")
+            .accessibilityLabel("Conversation width")
+            .accessibilityValue(sizing.snap.rawValue)
+            .accessibilityAdjustableAction { direction in
+                let all = ChatColumnSizing.Snap.allCases
+                guard let index = all.firstIndex(of: sizing.snap) else { return }
+                let next = direction == .increment ? min(all.count - 1, index + 1) : max(0, index - 1)
+                settle(all[next])
+            }
+    }
+
+    private func settle(_ snap: ChatColumnSizing.Snap) {
+        guard snap != sizing.snap else { return }
+        // A layout change, like the sidebar's.
+        motion.perform(.sidebar, .smooth(duration: 0.24)) { sizing.snap = snap }
+    }
 }
 
 /// T3 Code's outline button (variant="outline" size="xs"): a hairline,

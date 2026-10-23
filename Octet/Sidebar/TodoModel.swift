@@ -174,7 +174,7 @@ final class TodoModel: ObservableObject {
             for agent in store.snapshot.agents where agent.tabId == tabId && !agent.isSubagentViewer {
                 let brand = AgentBrand.forAgent(agent.agent)
                 guard let brandId = brand?.id,
-                      let sessionId = agent.sessionReference ?? agent.terminalId.flatMap({ store.recovery.sessionId(forTerminal: $0) })
+                      let sessionId = store.recovery.sessionId(of: agent)
                 else { continue }
                 let section = Section(id: "pane:\(agent.paneId)", agent: brandId, title: brand?.displayName ?? brandId, todos: [],
                                       running: [.working, .blocked].contains(agent.agentStatus),
@@ -254,12 +254,7 @@ final class TodoModel: ObservableObject {
     /// mode, as the composer's banner reads it.
     private static func proposedPlan(in sessions: [AgentSession]) -> ProposedPlan? {
         for session in sessions {
-            let planMode = switch session.engine {
-            case .claude: session.permissionMode == .plan
-            case .opencode: session.agentName?.lowercased() == "plan"
-            default: false
-            }
-            if let plan = ComposerPlanFollowUp.latestPlan(in: session.conversation.items, planMode: planMode,
+            if let plan = ComposerPlanFollowUp.latestPlan(in: session.conversation.items, planMode: session.isPlanning,
                                                           running: session.conversation.isRunning) {
                 return ProposedPlan(sessionId: session.id, agent: session.engine.agent, plan: plan)
             }

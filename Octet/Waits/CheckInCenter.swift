@@ -333,7 +333,7 @@ final class CheckInCenter: ObservableObject {
             return .conversation(session)
         }
         guard let store, let agent = store.snapshot.agents.first(where: { agent in
-            agent.sessionReference == sessionId || agent.terminalId.flatMap(store.recovery.sessionId(forTerminal:)) == sessionId
+            agent.sessionReference == sessionId || store.recovery.journalSessionId(of: agent) == sessionId
         }) else { return .dead }
         return agent.agentStatus == .idle || agent.agentStatus == .done ? .terminal(agent) : .busy
     }

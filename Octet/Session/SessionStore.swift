@@ -373,7 +373,7 @@ final class SessionStore: ObservableObject {
         // The session each Claude Code pane is on, for reading its log.
         let claudeSessions: [String: (sessionId: String, cwds: [String])] = snapshot.agents.reduce(into: [:]) { found, agent in
             guard AgentBrand.forAgent(agent.agent)?.id == "claude",
-                  let sessionId = agent.sessionReference ?? agent.terminalId.flatMap({ recovery.sessionId(forTerminal: $0) })
+                  let sessionId = recovery.sessionId(of: agent)
             else { return }
             found[agent.paneId] = (sessionId, agent.searchCwds)
         }

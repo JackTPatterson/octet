@@ -159,6 +159,21 @@ enum AgentRecovery {
     /// Past sessions that aren't running now, for recovering by hand.
     /// `liveTerminals` adds terminals running out of sight (a closed tab
     /// kept running), which aren't in `snapshot`.
+    /// The newest session `agent` recorded in `terminalId`. A terminal can
+    /// run one agent after another, and another agent's id would open the
+    /// wrong conversation, or none.
+    static func sessionId(in journal: [AgentSessionRecord], terminal terminalId: String, agent: String) -> String? {
+        let kind = self.kind(agent)
+        return journal
+            .filter { $0.terminalId == terminalId && self.kind($0.agent) == kind && $0.sessionId != nil }
+            .max { $0.lastSeen < $1.lastSeen }?.sessionId
+    }
+
+    /// `claude`, `codex`, …, however the agent was named.
+    static func kind(_ agent: String) -> String {
+        AgentBrand.forAgent(agent)?.id ?? agent.lowercased()
+    }
+
     static func history(journal: [AgentSessionRecord], current snapshot: EngineSnapshot,
                         liveTerminals hidden: Set<String> = []) -> [AgentSessionRecord] {
         let liveTerminals = Set(snapshot.agents.compactMap(\.terminalId)).union(hidden)

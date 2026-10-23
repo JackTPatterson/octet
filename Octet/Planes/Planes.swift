@@ -256,9 +256,16 @@ private struct PlaneRailItem: View {
             .frame(width: 44, height: 38)
             .overlay { MiddleClickCatcher { ui.closePlane(plane.id) } }
             .contentShape(Rectangle())
-            .onTapGesture { MotionPreferences.shared.perform(.tabs) { ui.activePlaneId = plane.id } }
+            // The tab in front again closes the panel, as the toggle does.
+            .onTapGesture {
+                if active {
+                    ui.sidePanelVisible = false
+                } else {
+                    MotionPreferences.shared.perform(.tabs) { ui.activePlaneId = plane.id }
+                }
+            }
             .onHover { hovered = $0 }
-            .help(badge?.help ?? title)
+            .help(active ? "\(badge?.help ?? title). Click to close the panel." : badge?.help ?? title)
             .contextMenu {
                 Button("Close \(title)") { ui.closePlane(plane.id) }
                 Button("Close Others") { ui.closePlanes { $0.id != plane.id } }

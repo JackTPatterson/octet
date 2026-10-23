@@ -21,6 +21,24 @@ enum ComposerPlanFollowUp {
         implementationPrefix + plan.markdown.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// The call an agent hands its plan in with: Claude Code's ExitPlanMode,
+    /// Qwen's exit_plan_mode, and Codex's plan item, which Octet names as
+    /// Claude's.
+    static func isPlanTool(_ name: String) -> Bool {
+        name == "ExitPlanMode" || name == "exit_plan_mode"
+    }
+
+    /// Plan mode for an agent with none of its own (Pi, or Codex before its
+    /// thread says which model it's on): the turn's instructions, sent ahead
+    /// of the message and kept out of the transcript.
+    static let directive = "[Plan mode] Research only: read and search the code as you need, but don't edit or create files or run anything that changes them. End your reply with the plan as a Markdown heading followed by numbered steps.\n\n"
+
+    static func withDirective(_ text: String) -> String { directive + text }
+
+    static func strippingDirective(_ text: String) -> String {
+        text.hasPrefix(directive) ? String(text.dropFirst(directive.count)) : text
+    }
+
     /// The plan the latest turn ended on: Claude's ExitPlanMode call when
     /// nothing ran after it, or else, still in plan mode, a final reply laid
     /// out as a plan (a heading or a list). Nil while the turn runs, out of
@@ -33,7 +51,7 @@ enum ComposerPlanFollowUp {
         let turn = main[(lastUser + 1)...]
         for item in turn.reversed() {
             switch item.kind {
-            case .tool(let call) where call.name == "ExitPlanMode":
+            case .tool(let call) where isPlanTool(call.name):
                 let plan = (call.inputObject?["plan"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 if !plan.isEmpty { return Plan(id: item.id, markdown: plan) }
                 return lastText(in: turn).map { Plan(id: item.id, markdown: $0) }

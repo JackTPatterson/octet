@@ -52,6 +52,13 @@ final class OverviewLogicTests: XCTestCase {
         XCTAssertEqual(RuntimeStates.exitCode(in: "swiftlint exited with code 2"), 2)
         XCTAssertEqual(RuntimeStates.exitCode(in: "Exit code: 0"), 0)
         XCTAssertNil(RuntimeStates.exitCode(in: "Command running in background with ID: b1"))
+        // Only the launch message makes a call a background task, not output
+        // that happens to say "background".
+        XCTAssertTrue(RuntimeStates.launchedInBackground("Command running in background with ID: b1"))
+        XCTAssertTrue(RuntimeStates.launchedInBackground("Command running in background with ID preview-server."))
+        XCTAssertFalse(RuntimeStates.launchedInBackground("    /// Background tasks run here.\nlet x = 1"))
+        XCTAssertFalse(RuntimeStates.launchedInBackground("Moved the job to the background."))
+        XCTAssertFalse(RuntimeStates.launchedInBackground(nil))
         XCTAssertEqual(RuntimeStates.subagentCount(1), "1 subagent")
         XCTAssertEqual(RuntimeStates.subagentCount(3), "3 subagents")
         XCTAssertEqual(RuntimeText.firstLine(of: "\n first \nsecond"), "first")

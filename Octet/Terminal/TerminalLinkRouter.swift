@@ -24,6 +24,35 @@ enum TerminalLinkRouter {
         return true
     }
 
+    /// Opens a ⌘-clicked file path in the editor beside the terminal it was
+    /// clicked in, at the line it names. False when it isn't a file the
+    /// editor shows (a folder, nothing there, or a binary), so the caller
+    /// opens it as before.
+    @discardableResult
+    static func openFile(_ link: String, from view: TerminalEngine.SurfaceView?) -> Bool {
+        let manager = FileManager.default
+        guard let target = TerminalFileLink.resolve(link, cwd: view?.pwd, isFile: { path in
+            var folder: ObjCBool = false
+            return manager.fileExists(atPath: path, isDirectory: &folder) && !folder.boolValue
+        }), FilePreviewMode.mode(forPath: target.path) != .binary,
+              let window = context(for: view?.window) else { return false }
+        // The terminal's own link and Octet's reading of the row can both
+        // answer one click.
+        if let last = lastOpened, last.path == target.path, Date().timeIntervalSince(last.at) < 0.5 { return true }
+        lastOpened = (target.path, Date())
+        window.openFile(URL(fileURLWithPath: target.path), presentation: .split)
+        if let line = target.line { window.editor.reveal(line: line) }
+        return true
+    }
+
+    private static var lastOpened: (path: String, at: Date)?
+
+    private static func context(for window: NSWindow?) -> WindowContext? {
+        let registry = WindowRegistry.shared
+        if let window, let context = registry.windows.first(where: { $0.nsWindow === window }) { return context }
+        return registry.key
+    }
+
     static func ui(for window: NSWindow?) -> UIState? {
         let registry = WindowRegistry.shared
         if let window, let context = registry.windows.first(where: { $0.nsWindow === window }) { return context.ui }
@@ -40,15 +69,36 @@ extension TerminalEngine.SurfaceView {
         guard settings.previewTerminalLinks, settings.previewLinksOnPlainClick,
               event.clickCount == 1,
               event.modifierFlags.intersection([.command, .shift, .option, .control]).isEmpty,
-              let surface, !ghostty_surface_mouse_captured(surface), !ghostty_surface_has_selection(surface) else { return }
+              let surface, !ghostty_surface_mouse_captured(surface), !ghostty_surface_has_selection(surface),
+              let (line, column) = clickedRow(event, pressedAt: pressedAt),
+              let url = PreviewLink.url(inLine: line, column: column), PreviewLink.isLocal(url) else { return }
+        TerminalLinkRouter.open(url, from: self)
+    }
+
+    /// ⌘-click on a path the terminal doesn't underline (`src/app.swift:12`,
+    /// `main.swift:42`): the word under the pointer opens in the editor
+    /// when it's a file. ⇧⌘ is left to the terminal.
+    @MainActor func openFileOnCommandClick(_ event: NSEvent, pressedAt: NSPoint?) {
+        guard event.clickCount == 1,
+              event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command,
+              let surface, !ghostty_surface_mouse_captured(surface),
+              let (line, column) = clickedRow(event, pressedAt: pressedAt),
+              let word = TerminalFileLink.word(inLine: line, column: column) else { return }
+        TerminalLinkRouter.openFile(word, from: self)
+    }
+
+    /// The text of the row clicked and the column within it, for a click
+    /// that didn't drag.
+    @MainActor private func clickedRow(_ event: NSEvent, pressedAt: NSPoint?) -> (String, Int)? {
+        guard let surface else { return nil }
         let point = convert(event.locationInWindow, from: nil)
-        if let pressedAt, hypot(pressedAt.x - point.x, pressedAt.y - point.y) > 3 { return }
+        if let pressedAt, hypot(pressedAt.x - point.x, pressedAt.y - point.y) > 3 { return nil }
         var metrics = ghostty_surface_grid_metrics_s()
-        guard ghostty_surface_grid_metrics(surface, &metrics), metrics.cell_width > 0, metrics.cell_height > 0 else { return }
+        guard ghostty_surface_grid_metrics(surface, &metrics), metrics.cell_width > 0, metrics.cell_height > 0 else { return nil }
         let top = isFlipped ? point.y : bounds.height - point.y
         let column = Int((point.x - metrics.padding_left) / metrics.cell_width)
         let row = Int((top - metrics.padding_top) / metrics.cell_height)
-        guard column >= 0, column < Int(metrics.columns), row >= 0, row < Int(metrics.rows) else { return }
+        guard column >= 0, column < Int(metrics.columns), row >= 0, row < Int(metrics.rows) else { return nil }
         let selection = ghostty_selection_s(
             top_left: ghostty_point_s(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_EXACT, x: 0, y: UInt32(row)),
             bottom_right: ghostty_point_s(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_EXACT,
@@ -56,11 +106,10 @@ extension TerminalEngine.SurfaceView {
             rectangle: false
         )
         var text = ghostty_text_s()
-        guard ghostty_surface_read_text(surface, selection, &text) else { return }
+        guard ghostty_surface_read_text(surface, selection, &text) else { return nil }
         let line = String(cString: text.text)
         ghostty_surface_free_text(surface, &text)
-        guard let url = PreviewLink.url(inLine: line, column: column), PreviewLink.isLocal(url) else { return }
-        TerminalLinkRouter.open(url, from: self)
+        return (line, column)
     }
 }
 

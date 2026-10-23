@@ -126,6 +126,14 @@ final class WindowContext: ObservableObject, Identifiable {
     @Published private(set) var agentUIHandoffTabId: String?
     @Published private(set) var agentUIHandoffTitle: String?
     @Published private(set) var agentUIHandoffWorkspaceId: String?
+    /// The cover's direction: into Octet's conversation view, or back out
+    /// to the agent's own interface in the terminal.
+    @Published private(set) var agentUIHandoffToTerminal = false
+    /// Which cover a timeout or watch belongs to, so a stale one never lifts
+    /// the cover of a later handoff.
+    private var agentUIHandoffToken = 0
+    /// Lifts the cover back to the terminal once the agent runs there.
+    private var agentUIHandoffWatch: AnyCancellable?
     /// Remains true briefly after the handoff cover disappears because the
     /// engine's replacement-tab snapshot can land a frame or two later.
     @Published private(set) var suppressHandoffTabAnimations = false
@@ -887,10 +895,8 @@ final class WindowContext: ObservableObject, Identifiable {
         AgentCenter.shared.setActive(nil, in: focusedWorkspace?.workspaceId)
         AgentCenter.shared.setBoard(nil, in: focusedWorkspace?.workspaceId)
         twin.hide()
-        if presentation == .split {
-            editor.fileTreeVisible = false
-            panelUI.showPlane(.files)
-        }
+        // Just the file: the explorer is a click away (Show Files).
+        if presentation == .split { editor.fileTreeVisible = false }
         editor.open(url, presentation: presentation)
         DebugSnapshot.overlay("editor", editor.isPresented)
     }
@@ -910,10 +916,7 @@ final class WindowContext: ObservableObject, Identifiable {
 
     func toggleEditorPresentation() {
         editor.togglePresentation()
-        if editor.presentation == .split {
-            editor.fileTreeVisible = false
-            panelUI.showPlane(.files)
-        }
+        if editor.presentation == .split { editor.fileTreeVisible = false }
     }
 
     func splitWorkspace(_ workspaceId: String, at edge: SplitEdge) {
@@ -1105,6 +1108,57 @@ final class WindowContext: ObservableObject, Identifiable {
         continueInOctet(agent)
     }
 
+    /// The composer's terminal button, the way back from "Switch to Octet
+    /// UI": the conversation closes and its agent's own interface resumes it
+    /// in the conversation's place on the strip. The terminal kept hidden
+    /// behind the conversation runs it while that's still a bare shell, else
+    /// a new tab does. Either way the Octet view doesn't linger.
+    func continueInTerminal(_ session: AgentSession) {
+        let workspaceId = session.workspaceId
+        let command = session.terminalCommand
+        let snapshot = store.snapshot
+        let gap = shownTabOrders[workspaceId]?.firstIndex(of: "conversation:" + session.id)
+        let backing = conversationBackingTabs.removeValue(forKey: session.id)
+        let backingPane = backing.flatMap { tab -> String? in
+            let panes = snapshot.panes.filter { $0.tabId == tab }
+            guard panes.count == 1, snapshot.agents(inTab: tab).isEmpty else { return nil }
+            return panes[0].paneId
+        }
+        beginAgentUIHandoff(session.engine.agent, workspaceId: workspaceId,
+                            tabId: backingPane != nil ? backing : nil,
+                            title: session.title, toTerminal: true, timeout: 5)
+        // Stopped first, so two processes never write the same session.
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { AgentCenter.shared.close(session) }
+        let arrived: (String) -> Void = { [weak self] tabId in
+            guard let self else { return }
+            self.endAgentUIHandoff(whenAgentRunsIn: tabId)
+            if let gap, self.focusedWorkspace?.workspaceId == workspaceId {
+                self.placeArrivedTab(tabId, atGap: gap) { [weak self] in self?.focusTab(tabId) }
+            } else {
+                self.focusTab(tabId)
+            }
+        }
+        if let backing, let backingPane {
+            store.runInPane(backingPane, line: command)
+            return arrived(backing)
+        }
+        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+        store.call("layout.apply", [
+            "workspace_id": workspaceId,
+            "focus": false,
+            "tab_label": session.title,
+            "root": [
+                "type": "pane", "label": session.title, "cwd": session.cwd,
+                "command": [shell, "-lic", "\(command); exec \(shell) -l"],
+            ] as [String: Any],
+        ], failure: "Couldn't open the conversation in a terminal") { created in
+            guard let tabId = created.tabId else { return }
+            arrived(tabId)
+        }
+    }
+
     private func moveToOctet(_ agent: EngineAgent, engine: AgentSession.Engine) {
         guard let workspaceId = agent.workspaceId ?? focusedWorkspace?.workspaceId else { return }
         let snapshot = store.snapshot
@@ -1113,9 +1167,12 @@ final class WindowContext: ObservableObject, Identifiable {
         // per-process record; the journal's folder-based guess comes last,
         // since panes sharing a folder (or Octet's own conversations there)
         // could hand it someone else's session.
-        let live = (try? store.client.call("pane.process_info", ["pane_id": agent.paneId]))
+        // Each source counts only for this agent: a terminal that ran Claude
+        // Code before Codex still has Claude's session on record, and a
+        // Codex thread opened on that id doesn't exist.
+        let live = engine != .claude ? nil : (try? store.client.call("pane.process_info", ["pane_id": agent.paneId]))
             .flatMap { AgentSessionFiles.claudeSession(processInfo: $0, cwd: agent.effectiveCwd ?? cwd) }
-        let sessionId = live ?? agent.sessionReference ?? agent.terminalId.flatMap { store.recovery.sessionId(forTerminal: $0) }
+        let sessionId = live ?? store.recovery.sessionId(of: agent)
         let label = snapshot.tabs.first { $0.tabId == agent.tabId }.map { TabAutoName.display(label: $0.label, number: $0.number) }
         let title = label.flatMap { TabAutoName.isUnnamed($0) ? nil : $0 }
         beginAgentUIHandoff(engine.agent, workspaceId: workspaceId,
@@ -1217,7 +1274,11 @@ final class WindowContext: ObservableObject, Identifiable {
         }
     }
 
-    private func beginAgentUIHandoff(_ agent: String, workspaceId: String?, tabId: String?, title: String) {
+    private func beginAgentUIHandoff(_ agent: String, workspaceId: String?, tabId: String?, title: String,
+                                     toTerminal: Bool = false, timeout: TimeInterval = 8) {
+        agentUIHandoffToken += 1
+        let token = agentUIHandoffToken
+        agentUIHandoffWatch = nil
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) {
@@ -1226,19 +1287,60 @@ final class WindowContext: ObservableObject, Identifiable {
             agentUIHandoffWorkspaceId = workspaceId
             agentUIHandoffTabId = tabId
             agentUIHandoffTitle = title
+            agentUIHandoffToTerminal = toTerminal
         }
         // A failed engine close reports its own toast. Do not leave the
         // transition cover stranded if that callback never arrives.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
-            guard self?.agentUIHandoff == agent else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { [weak self] in
+            guard let self, self.agentUIHandoffToken == token, self.agentUIHandoff != nil else { return }
+            self.endAgentUIHandoff(settled: true)
+        }
+    }
+
+    /// Lifts the handoff cover. Tab animations stay off a moment longer
+    /// unless `settled`, since the engine's tab snapshot can land after it.
+    private func endAgentUIHandoff(settled: Bool = false) {
+        agentUIHandoffWatch = nil
+        let token = agentUIHandoffToken
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            agentUIHandoff = nil
+            agentUIHandoffTabId = nil
+            agentUIHandoffTitle = nil
+            agentUIHandoffWorkspaceId = nil
+            agentUIHandoffToTerminal = false
+            if settled { suppressHandoffTabAnimations = false }
+        }
+        guard !settled else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            guard let self, self.agentUIHandoffToken == token, self.agentUIHandoff == nil else { return }
             var transaction = Transaction()
             transaction.disablesAnimations = true
-            withTransaction(transaction) {
-                self?.agentUIHandoff = nil
-                self?.agentUIHandoffTabId = nil
-                self?.agentUIHandoffTitle = nil
-                self?.agentUIHandoffWorkspaceId = nil
-                self?.suppressHandoffTabAnimations = false
+            withTransaction(transaction) { self.suppressHandoffTabAnimations = false }
+        }
+    }
+
+    /// Lifts the cover back to the terminal once the engine sees the agent
+    /// running in `tabId` and it has had a moment to draw: the shell typing
+    /// its command is never seen between the two interfaces.
+    private func endAgentUIHandoff(whenAgentRunsIn tabId: String) {
+        let token = agentUIHandoffToken
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { agentUIHandoffTabId = tabId }
+        var seen: Date?
+        agentUIHandoffWatch = store.$snapshot.receive(on: RunLoop.main).sink { [weak self] snapshot in
+            guard let self, self.agentUIHandoffToken == token,
+                  let agent = snapshot.agents(inTab: tabId).first(where: { !$0.isSubagentViewer }) else { return }
+            // A known state means its interface is up; an unknown one gets
+            // the time an interface takes to draw.
+            let settle: TimeInterval = agent.agentStatus == .unknown ? 0.6 : 0.12
+            guard seen == nil else { return }
+            seen = Date()
+            DispatchQueue.main.asyncAfter(deadline: .now() + settle) { [weak self] in
+                guard let self, self.agentUIHandoffToken == token, self.agentUIHandoff != nil else { return }
+                self.endAgentUIHandoff()
             }
         }
     }

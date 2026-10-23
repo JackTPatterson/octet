@@ -153,7 +153,7 @@ final class AttentionRouter {
     private func event(for session: AgentSession, transition: ConversationActivityWatcher.Transition) -> AgentEvent {
         var detail = session.lastReplyPreview
         if let permission = session.pendingPermission {
-            detail = permission.toolName == "ExitPlanMode" ? "Wants to go ahead with its plan" : "Asks to use \(permission.toolName)"
+            detail = ComposerPlanFollowUp.isPlanTool(permission.toolName) ? "Wants to go ahead with its plan" : "Asks to use \(permission.toolName)"
         } else if session.pendingQuestion != nil {
             detail = "Has a question for you"
         }

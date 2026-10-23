@@ -27,7 +27,7 @@ enum AgentPermissionRules {
         case "WebFetch":
             guard let host = (input["url"] as? String).flatMap({ URL(string: $0)?.host }), !host.isEmpty else { return nil }
             return Rule(text: "WebFetch(domain:\(host))", title: "Always Allow \(host)")
-        case "ExitPlanMode", "AskUserQuestion", "":
+        case "ExitPlanMode", "exit_plan_mode", "AskUserQuestion", "":
             return nil
         default:
             return Rule(text: name, title: "Always Allow \(displayName(name))")

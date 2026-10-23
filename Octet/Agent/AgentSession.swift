@@ -195,13 +195,26 @@ final class AgentSession: ObservableObject, Identifiable {
     /// OpenCode only: the agent messages go to (Build, Plan, or one of the
     /// person's own). Nil is OpenCode's default.
     @Published var agentName: String? { didSet { if agentName != oldValue { AgentCenter.shared.save() } } }
+    /// Codex and Pi: plan mode, which neither keeps in a setting Octet
+    /// passes. The others keep it in their own (`isPlanning`).
+    @Published private(set) var planning = false { didSet { if planning != oldValue { AgentCenter.shared.save() } } }
+    /// The permission mode plan mode took over from, given back when it ends.
+    private var modeBeforePlan: PermissionMode?
+    /// Codex's next turn leaves plan mode, which it keeps until told.
+    private var codexLeavesPlan = false
+    /// Codex has opened `threadId`: until then there's no thread to move
+    /// onto new settings, and a resume can still find it gone.
+    private var codexThreadOpen = false
+    /// Said once per thread that Codex didn't take a settings change; each
+    /// later change would only say it again.
+    private var codexSettingsRefused = false
 
     private func settingsChanged() {
         switch engine {
         case .claude:
             if process?.isRunning == true, claudeApplied != nil { updateClaudeSettings() } else { needsRestart = true }
         case .codex:
-            if let threadId, process?.isRunning == true { updateCodexSettings(threadId: threadId) }
+            if let threadId, codexThreadOpen, process?.isRunning == true { updateCodexSettings(threadId: threadId) }
         case .opencode:
             // Model, variant and agent go with each message; permissions are
             // the session's, and change at once.
@@ -243,6 +256,15 @@ final class AgentSession: ObservableObject, Identifiable {
     /// change sends only what differs.
     private var claudeApplied: (model: String, effort: String?, mode: PermissionMode)?
     static let settingsRequestPrefix = "octet-settings-"
+
+    /// Whether Claude Code saved a transcript for `id` under any project.
+    static func claudeTranscriptExists(_ id: String) -> Bool {
+        let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects")
+        let folders = (try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? []
+        return folders.contains {
+            FileManager.default.fileExists(atPath: root.appendingPathComponent($0).appendingPathComponent(id + ".jsonl").path)
+        }
+    }
 
     /// Moves a running Claude Code onto the picked model, effort and mode
     /// with control requests, instead of restarting it (seconds, and the
@@ -548,6 +570,8 @@ final class AgentSession: ObservableObject, Identifiable {
         var permissionProfile: String?
         /// OpenCode only: the agent messages go to.
         var agent: String?
+        /// Codex and Pi: in plan mode.
+        var planning: Bool?
         /// A fork not yet made, made when it next starts.
         var forkFrom: String?
         var forkAt: String?
@@ -561,7 +585,7 @@ final class AgentSession: ObservableObject, Identifiable {
     var saved: Saved {
         Saved(sessionId: sessionId, cwd: cwd, title: title, model: model, effort: effort,
               permissionMode: permissionMode.rawValue, hasTurns: hasTurns, engine: engine, threadId: threadId,
-              permissionProfile: permissionProfile, agent: agentName,
+              permissionProfile: permissionProfile, agent: agentName, planning: planning ? true : nil,
               forkFrom: forkFrom?.session, forkAt: forkFrom?.at, baseline: baselineCommit,
               policyHeld: policyHeld, policyOverridden: policyOverridden ? true : nil)
     }
@@ -577,6 +601,7 @@ final class AgentSession: ObservableObject, Identifiable {
         session.effort = saved.effort
         session.permissionProfile = saved.permissionProfile
         session.agentName = saved.agent
+        session.planning = saved.planning == true
         session.title = saved.title
         session.hasTurns = saved.hasTurns
         session.forkFrom = saved.forkFrom.map { ($0, saved.forkAt) }
@@ -829,7 +854,7 @@ final class AgentSession: ObservableObject, Identifiable {
             if trimmed == "/compact" { compactOpenCode() } else { sendOpenCode(trimmed, attachments: attachments) }
             return true
         }
-        if needsRestart || process?.isRunning != true { restart() }
+        if (needsRestart && !wasRunning) || process?.isRunning != true { restart() }
         guard stdin != nil else {
             // Nothing is in the transcript yet; say why rather than drop it.
             let why = startupError.map { " " + $0 } ?? ""
@@ -898,7 +923,7 @@ final class AgentSession: ObservableObject, Identifiable {
         case .opencode:
             break
         case .pi:
-            var message: [String: Any] = ["type": "prompt", "message": sent]
+            var message: [String: Any] = ["type": "prompt", "message": planning ? ComposerPlanFollowUp.withDirective(sent) : sent]
             if !attachments.isEmpty {
                 message["images"] = attachments.map {
                     ["type": "image", "data": $0.data.base64EncodedString(), "mimeType": $0.mediaType]
@@ -951,10 +976,27 @@ final class AgentSession: ObservableObject, Identifiable {
     }
 
     private func startTurn(threadId: String, input: [[String: Any]]) {
+        var input = input
         var params: [String: Any] = ["threadId": threadId, "input": input]
         // Every turn carries the effort picked, so it holds even if a
         // settings update mid-conversation wasn't taken.
         if let effort { params["effort"] = effort }
+        // Codex's own plan mode, which it keeps until a turn says otherwise.
+        // It needs the model; before the thread says which, the plan
+        // instructions stand in.
+        if planning || codexLeavesPlan {
+            if let model = codexModel ?? conversation.model {
+                params["collaborationMode"] = [
+                    "mode": planning ? "plan" : "default",
+                    "settings": ["model": model, "reasoning_effort": effort ?? NSNull(), "developer_instructions": NSNull()],
+                ] as [String: Any]
+                codexLeavesPlan = false
+            } else if planning, let index = input.lastIndex(where: { $0["type"] as? String == "text" }),
+                      let text = input[index]["text"] as? String {
+                input[index]["text"] = ComposerPlanFollowUp.withDirective(text)
+                params["input"] = input
+            }
+        }
         let sent = call("turn/start", params, as: .turn)
         if sent { hasTurns = true }
     }
@@ -1951,7 +1993,9 @@ final class AgentSession: ObservableObject, Identifiable {
             args += ["--resume", fork.session, "--fork-session", "--session-id", sessionId]
             if let at = fork.at { args += ["--resume-session-at", at] }
         } else {
-            args += hasTurns ? ["--resume", sessionId] : ["--session-id", sessionId]
+            // A message written just before the process stopped never reached
+            // Claude's transcript, and resuming a session with none fails.
+            args += hasTurns && Self.claudeTranscriptExists(sessionId) ? ["--resume", sessionId] : ["--session-id", sessionId]
         }
         claudeApplied = (model, effort, permissionMode)
 
@@ -1998,6 +2042,8 @@ final class AgentSession: ObservableObject, Identifiable {
     /// one JSON event per line. Its session file is retained for reopening.
     private func startPi() {
         var command = "exec \(shellQuote(executable("pi"))) --mode rpc"
+        // Plan mode can only read: Pi takes its tools as it starts.
+        if planning { command += " --tools read,grep,find,ls" }
         let fork = forkFrom
         // A new session file carrying the parent's; get_state names it.
         if let fork { command += " --fork \(shellQuote(fork.session))" }
@@ -2067,6 +2113,7 @@ final class AgentSession: ObservableObject, Identifiable {
         self.process = process
         nextRequestId = 0
         codexCalls = [:]
+        codexThreadOpen = false
         let handshakeId = nextId()
         codexCalls[handshakeId] = .handshake
         for message in CodexRPC.handshake(requestId: handshakeId) { write(message) }
@@ -2082,6 +2129,11 @@ final class AgentSession: ObservableObject, Identifiable {
             call("thread/resume", ["threadId": threadId], as: .thread)
             return
         }
+        startCodexThread()
+    }
+
+    /// A new thread, on the settings the pickers show.
+    private func startCodexThread() {
         var params: [String: Any] = ["cwd": cwd]
         // A new thread starts on the settings the pickers show; an existing
         // one keeps its own, and `thread/settings/update` moves it.
@@ -2537,12 +2589,26 @@ final class AgentSession: ObservableObject, Identifiable {
             if let error { startupError = "Codex didn't accept Octet's connection: \(error)" }
         case .thread:
             if let error {
+                // A thread Codex has no record of can't be opened, now or
+                // later: carry on in a new one rather than fail every turn
+                // and settings change on it.
+                // Codex says "no rollout found for thread id …" on resume,
+                // and "thread not found" elsewhere.
+                if let missing = threadId, ["no rollout found", "not found"].contains(where: error.lowercased().contains) {
+                    threadId = nil
+                    AgentCenter.shared.save()
+                    notice("Codex has no conversation \(missing), so this one carries on in a new Codex thread.", style: .error)
+                    startCodexThread()
+                    return
+                }
                 startupError = "Codex couldn't open the conversation: \(error)"
                 return
             }
             guard let thread = (message["result"] as? [String: Any])?["thread"] as? [String: Any],
                   let id = thread["id"] as? String else { return }
+            if id != threadId { codexSettingsRefused = false }
             threadId = id
+            codexThreadOpen = true
             AgentCenter.shared.save()
             // Anything typed while the thread was opening goes now, in order.
             let queued = queuedTurns
@@ -2564,7 +2630,8 @@ final class AgentSession: ObservableObject, Identifiable {
         case .settings:
             // Changing a running thread rides on Codex's experimental API,
             // which a newer Codex may change; say so rather than pretend.
-            if let error {
+            if let error, !codexSettingsRefused {
+                codexSettingsRefused = true
                 notice("Codex didn't take the new settings mid-conversation (\(error)). They apply to conversations started from now.", style: .error)
             }
         case .interrupt:
@@ -2896,36 +2963,60 @@ final class AgentSession: ObservableObject, Identifiable {
         }
     }
 
-    // MARK: - Terminal hand-off
+    // MARK: - Plan mode
 
-    /// How the agent's own interface reopens this conversation.
-    private var resumeCommand: String {
+    /// Plan mode, however this agent has it: Claude Code's and Qwen's own
+    /// permission mode, OpenCode's Plan agent, Codex's plan collaboration
+    /// mode, and for Pi read-only tools and Octet's plan instructions.
+    var isPlanning: Bool {
         switch engine {
-        case .claude: "claude --resume \(sessionId)"
-        case .codex: threadId.map { "codex resume \($0)" } ?? "codex"
-        case .opencode: threadId.map { "opencode --session \($0)" } ?? "opencode"
-        case .pi: threadId.map { "pi --session \(shellQuote($0))" } ?? "pi"
-        case .qwen: threadId.map { "qwen --resume \($0)" } ?? "qwen"
+        case .claude, .qwen: permissionMode == .plan
+        case .opencode: agentName?.lowercased() == "plan"
+        case .codex, .pi: planning
         }
     }
 
-    /// Continues this conversation in the agent's own interface, in a new tab
-    /// of the same workspace. The headless process stops first so two
-    /// processes never write the same session.
-    func openInTerminal(window: WindowContext) {
-        // Before a first message there's nothing to resume: the agent starts
-        // fresh there instead.
-        let command = hasTurns ? resumeCommand : engine.agent
-        close()
-        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-        window.applyLayout([
-            "workspace_id": workspaceId,
-            "tab_label": title,
-            "root": [
-                "type": "pane", "label": title, "cwd": cwd,
-                "command": [shell, "-lic", "\(command); exec \(shell) -l"],
-            ] as [String: Any],
-        ], failure: "Couldn't open the conversation in a terminal")
+    /// Turns plan mode on or off. Off gives back the mode it replaced,
+    /// unless `askingBeforeEdits`, as carrying a plan out does, so the
+    /// first edits still ask.
+    func setPlanning(_ on: Bool, askingBeforeEdits: Bool = false) {
+        guard on != isPlanning else { return }
+        switch engine {
+        case .claude, .qwen:
+            if on {
+                modeBeforePlan = permissionMode
+                permissionMode = .plan
+            } else {
+                permissionMode = askingBeforeEdits ? .default : modeBeforePlan ?? .default
+                modeBeforePlan = nil
+            }
+        case .opencode:
+            let plan = OpenCodeCatalogStore.shared.catalog(for: cwd).agents.first { $0.name.lowercased() == "plan" }
+            agentName = on ? plan?.name ?? "plan" : nil
+        case .codex:
+            planning = on
+            if !on { codexLeavesPlan = true }
+        case .pi:
+            planning = on
+            // Its tools change only as it starts: the next message starts it
+            // again on the same session.
+            needsRestart = true
+        }
+    }
+
+    // MARK: - Terminal hand-off
+
+    /// How the agent's own interface reopens this conversation. Before a
+    /// first message there's nothing to resume: the agent starts fresh.
+    var terminalCommand: String {
+        guard hasTurns else { return engine.agent }
+        switch engine {
+        case .claude: return "claude --resume \(sessionId)"
+        case .codex: return threadId.map { "codex resume \($0)" } ?? "codex"
+        case .opencode: return threadId.map { "opencode --session \($0)" } ?? "opencode"
+        case .pi: return threadId.map { "pi --session \(shellQuote($0))" } ?? "pi"
+        case .qwen: return threadId.map { "qwen --resume \($0)" } ?? "qwen"
+        }
     }
 }
 

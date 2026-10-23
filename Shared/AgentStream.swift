@@ -316,7 +316,9 @@ struct AgentConversation: Equatable {
         for message in messages {
             switch message["role"] as? String {
             case "user":
-                let text = Self.piText(message["content"])
+                // Octet's plan instructions went ahead of the message; it
+                // shows as typed.
+                let text = ComposerPlanFollowUp.strippingDirective(Self.piText(message["content"]))
                 let attachments = message["attachments"] as? [[String: Any]] ?? []
                 let images = attachments.compactMap { attachment -> Data? in
                     guard attachment["type"] as? String == "image",

@@ -34,6 +34,16 @@ enum RuntimeStates {
         return .working
     }
 
+    /// Whether a shell call's result is the agent saying it started the
+    /// command in the background ("Command running in background with ID:
+    /// b1"). Only that message: any ordinary command can print the word
+    /// "background", and one reading code about background tasks does.
+    static func launchedInBackground(_ result: String?) -> Bool {
+        guard let result else { return false }
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
+            .range(of: "^Command running in background with ID", options: [.regularExpression, .caseInsensitive]) != nil
+    }
+
     /// A background task's exit code, when its output says ("exit code 2",
     /// "exited with code 2", "Exit code: 2").
     static func exitCode(in output: String?) -> Int? {

@@ -67,7 +67,7 @@ struct SettingsView: View {
             case .agents: return "sparkle.magnifyingglass"
             case .accounts: return "person.2"
             case .waits: return "clock"
-            case .recovery: return "arrow.counterclockwise.circle"
+            case .recovery: return "arrow.counterclockwise"
             case .integrations: return "point.3.connected.trianglepath.dotted"
             case .plugins: return "puzzlepiece.extension"
             case .motion: return "sparkles"

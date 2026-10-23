@@ -93,6 +93,26 @@ struct AgentLogo: View {
     }
 }
 
+/// An agent's logo on a disc of raised ground, as the right panel's agent
+/// rows show it; an agent without a logo of its own gets the agent mark.
+struct AgentLogoDisc: View {
+    let brand: AgentBrand?
+    var diameter: CGFloat = 20
+
+    var body: some View {
+        Group {
+            if let brand {
+                AgentLogo(brand: brand, size: (diameter * 0.6).rounded())
+            } else {
+                OctetIcon("tool.agent", size: (diameter * 0.6).rounded()).foregroundStyle(Theme.textSecondary)
+            }
+        }
+        .frame(width: diameter, height: diameter)
+        .background(Circle().fill(Theme.cardSelected))
+        .overlay(Circle().strokeBorder(Theme.border, lineWidth: 1))
+    }
+}
+
 /// Several agents' logos, slightly overlapping, each ringed in the card's
 /// ground so the edges stay readable, e.g. Claude and Codex together.
 struct AgentLogoStack: View {

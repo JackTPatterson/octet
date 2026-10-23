@@ -186,7 +186,7 @@ struct RootView: View {
     /// chip: the session, where it runs, and its process.
     private var focusedClaude: FocusedClaude? {
         guard let agent = focusedAgent, AgentBrand.forAgent(agent.agent)?.id == "claude",
-              let sessionId = agent.sessionReference ?? agent.terminalId.flatMap({ store.recovery.sessionId(forTerminal: $0) }),
+              let sessionId = store.recovery.sessionId(of: agent),
               let cwd = agent.cwd ?? focusedPaneCwd else { return nil }
         let pid = window.focusedProcess?.foreground.first { AgentBrand.forAgent(($0.name as NSString).lastPathComponent)?.id == "claude" }?.pid
         return FocusedClaude(sessionId: sessionId, cwd: cwd, pid: pid)
@@ -1042,8 +1042,10 @@ struct RootView: View {
             }
             if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "editor" {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                    let candidate = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-                        .appendingPathComponent("Octet/Editor/CodeEditorView.swift")
+                    // OCTET_EDITOR_FILE opens that file instead.
+                    let candidate = ProcessInfo.processInfo.environment["OCTET_EDITOR_FILE"].map { URL(fileURLWithPath: $0) }
+                        ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+                            .appendingPathComponent("Octet/Editor/CodeEditorView.swift")
                     let split = ProcessInfo.processInfo.environment["OCTET_EDITOR_SPLIT"] != nil
                     window.openFile(candidate, presentation: split ? .split : .full)
                 }
@@ -1139,7 +1141,7 @@ struct RootView: View {
                     if window.activeContainerLog != nil {
                         Theme.terminalBackground
                     } else if let agent = window.agentUIHandoff {
-                        AgentUIHandoffView(agent: agent)
+                        AgentUIHandoffView(agent: agent, toTerminal: window.agentUIHandoffToTerminal)
                     } else if let review = ui.review {
                         DiffReviewView(model: review, store: store) { window.toggleReview() }
                             .id(review.directory)
@@ -1211,13 +1213,19 @@ struct RootView: View {
     /// same saved session rendered as an Octet conversation.
     private struct AgentUIHandoffView: View {
         let agent: String
+        /// Back out to the agent's own interface, rather than into Octet.
+        var toTerminal = false
+
+        private var destination: String {
+            toTerminal ? AgentBrand.forAgent(agent)?.displayName ?? "the terminal" : "Octet"
+        }
 
         var body: some View {
             VStack(spacing: 13) {
                 if let brand = AgentBrand.forAgent(agent) {
                     AgentLogo(brand: brand, size: 30)
                 }
-                Text("Opening in Octet")
+                Text("Opening in \(destination)")
                     .font(Theme.uiFontMedium)
                     .foregroundStyle(Theme.textPrimary)
                 Capsule()
@@ -1230,7 +1238,8 @@ struct RootView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Theme.terminalBackground)
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("Opening \(AgentBrand.forAgent(agent)?.displayName ?? "agent") in Octet")
+            .accessibilityLabel(toTerminal ? "Opening in \(destination)"
+                                : "Opening \(AgentBrand.forAgent(agent)?.displayName ?? "agent") in Octet")
         }
     }
 
@@ -2135,7 +2144,9 @@ private struct RecoveryOverlay: View {
         ZStack {
             if center.isPresented {
                 RecoveryPanel(center: center)
-                    .padding([.trailing, .bottom], 12)
+                    .padding(.trailing, 12)
+                    // Clear of the status bar.
+                    .padding(.bottom, 12 + StatusBar.height)
                     .transition(motion.animates(.palette)
                         ? .opacity.combined(with: .offset(y: 8))
                         : .identity)
