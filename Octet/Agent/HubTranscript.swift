@@ -266,7 +266,9 @@ private struct HubOutputPanel: View {
                 .accessibilityHidden(true)
             VStack(spacing: 0) {
                 HStack(spacing: Theme.Space.md) {
-                    OctetIcon(call.iconName, size: 14).foregroundStyle(Theme.textTertiary)
+                    if let logo = LanguageLogo(mcpTool: call.name, size: 14) { logo } else {
+                        OctetIcon(call.iconName, size: 14).foregroundStyle(Theme.textTertiary)
+                    }
                     Text(call.displayName).font(Theme.Text.bodyMedium).foregroundStyle(Theme.textPrimary)
                     Spacer(minLength: Theme.Space.md)
                     OctetIconButton(icon: "doc.on.doc", help: "Copy output") {

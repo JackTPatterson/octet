@@ -109,6 +109,80 @@ struct LanguageLogo: View {
         .init("latex", "008080", ["latex", "tex"]),
     ]
 
+    /// The services MCP servers front, by the words their names go by
+    /// (`mcp__<server>__<tool>`, where the server may be "github",
+    /// "claude_ai_Linear" or "plugin_stripe_stripe"). Logos are Simple Icons.
+    static let mcp: [Entry] = [
+        .init("github", "181717", ["github"]),
+        .init("linear", "5E6AD2", ["linear"]),
+        .init("figma", "F24E1E", ["figma"]),
+        .init("notion", "000000", ["notion"]),
+        .init("jira", "0052CC", ["jira", "atlassian"]),
+        .init("confluence", "172B4D", ["confluence"]),
+        .init("stripe", "635BFF", ["stripe"]),
+        .init("sentry", "362D59", ["sentry"]),
+        .init("vercel", "000000", ["vercel"]),
+        .init("cloudflare", "F38020", ["cloudflare"]),
+        .init("googledrive", "4285F4", ["drive", "gdrive"]),
+        .init("gmail", "EA4335", ["gmail"]),
+        .init("googlecalendar", "4285F4", ["calendar", "gcal"]),
+        .init("googlechrome", "4285F4", ["chrome", "chromedevtools", "devtools"]),
+        .init("firebase", "DD2C00", ["firebase"]),
+        .init("shopify", "7AB55C", ["shopify"]),
+        .init("asana", "F06A6A", ["asana"]),
+        .init("airtable", "18BFFF", ["airtable"]),
+        .init("zapier", "FF4F00", ["zapier"]),
+        .init("hubspot", "FF7A59", ["hubspot"]),
+        .init("datadog", "632CA6", ["datadog"]),
+        .init("grafana", "F46800", ["grafana"]),
+        .init("posthog", "000000", ["posthog"]),
+        .init("paypal", "002991", ["paypal"]),
+        .init("puppeteer", "40B5A4", ["puppeteer"]),
+        .init("tradingview", "131622", ["tradingview"]),
+        .init("apple", "000000", ["apple"]),
+        .init("googledocs", "4285F4", []),
+        .init("googlesheets", "34A853", []),
+        .init("googleslides", "FBBC04", []),
+        .init("googleforms", "7248B9", []),
+        .init("googlemaps", "4285F4", []),
+        .init("googlecloud", "4285F4", ["gcloud", "googlecloud"]),
+        .init("netlify", "00C7B7", ["netlify"]),
+        .init("neon", "34D59A", ["neon"]),
+        .init("planetscale", "000000", ["planetscale"]),
+        .init("clickhouse", "FFCC01", ["clickhouse"]),
+        .init("trello", "0052CC", ["trello"]),
+        .init("clickup", "7B68EE", ["clickup"]),
+        .init("bitbucket", "0052CC", ["bitbucket"]),
+        .init("gitlab", "FC6D26", ["gitlab"]),
+        .init("huggingface", "FFD21E", ["huggingface"]),
+        .init("brave", "FB542B", ["brave"]),
+        .init("duckduckgo", "DE5833", ["duckduckgo"]),
+        .init("perplexity", "1FB8CD", ["perplexity"]),
+        .init("kubernetes", "326CE5", ["kubernetes", "k8s"]),
+        .init("google", "4285F4", ["google"]),
+    ]
+
+    /// The logo for an MCP tool call's server, or nil for one with no mark.
+    init?(mcpTool name: String, size: CGFloat = 13) {
+        let parts = name.components(separatedBy: "__")
+        guard parts.count >= 3, parts[0] == "mcp" else { return nil }
+        self.init(mcpServer: parts[1], size: size)
+    }
+
+    /// The logo for an MCP server by its configured name.
+    init?(mcpServer name: String, size: CGFloat = 13) {
+        let words = name.lowercased().components(separatedBy: CharacterSet(charactersIn: "_-:. "))
+        for word in words {
+            if let entry = Self.mcp.first(where: { $0.slug == word || $0.names.contains(word) }) {
+                slug = entry.slug
+                hex = entry.hex
+                self.size = size
+                return
+            }
+        }
+        return nil
+    }
+
     /// Servers, frameworks and runtimes behind a listening port, for its
     /// button; a language's own logo (Python, Ruby, Go…) comes from `table`.
     static let services: [Entry] = [

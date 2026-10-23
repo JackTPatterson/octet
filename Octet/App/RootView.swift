@@ -2173,6 +2173,7 @@ private struct RootDialogHosts: ViewModifier {
     func body(content: Content) -> some View {
         content
             .overlay { AgentUpdateDialog(center: AgentUpdateCenter.shared) }
+            .overlay { MCPServersDialogHost(center: MCPServersCenter.shared) }
             .overlay { ConfirmDialog(center: confirmations) }
             .overlay { DelegationApprovalDialog(center: DelegationApprovalCenter.shared) }
             // Set Up Devices, over the whole window rather than the panel.

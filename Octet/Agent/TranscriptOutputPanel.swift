@@ -47,7 +47,9 @@ struct TranscriptOutputPanel: View {
 
     private func header(call: AgentToolCall?, lines: [String], running: Bool) -> some View {
         HStack(spacing: 8) {
-            OctetIcon(call?.iconName ?? "terminal", size: 14).foregroundStyle(Theme.textTertiary)
+            if let logo = call.flatMap({ LanguageLogo(mcpTool: $0.name, size: 14) }) { logo } else {
+                OctetIcon(call?.iconName ?? "terminal", size: 14).foregroundStyle(Theme.textTertiary)
+            }
             Text(call?.displayName ?? "Output").font(Theme.uiFontMedium).foregroundStyle(Theme.textPrimary)
             if let summary = call?.summary, !summary.isEmpty {
                 ShellSummary(text: summary)

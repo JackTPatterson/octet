@@ -98,13 +98,16 @@ struct AgentLogo: View {
 struct AgentLogoDisc: View {
     let brand: AgentBrand?
     var diameter: CGFloat = 20
+    /// What draws when there is no brand: a shell, a monitor, a task.
+    var symbol = "tool.agent"
+    var tint: Color = Theme.textSecondary
 
     var body: some View {
         Group {
             if let brand {
                 AgentLogo(brand: brand, size: (diameter * 0.6).rounded())
             } else {
-                OctetIcon("tool.agent", size: (diameter * 0.6).rounded()).foregroundStyle(Theme.textSecondary)
+                OctetIcon(symbol, size: (diameter * 0.6).rounded()).foregroundStyle(tint)
             }
         }
         .frame(width: diameter, height: diameter)

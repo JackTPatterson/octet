@@ -1127,10 +1127,18 @@ struct ProjectMonogram: View {
 
     var body: some View {
         let color = Theme.palette.color(Self.palette[SidebarSearch.colorIndex(name, count: Self.palette.count)])
-        Text(SidebarSearch.monogram(name))
-            .font(.system(size: size * 0.5, weight: .bold, design: .monospaced))
+        Group {
+            if let symbol = ProjectIcon.symbol(for: name) {
+                // What the name says it is: a wrench for tools, a puck for hockey.
+                Image(systemName: symbol)
+                    .font(.system(size: size * 0.56, weight: .semibold))
+            } else {
+                Text(SidebarSearch.monogram(name))
+                    .font(.system(size: size * 0.5, weight: .bold, design: .monospaced))
+                    .minimumScaleFactor(0.6)
+            }
+        }
             .foregroundStyle(color)
-            .minimumScaleFactor(0.6)
             .frame(width: size, height: size)
             .background(RoundedRectangle(cornerRadius: size * 0.25).fill(color.opacity(0.16)))
             .accessibilityHidden(true)

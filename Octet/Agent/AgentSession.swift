@@ -1034,6 +1034,13 @@ final class AgentSession: ObservableObject, Identifiable {
             }
             return
         }
+        // A turn marked running with no process behind it has nothing to
+        // stop: the mark is stale, so clear it rather than ignore the press.
+        if conversation.isRunning, process?.isRunning != true {
+            conversation.isRunning = false
+            dismissPending(message: "The turn was stopped.")
+            return
+        }
         guard let process, process.isRunning, conversation.isRunning else { return }
         switch engine {
         case .claude:
@@ -1052,6 +1059,22 @@ final class AgentSession: ObservableObject, Identifiable {
         }
         // A card left up would outlive the turn and hold the follow-ups.
         dismissPending(message: "The turn was stopped.")
+        escalateStopIfStuck(process)
+    }
+
+    /// The agent is asked politely first; one that's still going seconds
+    /// later (busy in a tool, a hook or a stalled pipe) is ended, and the
+    /// conversation picks up from its saved session on the next message.
+    private func escalateStopIfStuck(_ asked: Process) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.conversation.isRunning, self.process === asked else { return }
+                self.stopProcess()
+                self.conversation.isRunning = false
+                self.needsRestart = true
+                self.notice("\(self.engine.displayName) didn't stop when asked, so it was ended. Your next message continues from here.")
+            }
+        }
     }
 
     /// Whether a message waiting behind the running turn can be taken back:
@@ -1774,6 +1797,42 @@ final class AgentSession: ObservableObject, Identifiable {
             ],
         ]) else { return }
         enqueueQuestion(question, answer: { _ in }, reject: {})
+    }
+
+    /// Verification hook: MCP calls with service logos, and servers that
+    /// are down for the chip and the dialog.
+    func debugLoadMCP() {
+        title = "MCP logos"
+        conversation.appendUser("Check the issue, the design and the payment.")
+        let tools: [(String, [String: Any], String)] = [
+            ("mcp__github__get_pull_request", ["number": 482], "Open · 3 files changed"),
+            ("mcp__linear__list_issues", ["team": "Core"], "OCT-91 Flush composer"),
+            ("mcp__figma__get_design_context", ["nodeId": "12:340"], "Frame: Chat"),
+            ("mcp__stripe__list_customers", ["limit": 3], "3 customers"),
+            ("mcp__plugin_notion_notion__search", ["query": "roadmap"], "2 pages"),
+            ("mcp__chrome-devtools__take_screenshot", [:], "saved"),
+            ("mcp__app-pipeline__pipeline_overview", [:], "stage 3"),
+        ]
+        let events: [[String: Any]] = [
+            ["type": "assistant", "message": ["id": "m1", "content": tools.enumerated().map { index, tool in
+                ["type": "tool_use", "id": "t\(index)", "name": tool.0, "input": tool.1] as [String: Any]
+            }]],
+            ["type": "user", "message": ["content": tools.enumerated().map { index, tool in
+                ["type": "tool_result", "tool_use_id": "t\(index)", "content": tool.2] as [String: Any]
+            }]],
+        ]
+        for event in events { conversation.apply(event) }
+        conversation.isRunning = false
+        checkedMCPServers = [
+            MCPServerState(name: "github", status: .connected, detail: "41 tools"),
+            MCPServerState(name: "claude_ai_Linear", status: .needsAuth, detail: "Sign in to use its 23 tools"),
+            MCPServerState(name: "figma", status: .failed, detail: "spawn npx ENOENT"),
+            MCPServerState(name: "stripe", status: .connected, detail: "27 tools"),
+            MCPServerState(name: "supabase", status: .failed, detail: "Connection closed"),
+            MCPServerState(name: "plugin_notion_notion", status: .connected, detail: "12 tools"),
+            MCPServerState(name: "chrome-devtools", status: .connected, detail: "29 tools"),
+            MCPServerState(name: "app-pipeline", status: .connected, detail: "30 tools"),
+        ]
     }
 
     func debugShowError() {
@@ -2788,7 +2847,12 @@ final class AgentSession: ObservableObject, Identifiable {
         guard shellProcess == nil else {
             return notice("A command is still running. Stop it (Esc) before starting another.")
         }
+        // Appending a user line marks a turn running; a shell command isn't
+        // one, so the mark stays as it was and the composer sends again at
+        // once when the command ends.
+        let wasRunning = conversation.isRunning
         conversation.appendUser("! " + command)
+        conversation.isRunning = wasRunning
         let itemId = UUID().uuidString
         let input = ["command": command]
         let inputData = try? JSONSerialization.data(withJSONObject: input)

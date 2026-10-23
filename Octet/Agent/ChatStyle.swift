@@ -242,6 +242,7 @@ struct ChatColumnEdges: View {
     private func settle(_ snap: ChatColumnSizing.Snap) {
         guard snap != sizing.snap else { return }
         // A layout change, like the sidebar's.
+        if sizing.snap != snap { Haptics.tick() }
         motion.perform(.sidebar, .smooth(duration: 0.24)) { sizing.snap = snap }
     }
 }
@@ -337,6 +338,10 @@ struct WorkLogDisclosure<Trailing: View, Content: View>: View {
     var tint: Color = ChatStyle.secondaryText
     var icon: String?
     var logo: LanguageLogo?
+    /// The logo takes the icon's place, before the title.
+    var logoLeads = false
+    /// How the call ended, as a filled mark just right of the icon.
+    var outcome: Bool?
     var highlightsShell = false
     @ViewBuilder var trailing: () -> Trailing
     @ViewBuilder var content: () -> Content
@@ -345,7 +350,8 @@ struct WorkLogDisclosure<Trailing: View, Content: View>: View {
     @Environment(\.transcriptFindMarks) private var marks
 
     init(title: String, subtitle: String = "", subtitleIsCode: Bool = false, tint: Color = ChatStyle.secondaryText,
-         icon: String? = nil, logo: LanguageLogo? = nil, highlightsShell: Bool = false, initiallyOpen: Bool = false,
+         icon: String? = nil, logo: LanguageLogo? = nil, logoLeads: Bool = false, outcome: Bool? = nil,
+         highlightsShell: Bool = false, initiallyOpen: Bool = false,
          @ViewBuilder trailing: @escaping () -> Trailing = { EmptyView() },
          @ViewBuilder content: @escaping () -> Content) {
         self.title = title
@@ -354,6 +360,8 @@ struct WorkLogDisclosure<Trailing: View, Content: View>: View {
         self.tint = tint
         self.icon = icon
         self.logo = logo
+        self.logoLeads = logoLeads
+        self.outcome = outcome
         self.highlightsShell = highlightsShell
         _open = State(initialValue: initiallyOpen)
         self.trailing = trailing
@@ -364,11 +372,19 @@ struct WorkLogDisclosure<Trailing: View, Content: View>: View {
         VStack(alignment: .leading, spacing: 2) {
             Button { withAnimation(.easeOut(duration: 0.2)) { open.toggle() } } label: {
                 HStack(spacing: 6) {
-                    OctetIcon(icon ?? "tool.other", size: 16)
-                        .foregroundStyle(tint == ChatStyle.secondaryText ? ChatStyle.faintIcon : tint)
-                        .frame(width: ChatStyle.workIconColumn)
+                    if logoLeads, let logo {
+                        logo.frame(width: ChatStyle.workIconColumn)
+                    } else {
+                        OctetIcon(icon ?? "tool.other", size: 16)
+                            .foregroundStyle(tint == ChatStyle.secondaryText ? ChatStyle.faintIcon : tint)
+                            .frame(width: ChatStyle.workIconColumn)
+                    }
+                    if let outcome {
+                        WorkLogOutcomeMark(succeeded: outcome)
+                            .transition(.scale(scale: 0.4).combined(with: .opacity))
+                    }
                     Text(title).font(ChatStyle.body).foregroundStyle(tint)
-                    if let logo { logo }
+                    if !logoLeads, let logo { logo }
                     if !subtitle.isEmpty {
                         if highlightsShell {
                             WorkLogShellText(subtitle)
@@ -656,4 +672,21 @@ struct ChatPopover: ViewModifier {
 
 extension View {
     func chatPopover() -> some View { modifier(ChatPopover()) }
+}
+
+
+/// A filled check or cross: how a command ended, in the work log.
+struct WorkLogOutcomeMark: View {
+    let succeeded: Bool
+
+    var body: some View {
+        ZStack {
+            Circle().fill(succeeded ? ChatStyle.added : ChatStyle.removed)
+            Image(systemName: succeeded ? "checkmark" : "xmark")
+                .font(.system(size: 7, weight: .black))
+                .foregroundStyle(Color.white)
+        }
+        .frame(width: 13, height: 13)
+        .accessibilityLabel(succeeded ? "Succeeded" : "Failed")
+    }
 }

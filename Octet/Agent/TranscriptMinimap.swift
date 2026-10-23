@@ -25,7 +25,10 @@ struct TranscriptMinimap: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .onHover { inside in hovered = inside ? mark.id : (hovered == mark.id ? nil : hovered) }
+                    .onHover { inside in
+                        hovered = inside ? mark.id : (hovered == mark.id ? nil : hovered)
+                        if inside { Haptics.tick() }
+                    }
                     .offset(y: 8 + mark.position * height - 4.5)
                     .accessibilityLabel("Go to your prompt: \(mark.prompt)")
                 }

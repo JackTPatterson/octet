@@ -75,6 +75,9 @@ struct ConversationView: View {
             .clipped()
         }
         .onChange(of: session.pendingQuestion?.id, initial: true) { _, _ in questions.sync(session.pendingQuestion) }
+        // A question or an approval waiting on you is felt, not only seen.
+        .onChange(of: session.pendingQuestion?.id) { _, id in if id != nil { Haptics.step() } }
+        .onChange(of: session.pendingPermission?.id) { _, id in if id != nil { Haptics.step() } }
         .animation(motion.animation(.approvals, .smooth(duration: 0.26)), value: session.pendingPermission?.id)
         .animation(motion.animation(.approvals, .smooth(duration: 0.26)), value: session.pendingQuestion?.id)
         .background(ChatStyle.page)
@@ -106,6 +109,11 @@ struct ConversationView: View {
             if id == "question" { session.debugShowQuestion(); return }
             if id == "error" { session.debugShowError(); return }
             if id == "sample" { session.debugLoadSample(); return }
+            if id == "mcp" {
+                session.debugLoadMCP()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 4) { MCPServersDialog.show(session) }
+                return
+            }
             if id == "context" {
                 session.conversation.contextUsed = 175_600
                 session.conversation.contextWindow = 200_000
@@ -640,8 +648,12 @@ private struct Transcript: View {
             }
             .scrollPosition(id: $position, anchor: .top)
             .modifier(TranscriptFollow(following: $following))
+            .modifier(CopyOnSelect())
             // Opens at the latest, not the first message.
             .defaultScrollAnchor(.bottom)
+            // And stays on it as the reply grows, with the system's own
+            // smooth pinning, until you scroll up.
+            .modifier(PinToEnd(following: following))
             .octetScrollIndicators()
             // Coming back to where you were reading: the position above
             // takes it there on first layout; this settles it once the lazy
@@ -669,7 +681,9 @@ private struct Transcript: View {
                 scrollQueued = true
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                     scrollQueued = false
-                    if following { proxy.scrollTo("bottom", anchor: .bottom) }
+                    if following {
+                        withAnimation(.easeOut(duration: 0.16)) { proxy.scrollTo("bottom", anchor: .bottom) }
+                    }
                 }
             }
             // Find in conversation: go to the current match, once what it
@@ -839,23 +853,79 @@ private struct Transcript: View {
 /// Stops following the stream when you scroll up, and starts again when
 /// you reach the end. Content growing under the view moves neither: only
 /// the offset moving up, landing away from the end, counts as leaving.
+/// The terminal's "Copy on select", for the conversation: letting go of
+/// the mouse after selecting text in the transcript copies it, as the
+/// setting says. The transcript's selectable text takes `copy:` like ⌘C.
+private struct CopyOnSelect: ViewModifier {
+    @ObservedObject private var settings = SettingsStore.shared
+    @State private var frame: CGRect = .zero
+    @State private var monitor: Any?
+
+    func body(content: Content) -> some View {
+        content
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame = $0 }
+            .onAppear {
+                monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseUp) { event in
+                    handle(event)
+                    return event
+                }
+            }
+            .onDisappear {
+                if let monitor { NSEvent.removeMonitor(monitor) }
+                monitor = nil
+            }
+    }
+
+    private func handle(_ event: NSEvent) {
+        guard settings.values.copyOnSelect, let window = event.window, window === NSApp.keyWindow,
+              let height = window.contentView?.bounds.height else { return }
+        let point = CGPoint(x: event.locationInWindow.x, y: height - event.locationInWindow.y)
+        guard frame.contains(point) else { return }
+        // A selection made in the message box is its own, not the transcript's.
+        if let editor = window.firstResponder as? NSTextView, editor.isEditable { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil)
+        }
+    }
+}
+
+/// Keeps the view on the end while following, so a growing reply scrolls
+/// with the system's own smoothing instead of jumping.
+private struct PinToEnd: ViewModifier {
+    let following: Bool
+
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) {
+            content.defaultScrollAnchor(following ? .bottom : nil, for: .sizeChanges)
+        } else {
+            content
+        }
+    }
+}
+
 private struct TranscriptFollow: ViewModifier {
     @Binding var following: Bool
 
     struct Reading: Equatable {
         var offset: CGFloat
         var fromEnd: CGFloat
+        var contentHeight: CGFloat
     }
 
     func body(content: Content) -> some View {
         if #available(macOS 15.0, *) {
             content.onScrollGeometryChange(for: Reading.self) { geometry in
                 Reading(offset: geometry.contentOffset.y,
-                        fromEnd: geometry.contentSize.height - geometry.contentOffset.y - geometry.containerSize.height)
+                        fromEnd: geometry.contentSize.height - geometry.contentOffset.y - geometry.containerSize.height,
+                        contentHeight: geometry.contentSize.height)
             } action: { old, new in
                 if new.fromEnd < 24 {
                     if !following { following = true }
-                } else if new.offset < old.offset - 1, new.fromEnd > 60, following {
+                } else if new.offset < old.offset - 1, new.fromEnd > 60, following,
+                          // Lazy rows settling to their real heights move the
+                          // offset too; only a scroll with the content as it
+                          // was is you leaving the end.
+                          abs(new.contentHeight - old.contentHeight) < 1 {
                     following = false
                 }
             }
@@ -922,14 +992,20 @@ private struct ShellModeStrip: View {
     let typingCommand: Bool
 
     var body: some View {
+        Group { content }
+            .animation(.smooth(duration: 0.28), value: typingCommand)
+            .animation(.smooth(duration: 0.28), value: session.shellRunning != nil)
+    }
+
+    @ViewBuilder private var content: some View {
         if typingCommand || session.shellRunning != nil || !session.shellRuns.isEmpty {
             HStack(spacing: 7) {
-                OctetIcon("terminal", size: 12).foregroundStyle(ChatStyle.primary)
+                OctetIcon("terminal", size: 12).foregroundStyle(ChatStyle.link)
                 if let running = session.shellRunning {
                     LoadingLine(width: 14)
                     Text("Running `\(running)`").lineLimit(1).truncationMode(.middle)
                     Spacer(minLength: 4)
-                    Button("Stop") { session.stopShell() }.buttonStyle(.plain).foregroundStyle(ChatStyle.primary)
+                    Button("Stop") { session.stopShell() }.buttonStyle(.plain).foregroundStyle(ChatStyle.link)
                     Keycap(text: "esc")
                 } else if typingCommand {
                     Text("Runs in \(abbreviateHome(session.cwd)); its output goes to \(session.engine.displayName) with your next message")
@@ -941,12 +1017,13 @@ private struct ShellModeStrip: View {
                                     : "\(count) commands' output goes with your next message")
                         .lineLimit(1)
                     Spacer(minLength: 4)
-                    Button("Don't Send") { session.dropShellRuns() }.buttonStyle(.plain).foregroundStyle(ChatStyle.primary)
+                    Button("Don't Send") { session.dropShellRuns() }.buttonStyle(.plain).foregroundStyle(ChatStyle.link)
                 }
             }
             .font(Theme.captionFont)
             .foregroundStyle(Theme.textSecondary)
             .padding(.horizontal, 4)
+            .transition(.opacity.combined(with: .offset(y: 5)))
         }
     }
 }
@@ -1368,9 +1445,16 @@ struct ToolCard: View {
             ?? artifact?.summary ?? call.summary
         // A file's name rather than its whole path; the path is a hover away.
         let shown = call.filePath.map { subtitle.replacingOccurrences(of: $0, with: ($0 as NSString).lastPathComponent) } ?? subtitle
+        // An MCP tool leads with its service's logo where there is one,
+        // not the generic plug.
+        let mcpLogo = LanguageLogo(mcpTool: call.name, size: 14)
         WorkLogDisclosure(title: call.displayName, subtitle: shown, subtitleIsCode: call.filePath == nil,
                    tint: call.isError ? ChatStyle.removed : ChatStyle.secondaryText,
-                   icon: call.iconName, logo: artifact == nil ? LanguageLogo(path: call.filePath) : nil,
+                   icon: mcpLogo == nil ? call.iconName : nil,
+                   logo: mcpLogo ?? (artifact == nil ? LanguageLogo(path: call.filePath) : nil),
+                   logoLeads: mcpLogo != nil,
+                   outcome: call.name.caseInsensitiveCompare("Bash") == .orderedSame && call.result != nil
+                       ? !call.isError : nil,
                    highlightsShell: call.name.caseInsensitiveCompare("Bash") == .orderedSame
                        || call.name.caseInsensitiveCompare("Monitor") == .orderedSame,
                    initiallyOpen: diff != nil || todos != nil || !call.resultImages.isEmpty
@@ -1507,6 +1591,66 @@ struct Disclosure<Trailing: View, Content: View>: View {
     private var revealed: Bool {
         guard let field = marks?.current?.field else { return false }
         return field != TranscriptFind.toolSummary
+    }
+}
+
+/// The soft blue light that falls from the top of the composer card while it holds a
+/// `!` command: a wash for a bare `!`, brighter once there is something
+/// to run, drifting up into place and fading back out.
+private struct CommandGlow: View {
+    let level: Int
+
+    var body: some View {
+        let strength: Double = level == 2 ? 1 : level == 1 ? 0.4 : 0
+        // One wide pool of light from the top middle of the card, falling
+        // off like a gaussian so it has no visible edge, and grown and
+        // shrunk from the top as it fades so it feathers in and out.
+        let link = ChatStyle.link
+        RadialGradient(stops: [
+            .init(color: link.opacity(0.46), location: 0),
+            .init(color: link.opacity(0.34), location: 0.18),
+            .init(color: link.opacity(0.2), location: 0.4),
+            .init(color: link.opacity(0.09), location: 0.62),
+            .init(color: link.opacity(0.03), location: 0.82),
+            .init(color: .clear, location: 1),
+        ], center: .top, startRadius: 0, endRadius: 190)
+            .scaleEffect(x: 3.4, y: level == 0 ? 0.55 : 1, anchor: .top)
+            .blur(radius: 10)
+            .opacity(strength)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+            .animation(level == 0 ? .easeInOut(duration: 0.7) : .easeInOut(duration: 0.9), value: level)
+    }
+}
+
+/// A `!` line in the shell's colours, laid over the box that holds it.
+private struct ShellPromptText: View {
+    let source: String
+
+    var body: some View {
+        Text(highlighted)
+            .font(Theme.Text.mono(13.5))
+            .lineSpacing(ChatStyle.bodyLineSpacing)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var highlighted: AttributedString {
+        var result = AttributedString("!")
+        result.foregroundColor = ChatStyle.link
+        let body = String(source.dropFirst())
+        var cursor = body.startIndex
+        func add(_ piece: Substring, _ color: Color) {
+            var part = AttributedString(String(piece))
+            part.foregroundColor = color
+            result += part
+        }
+        for span in ShellSyntax.spans(in: body) {
+            if cursor < span.range.lowerBound { add(body[cursor..<span.range.lowerBound], ChatStyle.text) }
+            add(body[span.range], span.role.color(argument: ChatStyle.text))
+            cursor = span.range.upperBound
+        }
+        if cursor < body.endIndex { add(body[cursor...], ChatStyle.text) }
+        return result
     }
 }
 
@@ -1883,10 +2027,20 @@ private struct Composer: View {
                             .padding(.top, 1)
                             .allowsHitTesting(false)
                     }
+                    if commandMode {
+                        // The box's own text goes clear and this draws it in
+                        // the shell's colours, in the same place.
+                        ShellPromptText(source: text)
+                            .padding(.horizontal, 5)
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                            .allowsHitTesting(false)
+                            .transition(.opacity)
+                    }
                     TextEditor(text: $text)
-                        .font(ChatStyle.prompt)
+                        .font(commandMode ? Theme.Text.mono(13.5) : ChatStyle.prompt)
                         .lineSpacing(ChatStyle.bodyLineSpacing)
-                        .foregroundStyle(ChatStyle.text)
+                        .foregroundStyle(commandMode ? Color.clear : ChatStyle.text)
+                        .tint(commandMode ? ChatStyle.link : nil)
                         .scrollContentBackground(.hidden)
                         .scrollIndicators(.never)
                         .focused($focused)
@@ -2138,7 +2292,7 @@ private struct Composer: View {
                         RoundComposerButton(kind: kind) { submit(commandHeld: NSEvent.modifierFlags.contains(.command)) }
                             .disabled(empty)
                             .help(sendHelp(kind))
-                            .accessibilityLabel(kind == .steer ? "Steer" : kind == .queue ? "Queue" : bridge.editing == nil ? "Send" : "Update")
+                            .accessibilityLabel(kind == .steer ? "Steer" : kind == .queue ? "Queue" : kind == .run ? "Run command" : bridge.editing == nil ? "Send" : "Update")
                     }
                 }
             }
@@ -2148,8 +2302,13 @@ private struct Composer: View {
             .padding(.top, 12)
             .padding(.bottom, 10)
             .frame(maxWidth: .infinity)
-            .background(composerShape.fill(ChatStyle.card))
+            // A `!` line lights the inside of the card with a soft blue
+            // glow falling from its top middle (`CommandGlow`), no border.
+            .background(composerShape.fill(ChatStyle.card)
+                .overlay(alignment: .top) { CommandGlow(level: commandLevel).clipShape(composerShape) })
             .overlay(composerShape.strokeBorder(ChatStyle.composerOutline, lineWidth: 1))
+            .onChange(of: commandRunnable) { _, ready in if ready { Haptics.step() } }
+
             // The inner top highlight; dark mode has no drop shadow.
             .overlay(alignment: .top) {
                 Capsule().fill(Color.white.opacity(Theme.isLight ? 0 : 0.03)).frame(height: 1)
@@ -2160,6 +2319,9 @@ private struct Composer: View {
         .padding(.top, 8)
         .onAppear {
             #if DEBUG
+            if ConversationDebug.openDropdown == "command" {
+                text = "! git log --oneline -5 | grep -i \"fix\" > /tmp/out.txt && echo $HOME"
+            }
             if ConversationDebug.openDropdown == "reference" {
                 text = "@"
                 refreshReferences()
@@ -2283,7 +2445,18 @@ private struct Composer: View {
 
     /// The send button while a turn runs: steer where the engine can take
     /// it, ⌘ held flipping that to queue; queue where it can't.
+    /// The line starts with `!`: Return runs it in the shell, not the agent.
+    private var commandMode: Bool { text.hasPrefix("!") && session.engine != .opencode }
+
+    /// And there is a command after the `!` to run.
+    private var commandRunnable: Bool {
+        commandMode && !text.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var commandLevel: Int { commandRunnable ? 2 : commandMode ? 1 : 0 }
+
     private func sendKind(running: Bool) -> RoundComposerButton.Kind {
+        if commandRunnable, !running, bridge.editing == nil { return .run }
         guard running, bridge.editing == nil else { return .send }
         guard session.canSteer else { return .queue }
         return modifiers.command ? .queue : .steer
@@ -2297,6 +2470,8 @@ private struct Composer: View {
             return session.canSteer
                 ? "Queue for when this turn ends (⌘Return). Let go of ⌘ to steer instead."
                 : "Queue for when this turn ends (Return). \(session.engine.displayName) can't take a message mid-turn."
+        case .run:
+            return "Run it in the shell (Return); its output goes to \(session.engine.displayName) with your next message"
         case .send:
             switch bridge.editing {
             case .editHeld: return "Update the queued message (Return)"
@@ -3244,7 +3419,7 @@ private struct AssistantMessage: View {
 /// up arrow, growing a touch under the pointer; stop in red with a square.
 private struct RoundComposerButton: View {
     /// Send; while a turn runs, queue it for after or steer it in now.
-    enum Kind { case send, queue, steer, stop }
+    enum Kind { case send, queue, steer, stop, run }
     let kind: Kind
     let action: () -> Void
     @State private var hovered = false
@@ -3254,6 +3429,7 @@ private struct RoundComposerButton: View {
         Button(action: action) {
             ZStack {
                 Circle().fill(kind == .stop ? ChatStyle.removed.opacity(hovered && enabled ? 1 : 0.9)
+                              : kind == .run ? ChatStyle.link.opacity(hovered && enabled ? 1 : 0.92)
                               : hovered && enabled ? ChatStyle.primaryHover : ChatStyle.primary)
                 switch kind {
                 case .stop:
@@ -3261,7 +3437,7 @@ private struct RoundComposerButton: View {
                 default:
                     Image(systemName: Self.symbol(kind))
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(ChatStyle.onPrimary)
+                        .foregroundStyle(kind == .run ? Color.white : ChatStyle.onPrimary)
                         .contentTransition(.symbolEffect(.replace))
                 }
             }
@@ -3270,7 +3446,7 @@ private struct RoundComposerButton: View {
                 Capsule().fill(Color.white.opacity(0.18)).frame(width: 14, height: 1).padding(.top, 1)
             }
             .frame(width: ChatStyle.sendSize, height: ChatStyle.sendSize)
-            .shadow(color: (kind == .stop ? ChatStyle.removed : ChatStyle.primary).opacity(enabled ? 0.24 : 0), radius: 1, y: 1)
+            .shadow(color: (kind == .stop ? ChatStyle.removed : kind == .run ? ChatStyle.link : ChatStyle.primary).opacity(enabled ? 0.24 : 0), radius: 1, y: 1)
             .scaleEffect(hovered && enabled ? 1.05 : 1)
             .opacity(enabled ? 1 : 0.64)
             .contentShape(Circle())
@@ -3287,6 +3463,7 @@ private struct RoundComposerButton: View {
         case .queue: "text.line.last.and.arrowtriangle.forward"
         case .steer: "arrow.turn.up.right"
         case .stop: "stop.fill"
+        case .run: "play.fill"
         }
     }
 }

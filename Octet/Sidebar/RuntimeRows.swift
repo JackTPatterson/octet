@@ -490,14 +490,16 @@ struct RuntimeGlyph: View {
     }
 
     @ViewBuilder private var mark: some View {
-        if entry.kind == .monitor {
-            OctetIcon("eye", size: size).foregroundStyle(entry.tint)
-        } else if entry.kind == .task {
-            OctetIcon("clock.arrow.circlepath", size: size).foregroundStyle(entry.tint)
-        } else if entry.kind == .agent {
+        // Every kind sits on the same disc, so the column reads as one.
+        switch entry.kind {
+        case .monitor:
+            AgentLogoDisc(brand: nil, diameter: size + 6, symbol: "eye", tint: entry.tint)
+        case .task:
+            AgentLogoDisc(brand: nil, diameter: size + 6, symbol: "clock.arrow.circlepath", tint: entry.tint)
+        case .agent:
             AgentLogoDisc(brand: AgentBrand.forAgent(entry.agentID), diameter: size + 6)
-        } else {
-            OctetIcon("terminal", size: size).foregroundStyle(entry.tint)
+        case .shell:
+            AgentLogoDisc(brand: nil, diameter: size + 6, symbol: "terminal", tint: entry.tint)
         }
     }
 }
@@ -571,7 +573,7 @@ struct RuntimeGroupHeader: View {
             if let brand = AgentBrand.forAgent(group.agentID) {
                 AgentLogoDisc(brand: brand)
             } else {
-                OctetIcon("terminal", size: 13).foregroundStyle(Theme.textTertiary)
+                AgentLogoDisc(brand: nil, symbol: "terminal", tint: Theme.textTertiary)
             }
         }
         .overlay(alignment: .bottomTrailing) {

@@ -72,3 +72,4 @@ enum ComposerCaret {
         }
     }
 }
+
