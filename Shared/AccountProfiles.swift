@@ -156,15 +156,23 @@ enum AccountProfiles {
     }
 
     static func environment(for directory: String) -> [String: String] {
-        Dictionary(inForce(for: directory).map { ($0.variable, $0.expandedHome()) }, uniquingKeysWith: { first, _ in first })
+        var environment = Dictionary(inForce(for: directory).map { ($0.variable, $0.expandedHome()) },
+                                     uniquingKeysWith: { first, _ in first })
+        // The folder's credential profiles (Supabase, GitHub…) ride along.
+        environment.merge(CredentialProfiles.environment(for: directory)) { _, credential in credential }
+        return environment
     }
 
     /// The request rewrite the app installs in `EngineClient.prepareRequest`.
     static func prepare(_ method: String, _ params: [String: Any]) -> [String: Any] {
         let (profiles, assignments) = configured
-        guard !assignments.isEmpty else { return params }
+        guard !assignments.isEmpty || CredentialProfiles.hasAssignments else { return params }
         return inject(method, params,
-                      environment: { environment(for: $0, root: projectRoot(of: $0), profiles: profiles, assignments: assignments) },
+                      environment: { directory in
+                          var env = environment(for: directory, root: projectRoot(of: directory), profiles: profiles, assignments: assignments)
+                          env.merge(CredentialProfiles.environment(for: directory)) { _, credential in credential }
+                          return env
+                      },
                       cwdOf: folder(of:))
     }
 

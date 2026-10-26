@@ -36,6 +36,10 @@ final class PromptEditor: ObservableObject {
     private var anchorTimer: Timer?
     /// Executables on PATH, read once; branches per working folder.
     private var pathCommands: [String] = []
+    /// Functions your shell files define, which aren't on PATH.
+    private var functionNames: Set<String> = []
+    private var knownCommands: Set<String> = []
+    private var frecentCache: [String]?
     private var branches: [String] = []
     private var cwd: String?
     /// What this folder can run, and what usually follows what.
@@ -399,6 +403,8 @@ final class PromptEditor: ObservableObject {
     }
 
     private func activate() {
+        // Flags and subcommands for most tools come from the spec corpus.
+        SpecAutoIngest.ensure()
         paneId = store.keyPaneId
         let pane = store.snapshot.panes.first { $0.paneId == paneId }
         cwd = pane?.effectiveCwd
@@ -440,13 +446,56 @@ final class PromptEditor: ObservableObject {
             let commands = needsPath ? Completions.commandsOnPath() : []
             let branches = Completions.branches(in: folder)
             let project = ProjectCommands.all(in: folder)
+            let functions = Self.shellFunctionNames()
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 if needsPath { self.pathCommands = commands }
                 self.branches = branches
                 self.projectCommands = project
+                self.functionNames = functions
+                self.rebuildKnownCommands()
             }
         }
+    }
+
+    /// Everything the shell would run by name: PATH, its builtins, aliases
+    /// and functions, what this folder offers, and any first word you've
+    /// run before (which covers what a shell file sets up that Octet can't see).
+    private func rebuildKnownCommands() {
+        var names = Set(pathCommands)
+        names.formUnion(ShellSyntax.builtins)
+        names.formUnion(functionNames)
+        for entry in projectCommands { if let first = entry.command.split(separator: " ").first { names.insert(String(first)) } }
+        for entry in history.entries { if let first = entry.command.split(separator: " ").first { names.insert(String(first)) } }
+        knownCommands = names
+    }
+
+    /// Whether a command word is one the shell wouldn't find. Only said once
+    /// everything is loaded, and never of a path, an assignment or an expansion.
+    func isUnknownCommand(_ word: String) -> Bool {
+        guard !knownCommands.isEmpty, !pathCommands.isEmpty else { return false }
+        if word.contains("/") || word.hasPrefix("~") || word.hasPrefix(".") || word.hasPrefix("$")
+            || word.contains("=") || word.hasPrefix("\\") || word.hasPrefix("!") { return false }
+        return !knownCommands.contains(word)
+    }
+
+    /// `name() {` and `function name` in the usual shell files.
+    nonisolated private static func shellFunctionNames(home: String = NSHomeDirectory()) -> Set<String> {
+        var names = Set<String>()
+        for file in [".zshrc", ".zshenv", ".zprofile", ".bashrc", ".bash_profile", ".profile"] {
+            guard let text = try? String(contentsOfFile: "\(home)/\(file)", encoding: .utf8) else { continue }
+            for line in text.split(separator: "\n") {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                if trimmed.hasPrefix("function ") {
+                    let rest = trimmed.dropFirst("function ".count)
+                    if let name = rest.split(whereSeparator: { $0 == " " || $0 == "(" || $0 == "{" }).first { names.insert(String(name)) }
+                } else if let open = trimmed.range(of: "()"), open.lowerBound > trimmed.startIndex {
+                    let name = trimmed[..<open.lowerBound].trimmingCharacters(in: .whitespaces)
+                    if !name.isEmpty, name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" || $0 == "-" || $0 == "." }) { names.insert(name) }
+                }
+            }
+        }
+        return names
     }
 
     private func deactivate() {
@@ -554,18 +603,38 @@ final class PromptEditor: ObservableObject {
             for: context,
             commands: pathCommands,
             entries: Completions.entries(for: context.token, cwd: folder),
-            history: history.entries.map(\.command),
+            history: menuHistory(for: context),
             branches: branches,
             spec: spec,
             generatorValues: generatorValues,
             project: projectCommands,
-            predictions: sequences.next(after: lastCommand)
+            predictions: sequences.next(after: lastCommand),
+            historyIsRanked: true
         )
         completions = results
         completionIndex = 0
         completionColumn = context.range.lowerBound
         isSearchingHistory = false
         if !results.isEmpty || !awaitingValues { completionNotice = nil }
+    }
+
+    /// History for the menu, best first. At the command position that's the
+    /// lines you've run that start with what's typed, the ones run in this
+    /// folder first, then by how often and how lately; elsewhere it's every
+    /// command in that same order, for the words and flags harvested from it.
+    private func menuHistory(for context: CompletionContext) -> [String] {
+        guard context.isCommandPosition else { return frecentCommands }
+        let matches = context.token.isEmpty ? history.frecencyOrdered(limit: 60) : history.ranked(matching: context.token, limit: 60)
+        let here = matches.filter { sequences.count(of: $0, in: cwd) > 0 }
+        return here + matches.filter { sequences.count(of: $0, in: cwd) == 0 }
+    }
+
+    /// Every command by frecency, kept until history changes.
+    private var frecentCommands: [String] {
+        if let cached = frecentCache { return cached }
+        let ordered = history.frecencyOrdered()
+        frecentCache = ordered
+        return ordered
     }
 
     /// "No completions" for a moment where the menu would have been.
@@ -607,8 +676,10 @@ final class PromptEditor: ObservableObject {
             line.replace(range: 0..<line.text.count, with: completion.value)
         } else {
             let context = CompletionContext.at(caret: line.caret, in: line.text)
-            // Directories keep the slash so the next word continues the path.
-            let value = completion.kind == .directory ? completion.value : completion.value + " "
+            // Directories keep the slash so the next word continues the path;
+            // a name with a space is quoted or escaped the way it's being typed.
+            let text = context.insertion(for: completion)
+            let value = completion.kind == .directory ? text : text + " "
             line.replace(range: context.range, with: value)
         }
         closeCompletions()
@@ -676,6 +747,7 @@ final class PromptEditor: ObservableObject {
     private func remember(_ command: String) {
         if !command.trimmingCharacters(in: .whitespaces).isEmpty {
             history.add(.init(command: command, at: Date()))
+            frecentCache = nil
             // Learn the pair, so next time the line starts where you left off.
             if let previous = lastCommand {
                 sequences.add(previous: previous, next: command, at: Int(Date().timeIntervalSince1970))
@@ -783,7 +855,9 @@ final class PromptEditor: ObservableObject {
                 for entry in self.history.entries { merged.add(entry) }
                 merged.hidden = Set(UserDefaults.standard.stringArray(forKey: Self.hiddenKey) ?? [])
                 self.history = merged
+                self.frecentCache = nil
                 self.sequences = sequences
+                self.rebuildKnownCommands()
                 self.refreshSuggestion()
             }
         }

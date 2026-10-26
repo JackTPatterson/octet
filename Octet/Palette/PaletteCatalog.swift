@@ -253,6 +253,7 @@ enum PaletteCatalog {
         })
         items += appItems(window: window)
         items += accountItems(window: window)
+        items += credentialItems(window: window)
         if let item = checkpointItem(window: window) { items.append(item) }
         if let item = commandLogItem(window: window) { items.append(item) }
         items += bestOfNItems(window: window)
@@ -903,6 +904,31 @@ enum PaletteCatalog {
             done(rows.isEmpty ? [PaletteItem(id: "peer.none", kind: .action, title: "No agents running on your other Macs",
                                              subtitle: "Or they aren't reachable right now", icon: .symbol("desktopcomputer"), effect: .run {})] : rows)
         }
+    }
+
+    /// Credential profiles (Supabase, GitHub…): turn one on or off for this project.
+    static func credentialItems(window: WindowContext) -> [PaletteItem] {
+        let profiles = SettingsStore.shared.values.credentialProfiles
+        guard !profiles.isEmpty, let folder = AccountActions.projectFolder(window: window) else { return [] }
+        let inUse = CredentialProfiles.inForce(for: folder)
+        let project = URL(fileURLWithPath: folder).lastPathComponent
+        return [PaletteItem(
+            id: "action.useCredentials", kind: .action, title: "Use Credentials for This Project…",
+            subtitle: inUse.isEmpty ? "\(project) uses your usual sign-ins" : "\(project) uses " + inUse.map(\.name).joined(separator: ", "),
+            keywords: ["credentials", "supabase", "token", "env", "profile", "aventix", "jpx", "login", "switch", "cli"],
+            icon: .symbol("key.fill"),
+            effect: .list(title: "Credentials for \(project)") { deliver in
+                deliver(profiles.map { profile in
+                    let on = CredentialActions.uses(profile, folder: folder)
+                    return PaletteItem(
+                        id: "credentials.\(profile.id)", kind: .action, title: profile.name,
+                        subtitle: (on ? "In use here · select to stop · " : "") + profile.variables.map(\.name).joined(separator: ", "),
+                        icon: .symbol(on ? "checkmark.circle.fill" : "key.fill"),
+                        effect: .run { CredentialActions.toggle(profile, folder: folder) }
+                    )
+                })
+            }
+        )]
     }
 
     /// Accounts: add one, sign in to one, choose the project's.

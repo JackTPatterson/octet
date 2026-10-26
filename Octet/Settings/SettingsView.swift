@@ -570,6 +570,23 @@ private struct GeneralSettings: View {
                 Toggle("Name workspaces after their work", isOn: $settings.values.autoNameWorkspaces).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
         }
+        SettingsGroup(title: "Editor") {
+            SettingsRow(
+                title: "Show agent cursors",
+                detail: "While an agent works, show its cursor like a teammate's: in a file open beside it, a pointer with its name where an edit will land and new text typed in as it arrives; in the Browser plane, a pointer that glides to each thing it clicks, fills or types into, with a flag saying what it's doing. Off, edits and clicks still happen, just unseen.",
+                setting: \.showAgentCursors
+            ) {
+                Toggle("Show agent cursors", isOn: $settings.values.showAgentCursors).labelsHidden().toggleStyle(OctetSwitchStyle())
+            }
+            SettingsDivider()
+            SettingsRow(
+                title: "Vim keys in the editor",
+                detail: "Edit files with Vim's modes and keys: Normal, Insert and Visual, counts, operators with motions and text objects (dw, ci\", da(), yy and p, . to repeat, / to search, :w, :q and :%s). Off by default; the editor opens in Normal mode when it's on, so press i to type. ⌘ shortcuts keep working.",
+                setting: \.vimMode
+            ) {
+                Toggle("Vim keys in the editor", isOn: $settings.values.vimMode).labelsHidden().toggleStyle(OctetSwitchStyle())
+            }
+        }
         SettingsGroup(title: "Help & tips") {
             SettingsRow(
                 title: "Show tips",
@@ -1195,6 +1212,7 @@ private struct AccountsUsageSettings: View {
                 }
             }
         }
+        CredentialsSettingsGroup(settings: settings)
         SettingsGroup(title: "Usage") {
             SettingsRow(
                 title: "Read live usage from your Claude account",

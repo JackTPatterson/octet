@@ -161,6 +161,10 @@ private struct EditorDocumentView: View {
                 }
                 FileBreadcrumbs(url: document.url, root: rootDirectory, reveal: revealFolder)
                 viewSwitch
+                if document.mode.readsText {
+                    AgentEditingChip(document: document)
+                    AgentFollowToggle()
+                }
                 if lone {
                     HStack(spacing: 2) {
                         OctetIconButton(icon: "plus", help: "Open File (⌘O)", compact: true) { workspace.filePickerVisible = true }
@@ -241,6 +245,7 @@ private struct EditorDocumentView: View {
 
     private var footer: some View {
         HStack(spacing: 8) {
+            if document.mode.readsText { VimStatusView(workspace: workspace) }
             if !document.mode.readsText || showsPreview {
                 Text(detail.isEmpty ? previewFileSize(document.url) : detail)
             }
@@ -265,6 +270,63 @@ private struct EditorDocumentView: View {
         .layoutPriority(1)
         .background(Theme.chrome)
         .overlay(alignment: .top) { Rectangle().fill(Theme.divider).frame(height: 1) }
+    }
+}
+
+/// Vim's mode and the keys waiting, at the left of the footer, while Vim keys are on.
+private struct VimStatusView: View {
+    @ObservedObject var workspace: EditorWorkspace
+
+    var body: some View {
+        if !workspace.vimStatus.isEmpty {
+            Text(workspace.vimStatus)
+                .font(Theme.Text.mono(11).weight(.semibold))
+                .foregroundStyle(workspace.vimStatus.hasPrefix("-- INSERT") ? Theme.success : Theme.textSecondary)
+                .lineLimit(1)
+        }
+    }
+}
+
+/// "Claude is editing", with its logo and a loading line, while an agent has
+/// an edit to this file in flight.
+private struct AgentEditingChip: View {
+    let document: EditorDocument
+    @ObservedObject private var activity = AgentEditActivity.shared
+
+    var body: some View {
+        Group {
+            if let pending = activity.pending[document.id] {
+                HStack(spacing: 5) {
+                    if let brand = AgentBrand.forAgent(pending.writer.brandId) { AgentLogo(brand: brand, size: 11) }
+                    Text("\(pending.writer.name) is editing")
+                        .font(Theme.captionFont.weight(.medium))
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
+                    LoadingLine(width: 14, thickness: 1.5)
+                }
+                .fixedSize()
+                .layoutPriority(2)
+                .padding(.horizontal, 8)
+                .frame(height: 20)
+                .background(Capsule().fill(Theme.hover))
+                .padding(.trailing, 4)
+                .transition(.opacity.combined(with: .scale(scale: 0.92)))
+            }
+        }
+        .animation(.smooth(duration: 0.2), value: activity.pending[document.id] != nil)
+    }
+}
+
+/// Whether the view follows an agent's edits: scrolling to where its cursor goes.
+private struct AgentFollowToggle: View {
+    @AppStorage("octet.editor.followAgent") private var follow = true
+
+    var body: some View {
+        OctetIconButton(icon: "eye", help: follow ? "Following the agent's edits. Click to stay where you are."
+                                                  : "Follow the agent's edits as they land", active: follow, compact: true) {
+            follow.toggle()
+        }
+        .padding(.trailing, 4)
     }
 }
 

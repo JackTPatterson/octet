@@ -54,38 +54,129 @@ struct CompletionContext: Equatable {
     /// subcommand a spec is in.
     var wordsBeforeToken: [String] = []
 
+    /// The quote the word at the caret is inside, if it is still open.
+    var openQuote: Character?
+    /// Whether the word was typed starting with a quote (which `range` includes).
+    var startsWithQuote = false
+
+    /// One word of the line as typed: where it sits, what it says once its
+    /// quotes and backslashes are taken off, and the quote it left open.
+    private struct Word {
+        var start: Int
+        var end: Int
+        var value: String
+        var openQuote: Character?
+        var startsWithQuote: Bool
+        var segment: Int
+    }
+
+    /// Reads the line like a shell would, as far as completion needs: words
+    /// split by unquoted, unescaped spaces; `'...'`, `"..."` and `\ ` kept
+    /// inside one word; and a pipe, `&&`, `||`, `;`, `&` or `(` starting a
+    /// new command (not `2>&1` or `&>`).
+    private static func words(of characters: [Character]) -> (words: [Word], breaks: [Int]) {
+        var words: [Word] = []
+        var breaks: [Int] = []          // character offsets where a new command begins
+        var current: Word?
+        var quote: Character?
+        var index = 0
+        func finish(at end: Int) {
+            guard var word = current else { return }
+            word.end = end
+            word.openQuote = quote
+            words.append(word)
+            current = nil
+            quote = nil
+        }
+        func begin(at start: Int, quoted: Bool) {
+            current = Word(start: start, end: start, value: "", openQuote: nil, startsWithQuote: quoted, segment: breaks.count)
+        }
+        while index < characters.count {
+            let character = characters[index]
+            if let open = quote {
+                if character == open { quote = nil }
+                else if character == "\\", open == "\"", index + 1 < characters.count,
+                        "\"$`\\".contains(characters[index + 1]) {
+                    index += 1
+                    current?.value.append(characters[index])
+                } else { current?.value.append(character) }
+                index += 1
+                continue
+            }
+            if character == " " || character == "\t" {
+                finish(at: index)
+            } else if character == "\\", index + 1 < characters.count {
+                if current == nil { begin(at: index, quoted: false) }
+                index += 1
+                current?.value.append(characters[index])
+            } else if character == "\"" || character == "'" {
+                if current == nil { begin(at: index, quoted: true) }
+                quote = character
+            } else if "|;&(".contains(character) || character == ")" || character == ">" || character == "<" {
+                finish(at: index)
+                if "|;&(".contains(character) {
+                    let redirected = character == "&" && index > 0 && (characters[index - 1] == ">" || characters[index - 1] == "<")
+                    let redirecting = character == "&" && index + 1 < characters.count && characters[index + 1] == ">"
+                    if !redirected && !redirecting { breaks.append(index + 1) }
+                }
+            } else {
+                if current == nil { begin(at: index, quoted: false) }
+                current?.value.append(character)
+            }
+            index += 1
+        }
+        finish(at: characters.count)
+        return (words, breaks)
+    }
+
     /// Splits a line at the caret into the word being typed and its command.
+    /// `token` is the word as it will be read (quotes and backslashes off);
+    /// `range` is where it sits in the line, to replace as typed.
     static func at(caret: Int, in line: String) -> CompletionContext {
         let characters = Array(line)
-        var start = min(caret, characters.count)
-        while start > 0, !characters[start - 1].isWhitespace { start -= 1 }
-        var end = min(caret, characters.count)
-        while end < characters.count, !characters[end].isWhitespace { end += 1 }
-        let token = String(characters[start..<end])
-
-        // The command is the first word, unless the caret is on it.
-        var firstEnd = 0
-        while firstEnd < characters.count, characters[firstEnd].isWhitespace { firstEnd += 1 }
-        let firstStart = firstEnd
-        while firstEnd < characters.count, !characters[firstEnd].isWhitespace { firstEnd += 1 }
-        let first = String(characters[firstStart..<firstEnd])
-        let onFirstWord = start <= firstStart
-        // The word before the caret's own, for commands that take a branch.
-        var previousEnd = start
-        while previousEnd > 0, characters[previousEnd - 1].isWhitespace { previousEnd -= 1 }
-        var previousStart = previousEnd
-        while previousStart > 0, !characters[previousStart - 1].isWhitespace { previousStart -= 1 }
-        let previous = previousStart < previousEnd ? String(characters[previousStart..<previousEnd]) : nil
-        let before = String(characters[0..<start])
-            .split(separator: " ")
-            .map(String.init)
+        let caret = min(max(caret, 0), characters.count)
+        let (all, breaks) = words(of: characters)
+        let caretSegment = breaks.filter { $0 <= caret }.count
+        let here = all.first { $0.start <= caret && caret <= $0.end && $0.segment == caretSegment }
+        let before = all.filter { $0.segment == caretSegment && $0.end <= (here?.start ?? caret) && $0.start < (here?.start ?? caret) }
+        let first = before.first
         return CompletionContext(
-            token: token,
-            range: start..<end,
-            command: onFirstWord || first.isEmpty ? nil : first,
-            previousWord: previous,
-            wordsBeforeToken: Array(before.dropFirst())
+            token: here?.value ?? "",
+            range: (here?.start ?? caret)..<(here?.end ?? caret),
+            command: first?.value,
+            previousWord: before.last?.value,
+            wordsBeforeToken: before.dropFirst().map(\.value),
+            openQuote: here?.openQuote,
+            startsWithQuote: here?.startsWithQuote ?? false
         )
+    }
+
+    /// What goes in the line for `completion`: a path is written the way the
+    /// word being typed is quoted (or backslash-escaped, if it isn't), so a
+    /// name with a space completes to something the shell reads back whole.
+    func insertion(for completion: Completion) -> String {
+        guard completion.kind == .file || completion.kind == .directory else { return completion.value }
+        let value = completion.value
+        let quote = openQuote
+        var text = ""
+        if let quote {
+            text = String(quote)
+            for character in value {
+                if quote == "\"", "\"$`\\".contains(character) { text.append("\\") }
+                text.append(character)
+            }
+            // A file ends its word; a folder stays open for what follows.
+            if completion.kind == .file { text.append(quote) }
+        } else {
+            let special: Set<Character> = [" ", "\t", "(", ")", "&", ";", "|", "<", ">", "*", "?", "[", "]", "{", "}",
+                                           "$", "`", "\"", "'", "\\", "!", "#", "^"]
+            for (offset, character) in value.enumerated() {
+                // A leading `~` is the home folder, not a name.
+                if special.contains(character) && !(offset == 0 && character == "~") { text.append("\\") }
+                text.append(character)
+            }
+        }
+        return text
     }
 }
 
@@ -100,6 +191,13 @@ enum Completions {
         "npm": ["ci", "init", "install", "link", "publish", "run", "start", "test", "uninstall", "update"],
         "docker": ["build", "compose", "exec", "images", "logs", "ps", "pull", "push", "run", "stop"],
         "brew": ["cleanup", "doctor", "info", "install", "list", "outdated", "search", "uninstall", "update", "upgrade"],
+        "pnpm": ["add", "build", "dev", "dlx", "exec", "install", "remove", "run", "start", "test", "update"],
+        "yarn": ["add", "build", "dev", "install", "remove", "run", "start", "test", "upgrade"],
+        "bun": ["add", "build", "dev", "install", "remove", "run", "test", "update", "x"],
+        "gh": ["api", "auth", "browse", "codespace", "gist", "issue", "pr", "release", "repo", "run", "workflow"],
+        "supabase": ["db", "functions", "gen", "init", "link", "login", "migration", "projects", "secrets", "start", "status", "stop"],
+        "kubectl": ["apply", "config", "delete", "describe", "exec", "get", "logs", "port-forward", "rollout", "scale"],
+        "terraform": ["apply", "destroy", "fmt", "import", "init", "output", "plan", "state", "validate", "workspace"],
     ]
 
     /// Whether the word at the caret is already a whole word that fits
@@ -121,7 +219,10 @@ enum Completions {
     }
 
     /// Commands whose next word is a git branch.
-    static let branchTaking: Set<String> = ["checkout", "switch", "merge", "rebase"]
+    static let branchTaking: Set<String> = [
+        "checkout", "switch", "merge", "rebase", "branch", "diff", "log", "cherry-pick", "reset", "show", "revert",
+        "-d", "-D", "-m", "-M", "--delete",
+    ]
 
     /// Ranks candidates for the word at the caret. `commands` are the names
     /// on PATH, `entries` the files in the token's directory, `history` past
@@ -136,6 +237,7 @@ enum Completions {
         generatorValues: [String] = [],
         project: [ProjectCommands.Entry] = [],
         predictions: [String] = [],
+        historyIsRanked: Bool = false,
         limit: Int = 12
     ) -> [Completion] {
         var candidates: [Completion] = []
@@ -198,7 +300,7 @@ enum Completions {
             }
         }
 
-        return rank(candidates, matching: token, limit: limit)
+        return rank(candidates, matching: token, limit: limit, historyIsRanked: historyIsRanked)
     }
 
     /// Candidates a spec offers at the caret: subcommands and options with
@@ -251,12 +353,27 @@ enum Completions {
     }
 
     /// Prefix matches first, then fuzzy, shortest first, no duplicates.
-    static func rank(_ candidates: [Completion], matching token: String, limit: Int) -> [Completion] {
+    /// With `historyIsRanked`, history lines arrive best first (by how often
+    /// and how lately you ran them, and where) and keep that order, ahead of
+    /// bare command names that match the same letters.
+    static func rank(_ candidates: [Completion], matching token: String, limit: Int,
+                     historyIsRanked: Bool = false) -> [Completion] {
         var seen = Set<String>()
         var scored: [(Completion, Int)] = []
         let needle = token.lowercased()
+        var historyPlace = 0
         for candidate in candidates {
             guard seen.insert(candidate.id).inserted, candidate.value != token else { continue }
+            if historyIsRanked, candidate.kind == .history {
+                // Whatever it matches, its place in your habits decides.
+                let matches = needle.isEmpty || candidate.value.lowercased().hasPrefix(needle)
+                    || FuzzyMatcher.match(needle, in: candidate.shown) != nil
+                if matches {
+                    scored.append((candidate, 1_200 - min(historyPlace, 150)))
+                    historyPlace += 1
+                }
+                continue
+            }
             if needle.isEmpty {
                 scored.append((candidate, 0))
                 continue
@@ -341,31 +458,84 @@ enum Completions {
             base = cwd + "/" + directoryPart
         }
         let manager = FileManager.default
-        let names = (try? manager.contentsOfDirectory(atPath: base)) ?? []
+        let names = listing(of: base)
         // Keep a typed tilde in what is inserted even though filesystem
         // lookup uses its expanded path.
         let typedDirectory = token.contains("/") ? (token as NSString).deletingLastPathComponent : ""
         let prefix = typedDirectory.isEmpty ? "" : typedDirectory + "/"
-        return names.filter { !$0.hasPrefix(".") }.sorted().map { name in
+        // Dotfiles stay out of the way until the word being typed starts with one.
+        let typedName = token.split(separator: "/", omittingEmptySubsequences: false).last.map(String.init) ?? ""
+        let showsHidden = typedName.hasPrefix(".")
+        return names.filter { showsHidden || !$0.hasPrefix(".") }.sorted().map { name in
             var isDirectory: ObjCBool = false
             manager.fileExists(atPath: base + "/" + name, isDirectory: &isDirectory)
             return (prefix + name, isDirectory.boolValue)
         }
     }
 
-    /// Local branches, for the git commands that take one.
+    /// A folder's names, kept a few seconds: a menu that reopens on every
+    /// keystroke shouldn't read a big folder (Downloads, node_modules) each time.
+    private static let listingLock = NSLock()
+    nonisolated(unsafe) private static var listings: [String: (names: [String], at: Date)] = [:]
+
+    private static func listing(of directory: String) -> [String] {
+        if let hit = listingLock.withLock({ listings[directory] }), Date().timeIntervalSince(hit.at) < 3 { return hit.names }
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: directory)) ?? []
+        listingLock.withLock {
+            if listings.count > 40 { listings = [:] }
+            listings[directory] = (names, Date())
+        }
+        return names
+    }
+
+    /// Local branches, then remote ones not already local, for the git
+    /// commands that take one. Reads the repository's files, so it works in
+    /// a linked worktree (whose `.git` is a file) and for branches git has
+    /// packed into `packed-refs`.
     static func branches(in cwd: String) -> [String] {
-        guard let head = GitBranch.repositoryRoot(for: cwd) else { return [] }
-        let refs = head + "/.git/refs/heads"
-        var names: [String] = []
+        guard let root = GitBranch.repositoryRoot(for: cwd) else { return [] }
         let manager = FileManager.default
-        if let enumerator = manager.enumerator(atPath: refs) {
-            for case let name as String in enumerator where !name.hasPrefix(".") {
-                var isDirectory: ObjCBool = false
-                manager.fileExists(atPath: refs + "/" + name, isDirectory: &isDirectory)
-                if !isDirectory.boolValue { names.append(name) }
+        var gitDirectory = root + "/.git"
+        var isDirectory: ObjCBool = false
+        if manager.fileExists(atPath: gitDirectory, isDirectory: &isDirectory), !isDirectory.boolValue,
+           let pointer = try? String(contentsOfFile: gitDirectory, encoding: .utf8),
+           let line = pointer.split(separator: "\n").first(where: { $0.hasPrefix("gitdir:") }) {
+            let path = line.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespaces)
+            gitDirectory = path.hasPrefix("/") ? path : root + "/" + path
+        }
+        // A worktree's refs live in the main repository's folder.
+        var common = gitDirectory
+        if let pointer = try? String(contentsOfFile: gitDirectory + "/commondir", encoding: .utf8) {
+            let path = pointer.trimmingCharacters(in: .whitespacesAndNewlines)
+            common = path.hasPrefix("/") ? path : (gitDirectory + "/" + path)
+            common = (common as NSString).standardizingPath
+        }
+        func loose(_ folder: String) -> [String] {
+            var names: [String] = []
+            if let enumerator = manager.enumerator(atPath: common + "/" + folder) {
+                for case let name as String in enumerator where !name.hasPrefix(".") && !name.hasSuffix(".lock") {
+                    var isDirectory: ObjCBool = false
+                    manager.fileExists(atPath: common + "/" + folder + "/" + name, isDirectory: &isDirectory)
+                    if !isDirectory.boolValue { names.append(name) }
+                }
+            }
+            return names
+        }
+        var local = Set(loose("refs/heads"))
+        var remote = Set(loose("refs/remotes").filter { !$0.hasSuffix("/HEAD") })
+        if let packed = try? String(contentsOfFile: common + "/packed-refs", encoding: .utf8) {
+            for line in packed.split(separator: "\n") where !line.hasPrefix("#") && !line.hasPrefix("^") {
+                let fields = line.split(separator: " ", maxSplits: 1)
+                guard fields.count == 2 else { continue }
+                let ref = String(fields[1])
+                if ref.hasPrefix("refs/heads/") { local.insert(String(ref.dropFirst("refs/heads/".count))) }
+                else if ref.hasPrefix("refs/remotes/"), !ref.hasSuffix("/HEAD") { remote.insert(String(ref.dropFirst("refs/remotes/".count))) }
             }
         }
-        return names.sorted()
+        // `git checkout feature` finds origin/feature: offer the short name too.
+        let remoteOnly = remote.map { name -> String in
+            name.split(separator: "/", maxSplits: 1).count == 2 ? String(name.split(separator: "/", maxSplits: 1)[1]) : name
+        }.filter { !local.contains($0) }
+        return local.sorted() + Set(remoteOnly).sorted()
     }
 }

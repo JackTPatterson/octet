@@ -174,6 +174,9 @@ struct OctetSettings: Codable, Equatable {
     /// Extra agent sign-ins, and the project folders that use them.
     var accountProfiles: [AccountProfile] = []
     var accountAssignments: [AccountAssignment] = []
+    /// Credential profiles (Supabase, GitHub…): environment per project folder. Secrets are in the Keychain.
+    var credentialProfiles: [CredentialProfile] = []
+    var credentialAssignments: [CredentialAssignment] = []
     /// Turn on Remote Control for every Claude conversation in Octet, so it
     /// can be continued from claude.ai or the Claude app.
     var claudeRemoteControl = false
@@ -200,6 +203,10 @@ struct OctetSettings: Codable, Equatable {
     var checkForAgentUpdates = true
     var promptEditor = true
     var promptCompletions = true
+    /// Vim's keys in the editor: Normal, Insert and Visual modes, operators and motions.
+    var vimMode = false
+    /// A cursor for each agent working in a file beside you or driving the Browser plane.
+    var showAgentCursors = true
     var suggestionAcceptKey: SuggestionAcceptKey = .right
     var pasteImagesAsFiles = true
     var autoNameTabs = true
@@ -465,6 +472,8 @@ struct OctetSettings: Codable, Equatable {
         checkpointTurns = value("checkpointTurns", defaults.checkpointTurns)
         accountProfiles = list("accountProfiles", defaults.accountProfiles)
         accountAssignments = list("accountAssignments", defaults.accountAssignments)
+        credentialProfiles = list("credentialProfiles", defaults.credentialProfiles)
+        credentialAssignments = list("credentialAssignments", defaults.credentialAssignments)
         claudeRemoteControl = value("claudeRemoteControl", defaults.claudeRemoteControl)
         agentOpening = value("agentOpening", defaults.agentOpening)
         subagentTabClosing = value("subagentTabClosing", defaults.subagentTabClosing)
@@ -486,6 +495,8 @@ struct OctetSettings: Codable, Equatable {
         checkForAgentUpdates = value("checkForAgentUpdates", defaults.checkForAgentUpdates)
         promptEditor = value("promptEditor", defaults.promptEditor)
         promptCompletions = value("promptCompletions", defaults.promptCompletions)
+        vimMode = value("vimMode", defaults.vimMode)
+        showAgentCursors = value("showAgentCursors", defaults.showAgentCursors)
         suggestionAcceptKey = value("suggestionAcceptKey", defaults.suggestionAcceptKey)
         pasteImagesAsFiles = value("pasteImagesAsFiles", defaults.pasteImagesAsFiles)
         autoNameTabs = value("autoNameTabs", defaults.autoNameTabs)
@@ -744,6 +755,8 @@ final class SettingsStore: ObservableObject {
             UserDefaults.standard.set(stored, forKey: Self.unreadableBackupKey)
         }
         AccountProfiles.configure(profiles: values.accountProfiles, assignments: values.accountAssignments)
+        CredentialProfiles.readSecret = { CredentialKeychain.get($0) }
+        CredentialProfiles.configure(profiles: values.credentialProfiles, assignments: values.credentialAssignments)
         // Before the app builds its menus and terminal config from them.
         ShortcutOverrides.shared.update(values.shortcutOverrides)
         EngineClient.prepareRequest = AccountProfiles.prepare
@@ -856,14 +869,50 @@ final class SettingsStore: ObservableObject {
     /// The range the Font size stepper and the View menu share.
     static let fontSizeRange: ClosedRange<Double> = 8...32
 
+    /// What the zoom keys just did, for the on-screen indicator.
+    struct ZoomIndicator: Equatable {
+        let id = UUID()
+        let size: Double
+        let atDefault: Bool
+        let atLimit: Bool
+    }
+    @Published private(set) var zoomIndicator: ZoomIndicator?
+    /// The size the keys have asked for, applied once they pause so holding
+    /// ⌘+ reflows the terminal once, not on every step.
+    private var targetFontSize: Double?
+    private var applyFontSize: DispatchWorkItem?
+    private var hideZoom: DispatchWorkItem?
+
     /// View › Increase/Decrease Font Size: whole points, kept in range.
     func adjustFontSize(by delta: Double) {
-        let size = (values.fontSize + delta).rounded()
-        values.fontSize = min(max(size, Self.fontSizeRange.lowerBound), Self.fontSizeRange.upperBound)
+        let requested = ((targetFontSize ?? values.fontSize) + delta).rounded()
+        let size = min(max(requested, Self.fontSizeRange.lowerBound), Self.fontSizeRange.upperBound)
+        setZoom(size, atLimit: size != requested)
     }
 
     func resetFontSize() {
-        values.fontSize = OctetSettings().fontSize
+        setZoom(OctetSettings().fontSize, atLimit: false)
+    }
+
+    private func setZoom(_ size: Double, atLimit: Bool) {
+        targetFontSize = size
+        zoomIndicator = ZoomIndicator(size: size, atDefault: size == OctetSettings().fontSize, atLimit: atLimit)
+        applyFontSize?.cancel()
+        let apply = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, let size = self.targetFontSize else { return }
+                self.targetFontSize = nil
+                self.values.fontSize = size
+            }
+        }
+        applyFontSize = apply
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: apply)
+        hideZoom?.cancel()
+        let hide = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.zoomIndicator = nil }
+        }
+        hideZoom = hide
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: hide)
     }
 
     func writeSessionConfig() {
@@ -959,6 +1008,9 @@ final class SettingsStore: ObservableObject {
         if values.accountProfiles != old.accountProfiles || values.accountAssignments != old.accountAssignments {
             AccountProfiles.configure(profiles: values.accountProfiles, assignments: values.accountAssignments)
             writeAccountTable()
+        }
+        if values.credentialProfiles != old.credentialProfiles || values.credentialAssignments != old.credentialAssignments {
+            CredentialProfiles.configure(profiles: values.credentialProfiles, assignments: values.credentialAssignments)
         }
         if values.importedTheme != old.importedTheme {
             TerminalTheme.imported = values.importedTheme

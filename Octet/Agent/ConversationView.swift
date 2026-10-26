@@ -187,8 +187,18 @@ private struct ConversationContextStrip: View {
         let conversation = session.conversation
         let showsCost = accounts.accounts["claude"]?.kind != .subscription && conversation.costUSD != nil
         let showsBadge = !conversation.isRunning && verification != .noEdits
+        // The credential profiles this folder's agents and commands run with.
+        let credentials = CredentialProfiles.inForce(for: session.cwd)
         HStack(spacing: 10) {
             // Branch and working-tree changes are the status bar's.
+            if !credentials.isEmpty {
+                HStack(spacing: 4) {
+                    Image(systemName: "key.fill").font(.system(size: 9))
+                    Text(credentials.map(\.name).joined(separator: ", ")).lineLimit(1)
+                }
+                .foregroundStyle(ChatStyle.mutedText)
+                .help("Credential profiles in use here: " + credentials.map { $0.name + " (" + $0.variables.map(\.name).joined(separator: ", ") + ")" }.joined(separator: "; "))
+            }
             Spacer(minLength: 8)
             if !conversation.isRunning, verification != .noEdits {
                 VerificationBadge(verification: verification, compact: true)
@@ -210,7 +220,7 @@ private struct ConversationContextStrip: View {
         .padding(.bottom, 2)
         .chatColumn()
         // Nothing to say: no strip at all, not an empty band.
-        .frame(height: showsCost || showsBadge ? nil : 0)
+        .frame(height: showsCost || showsBadge || !credentials.isEmpty ? nil : 0)
         .clipped()
         .onChange(of: conversation.isRunning, initial: true) { _, running in
             if !running { verification = Verification.assess(session.conversation.items) }
@@ -672,17 +682,26 @@ private struct Transcript: View {
             }
             // Follow the stream only while at the end, so reading back isn't
             // yanked away; a button jumps to the latest instead.
-            // At most every tenth of a second: once per streamed token kept
-            // layout busy scrolling. The last change is always followed.
-            .onChange(of: items) { _, _ in
-                // Your own message brings the view back to the end.
-                if let last = items.last, case .user = last.kind, !last.queued { following = true }
-                guard following, !scrollQueued else { return }
-                scrollQueued = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    scrollQueued = false
-                    if following {
-                        withAnimation(.easeOut(duration: 0.16)) { proxy.scrollTo("bottom", anchor: .bottom) }
+            // Growth while following is the pinned anchor's job (`PinToEnd`):
+            // the system keeps the end in view as the reply lengthens, in
+            // step with layout, which is what stays smooth. Scrolling by
+            // hand on top of it fought it and made it jump.
+            .onChange(of: items) { old, new in
+                // Your own message brings the view back to the end, once.
+                if new.count != old.count, let last = new.last, case .user = last.kind, !last.queued {
+                    following = true
+                    DispatchQueue.main.async {
+                        withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("bottom", anchor: .bottom) }
+                    }
+                    return
+                }
+                // Before macOS 15 there's no pinned anchor, so follow by hand,
+                // at most every tenth of a second.
+                if #unavailable(macOS 15.0), following, !scrollQueued {
+                    scrollQueued = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        scrollQueued = false
+                        if following { proxy.scrollTo("bottom", anchor: .bottom) }
                     }
                 }
             }

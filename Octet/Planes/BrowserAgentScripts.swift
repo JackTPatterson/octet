@@ -216,6 +216,147 @@ enum BrowserAgentScripts {
       return lines.join('\n');
     };
 
+    // MARK: the agent's cursor
+    // What the person sees while an agent drives the page: a pointer that
+    // glides to each element it acts on, a flag with its name and what it is
+    // doing, a soft wash on the element, and a ripple on a click. It lives in
+    // a closed shadow root at the top of the document, never takes a click,
+    // and goes quiet a moment after the agent does.
+    const cursor = (() => {
+      const S = { on: true, name: 'Agent', hue: '#8b6bff', ready: false, placed: false, x: 0, y: 0, hideTimer: 0 };
+      let host, cur, inner, flag, nameEl, doingEl, wash, ring, ripple;
+      const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
+      const reduce = () => !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
+      const css = `
+        *{box-sizing:border-box}
+        .cur{position:fixed;left:0;top:0;opacity:0;transform:translate3d(-80px,-80px,0);will-change:transform;
+          transition:transform .56s cubic-bezier(.32,.72,.24,1),opacity .26s}
+        .cur.on{opacity:1}
+        .in{position:relative;transform-origin:3px 2px;transition:transform .16s ease}
+        .in.press{transform:scale(.84)}
+        .in.pop{animation:pop .34s cubic-bezier(.32,.72,.24,1)}
+        @keyframes pop{from{transform:scale(.4);opacity:0}to{transform:scale(1);opacity:1}}
+        .arrow{display:block;width:20px;height:24px;overflow:visible;filter:drop-shadow(0 2px 3px rgba(0,0,0,.35))}
+        .arrow path{fill:var(--hue);stroke:#fff;stroke-width:1.6;stroke-linejoin:round}
+        .flag{position:absolute;left:15px;top:19px;white-space:nowrap;color:#f4f4f5;
+          font:500 12px/16px ui-sans-serif,-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;
+          background:linear-gradient(#1c1c1f,#1c1c1f) padding-box,linear-gradient(90deg,#ff4fa3,#8b6bff 55%,#3b8bff) border-box;
+          border:1.5px solid transparent;border-radius:8px;padding:4px 9px;
+          box-shadow:0 8px 18px -8px rgba(255,79,163,.5),6px 8px 18px -8px rgba(59,139,255,.5),0 2px 6px -2px rgba(0,0,0,.3);
+          opacity:0;transform:translate(-4px,-4px) scale(.96);transform-origin:0 0;
+          transition:opacity .2s,transform .32s cubic-bezier(.32,.72,.24,1)}
+        .flag.show{opacity:1;transform:none}
+        .flag.left{left:auto;right:6px;transform-origin:100% 0}
+        .flag.up{top:auto;bottom:6px;transform-origin:0 100%}
+        .doing{display:block;max-height:0;opacity:0;overflow:hidden;margin-top:0;font-size:11.5px;font-weight:400;color:rgba(244,244,245,.62);
+          transition:max-height .32s cubic-bezier(.32,.72,.24,1),opacity .2s,margin-top .32s cubic-bezier(.32,.72,.24,1)}
+        .doing.show{max-height:18px;opacity:1;margin-top:1px}
+        .wash{position:fixed;border-radius:6px;background:var(--hue);opacity:0;transition:opacity .25s}
+        .wash.show{opacity:.13}
+        .ring{position:fixed;border-radius:6px;box-shadow:0 0 0 2px var(--hue);opacity:0;transition:opacity .25s}
+        .ring.show{opacity:.7}
+        .ripple{position:fixed;width:36px;height:36px;margin:-18px 0 0 -18px;border-radius:50%;border:2px solid var(--hue);opacity:0}
+        .ripple.go{animation:ripple .55s cubic-bezier(.2,.7,.3,1)}
+        @keyframes ripple{0%{opacity:.9;transform:scale(.2)}100%{opacity:0;transform:scale(1)}}
+        @media (prefers-reduced-motion:reduce){.cur,.flag,.doing,.wash,.ring{transition:none}.in.pop,.ripple.go{animation:none}}`;
+      const el = (tag, cls, parent) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (parent) parent.append(e); return e; };
+      const build = () => {
+        host = doc.createElement('octet-agent-cursor');
+        host.setAttribute('aria-hidden', 'true');
+        host.style.cssText = 'all:initial;position:fixed;inset:0;z-index:2147483647;pointer-events:none;';
+        const root = host.attachShadow({ mode: 'closed' });
+        const style = doc.createElement('style');
+        style.textContent = css;
+        root.append(style);
+        wash = el('div', 'wash', root);
+        ring = el('div', 'ring', root);
+        ripple = el('i', 'ripple', root);
+        cur = el('div', 'cur', root);
+        inner = el('div', 'in', cur);
+        const svg = doc.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('class', 'arrow');
+        svg.setAttribute('viewBox', '0 0 20 24');
+        const path = doc.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', 'M3 2.4 3 18.4 7.2 14.6 9.9 20.9 13 19.6 10.3 13.4 15.9 13.1Z');
+        svg.append(path);
+        inner.append(svg);
+        flag = el('div', 'flag', inner);
+        nameEl = el('span', '', flag);
+        doingEl = el('span', 'doing', flag);
+        (doc.documentElement || doc.body).append(host);
+        S.ready = true;
+        paint();
+      };
+      const paint = () => { if (host) host.style.setProperty('--hue', S.hue); };
+      const place = (box, rect) => {
+        if (!rect) { box.classList.remove('show'); return; }
+        const pad = 3;
+        box.style.cssText = 'left:' + (rect.left - pad) + 'px;top:' + (rect.top - pad) + 'px;width:' + (rect.width + pad * 2) + 'px;height:' + (rect.height + pad * 2) + 'px';
+        box.classList.add('show');
+      };
+      const quiet = (after = 2600) => {
+        clearTimeout(S.hideTimer);
+        S.hideTimer = setTimeout(() => {
+          if (!S.ready) return;
+          flag.classList.remove('show'); doingEl.classList.remove('show');
+          wash.classList.remove('show'); ring.classList.remove('show');
+          S.hideTimer = setTimeout(() => { cur.classList.remove('on'); S.placed = false; }, 1400);
+        }, after);
+      };
+      const identity = (name, hue, on) => {
+        S.name = String(name || 'Agent'); S.hue = hue || S.hue; S.on = on !== false && window.top === window;
+        paint();
+        return true;
+      };
+      // Glides to `target` (an element, or {x, y}) and says what's about to happen.
+      const go = async (target, doing, opts = {}) => {
+        if (!S.on) return;
+        if (!S.ready) build();
+        clearTimeout(S.hideTimer);
+        const isPoint = target && typeof target.x === 'number' && !target.getBoundingClientRect;
+        const rect = isPoint ? null : target.getBoundingClientRect();
+        const x = Math.round(isPoint ? target.x : opts.field ? rect.left + Math.min(26, rect.width * 0.35) : rect.left + rect.width / 2);
+        const y = Math.round(isPoint ? target.y : rect.top + rect.height / 2);
+        const first = !S.placed;
+        let ms = 0;
+        if (first) {
+          cur.style.transition = 'none';
+          cur.style.transform = 'translate3d(' + Math.max(0, x - 70) + 'px,' + Math.max(0, y - 50) + 'px,0)';
+          void cur.offsetWidth;
+          cur.style.transition = '';
+          inner.classList.remove('pop'); void inner.offsetWidth; inner.classList.add('pop');
+          ms = reduce() ? 0 : 560;
+        } else {
+          ms = reduce() ? 0 : Math.round(260 + Math.min(Math.hypot(x - S.x, y - S.y), 1400) * 0.22);
+        }
+        cur.style.transitionDuration = ms + 'ms, .26s';
+        cur.classList.add('on');
+        cur.style.transform = 'translate3d(' + x + 'px,' + y + 'px,0)';
+        S.x = x; S.y = y; S.placed = true;
+        nameEl.textContent = S.name;
+        doingEl.textContent = doing || '';
+        flag.classList.toggle('left', x > innerWidth - 200);
+        flag.classList.toggle('up', y > innerHeight - 76);
+        flag.classList.add('show');
+        doingEl.classList.toggle('show', !!doing);
+        place(wash, rect); place(ring, rect && opts.ring ? rect : null);
+        await sleep(ms + 40);
+      };
+      const press = () => {
+        if (!S.on || !S.ready) return;
+        inner.classList.add('press');
+        ripple.style.left = S.x + 'px'; ripple.style.top = S.y + 'px';
+        ripple.classList.remove('go'); void ripple.offsetWidth; ripple.classList.add('go');
+        setTimeout(() => inner.classList.remove('press'), 150);
+      };
+      const done = (text) => {
+        if (!S.on || !S.ready) return;
+        if (text) { doingEl.textContent = text; doingEl.classList.add('show'); }
+        quiet();
+      };
+      return { go, press, done, identity, pause: sleep };
+    })();
+
     // MARK: input
     const settle = (quietMs = 200, maxMs = 2000) => new Promise((done) => {
       let timer;
@@ -256,6 +397,10 @@ enum BrowserAgentScripts {
     const click = async (uid, dbl) => {
       const el = resolve(uid);
       if (el.disabled) throw new Error(describe(el) + ' is disabled.');
+      center(el);
+      await cursor.go(el, dbl ? 'Double-clicking' : 'Clicking');
+      cursor.press();
+      await cursor.pause(90);
       const { p, hit, covered } = target(el);
       hoverSeq(hit, p);
       const times = dbl ? 2 : 1;
@@ -268,16 +413,26 @@ enum BrowserAgentScripts {
         if (hit === el && typeof el.click === 'function') el.click(); else mouse(hit, 'click', p, { detail: i });
       }
       if (dbl) mouse(hit, 'dblclick', p, { detail: 2 });
+      cursor.done('Clicked');
       return (dbl ? 'Double clicked ' : 'Clicked ') + describe(el) + coveredNote(covered);
     };
-    const hover = (uid) => {
+    const hover = async (uid) => {
       const el = resolve(uid);
+      center(el);
+      await cursor.go(el, 'Hovering');
       const { p, hit, covered } = target(el);
       hoverSeq(hit, p);
+      cursor.done();
       return 'Hovered over ' + describe(el) + coveredNote(covered);
     };
-    const drag = (fromUid, toUid) => {
+    const drag = async (fromUid, toUid) => {
       const from = resolve(fromUid), to = resolve(toUid);
+      center(from);
+      await cursor.go(from, 'Picking up');
+      cursor.press();
+      center(to);
+      await cursor.go(to, 'Dragging');
+      center(from);
       const a = center(from);
       const data = new DataTransfer();
       mouse(from, 'pointerdown', a); mouse(from, 'mousedown', a);
@@ -289,6 +444,8 @@ enum BrowserAgentScripts {
       mouse(to, 'drop', b, { dataTransfer: data });
       mouse(from, 'dragend', b, { dataTransfer: data });
       mouse(to, 'pointerup', b); mouse(to, 'mouseup', b);
+      cursor.press();
+      cursor.done('Dropped');
       return 'Dragged ' + describe(from) + ' onto ' + describe(to);
     };
     const nativeSet = (el, value) => {
@@ -351,14 +508,33 @@ enum BrowserAgentScripts {
       field.dispatchEvent(new Event('change', { bubbles: true }));
       return 'Filled ' + describe(field) + (field.type === 'password' ? '' : ' with ' + q(clean(value, 80)));
     };
-    const fill = async (uid, value) => fillOne(uid, value);
-    const fillForm = async (elements) => elements.map((e) => fillOne(e.uid, e.value)).join('\n');
+    const fill = async (uid, value) => {
+      const el = resolve(uid);
+      center(el);
+      await cursor.go(el, 'Typing', { field: true, ring: true });
+      const result = fillOne(uid, value);
+      cursor.done('Typed');
+      return result;
+    };
+    const fillForm = async (elements) => {
+      const lines = [];
+      for (const e of elements) {
+        const el = resolve(e.uid);
+        center(el);
+        await cursor.go(el, 'Filling in', { field: true, ring: true });
+        lines.push(fillOne(e.uid, e.value));
+      }
+      cursor.done('Filled in the form');
+      return lines.join('\n');
+    };
     const typeText = async (text) => {
       const el = doc.activeElement;
       if (!el || el === doc.body) throw new Error('Nothing on the page has focus. Click the field first, or use fill.');
       const editable = el.isContentEditable || el.localName === 'textarea' || (el.localName === 'input' && !['checkbox', 'radio', 'button', 'submit', 'file'].includes(el.type));
       if (!editable) throw new Error(describe(el) + " has focus, and it isn't a text field.");
+      await cursor.go(el, 'Typing', { field: true, ring: true });
       insert(el, text, false);
+      cursor.done('Typed');
       return 'Typed into ' + describe(el);
     };
     const keyCodes = { Enter: 13, Tab: 9, Escape: 27, Backspace: 8, Delete: 46, ' ': 32, Space: 32, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39,
@@ -382,6 +558,7 @@ enum BrowserAgentScripts {
       }
       if (key === 'Space') key = ' ';
       const el = doc.activeElement && doc.activeElement !== doc.documentElement ? doc.activeElement : doc.body;
+      if (el !== doc.body) await cursor.go(el, 'Pressing ' + combo, { field: true });
       const init = { key, code: codeOf(key), keyCode: keyCodes[key] ?? (key.length === 1 ? key.toUpperCase().charCodeAt(0) : 0),
         which: keyCodes[key] ?? 0, bubbles: true, cancelable: true, composed: true,
         ctrlKey: mods.Control, shiftKey: mods.Shift, altKey: mods.Alt, metaKey: mods.Meta };
@@ -415,6 +592,7 @@ enum BrowserAgentScripts {
         }
       }
       (doc.activeElement || el).dispatchEvent(new KeyboardEvent('keyup', init));
+      cursor.done();
       return 'Pressed ' + combo + (allowed ? '' : ' (the page handled it)') + did;
     };
     const upload = async (uid, files) => {
@@ -603,6 +781,7 @@ enum BrowserAgentScripts {
     };
 
     globalThis.octetAgent = { snapshot, click, hover, drag, fill, fillForm, typeText, pressKey, upload, waitFor, settle, rect, extent,
+      cursorIdentity: (name, hue, on) => cursor.identity(name, hue, on),
       styles, startRecording, metrics, audit, markArgs, describeUid: (uid) => describe(resolve(uid)) };
     })();
     """#

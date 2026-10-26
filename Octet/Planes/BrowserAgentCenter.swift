@@ -198,6 +198,7 @@ final class BrowserAgentCenter {
         }
 
         let page = try page(for: arguments, asker: asker, create: tool == "navigate_page", show: tool == "navigate_page")
+        await announceCursor(for: tool, on: page, asker: asker)
         let agent = page.agent
         agent.install()
         agent.lastDriven = Date()
@@ -310,6 +311,65 @@ final class BrowserAgentCenter {
         default:
             throw Failure(message: "Unknown tool \(tool).")
         }
+    }
+
+    #if DEBUG
+    /// Verification hook: opens `url` in the workspace's Browser plane and has an
+    /// agent fill the first text field and click "Continue", to see its cursor.
+    func debugCursorDemo(workspace: String, url: String) {
+        Task { @MainActor in
+            let asker = Asker(pane: nil, workspace: workspace)
+            _ = try? await self.run("new_page", ["url": url], origin: asker)
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            let snapshot = (try? await self.run("take_snapshot", [:], origin: asker))?["text"] as? String ?? ""
+            func uid(containing label: String) -> String? {
+                for line in snapshot.split(separator: "\n") where line.contains(label) {
+                    guard let range = line.range(of: "uid=") else { continue }
+                    return String(line[range.upperBound...].prefix { !$0.isWhitespace })
+                }
+                return nil
+            }
+            if let email = uid(containing: "Email") {
+                _ = try? await self.run("fill", ["uid": email, "value": "jack@example.com"], origin: asker)
+            }
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            if let go = uid(containing: "Continue") { _ = try? await self.run("click", ["uid": go], origin: asker) }
+        }
+    }
+    #endif
+
+    // MARK: The agent's cursor
+
+    private static let cursorTools: Set<String> = ["click", "hover", "drag", "fill", "fill_form", "type_text", "press_key"]
+
+    /// Tells the page who is about to act on it, so the cursor it draws
+    /// carries their name and colour; it stays off when the setting is.
+    private func announceCursor(for tool: String, on page: BrowserPage, asker: Asker) async {
+        guard Self.cursorTools.contains(tool), !isStart(page) else { return }
+        let who = agentIdentity(for: asker)
+        _ = try? await page.agent.agentCall("cursorIdentity", ["name": who.name, "hue": who.hue,
+                                                              "on": SettingsStore.shared.values.showAgentCursors], timeout: 5)
+    }
+
+    /// The agent behind a request: the conversation working in its workspace,
+    /// else the agent in its terminal pane.
+    private func agentIdentity(for asker: Asker) -> (name: String, hue: String) {
+        let fallback = "#8B6BFF"
+        func hue(_ hex: String?) -> String { hex.map { $0.hasPrefix("#") ? $0 : "#" + $0 } ?? fallback }
+        if let workspace = asker.workspace {
+            let sessions = AgentCenter.shared.sessions.filter { $0.workspaceId == workspace }
+            if let session = sessions.first(where: { $0.conversation.isRunning }) ?? sessions.first {
+                let writer = AgentEditActivity.writer(of: session)
+                return (writer.name, hue(writer.hueHex))
+            }
+        }
+        for window in WindowRegistry.shared.windows {
+            if let pane = asker.pane, let agent = window.store.snapshot.agents.first(where: { $0.paneId == pane }),
+               let brand = AgentBrand.forAgent(agent.agent) {
+                return (brand.displayName, hue(brand.hueHex))
+            }
+        }
+        return ("Agent", fallback)
     }
 
     // MARK: Helpers

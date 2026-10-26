@@ -39,11 +39,28 @@ enum IssueCredentialStore {
         }
     }
 
+    /// What was read, kept for the run: each read of the Keychain can make
+    /// macOS ask, once per saved entry, so it's done once and again only
+    /// after Octet itself changes an entry.
+    private static let cacheLock = NSLock()
+    nonisolated(unsafe) private static var cached: [IssueTracker: [TrackerConnection]] = [:]
+
+    private static func forget() {
+        cacheLock.withLock { cached = [:] }
+    }
+
     /// Every saved connection for a tracker, the old single entry first.
     static func connections(_ tracker: IssueTracker) -> [TrackerConnection] {
         #if DEBUG && !OCTET_CLI
         if ServiceSample.shows("tickets") { return ServiceSample.connections(tracker) }
         #endif
+        if let known = cacheLock.withLock({ cached[tracker] }) { return known }
+        let read = readConnections(tracker)
+        cacheLock.withLock { cached[tracker] = read }
+        return read
+    }
+
+    private static func readConnections(_ tracker: IssueTracker) -> [TrackerConnection] {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -82,6 +99,7 @@ enum IssueCredentialStore {
     }
 
     static func update(_ connection: TrackerConnection) throws {
+        forget()
         let name = account(connection.tracker, connection.id)
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -103,6 +121,7 @@ enum IssueCredentialStore {
     }
 
     static func remove(_ connection: TrackerConnection) {
+        forget()
         SecItemDelete([
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,

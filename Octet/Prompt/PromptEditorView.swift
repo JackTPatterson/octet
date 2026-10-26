@@ -31,7 +31,10 @@ struct PromptEditorView: View {
                         .frame(width: CGFloat(to - from) * anchor.cellWidth, height: anchor.cellHeight)
                         .offset(x: CGFloat(from - shift) * anchor.cellWidth)
                 }
-                ForEach(cells.indices, id: \.self) { index in
+                // Only what's on screen: a long paste or a line wider than the
+                // pane would otherwise make a view for every character.
+                ForEach(cells.indices.filter { cells[$0].column + cells[$0].width > shift && cells[$0].column <= shift + width },
+                        id: \.self) { index in
                     let cell = cells[index]
                     Text(String(cell.character))
                         .font(font)
@@ -109,10 +112,25 @@ struct PromptEditorView: View {
     private var cells: [Cell] {
         let text = editor.line.text
         var colors = Array(repeating: Theme.textPrimary, count: text.count)
+        // Walk the spans in order, so each one's position costs only the
+        // distance from the last, not from the start of the line.
+        var cursor = text.startIndex
+        var offset = 0
         for span in ShellSyntax.spans(in: text) {
-            let from = text.distance(from: text.startIndex, to: span.range.lowerBound)
-            let to = text.distance(from: text.startIndex, to: span.range.upperBound)
-            for index in from..<min(to, colors.count) { colors[index] = span.role.color() }
+            let from = offset + text.distance(from: cursor, to: span.range.lowerBound)
+            let to = from + text.distance(from: span.range.lowerBound, to: span.range.upperBound)
+            cursor = span.range.upperBound
+            offset = to
+            var color = span.role.color()
+            // A command the shell won't find, once it's finished being typed
+            // (not while the word is still at the caret), as a shell's own
+            // highlighter shows it.
+            if span.role == .command {
+                let word = String(text[span.range])
+                let stillTyping = span.range.upperBound == text.endIndex && editor.line.caretAtEnd
+                if !stillTyping, editor.isUnknownCommand(word) { color = Theme.danger }
+            }
+            for index in from..<min(to, colors.count) { colors[index] = color }
         }
         var result: [Cell] = []
         var column = 0

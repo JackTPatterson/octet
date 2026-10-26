@@ -113,7 +113,18 @@ private struct WorkspaceAgentTaskRow: View {
                         .transition(motion.animates(.sidebar)
                             ? .move(edge: .leading).combined(with: .opacity) : .identity)
                 }
-                if let brand { AgentLogo(brand: brand, size: 14) }
+                if let brand {
+                    AgentLogo(brand: brand, size: 14)
+                        // Working: the loading line runs under the logo, out of
+                        // the row's height, not in a column of its own.
+                        .overlay(alignment: .bottom) {
+                            if AgentState(status) == .working {
+                                LoadingLine(width: 14, thickness: 1.5)
+                                    .offset(y: 7)
+                                    .transition(.opacity)
+                            }
+                        }
+                }
                 Text(title)
                     .font(Theme.Text.body)
                     .foregroundStyle(Theme.textSecondary)
@@ -138,6 +149,7 @@ private struct WorkspaceAgentTaskRow: View {
         }
         .buttonStyle(.plain)
         .animation(motion.animation(.sidebar, .smooth(duration: 0.25)), value: AgentState(status).needsGlyph)
+        .animation(.easeOut(duration: 0.2), value: AgentState(status) == .working)
         .onHover { hovered = $0 }
         .help("\(brand?.displayName ?? "Agent") · \(stateLabel(status))\n\(title)")
         .accessibilityLabel("\(brand?.displayName ?? "Agent"), \(stateLabel(status)), \(title)")

@@ -56,13 +56,23 @@ struct CommandHistory {
     /// All matches, best first: recent beats old, repeated beats one-off.
     func ranked(matching prefix: String, limit: Int = 10) -> [String] {
         guard !prefix.isEmpty else { return [] }
+        return frecencyOrder(of: entries.filter { $0.command.hasPrefix(prefix) && $0.command != prefix }, limit: limit)
+    }
+
+    /// Every command, best first by the same measure: for menus that show
+    /// what you run most when nothing has been typed yet, and for the words
+    /// and flags harvested from history to come out in a useful order.
+    func frecencyOrdered(limit: Int = 2_000) -> [String] {
+        frecencyOrder(of: entries, limit: limit)
+    }
+
+    /// Frecency: repeats matter, but a command from this hour matters more
+    /// than one from last month.
+    private func frecencyOrder(of candidates: [Entry], limit: Int) -> [String] {
         let now = Date()
-        let matches: [Entry] = entries.filter { $0.command.hasPrefix(prefix) && $0.command != prefix && !hidden.contains($0.command) }
-        // Frecency: repeats matter, but a command from this hour matters
-        // more than one from last month.
         var scored: [(command: String, score: Double)] = []
-        scored.reserveCapacity(matches.count)
-        for entry in matches {
+        scored.reserveCapacity(candidates.count)
+        for entry in candidates where !hidden.contains(entry.command) {
             let age: TimeInterval = entry.at.map { max(now.timeIntervalSince($0), 0) } ?? (30 * 86_400)
             let recency: Double = 1 / (1 + age / 86_400)
             scored.append((entry.command, Double(entry.count) + recency * 8))

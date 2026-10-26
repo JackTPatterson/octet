@@ -61,7 +61,10 @@ struct TerminalDrawer: View {
                 OctetTerminalRuntime.focusTerminal()
             }
         }
+        .onAppear { ui.enterDrawerWorkspace(currentWorkspace) }
         .onChange(of: currentWorkspace) { _, key in
+            // Each workspace has its own drawer: open or closed, and how tall.
+            ui.enterDrawerWorkspace(key)
             // Keys mustn't stay with the last workspace's shell, now hidden.
             if !terminals.started.isEmpty { OctetTerminalRuntime.focusTerminal() }
             if ui.terminalDrawerVisible { terminals.start(key) }
@@ -773,7 +776,8 @@ private struct DrawerTerminal: View {
         ZStack {
             OctetTerminalView(
                 command: Self.shellCommand,
-                environment: Self.environment,
+                // The folder's accounts and credential profiles (Supabase, GitHub…).
+                environment: Self.environment.merging(AccountProfiles.environment(for: folder)) { _, profile in profile },
                 workingDirectory: folder,
                 onTitleChange: { terminals.titleChanged($0, workspace: workspace, id: id) },
                 onExit: {

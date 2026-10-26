@@ -26,14 +26,20 @@ enum ProjectCommands {
 
     static func npmScripts(in directory: String) -> [Entry] {
         guard let data = FileManager.default.contents(atPath: directory + "/package.json") else { return [] }
-        return parseNpmScripts(data)
+        // The project's own package manager, from its lockfile.
+        let files = FileManager.default
+        let runner = files.fileExists(atPath: directory + "/pnpm-lock.yaml") ? "pnpm run"
+            : files.fileExists(atPath: directory + "/yarn.lock") ? "yarn"
+            : files.fileExists(atPath: directory + "/bun.lockb") || files.fileExists(atPath: directory + "/bun.lock") ? "bun run"
+            : "npm run"
+        return parseNpmScripts(data, runner: runner)
     }
 
-    static func parseNpmScripts(_ data: Data) -> [Entry] {
+    static func parseNpmScripts(_ data: Data, runner: String = "npm run") -> [Entry] {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let scripts = object["scripts"] as? [String: Any] else { return [] }
         // npm and its friends all run scripts the same way.
-        return scripts.keys.sorted().map { Entry(command: "npm run \($0)", source: "package.json") }
+        return scripts.keys.sorted().map { Entry(command: "\(runner) \($0)", source: "package.json") }
     }
 
     static func makeTargets(in directory: String) -> [Entry] {

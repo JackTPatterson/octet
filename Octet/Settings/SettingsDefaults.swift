@@ -115,6 +115,8 @@ enum SettingsDefaults {
         .init("Offer Octet's view over a running agent", \.agentBanner),
         .init("Octet's command line", \.promptEditor),
         .init("Octet's Tab completions", \.promptCompletions),
+        .init("Vim keys in the editor", \.vimMode),
+        .init("Show agent cursors", \.showAgentCursors),
         .init("Accept a suggestion with", \.suggestionAcceptKey),
         .init("Paste images as files", \.pasteImagesAsFiles),
         .init("Visual twin", \.visualTwin),

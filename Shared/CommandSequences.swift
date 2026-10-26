@@ -40,6 +40,12 @@ struct CommandSequences {
         byDirectory[directory, default: [:]][command, default: 0] += 1
     }
 
+    /// How many times `command` was run in `directory`.
+    func count(of command: String, in directory: String?) -> Int {
+        guard let directory else { return 0 }
+        return byDirectory[directory]?[command] ?? 0
+    }
+
     /// What usually follows `command`, best first.
     func next(after command: String?, limit: Int = 5) -> [String] {
         guard let command, let following = table[Self.key(for: command)] else { return [] }

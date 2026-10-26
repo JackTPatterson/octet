@@ -400,6 +400,7 @@ struct RootView: View {
                         : .identity)
             }
         }
+        .overlay(alignment: .top) { ZoomHUD() }
         // Draw transient cards after the terminal chrome cover and prompt.
         // The hosted terminal needs those root overlays, but neither should
         // be able to paint a black strip through a toast or quick answer.
@@ -588,6 +589,37 @@ struct RootView: View {
                         guard let tabId = created.tabId else { return }
                         WindowActions.splitTab(tabId, beside: window, at: .right)
                     }
+                }
+            }
+            // Verification hook: an agent fills a field and clicks in the Browser plane.
+            if let url = ProcessInfo.processInfo.environment["OCTET_BROWSER_CURSOR_DEMO"] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    guard let workspace = self.window.focusedWorkspace?.workspaceId else { return }
+                    BrowserAgentCenter.shared.debugCursorDemo(workspace: workspace, url: url)
+                }
+            }
+            // Verification hook: opens a file and plays an agent's edit on it,
+            // to see the cursor: in flight, then typed in, then settled.
+            if ProcessInfo.processInfo.environment["OCTET_AGENT_CURSOR_DEMO"] != nil {
+                let path = AgentEditActivity.canonical(NSTemporaryDirectory() + "octet-cursor-demo.swift")
+                let original = (1...40).map { "// line \($0)" }.joined(separator: "\n")
+                    .replacingOccurrences(of: "// line 12", with: "func total(_ values: [Int]) -> Int {\n    var sum = 0\n    for value in values { sum += value }\n    return sum\n}")
+                try? original.write(toFile: path, atomically: true, encoding: .utf8)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    self.window.openFile(URL(fileURLWithPath: path))
+                    AgentEditActivity.shared.start()
+                }
+                let writer = AgentEditActivity.Writer(name: "Claude", brandId: "claude", hueHex: "D97757")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+                    AgentEditActivity.shared.debugSetPending(.init(path: path, writer: writer, tool: "Edit",
+                                                                   oldString: "for value in values { sum += value }"))
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 9) {
+                    let edited = original.replacingOccurrences(of: "for value in values { sum += value }",
+                        with: "// Add them up, skipping anything negative.\n    for value in values where value >= 0 {\n        sum += value\n    }")
+                    try? edited.write(toFile: path, atomically: true, encoding: .utf8)
+                    AgentEditActivity.shared.debugSetPending(nil)
+                    AgentEditActivity.shared.debugLand(path: path, writer: writer)
                 }
             }
             // Verification hook: "conversation" opens a native conversation;
@@ -1827,15 +1859,58 @@ final class UIState: ObservableObject {
 
     // MARK: Terminal drawer
 
-    /// The shell under the terminal, after T3 Code's drawer (⌘J).
+    /// The shell under the terminal, after T3 Code's drawer (⌘J). Open or
+    /// closed, and how tall, belong to the workspace in front: these hold its
+    /// values, swapped as the workspace changes (`enterDrawerWorkspace`).
     @Published var terminalDrawerVisible = UserDefaults.standard.bool(forKey: "octet.terminalDrawer.visible") {
-        didSet { UserDefaults.standard.set(terminalDrawerVisible, forKey: "octet.terminalDrawer.visible") }
+        didSet {
+            UserDefaults.standard.set(terminalDrawerVisible, forKey: "octet.terminalDrawer.visible")
+            if let key = drawerWorkspace, !swappingDrawer {
+                drawerVisibleByWorkspace[key] = terminalDrawerVisible
+                UserDefaults.standard.set(drawerVisibleByWorkspace, forKey: Self.drawerVisibleKey)
+            }
+        }
     }
     @Published var terminalDrawerHeight: CGFloat = {
         let saved = UserDefaults.standard.double(forKey: "octet.terminalDrawer.height")
         return saved > 0 ? CGFloat(saved) : UIState.terminalDrawerDefaultHeight
     }() {
-        didSet { UserDefaults.standard.set(Double(terminalDrawerHeight), forKey: "octet.terminalDrawer.height") }
+        didSet {
+            UserDefaults.standard.set(Double(terminalDrawerHeight), forKey: "octet.terminalDrawer.height")
+            if let key = drawerWorkspace, !swappingDrawer {
+                drawerHeightByWorkspace[key] = Double(terminalDrawerHeight)
+                UserDefaults.standard.set(drawerHeightByWorkspace, forKey: Self.drawerHeightKey)
+            }
+        }
+    }
+    private static let drawerVisibleKey = "octet.terminalDrawer.visibleByWorkspace"
+    private static let drawerHeightKey = "octet.terminalDrawer.heightByWorkspace"
+    private var drawerWorkspace: String?
+    private var swappingDrawer = false
+    private var drawerVisibleByWorkspace = UserDefaults.standard.dictionary(forKey: UIState.drawerVisibleKey) as? [String: Bool] ?? [:]
+    private var drawerHeightByWorkspace = UserDefaults.standard.dictionary(forKey: UIState.drawerHeightKey) as? [String: Double] ?? [:]
+
+    /// The drawer's open state and height are `key`'s own: a workspace that
+    /// has never had a say starts closed at the usual height, and the first
+    /// one a window shows keeps what the drawer was set to before this was
+    /// per workspace.
+    @MainActor
+    func enterDrawerWorkspace(_ key: String) {
+        guard key != drawerWorkspace else { return }
+        let first = drawerWorkspace == nil
+        drawerWorkspace = key
+        swappingDrawer = true
+        defer { swappingDrawer = false }
+        let visible = drawerVisibleByWorkspace[key] ?? (first && drawerVisibleByWorkspace.isEmpty ? terminalDrawerVisible : false)
+        let height = drawerHeightByWorkspace[key].map { CGFloat($0) } ?? (first && drawerHeightByWorkspace.isEmpty ? terminalDrawerHeight : UIState.terminalDrawerDefaultHeight)
+        MotionPreferences.shared.perform(.sidebar) {
+            terminalDrawerVisible = visible
+            terminalDrawerHeight = height
+        }
+        if first {
+            drawerVisibleByWorkspace[key] = visible
+            drawerHeightByWorkspace[key] = Double(height)
+        }
     }
     static let terminalDrawerDefaultHeight: CGFloat = 280
     static let terminalDrawerMinHeight: CGFloat = 180

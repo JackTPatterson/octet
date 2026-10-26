@@ -473,7 +473,7 @@ struct OctetMenuRow: View {
                         .resizable().scaledToFit()
                         .frame(width: 14, height: 14)
                         .foregroundStyle(lit ? Theme.textPrimary : Theme.textSecondary)
-                } else if let icon = item.icon {
+                } else if let icon = item.icon ?? OctetMenuIcons.guess(item.title) {
                     OctetIcon(icon, size: 13).foregroundStyle(item.destructive && item.enabled ? Theme.danger
                                                               : lit ? Theme.textPrimary : Theme.textSecondary)
                 } else {

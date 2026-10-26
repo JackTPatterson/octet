@@ -46,9 +46,10 @@ struct StatusBar: View {
     /// "Claude · Work", for each agent whose account here isn't the default.
     static func accountLabel(for directory: String?) -> String {
         guard let directory else { return "" }
-        return AccountProfiles.inForce(for: directory)
+        let accounts = AccountProfiles.inForce(for: directory)
             .map { "\(AgentBrand.forAgent($0.agent)?.displayName ?? $0.agent) · \($0.name)" }
-            .joined(separator: ", ")
+        let credentials = CredentialProfiles.inForce(for: directory).map(\.name)
+        return (accounts + credentials).joined(separator: ", ")
     }
 
     /// Whether an item has something to show; `item(for:)` draws exactly these.

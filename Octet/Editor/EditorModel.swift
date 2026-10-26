@@ -34,6 +34,9 @@ final class EditorDocument: ObservableObject, Identifiable {
     private(set) var diskModificationDate: Date?
     /// How the file opens. Media and binary files hold no text.
     private(set) var mode: FilePreviewMode
+    /// What the last change that came from outside (an agent's edit) did to
+    /// the buffer, for the editor to show as it lands.
+    @Published private(set) var liveChange: LiveChange?
     /// Bumped when a viewer's file changes on disk, so the viewer reloads.
     @Published private(set) var revision = 0
     /// What the bytes on disk are in, so saving writes them back the same.
@@ -109,9 +112,19 @@ final class EditorDocument: ObservableObject, Identifiable {
         }
     }
 
+    /// A change that arrived from disk, with the text it replaced and who made it.
+    struct LiveChange: Equatable {
+        let id = UUID()
+        let edit: LiveEdit
+        let before: String
+        let writer: AgentEditActivity.Writer?
+        let at = Date()
+    }
+
     /// Pull an agent or branch-switch edit into a clean buffer. A dirty buffer
     /// keeps its edits and raises `changedOnDisk`, so the person decides.
-    func refreshFromDisk() {
+    /// `writer` is who made the change, when it's known.
+    func refreshFromDisk(writer: AgentEditActivity.Writer? = nil) {
         guard let modified = Self.modificationDate(url), modified != diskModificationDate else { return }
         guard mode.readsText else {
             diskModificationDate = modified
@@ -123,6 +136,10 @@ final class EditorDocument: ObservableObject, Identifiable {
             return
         }
         guard let decoded = readDisk() else { return }
+        // Noted first, so the view that sees the new text sees what changed.
+        if decoded.text != text, let edit = LiveEdit.between(old: text, new: decoded.text) {
+            liveChange = LiveChange(edit: edit, before: text, writer: writer ?? AgentEditActivity.shared.writer(for: id))
+        }
         apply(decoded, modified: modified)
     }
 
@@ -167,6 +184,9 @@ final class EditorBufferRegistry {
     static let shared = EditorBufferRegistry()
     private var documents: [String: EditorDocument] = [:]
 
+    /// A file's buffer if one is open, without opening it.
+    func existing(atPath path: String) -> EditorDocument? { documents[path] }
+
     func document(at url: URL) throws -> EditorDocument {
         let path = url.standardizedFileURL.resolvingSymlinksInPath().path
         if let document = documents[path] {
@@ -189,6 +209,8 @@ final class EditorWorkspace: ObservableObject {
     @Published var activeID: String?
     @Published var isPresented = false
     @Published var fileTreeVisible = false
+    /// Vim's mode and pending keys, for the footer; empty when Vim keys are off.
+    @Published var vimStatus = ""
     @Published var filePickerVisible = false
     @Published var presentation: Presentation = .split
     var requestedPresentation: Presentation = .split

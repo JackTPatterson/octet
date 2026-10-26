@@ -234,3 +234,25 @@ enum SpecCorpusWriter {
         try SpecCorpus.write(index: index)
     }
 }
+
+/// Brings the spec corpus in by itself the first time the prompt is used,
+/// so flags, subcommands and values complete without a trip to Settings.
+/// It needs npm and a network, tries at most once a week, and says nothing
+/// if it can't; Settings › Prompt (or the palette) still runs it by hand.
+@MainActor
+enum SpecAutoIngest {
+    private static let attemptKey = "octet.specs.lastAutoAttempt"
+    private static let retry: TimeInterval = 7 * 86_400
+
+    static func ensure() {
+        guard SettingsStore.shared.values.promptCompletions, SpecCorpus.index() == nil, !SpecIngest.isRunning else { return }
+        let last = UserDefaults.standard.double(forKey: attemptKey)
+        guard Date().timeIntervalSince1970 - last > retry else { return }
+        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: attemptKey)
+        SpecIngest.run { _ in } completion: { result in
+            guard case .success(let outcome) = result else { return }
+            ToastCenter.shared.info("Command completions ready",
+                                    detail: "\(outcome.commands) commands from \(SpecIngest.sourceName)")
+        }
+    }
+}
