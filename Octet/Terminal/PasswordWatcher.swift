@@ -23,8 +23,23 @@ final class PasswordWatcher {
             SecureInput.shared.passwordPrompt(false)
             return
         }
-        SecureInput.shared.passwordPrompt(ShellPrompt.secretPrompt(shellPid: shell) == true)
+        // The terminal reads happen off the main thread, which a workspace
+        // switch is also using; one check at a time.
+        guard !checking else { return }
+        checking = true
+        Self.queue.async {
+            let asking = ShellPrompt.secretPrompt(shellPid: shell) == true
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    PasswordWatcher.shared.checking = false
+                    if NSApp.isActive { SecureInput.shared.passwordPrompt(asking) }
+                }
+            }
+        }
     }
+
+    private var checking = false
+    private static let queue = DispatchQueue(label: "octet.password-watch", qos: .userInitiated)
 }
 
 /// Says so while keys are going only to Octet.

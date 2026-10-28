@@ -230,8 +230,8 @@ final class StatusBarModel: ObservableObject {
             return
         }
         guard remoteWatch?.sessionId != sessionId || remoteWatch?.pid != claudePid else { return }
-        remoteWatch = RemoteWatch(sessionId: sessionId, cwd: cwd, pid: claudePid,
-                                  since: claudePid.flatMap(AgentRuntimeHandoff.processStart(pid:)))
+        // The process's start time is read with the log, off the main thread.
+        remoteWatch = RemoteWatch(sessionId: sessionId, cwd: cwd, pid: claudePid, since: nil)
         remoteControlOn = false
         remoteControlURL = nil
         refreshRemoteControl()
@@ -242,6 +242,7 @@ final class StatusBarModel: ObservableObject {
         guard var watch = remoteWatch, !readingRemote else { return }
         readingRemote = true
         DispatchQueue.global(qos: .utility).async { [weak self] in
+            if watch.since == nil, let pid = watch.pid { watch.since = AgentRuntimeHandoff.processStart(pid: pid) }
             if watch.path == nil {
                 watch.path = AgentConversation.findLog(sessionIds: [watch.sessionId], cwd: watch.cwd)
             }

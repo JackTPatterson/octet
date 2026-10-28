@@ -79,7 +79,9 @@ final class RuntimeModel: ObservableObject {
     func setScope(_ scope: Scope) {
         guard scope != self.scope else { return }
         self.scope = scope
-        rebuildNow()
+        // Rebuilt at once only where it's on screen; a switch is the moment
+        // the window can least spare the time.
+        if panelVisible { rebuildNow() } else { scheduleRebuild() }
         reload()
     }
 
