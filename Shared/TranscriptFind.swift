@@ -62,6 +62,8 @@ enum TranscriptFind {
                 fields.append(Field(key: key(block: index), text: String(inline(text).characters)))
             case .code(_, let text):
                 fields.append(Field(key: key(block: index), text: String(text.prefix(panelLimit))))
+            case .command(let command):
+                fields.append(Field(key: key(block: index), text: "! " + command))
             case .table(let header, let rows):
                 let cells = header + rows.flatMap { row in (0..<header.count).map { $0 < row.count ? row[$0] : "" } }
                 for (cell, text) in cells.enumerated() {

@@ -16,6 +16,8 @@ struct TranscriptActions {
     /// Runs a shell block's command in the focused terminal pane; nil
     /// where there's no terminal to run it in.
     var runInTerminal: ((String) -> Void)?
+    /// Runs a command the agent wrote as a `! …` line, as typing it with `!` would.
+    var runCommand: ((String) -> Void)?
     /// Who's speaking in replies, for VoiceOver.
     var agentName = "Agent"
     /// Asks for the last reply again.

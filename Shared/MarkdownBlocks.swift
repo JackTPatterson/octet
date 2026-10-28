@@ -13,6 +13,15 @@ enum MarkdownBlock: Equatable {
     /// A pipe table: the header row, then body rows, cells trimmed.
     case table(header: [String], rows: [[String]])
     case rule
+    /// A line an agent starts with `!`: a command for the person to run.
+    case command(String)
+
+    /// The command in a `! ls` line, nil for prose, `!!`, images and `!=`.
+    static func shellCommand(in trimmed: String) -> String? {
+        guard trimmed.hasPrefix("!"), let next = trimmed.dropFirst().first, !"![=".contains(next) else { return nil }
+        let command = trimmed.dropFirst().trimmingCharacters(in: .whitespaces)
+        return command.isEmpty ? nil : command
+    }
 
     static func parse(_ markdown: String) -> [MarkdownBlock] {
         var blocks: [MarkdownBlock] = []
@@ -72,6 +81,11 @@ enum MarkdownBlock: Equatable {
                 blocks.append(.rule)
                 continue
             }
+            if let command = Self.shellCommand(in: trimmed) {
+                flushParagraph()
+                blocks.append(.command(command))
+                continue
+            }
             if let heading = Self.heading(trimmed) {
                 flushParagraph()
                 blocks.append(heading)
@@ -92,7 +106,8 @@ enum MarkdownBlock: Equatable {
                 }
                 continue
             }
-            paragraph.append(line)
+            // Markdown ignores a line's leading blanks; keeping them left a gap.
+            paragraph.append(String(line.drop { $0 == " " || $0 == "\t" }))
         }
         flushTable()
         // A fence still open means the reply is mid-stream: show what's there.

@@ -49,6 +49,8 @@ enum MarkdownHTML {
                     html += "<tr>" + row.map { "<td>" + inline($0) + "</td>" }.joined() + "</tr>\n"
                 }
                 html += "</tbody>\n</table>\n"
+            case .command(let command):
+                html += "<pre><code class=\"language-sh\">! " + escape(command) + "</code></pre>\n"
             case .rule:
                 html += "<hr>\n"
             case .listItem:

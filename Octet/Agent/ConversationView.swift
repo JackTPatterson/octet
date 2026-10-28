@@ -814,6 +814,7 @@ private struct Transcript: View {
                 ToastCenter.shared.info("Running in the terminal",
                                         detail: command.split(separator: "\n").first.map(String.init))
             },
+            runCommand: { command in session.send("!" + command) },
             agentName: session.engine.displayName,
             regenerate: { MessageResend.regenerate(in: session) }
         )

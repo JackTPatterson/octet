@@ -74,6 +74,8 @@ struct MarkdownView: View {
                       runnable: streaming ? nil : ShellCodeBlock.runnable(language: language, text: text))
         case .table(let header, let rows):
             MarkdownTable(header: header, rows: rows, block: index)
+        case .command(let command):
+            AgentCommandLine(command: command, findField: TranscriptFind.key(block: index))
         case .rule:
             Rectangle().fill(Theme.divider).frame(height: 1).padding(.vertical, 4)
         }
@@ -418,5 +420,40 @@ struct TranscriptShowMore: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// A `! command` line an agent wrote: the command, and a Run button that
+/// runs it here as typing it with `!` would.
+private struct AgentCommandLine: View {
+    let command: String
+    let findField: Int
+    @Environment(\.transcriptFindMarks) private var marks
+    @Environment(\.transcriptActions) private var actions
+    private var run: ((String) -> Void)? { actions.runCommand }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(marked(CodePanel.highlighted("! " + command)))
+                .font(Theme.monoFont)
+                .textSelection(.enabled)
+                .lineLimit(3)
+                .truncationMode(.middle)
+            Spacer(minLength: 4)
+            if let run {
+                OctetButton(title: "Run", icon: "terminal", kind: .secondary, compact: true) { run(command) }
+                    .help("Run in this conversation's folder")
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Theme.terminalBackground)
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.md).strokeBorder(Theme.border, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
+    }
+
+    private func marked(_ text: AttributedString) -> AttributedString {
+        guard let marks else { return text }
+        return marks.mark(text, field: findField)
     }
 }
