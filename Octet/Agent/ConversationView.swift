@@ -1027,7 +1027,7 @@ private struct ShellModeStrip: View {
                     Button("Stop") { session.stopShell() }.buttonStyle(.plain).foregroundStyle(ChatStyle.link)
                     Keycap(text: "esc")
                 } else if typingCommand {
-                    Text("Runs in \(abbreviateHome(session.cwd)); its output goes to \(session.engine.displayName) with your next message")
+                    Text("Runs in \(abbreviateHome(session.cwd)); \(session.engine.displayName) responds to its output")
                         .lineLimit(1).truncationMode(.middle)
                     Spacer(minLength: 0)
                 } else {

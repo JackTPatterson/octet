@@ -988,7 +988,7 @@ private struct TerminalSettings: View {
             SettingsDivider()
             SettingsRow(
                 title: "Let agents suggest commands",
-                detail: "An agent can open the sidebar terminal and type a command at its prompt, for example one that needs your password or that you'd rather watch. It is never run for you: you read it and press Return, or Run. It only goes in when the terminal is waiting at a prompt. Tool: suggest_sidebar_command, or octet-cli terminal suggest. Off by default.",
+                detail: "An agent can open the sidebar terminal and type a command at its prompt, for example one that needs your password or that you'd rather watch. It is never run for you: you read it and press Return, or Run. It only goes in when the terminal is waiting at a prompt. Tool: suggest_sidebar_command, or octet-cli terminal suggest. The same switch lets an agent open a new terminal in its workspace, as a split beside it or a tab (open_terminal), and put a command at that terminal's prompt (queue_command); those are never run for you either. Off by default.",
                 setting: \.agentsSuggestSidebarCommands
             ) {
                 Toggle("Let agents suggest commands", isOn: $settings.values.agentsSuggestSidebarCommands)

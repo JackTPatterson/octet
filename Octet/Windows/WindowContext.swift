@@ -849,6 +849,17 @@ final class WindowContext: ObservableObject, Identifiable {
         create("pane.move", ["pane_id": pane, "destination": ["type": "new_tab"]], failure: "Couldn't move the pane to a new tab")
     }
 
+    /// A split tab's panes, each in a tab of its own: the first stays where it
+    /// is and the rest move out, still running.
+    func separatePanes(ofTab tabId: String) {
+        let panes = store.snapshot.panes.filter { $0.tabId == tabId }
+        guard panes.count > 1, let target = store.snapshot.tabs.first(where: { $0.tabId == tabId })?.workspaceId else { return }
+        for pane in panes.dropFirst() {
+            create("pane.move", ["pane_id": pane.paneId, "destination": ["type": "new_tab", "workspace_id": target]],
+                   failure: "Couldn't move the pane to a new tab")
+        }
+    }
+
     /// With no engine named, the default agent from Settings › Agents.
     func newConversation(engine: AgentSession.Engine? = nil, cwd: String? = nil,
                          replacingStarterTab starterTabId: String? = nil) {

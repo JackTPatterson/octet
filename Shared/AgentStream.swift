@@ -957,6 +957,11 @@ extension AgentToolCall {
             let input = inputData.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
             return input.flatMap(SkillCall.name(in:)) ?? name
         }
+        return Self.displayName(forTool: name)
+    }
+
+    /// `displayName` for a bare tool name: MCP tools as "server: tool".
+    static func displayName(forTool name: String) -> String {
         guard name.hasPrefix("mcp__") else { return name }
         let parts = name.dropFirst(5).components(separatedBy: "__")
         guard parts.count >= 2 else { return name }
@@ -966,8 +971,10 @@ extension AgentToolCall {
     var isMCP: Bool { name.hasPrefix("mcp__") }
 
     /// Which icon names the tool's kind.
-    var iconName: String {
-        if isMCP { return "tool.mcp" }
+    var iconName: String { Self.iconName(forTool: name) }
+
+    static func iconName(forTool name: String) -> String {
+        if name.hasPrefix("mcp__") { return "tool.mcp" }
         switch name {
         case "Read": return "tool.read"
         case "Edit", "MultiEdit": return "tool.edit"

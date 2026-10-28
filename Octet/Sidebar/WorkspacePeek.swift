@@ -16,6 +16,8 @@ struct WorkspacePeek: View {
     @ObservedObject private var workspaceIcons = WorkspaceIconStore.shared
     let workspace: EngineWorkspace
     let dismiss: () -> Void
+    /// Starts renaming the workspace in the sidebar.
+    var rename: () -> Void = {}
     /// Verification hook: RootView posts this to open the first workspace's card.
     static let debugOpen = Notification.Name("octet.debug.openWorkspacePeek")
     /// Read when the card opens: what's uncommitted or unpushed, and the
@@ -36,7 +38,7 @@ struct WorkspacePeek: View {
         VStack(alignment: .leading, spacing: 0) {
             header(directory: directory, reading: reading)
             hairline
-            VStack(alignment: .leading, spacing: 1) {
+            rowsContainer(rowCount: tabs.count + conversations.count + ports.count + (reading?.pullRequest == nil ? 0 : 1)) {
                 section("Tabs", count: tabs.count)
                 ForEach(tabs) { tab in
                     TabPeekRow(store: store, tab: tab, showing: tab.tabId == shownTab) {
@@ -74,7 +76,6 @@ struct WorkspacePeek: View {
                     }
                 }
             }
-            .padding(6)
             hairline
             footer
         }
@@ -96,6 +97,20 @@ struct WorkspacePeek: View {
             PeekGit.read(directory: directory, isWorktree: workspace.worktree != nil) { git = PeekGit.cached }
         }
         .onDisappear { DebugSnapshot.overlay("peek", false) }
+    }
+
+    /// The rows, padded; past a dozen or so they scroll rather than run the
+    /// card off the screen.
+    @ViewBuilder
+    private func rowsContainer<Content: View>(rowCount: Int, @ViewBuilder content: () -> Content) -> some View {
+        let list = VStack(alignment: .leading, spacing: 1, content: content).padding(6)
+        if rowCount > 9 {
+            ScrollView(.vertical) { list }
+                .scrollIndicators(.never)
+                .frame(maxHeight: 420)
+        } else {
+            list
+        }
     }
 
     private var hairline: some View {
@@ -142,7 +157,8 @@ struct WorkspacePeek: View {
                 }
             }
             let branch = reading?.work.branch ?? store.branches[id]
-            if branch != nil || (reading?.work.uncommitted ?? 0) > 0 || (reading?.work.unpushed ?? 0) > 0 {
+            if branch != nil || (reading?.work.uncommitted ?? 0) > 0 || (reading?.work.unpushed ?? 0) > 0
+                || reading?.pullRequest != nil {
                 HStack(spacing: 6) {
                     if let branch {
                         PeekChip(icon: workspace.worktree != nil ? "square.stack.3d.up" : "branch", text: branch, mono: true)
@@ -157,6 +173,11 @@ struct WorkspacePeek: View {
                             PeekChip(icon: "arrow.up", text: "\(work.unpushed)")
                                 .help(Recap.count(work.unpushed, "unpushed commit"))
                         }
+                    }
+                    if let pull = reading?.pullRequest {
+                        let tone = PullRequestTone(state: pull.state, isDraft: pull.isDraft)
+                        PeekChip(icon: tone.icon, tint: tone.color, text: "#\(pull.number)")
+                            .help("\(pull.title)\n\(pull.statusText)")
                     }
                     Spacer(minLength: 0)
                 }
@@ -231,6 +252,12 @@ struct WorkspacePeek: View {
                 dismiss()
                 store.markIdle(id)
             }
+            OctetIconButton(icon: "ellipsis", help: "More: rename, color, Octet UI…", compact: true) {
+                OctetContextMenu.present(WorkspaceMenu.items(store: store, workspace: workspace, window: window) {
+                    dismiss()
+                    rename()
+                })
+            }
             OctetIconButton(icon: "xmark", help: "Close workspace", compact: true) {
                 dismiss()
                 store.closeWorkspace(id)
@@ -245,13 +272,14 @@ struct WorkspacePeek: View {
 /// A small capsule in the header: the branch, what's unsaved.
 private struct PeekChip: View {
     var icon: String?
+    var tint: Color?
     var dot: Color?
     let text: String
     var mono = false
 
     var body: some View {
         HStack(spacing: 4) {
-            if let icon { OctetIcon(icon, size: 10) }
+            if let icon { OctetIcon(icon, size: 10).foregroundStyle(tint ?? Theme.textSecondary) }
             if let dot { Circle().fill(dot.opacity(0.85)).frame(width: 6, height: 6) }
             Text(text)
                 .font(mono ? .system(size: 10.5, design: .monospaced) : Theme.captionFont.weight(.medium))
@@ -271,24 +299,38 @@ private struct PeekChip: View {
 /// how many.
 private struct TabPeekRow: View {
     @ObservedObject var store: SessionStore
+    @ObservedObject private var usage: AgentUsageTracker
     let tab: EngineTab
     let showing: Bool
     let action: () -> Void
+
+    init(store: SessionStore, tab: EngineTab, showing: Bool, action: @escaping () -> Void) {
+        self.store = store
+        self.tab = tab
+        self.showing = showing
+        self.action = action
+        _usage = ObservedObject(wrappedValue: store.usageTracker)
+    }
 
     var body: some View {
         let running = store.snapshot.agents(inTab: tab.tabId)
         let agent = store.primaryAgent(in: running)
         let brand = AgentBrand.forAgent(agent?.agent)
         let status = AgentState(agent?.agentStatus ?? tab.agentStatus)
-        PeekRow(status: status, action: action) {
+        // What a working agent is on: its tool's mark and the line it wrote.
+        let terminal = agent?.terminalId
+        let activity = status == .working ? terminal.flatMap { usage.lastActivity[$0] } : nil
+        let tool = activity != nil ? terminal.flatMap { usage.lastTool[$0] }.flatMap { $0.isEmpty ? nil : $0 } : nil
+        PeekRow(status: status, action: action, tool: tool,
+                actions: [PeekAction(icon: "xmark", help: "Close tab") { store.closeTab(tab.tabId) }]) {
             if let brand { AgentLogo(brand: brand, size: 14) } else {
                 OctetIcon("terminal", size: 13).foregroundStyle(Theme.textTertiary)
             }
         } title: {
             TabAutoName.display(label: tab.label, number: tab.number)
         } detail: {
-            detail(agent: agent, brand: brand, count: running.count,
-                   location: agent.flatMap { store.agentLocations[$0.paneId] })
+            activity ?? detail(agent: agent, brand: brand, count: running.count,
+                               location: agent.flatMap { store.agentLocations[$0.paneId] })
         } trailing: {
             if showing {
                 Text("Showing")
@@ -324,32 +366,52 @@ private struct ConversationPeekRow: View {
 
     var body: some View {
         let status = session.agentState
-        PeekRow(status: status, action: action) {
+        let call: AgentToolCall? = status == .working ? session.conversation.items.last.flatMap { item in
+            if case .tool(let call) = item.kind { return call } else { return nil }
+        } : nil
+        PeekRow(status: status, action: action, tool: call?.name,
+                actions: status == .working ? [PeekAction(icon: "stop.fill", help: "Stop this turn") { session.interrupt() }] : []) {
             if let brand = AgentBrand.forAgent(session.engine.agent) { AgentLogo(brand: brand, size: 14) }
         } title: {
             session.title
         } detail: {
-            detail(status)
+            if let call {
+                let name = AgentToolCall.displayName(forTool: call.name)
+                return call.summary.isEmpty ? name : "\(name): \(call.summary)"
+            }
+            return detail(status)
         } trailing: {
-            TimelineView(.periodic(from: .now, by: 30)) { context in
-                let age = WorkspaceActivity.ageLabel(since: session.conversation.items.last?.createdAt, now: context.date)
-                if !age.isEmpty, status != .working {
-                    Text(age)
+            if status == .working, let started = session.turnStartedAt {
+                // Ticks each second, which the detail line used to do not at all.
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    Text(Self.elapsed(since: started, now: context.date))
                         .font(Theme.captionFont.monospacedDigit())
                         .foregroundStyle(Theme.textTertiary)
-                        .help("Last activity")
+                        .help("Time on this turn")
+                }
+            } else {
+                TimelineView(.periodic(from: .now, by: 30)) { context in
+                    let age = WorkspaceActivity.ageLabel(since: session.conversation.items.last?.createdAt, now: context.date)
+                    if !age.isEmpty, status != .working {
+                        Text(age)
+                            .font(Theme.captionFont.monospacedDigit())
+                            .foregroundStyle(Theme.textTertiary)
+                            .help("Last activity")
+                    }
                 }
             }
         }
     }
 
+    private static func elapsed(since start: Date, now: Date) -> String {
+        let seconds = max(0, Int(now.timeIntervalSince(start)))
+        return seconds < 60 ? "\(seconds)s" : "\(seconds / 60)m \(seconds % 60)s"
+    }
+
     private func detail(_ status: AgentState) -> String {
         switch status {
         case .needsApproval, .needsInput, .failed, .planReady: return status.title
-        case .working:
-            guard let started = session.turnStartedAt else { return "Working" }
-            let seconds = Int(Date().timeIntervalSince(started))
-            return seconds < 60 ? "Working \(seconds)s" : "Working \(seconds / 60)m \(seconds % 60)s"
+        case .working: return "Working"
         default: return "\(session.engine.displayName) · \(status == .done ? status.label : AgentState.idle.label)"
         }
     }
@@ -357,9 +419,19 @@ private struct ConversationPeekRow: View {
 
 /// The shared row: the agent's mark with its state on the corner, the
 /// title over a detail line, and something on the right.
+private struct PeekAction {
+    let icon: String
+    let help: String
+    let perform: () -> Void
+}
+
 private struct PeekRow<Mark: View, Trailing: View>: View {
     let status: AgentState
     let action: () -> Void
+    /// The tool the agent is on, drawn before the detail line.
+    var tool: String? = nil
+    /// Shown in place of `trailing` under the pointer.
+    var actions: [PeekAction] = []
     @ViewBuilder let mark: () -> Mark
     let title: () -> String
     let detail: () -> String
@@ -385,13 +457,22 @@ private struct PeekRow<Mark: View, Trailing: View>: View {
                         .font(Theme.uiFontMedium)
                         .foregroundStyle(Theme.textPrimary)
                         .lineLimit(1)
-                    Text(detail())
-                        .font(Theme.captionFont)
-                        .foregroundStyle(status.needsYou || status == .failed ? status.color : Theme.textTertiary)
-                        .lineLimit(1)
+                    HStack(spacing: 4) {
+                        if let tool { AgentToolMark(tool: tool, size: 10).frame(width: 12) }
+                        Text(detail())
+                            .font(Theme.captionFont)
+                            .foregroundStyle(status.needsYou || status == .failed ? status.color : Theme.textTertiary)
+                            .lineLimit(1)
+                    }
                 }
                 Spacer(minLength: 4)
-                trailing()
+                if hovered, !actions.isEmpty {
+                    ForEach(Array(actions.enumerated()), id: \.offset) { _, item in
+                        OctetIconButton(icon: item.icon, help: item.help, compact: true, action: item.perform)
+                    }
+                } else {
+                    trailing()
+                }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)

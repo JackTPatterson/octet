@@ -171,4 +171,58 @@ final class TerminalAccessTests: XCTestCase {
     func testFormatSuggestionNamesTheCommand() {
         XCTAssertTrue(TerminalMCP.formatSuggestion(["command": "make test"]).contains("make test"))
     }
+
+    func testOpeningATerminalAsksTheAppWithALayoutAndAStagedCommand() throws {
+        var asked: [String: Any] = [:]
+        var askedMethod: TerminalControl.Method?
+        let reply = TerminalMCP.respond(
+            to: rpc("tools/call", params: ["name": "open_terminal", "arguments": ["command": " python app.py \n", "layout": "down"]]), origin: inPane,
+            call: { method, params in
+                askedMethod = method
+                asked = params
+                return ["pane_id": "w1:p9", "layout": "down", "command": "python app.py"]
+            })
+        let text = try XCTUnwrap((try result(reply)["content"] as? [[String: Any]])?.first?["text"] as? String)
+        XCTAssertTrue(text.contains("w1:p9") && text.contains("python app.py") && text.contains("Nothing has run"))
+        XCTAssertEqual(askedMethod, .open)
+        XCTAssertEqual(asked["layout"] as? String, "down")
+        XCTAssertEqual(asked["command"] as? String, "python app.py")
+        XCTAssertEqual(asked["from_pane"] as? String, "w1:p2")
+    }
+
+    func testAConversationOpensATabAndAPaneSplitsByDefault() throws {
+        var layouts: [String] = []
+        func open(_ origin: TerminalControl.Origin) {
+            _ = TerminalMCP.respond(to: rpc("tools/call", params: ["name": "open_terminal", "arguments": [String: Any]()]), origin: origin,
+                                    call: { _, params in layouts.append(params["layout"] as? String ?? ""); return ["pane_id": "p"] })
+        }
+        open(inPane)
+        open(TerminalControl.Origin(pane: nil, workspace: nil))
+        XCTAssertEqual(layouts, ["right", "tab"])
+        let bad = try result(TerminalMCP.respond(
+            to: rpc("tools/call", params: ["name": "open_terminal", "arguments": ["layout": "diagonal"]]), origin: inPane, call: { _, _ in [:] }))
+        XCTAssertEqual(bad["isError"] as? Bool, true)
+    }
+
+    func testAQueuedCommandNeedsAPaneAndAFitLine() throws {
+        var calls: [(TerminalControl.Method, [String: Any])] = []
+        func queue(_ arguments: [String: Any], origin: TerminalControl.Origin? = nil) throws -> [String: Any] {
+            try result(TerminalMCP.respond(to: rpc("tools/call", params: ["name": "queue_command", "arguments": arguments]), origin: origin ?? inPane,
+                                           call: { method, params in calls.append((method, params)); return [:] }))
+        }
+        XCTAssertEqual(try queue(["command": "ls"])["isError"] as? Bool, true)
+        XCTAssertEqual(try queue(["pane_id": "w1:p9", "command": "ls\nrm x"])["isError"] as? Bool, true)
+        XCTAssertTrue(calls.isEmpty)
+        XCTAssertNil(try queue(["pane_id": "w1:p9", "command": " make deploy "])["isError"])
+        XCTAssertEqual(calls.first?.0, .queue)
+        XCTAssertEqual(calls.first?.1["pane_id"] as? String, "w1:p9")
+        XCTAssertEqual(calls.first?.1["command"] as? String, "make deploy")
+    }
+
+    func testReadingAPaneIsPassedOn() throws {
+        var asked: [String: Any] = [:]
+        _ = TerminalMCP.respond(to: rpc("tools/call", params: ["name": "read_sidebar_terminal", "arguments": ["pane_id": "w1:p9"]]), origin: inPane,
+                                call: { _, params in asked = params; return [:] })
+        XCTAssertEqual(asked["pane_id"] as? String, "w1:p9")
+    }
 }

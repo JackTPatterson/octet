@@ -2934,6 +2934,12 @@ final class AgentSession: ObservableObject, Identifiable {
             conversation.items[index].kind = .tool(call)
         }
         shellRuns.append(ShellPassthrough.Run(command: command, output: trimmed, status: stopped ? nil : status))
+        // As in Claude Code's terminal, the agent answers what the command
+        // printed. Mid-turn, or after Stop, the output waits for the next message.
+        if !stopped, !conversation.isRunning {
+            let shown = command.count > 60 ? String(command.prefix(60)) + "…" : command
+            send("I ran `\(shown)`. Take a look at what it printed.")
+        }
     }
 
     // MARK: - Model policy

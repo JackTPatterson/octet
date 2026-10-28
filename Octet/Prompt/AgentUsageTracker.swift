@@ -11,6 +11,8 @@ final class AgentUsageTracker: ObservableObject {
     @Published private(set) var usage: [String: TwinUsage] = [:]
     /// The last thing each agent said or did, for the board.
     @Published private(set) var lastActivity: [String: String] = [:]
+    /// The tool behind a terminal's last activity line, when that line is a tool call.
+    @Published private(set) var lastTool: [String: String] = [:]
 
     private unowned let store: SessionStore
     private var paths: [String: String] = [:]
@@ -71,6 +73,7 @@ final class AgentUsageTracker: ObservableObject {
             let agents = known + resolved.compactMap { terminal, path in path.map { (terminal, $0) } }
             var found: [String: TwinUsage] = [:]
             var activity: [String: String] = [:]
+            var tools: [String: String] = [:]
             for agent in agents {
                 guard let text = Self.tail(agent.path) else { continue }
                 let conversation = TwinTranscript.parse(agent: kinds[agent.terminal],
@@ -80,6 +83,7 @@ final class AgentUsageTracker: ObservableObject {
                 }
                 if let line = Self.lastLine(of: conversation) {
                     activity[agent.terminal] = line
+                    tools[agent.terminal] = Self.lastToolName(of: conversation) ?? ""
                 }
             }
             DispatchQueue.main.async { [weak self] in
@@ -92,6 +96,9 @@ final class AgentUsageTracker: ObservableObject {
                 }
                 for (terminal, line) in activity where self.lastActivity[terminal] != line {
                     self.lastActivity[terminal] = line
+                }
+                for (terminal, tool) in tools where self.lastTool[terminal] != tool {
+                    self.lastTool[terminal] = tool
                 }
             }
         }
@@ -128,7 +135,25 @@ final class AgentUsageTracker: ObservableObject {
                     let line = TwinTranscript.condense(text)
                     if !line.isEmpty { return line }
                 case .toolCall(_, let name, let summary):
-                    return summary.isEmpty ? name : "\(name): \(summary)"
+                    let shown = AgentToolCall.displayName(forTool: name)
+                    return summary.isEmpty ? shown : "\(shown): \(summary)"
+                case .thinking, .toolResult:
+                    continue
+                }
+            }
+        }
+        return nil
+    }
+
+    /// The tool of the newest block `lastLine` reads, if that block is a tool call.
+    nonisolated static func lastToolName(of conversation: TwinConversation) -> String? {
+        for message in conversation.messages.reversed() {
+            for block in message.blocks.reversed() {
+                switch block {
+                case .text(let text):
+                    if !TwinTranscript.condense(text).isEmpty { return nil }
+                case .toolCall(_, let name, _):
+                    return name
                 case .thinking, .toolResult:
                     continue
                 }

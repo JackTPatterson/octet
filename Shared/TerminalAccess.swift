@@ -64,9 +64,14 @@ enum TerminalControl {
         }
     }
 
+    static let unfitCommand = Failure(message: "Give one line of text, up to \(maxCommandLength) characters, with no control or invisible characters.")
+
     static let notInOctet = "This only works inside Octet: run it from an Octet terminal pane or conversation."
 
-    enum Method: String { case read, suggest }
+    enum Method: String { case read, suggest, open, queue }
+
+    /// Where `open_terminal` puts the new shell, relative to the agent's pane.
+    static let layouts = ["tab", "right", "down", "left", "up"]
 
     struct Failure: Error, CustomStringConvertible {
         let message: String
@@ -150,15 +155,20 @@ enum TerminalMCP {
     static let serverName = "octet-terminal"
     static let toolName = "read_sidebar_terminal"
     static let suggestToolName = "suggest_sidebar_command"
+    static let openToolName = "open_terminal"
+    static let queueToolName = "queue_command"
 
     static let tools: [[String: Any]] = [
         [
             "name": toolName,
-            "description": "Reads the latest output of the terminal in Octet's right-hand panel (the sidebar terminal) for your workspace; each workspace has its own. It's where the person runs things like dev servers, builds and tests. Read only: this can't type into it. Use it when the person points at what's in that terminal, or to see the logs or test output of something they started there.",
+            "description": "Reads the latest output of the terminal in Octet's right-hand panel (the sidebar terminal) for your workspace; each workspace has its own. It's where the person runs things like dev servers, builds and tests. Read only: this can't type into it. Give pane_id to read a terminal you opened instead. Use it when the person points at what's in that terminal, or to see the logs or test output of something they started there.",
             "inputSchema": [
                 "type": "object",
-                "properties": ["lines": ["type": "integer",
-                                         "description": "How many of the last lines to read, up to \(TerminalControl.maxLines). Default \(TerminalControl.defaultLines)."]],
+                "properties": [
+                    "lines": ["type": "integer",
+                              "description": "How many of the last lines to read, up to \(TerminalControl.maxLines). Default \(TerminalControl.defaultLines)."],
+                    "pane_id": ["type": "string", "description": "Read a terminal pane of your workspace instead (one open_terminal returned), what's on its screen now. Optional."],
+                ] as [String: Any],
                 "required": [String](),
             ] as [String: Any],
         ],
@@ -171,9 +181,35 @@ enum TerminalMCP {
                 "required": ["command"],
             ] as [String: Any],
         ],
+        [
+            "name": openToolName,
+            "description": "Opens a new terminal in the workspace you're working in: as a split beside your own pane (so the person sees it next to you) or as a tab of its own. It starts an ordinary shell in the project's folder and returns its pane id. Optionally puts one command at its prompt WITHOUT running it. Use it for something that should run in its own terminal: a dev server, a watcher, a long script, a REPL. Then use queue_command to stage a command there for the person to run, and read_sidebar_terminal with the pane id to see what it printed.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "layout": ["type": "string", "enum": TerminalControl.layouts,
+                               "description": "right (default), down, left or up: a split beside your pane. tab: a tab of its own."],
+                    "cwd": ["type": "string", "description": "The folder to start in. Defaults to your pane's folder."],
+                    "command": ["type": "string", "description": "A command to put at its prompt, not run: one line, up to \(TerminalControl.maxCommandLength) characters. Optional."],
+                ] as [String: Any],
+                "required": [String](),
+            ] as [String: Any],
+        ],
+        [
+            "name": queueToolName,
+            "description": "Puts a command at the prompt of a terminal you opened with open_terminal (or any other shell pane in your workspace), WITHOUT running it: the person reads it and runs it with Return. Use it for commands you don't want to run yourself: ones that need their credentials, deploys, anything destructive or long-running. One line per call; it replaces what is typed at that prompt. It fails if the pane is busy running something or is an agent. Afterwards, read_sidebar_terminal with the pane id shows what happened.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "pane_id": ["type": "string", "description": "The pane, from open_terminal."],
+                    "command": ["type": "string", "description": "The command, on one line, up to \(TerminalControl.maxCommandLength) characters."],
+                ] as [String: Any],
+                "required": ["pane_id", "command"],
+            ] as [String: Any],
+        ],
     ]
 
-    static let instructions = "You're running inside Octet. The person may have a terminal open in Octet's right-hand panel (the sidebar terminal), where they run things like dev servers, builds and tests. With read_sidebar_terminal you can read its latest output, read only. Use it when the person refers to what's in that terminal, or to see the logs or test results of something they started there. With suggest_sidebar_command you can open that panel and put a command at its prompt for the person to run themselves; it is never run for them. Both can be turned off in Octet's Settings, and the terminal may not be open."
+    static let instructions = "You're running inside Octet. The person may have a terminal open in Octet's right-hand panel (the sidebar terminal), where they run things like dev servers, builds and tests. With read_sidebar_terminal you can read its latest output, read only. Use it when the person refers to what's in that terminal, or to see the logs or test results of something they started there. With suggest_sidebar_command you can open that panel and put a command at its prompt for the person to run themselves; it is never run for them. With open_terminal you can open a new terminal in this workspace, as a split beside you or a tab, and queue_command stages a command in it for the person to run, never run for them, so you can hand off a server, a watcher or anything you'd rather not run yourself. All can be turned off in Octet's Settings, and the terminal may not be open."
 
     /// What the agent reads for an answer: a line saying what it is, then the text.
     static func format(_ answer: [String: Any]) -> String {
@@ -192,6 +228,24 @@ enum TerminalMCP {
     static func formatSuggestion(_ answer: [String: Any]) -> String {
         let command = answer["command"] as? String ?? ""
         return "Put this at the sidebar terminal's prompt, without running it: \(command)\nThe person has been asked to look at it and press Return (or Run) to run it. Nothing has run yet. If they do, read_sidebar_terminal shows the result."
+    }
+
+    /// What the agent reads after opening a terminal.
+    static func formatOpened(_ answer: [String: Any]) -> String {
+        let pane = answer["pane_id"] as? String ?? ""
+        let place = answer["layout"] as? String == "tab" ? "in a tab of its own" : "beside you"
+        var text = "Opened a terminal \(place) in this workspace. Its pane id is \(pane)."
+        if let command = answer["command"] as? String {
+            text += " Put this at its prompt, without running it: \(command)\nThe person has been asked to press Return to run it. Nothing has run yet."
+        } else {
+            text += " Nothing is running in it. queue_command stages a command there for the person to run; read_sidebar_terminal with this pane id shows its screen."
+        }
+        return text
+    }
+
+    /// What the agent reads after queueing a command.
+    static func formatQueued(pane: String, command: String) -> String {
+        "Put this at the prompt of pane \(pane), without running it: \(command)\nThe person has to press Return to run it. Nothing has run yet. Once they have, read_sidebar_terminal with pane_id \(pane) shows the result."
     }
 
     /// Answers one JSON-RPC line. `call` asks the app. Outside Octet
@@ -222,6 +276,7 @@ enum TerminalMCP {
                 switch name {
                 case toolName:
                     callParams["lines"] = TerminalControl.clampLines(arguments["lines"])
+                    if let pane = arguments["pane_id"] as? String, !pane.isEmpty { callParams["pane_id"] = pane }
                     result = ["content": [["type": "text", "text": format(try call(.read, callParams))]]]
                 case suggestToolName:
                     guard let command = TerminalControl.stagedCommand(arguments["command"] as? String ?? "") else {
@@ -230,6 +285,27 @@ enum TerminalMCP {
                     callParams["command"] = command
                     _ = try call(.suggest, callParams)
                     result = ["content": [["type": "text", "text": formatSuggestion(["command": command])]]]
+                case openToolName:
+                    let layout = (arguments["layout"] as? String ?? "").lowercased()
+                    guard layout.isEmpty || TerminalControl.layouts.contains(layout) else {
+                        throw TerminalControl.Failure(message: "layout is one of \(TerminalControl.layouts.joined(separator: ", ")).")
+                    }
+                    callParams["layout"] = layout.isEmpty ? (origin.pane == nil ? "tab" : "right") : layout
+                    if let cwd = arguments["cwd"] as? String, !cwd.isEmpty { callParams["cwd"] = (cwd as NSString).expandingTildeInPath }
+                    if let raw = arguments["command"] as? String, !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        guard let command = TerminalControl.stagedCommand(raw) else { throw TerminalControl.unfitCommand }
+                        callParams["command"] = command
+                    }
+                    result = ["content": [["type": "text", "text": formatOpened(try call(.open, callParams))]]]
+                case queueToolName:
+                    guard let pane = arguments["pane_id"] as? String, !pane.isEmpty else {
+                        throw TerminalControl.Failure(message: "Give the pane's id, from open_terminal.")
+                    }
+                    guard let command = TerminalControl.stagedCommand(arguments["command"] as? String ?? "") else { throw TerminalControl.unfitCommand }
+                    callParams["pane_id"] = pane
+                    callParams["command"] = command
+                    _ = try call(.queue, callParams)
+                    result = ["content": [["type": "text", "text": formatQueued(pane: pane, command: command)]]]
                 default:
                     result = ["content": [["type": "text", "text": "Unknown tool \(name)."]], "isError": true]
                 }

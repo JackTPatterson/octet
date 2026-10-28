@@ -9,23 +9,23 @@ enum ChatStyle {
     // MARK: Surfaces
     // Resolved from T3 Code's dark tokens (apps/web/src/index.css, .dark).
 
-    /// The page behind the transcript: neutral-950.
-    static var page: Color { Theme.isLight ? Theme.terminalBackground : Color(hex: "0A0A0A") }
+    /// The page behind the transcript: the theme's own background.
+    static var page: Color { Theme.terminalBackground }
     /// Raised surfaces (the composer): the page with 3% white.
-    static var card: Color { Theme.isLight ? Theme.card : Color(hex: "111111") }
+    static var card: Color { Theme.isLight ? Theme.card : Theme.surface(0.03) }
     /// Your messages (bg-message): white at 4%.
-    static var bubble: Color { Theme.isLight ? Theme.card : Color(hex: "141414") }
+    static var bubble: Color { Theme.isLight ? Theme.card : Theme.surface(0.04) }
     /// The changed-files card and code blocks: white at 1.6–2.6%.
-    static var inset: Color { Theme.isLight ? Theme.card : Color(hex: "0E0E0E") }
-    static var codeBlock: Color { Theme.isLight ? Theme.card : Color(hex: "101010") }
+    static var inset: Color { Theme.isLight ? Theme.card : Theme.surface(0.016) }
+    static var codeBlock: Color { Theme.isLight ? Theme.card : Theme.surface(0.026) }
     /// A control under the pointer (accent): white at 4%.
-    static var hover: Color { Theme.isLight ? Theme.hover : Color(hex: "141414") }
+    static var hover: Color { Theme.isLight ? Theme.hover : Theme.surface(0.04) }
     /// Hairlines: white at 6%; inputs 8%; the composer's outline 5%.
-    static var border: Color { Theme.isLight ? Theme.border : Color(hex: "191919") }
-    static var inputBorder: Color { Theme.isLight ? Theme.border : Color(hex: "1E1E1E") }
-    static var composerOutline: Color { Theme.isLight ? Theme.border : Color(hex: "161616") }
+    static var border: Color { Theme.isLight ? Theme.border : Theme.surface(0.06) }
+    static var inputBorder: Color { Theme.isLight ? Theme.border : Theme.surface(0.08) }
+    static var composerOutline: Color { Theme.isLight ? Theme.border : Theme.surface(0.05) }
     /// The rule under "Worked for…": border at 60%.
-    static var rowRule: Color { Theme.isLight ? Theme.divider : Color(hex: "141414") }
+    static var rowRule: Color { Theme.isLight ? Theme.divider : Theme.surface(0.04) }
 
     /// Foreground (neutral-100), the assistant's prose at 80% of it, and
     /// muted-foreground for labels, icons and metadata.
@@ -41,7 +41,7 @@ enum ChatStyle {
     /// where white would vanish), and what's drawn on it.
     static var primary: Color { Theme.isLight ? Theme.textPrimary : Color(hex: "F5F5F5") }
     static var primaryHover: Color { Theme.isLight ? Theme.textPrimary.opacity(0.85) : Color(hex: "DADADA") }
-    static var onPrimary: Color { Theme.isLight ? Color.white : Color(hex: "0A0A0A") }
+    static var onPrimary: Color { Theme.isLight ? Color.white : Theme.terminalBackground }
     static var link: Color { Color(hex: Theme.isLight ? "2563EB" : "51A2FF") }
     static var added: Color { Color(hex: Theme.isLight ? "059669" : "00BC7D") }
     static var removed: Color { Color(hex: Theme.isLight ? "DC2626" : "FB414A") }
@@ -538,7 +538,7 @@ struct ChatButton: View {
     private var fill: Color {
         switch kind {
         case .primary: hovered ? ChatStyle.primaryHover : ChatStyle.primary
-        case .outline: Theme.isLight ? (hovered ? Theme.hover : Theme.card) : Color(hex: hovered ? "171717" : "101010")
+        case .outline: Theme.isLight ? (hovered ? Theme.hover : Theme.card) : Theme.surface(hovered ? 0.05 : 0.026)
         case .ghost: hovered ? ChatStyle.hover : .clear
         }
     }

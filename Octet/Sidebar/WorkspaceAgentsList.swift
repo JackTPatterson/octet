@@ -21,10 +21,13 @@ struct WorkspaceAgentsList: View {
                     expanded.toggle()
                 } label: {
                     HStack(spacing: 6) {
-                        if brands.count > 1 {
-                            AgentLogoStack(brands: brands, size: 14)
-                        } else if let brand = brands.first {
-                            AgentLogo(brand: brand, size: 14)
+                        // Open, the rows below carry their own logos.
+                        if !expanded {
+                            if brands.count > 1 {
+                                AgentLogoStack(brands: brands, size: 14)
+                            } else if let brand = brands.first {
+                                AgentLogo(brand: brand, size: 14)
+                            }
                         }
                         Text("\(count) \(count == 1 ? "agent" : "agents")")
                         Spacer(minLength: 4)
@@ -75,8 +78,9 @@ private struct WorkspaceTerminalAgentRow: View {
         let activity = agent.terminalId.flatMap { usage.lastActivity[$0] }
         let title = activity ?? agent.name ?? tab.map { TabAutoName.display(label: $0.label, number: $0.number) } ?? "Agent"
         let since = agent.terminalId.flatMap { store.recovery.record(forTerminal: $0)?.firstSeen }
+        let tool = activity != nil ? agent.terminalId.flatMap { usage.lastTool[$0] }.flatMap { $0.isEmpty ? nil : $0 } : nil
         WorkspaceAgentTaskRow(brand: AgentBrand.forAgent(agent.agent), status: agent.agentStatus,
-                              title: title, since: since, timeHelp: "Time since this agent was first seen", action: action)
+                              title: title, tool: tool, since: since, timeHelp: "Time since this agent was first seen", action: action)
     }
 }
 
@@ -87,8 +91,11 @@ private struct WorkspaceConversationAgentRow: View {
     var body: some View {
         let status: EngineAgentStatus = session.pendingPermission != nil || session.pendingQuestion != nil ? .blocked
             : session.conversation.isRunning ? .working : .idle
+        let tool = status == .working ? session.conversation.items.last.flatMap { item -> String? in
+            if case .tool(let call) = item.kind { return call.name } else { return nil }
+        } : nil
         WorkspaceAgentTaskRow(brand: AgentBrand.forAgent(session.engine.agent), status: status,
-                              title: session.title,
+                              title: session.title, tool: tool,
                               since: session.turnStartedAt ?? session.conversation.items.last?.createdAt,
                               timeHelp: status == .working ? "Time on this turn" : "Time since last activity", action: action)
     }
@@ -98,6 +105,8 @@ private struct WorkspaceAgentTaskRow: View {
     let brand: AgentBrand?
     let status: EngineAgentStatus
     let title: String
+    /// The tool the agent is on, drawn as in the conversation's work log.
+    var tool: String? = nil
     let since: Date?
     let timeHelp: String
     let action: () -> Void
@@ -125,6 +134,7 @@ private struct WorkspaceAgentTaskRow: View {
                             }
                         }
                 }
+                if let tool { AgentToolMark(tool: tool, size: 12).frame(width: 14) }
                 Text(title)
                     .font(Theme.Text.body)
                     .foregroundStyle(Theme.textSecondary)
@@ -164,6 +174,89 @@ extension AgentState {
         switch self {
         case .needsInput, .needsApproval, .failed, .planReady, .done: true
         default: false
+        }
+    }
+}
+
+/// A tool's mark, as the conversation's work log draws it: an MCP tool's
+/// service logo where there is one, else the icon for its kind.
+struct AgentToolMark: View {
+    let tool: String
+    var size: CGFloat = 12
+
+    var body: some View {
+        if let logo = LanguageLogo(mcpTool: tool, size: size) {
+            logo
+        } else {
+            OctetIcon(AgentToolCall.iconName(forTool: tool), size: size).foregroundStyle(Theme.textTertiary)
+        }
+    }
+}
+
+/// What runs in a workspace's panes besides its agents, e.g. a Python script
+/// in the split beside Claude: one avatar per program, grouped the way
+/// several agents' logos are.
+struct WorkspaceProcessRow: View {
+    @ObservedObject var store: SessionStore
+    let workspaceId: String
+
+    /// Each program once, by the name its logo and label use.
+    private var programs: [String] {
+        let snapshot = store.snapshot
+        let agentPanes = Set(snapshot.agents(inWorkspace: workspaceId).map(\.paneId))
+        var seen = Set<String>()
+        var names: [String] = []
+        for pane in snapshot.panes where pane.workspaceId == workspaceId && !agentPanes.contains(pane.paneId) {
+            for process in store.paneProcesses[pane.paneId]?.foreground ?? [] {
+                let command = (process.name as NSString).lastPathComponent
+                let bare = command.hasPrefix("-") ? String(command.dropFirst()) : command
+                let lowered = bare.lowercased()
+                guard !bare.isEmpty, !ShellPrompt.shells.contains(lowered), !ShellPrompt.shells.contains(command.lowercased()),
+                      !EngineProtocol.processNames.contains(lowered),
+                      AgentBrand.runtimeAgentID(forExecutable: bare) == nil else { continue }
+                let name = Self.language(of: lowered)
+                if seen.insert(name).inserted { names.append(name) }
+            }
+        }
+        return names
+    }
+
+    /// "python3.12" is Python; "node" stays itself.
+    private static func language(of command: String) -> String {
+        var name = command
+        while let last = name.last, last.isNumber || last == "." { name.removeLast() }
+        return name.isEmpty ? command : name
+    }
+
+    var body: some View {
+        let programs = programs
+        if !programs.isEmpty {
+            HStack(spacing: 6) {
+                HStack(spacing: -14 * 0.3) {
+                    ForEach(Array(programs.prefix(3).enumerated()), id: \.offset) { index, name in
+                        Group {
+                            if let logo = LanguageLogo(language: name, size: 10) {
+                                logo
+                            } else {
+                                OctetIcon("terminal", size: 10).foregroundStyle(Theme.textSecondary)
+                            }
+                        }
+                        .frame(width: 17, height: 17)
+                        .background(Circle().fill(Theme.cardSelected))
+                        .overlay(Circle().strokeBorder(Theme.border, lineWidth: 1))
+                        .zIndex(Double(3 - index))
+                    }
+                }
+                Text(programs.joined(separator: ", "))
+                    .font(Theme.Text.mono(10.5))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(Theme.textTertiary)
+            .help("Running in this workspace: " + programs.joined(separator: ", "))
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Running: " + programs.joined(separator: ", "))
         }
     }
 }

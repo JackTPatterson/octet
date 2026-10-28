@@ -201,14 +201,19 @@ private struct ToastCard: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .fixedSize(horizontal: false, vertical: true)
-            // Out of the way until the pointer is on the toast; always there
-            // for a failure, whose details are worth copying.
+            // Room for the buttons, which float over the corner so they
+            // never set the card's height.
+            .padding(.trailing, toast.style == .progress ? 0 : (copyable ? 44 : 22))
+        }
+        // Out of the way until the pointer is on the toast; always there
+        // for a failure, whose details are worth copying.
+        .overlay(alignment: .topTrailing) {
             if toast.style != .progress {
                 HStack(spacing: 0) {
-                    if toast.style == .failure, let detail = toast.detail, !detail.isEmpty {
+                    if copyable {
                         OctetIconButton(icon: copied ? "checkmark" : "doc.on.doc", help: "Copy details", compact: true) {
                             NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString("\(toast.title)\n\(detail)", forType: .string)
+                            NSPasteboard.general.setString("\(toast.title)\n\(toast.detail ?? "")", forType: .string)
                             copied = true
                         }
                     }
@@ -216,11 +221,11 @@ private struct ToastCard: View {
                         .hoverReveal(hovered || toast.style == .failure)
                 }
                 .animation(.easeOut(duration: 0.12), value: hovered)
-                .offset(x: 4, y: -3)
+                .offset(x: 6, y: -5)
             }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 11)
+        .padding(.vertical, 12)
         .octetGlass(cornerRadius: Theme.popoverRadius, fill: Theme.card)
         .overlay(RoundedRectangle(cornerRadius: Theme.popoverRadius, style: .continuous)
             .strokeBorder(toast.style == .failure ? accent.opacity(0.4) : .clear, lineWidth: 1))
@@ -230,6 +235,10 @@ private struct ToastCard: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel([toast.title, toast.detail].compactMap { $0 }.joined(separator: ". "))
+    }
+
+    private var copyable: Bool {
+        toast.style == .failure && !(toast.detail ?? "").isEmpty
     }
 
     private var accent: Color {

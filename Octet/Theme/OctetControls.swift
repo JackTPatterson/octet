@@ -338,7 +338,13 @@ struct OctetDropdown: View {
                     .lineLimit(1)
                 if spec.id == "model", let effort = spec.modelEffort?.wrappedValue ?? spec.modelDefaultEffort,
                    effort != spec.modelEffortLevels.first {
-                    OctetIcon("lightbulb.fill", size: 11).foregroundStyle(Color.white)
+                    // A pill in the effort's own color, as the picker draws it.
+                    let top = EffortStyle.isTop(effort)
+                    EffortName(level: effort, size: 10.5, color: top ? .white : EffortStyle.color(effort))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 1.5)
+                        .background(Capsule().fill(EffortStyle.color(effort).opacity(top ? 0.85 : 0.16)))
+                        .overlay(Capsule().strokeBorder(EffortStyle.color(effort).opacity(top ? 0 : 0.35), lineWidth: 1))
                         .transition(.opacity.combined(with: .scale))
                 }
                 OctetIcon("chevron.down", size: 14)

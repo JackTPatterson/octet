@@ -46,8 +46,8 @@ enum TreeEdgeStyle {
     static let portRadius: CGFloat = 2.75
     static let corner: CGFloat = 5.5
     /// The mark is a 20pt disc: the port sits this far under its centre,
-    /// clear of the disc's edge.
-    static let portDrop: CGFloat = 10 + 4.5
+    /// on the disc's bottom edge, half inside it.
+    static let portDrop: CGFloat = 10
     /// Drawing out: quick off the port, settling into the child's mark
     /// (an expo-style ease-out). Longer edges take a little longer, so a
     /// long one doesn't streak and a short one doesn't crawl.

@@ -482,6 +482,8 @@ private struct TabItem: View {
             Button("Move Tab Left") { store.moveTab(tab.tabId, by: -1, among: shownTabIds) }.disabled(isFirstShown)
             Button("Move Tab Right") { store.moveTab(tab.tabId, by: 1, among: shownTabIds) }.disabled(isLastShown)
             Divider()
+            Button("Separate Tabs") { window.separatePanes(ofTab: tab.tabId) }
+                .disabled(store.snapshot.panes.filter { $0.tabId == tab.tabId }.count < 2)
             Button("Move Tab to New Workspace") { WindowActions.tabToWorkspace(tab.tabId, in: window) }
                 .disabled(store.onlyPane(ofTab: tab.tabId) == nil)
             Button("Move Tab to New Window") {

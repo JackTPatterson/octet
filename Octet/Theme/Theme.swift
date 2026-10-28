@@ -13,6 +13,8 @@ enum Theme {
     nonisolated(unsafe) static var palette = ThemePalette(theme: .named("Dark"))
 
     static var terminalBackground: Color { palette.color(\.background) }
+    /// The theme background with `amount` of its foreground mixed in.
+    static func surface(_ amount: Double) -> Color { Color(hex: ThemePalette.mix(palette.background, palette.foreground, amount)) }
     static var chrome: Color { palette.color(\.chrome) }
     static var sidebar: Color { palette.color(\.sidebar) }
     static var card: Color { palette.color(\.card) }
@@ -148,6 +150,7 @@ extension NSColor {
 struct ThemePalette: Equatable {
     let isLight: Bool
     let background: String
+    let foreground: String
     let chrome: String
     let sidebar: String
     let card: String
@@ -190,6 +193,7 @@ struct ThemePalette: Equatable {
         func step(_ amount: Double) -> String { Self.mix(bg, fg, amount * k) }
         isLight = theme.isLight
         background = bg
+        foreground = fg
         chrome = step(0.045)
         sidebar = step(0.06)
         card = step(0.085)

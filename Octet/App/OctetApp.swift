@@ -390,6 +390,7 @@ struct OctetCommands: Commands {
                 .keyboardShortcut(OctetShortcut.copyMode.keyboardShortcut)
             Button("Rename Pane…") { KeyWindow.act { $0.ui.paletteStart = ["action.renamePane"]; $0.ui.paletteVisible = true } }
             Button("Move Pane to New Tab") { KeyWindow.act { $0.moveFocusedPaneToNewTab() } }
+            Button("Separate Tabs") { KeyWindow.act { if let tab = $0.tabId { $0.separatePanes(ofTab: tab) } } }
             Button("Move Pane to New Window") { KeyWindow.act { $0.moveFocusedPaneToNewWindow() } }
             Divider()
             Button(OctetShortcut.equalizePanes.title) { KeyWindow.act { $0.equalizePanes() } }

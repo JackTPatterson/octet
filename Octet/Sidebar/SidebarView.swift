@@ -669,6 +669,13 @@ private struct WorkspaceCard: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 4)
+                // Working: the loading line runs on the card itself, not
+                // only on the agent rows under its dropdown.
+                if status == .working {
+                    LoadingLine(width: 16, thickness: 1.5, color: Theme.textTertiary)
+                        .transition(.opacity)
+                        .accessibilityHidden(true)
+                }
                 if store.isPinned(workspace.workspaceId) {
                     OctetIcon("pin.fill", size: 11).foregroundStyle(Theme.textMuted)
                         .help("Pinned: never moves to Idle")
@@ -687,6 +694,31 @@ private struct WorkspaceCard: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
+            // The branch, so worktrees of one repository tell apart without
+            // a hover, and when it last did anything.
+            let branch = store.branches[workspace.workspaceId]
+            let lastActive = store.activity.lastActive(workspace.workspaceId)
+            if branch != nil || (lastActive != nil && !isSelected && status != .working) {
+                HStack(spacing: 5) {
+                    if let branch, branch != workspace.label {
+                        OctetIcon(workspace.worktree != nil ? "square.stack.3d.up" : "branch", size: 10)
+                        Text(branch)
+                            .font(Theme.Text.mono(10.5))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    Spacer(minLength: 4)
+                    if !isSelected, status != .working, lastActive != nil {
+                        TimelineView(.periodic(from: .now, by: 60)) { context in
+                            let age = WorkspaceActivity.ageLabel(since: lastActive, now: context.date)
+                            if !age.isEmpty, age != "now" {
+                                Text(age).font(Theme.captionFont.monospacedDigit()).help("Last active")
+                            }
+                        }
+                    }
+                }
+                .foregroundStyle(Theme.textTertiary)
+            }
             if let from = store.movedWorkspaces[workspace.workspaceId] {
                 HStack(spacing: 4) {
                     OctetIcon("arrow.right", size: 11)
@@ -699,6 +731,7 @@ private struct WorkspaceCard: View {
                 .transition(.opacity)
             }
             WorkspaceAgentsList(store: store, workspaceId: workspace.workspaceId, brands: brands)
+            WorkspaceProcessRow(store: store, workspaceId: workspace.workspaceId)
             // Subagents that left for a worktree, repo or folder of their own.
             let locations = store.agentLocations(inWorkspace: workspace.workspaceId)
             if !locations.isEmpty {
@@ -723,7 +756,7 @@ private struct WorkspaceCard: View {
                         && TabDrag.shared.item == nil)
         }
         .hoverPopover(isPresented: $peek.isShown) {
-            WorkspacePeek(store: store, workspace: workspace) { peek.close() }
+            WorkspacePeek(store: store, workspace: workspace, dismiss: { peek.close() }, rename: { renaming = true })
                 .environmentObject(window)
                 .onHover { peek.card($0) }
         }

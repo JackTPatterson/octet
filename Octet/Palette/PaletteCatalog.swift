@@ -161,6 +161,8 @@ enum PaletteCatalog {
                    keywords: ["window", "combine", "close"]) { WindowActions.mergeAllWindows() },
             action("paneToTab", "Move Pane to New Tab", "rectangle.on.rectangle",
                    keywords: ["break", "unsplit", "detach", "split", "pane", "tab"]) { window.moveFocusedPaneToNewTab() },
+            action("separateTabs", "Separate Tabs", "rectangle.on.rectangle",
+                   keywords: ["split", "panes", "unsplit", "break", "tab"]) { if let tab = window.tabId { window.separatePanes(ofTab: tab) } },
             action("focusLeft", OctetShortcut.focusLeft.title, "arrow.left", shortcut: OctetShortcut.focusLeft.keys, keywords: ["pane"]) { window.focusPane(.left) },
             action("focusRight", OctetShortcut.focusRight.title, "arrow.right", shortcut: OctetShortcut.focusRight.keys, keywords: ["pane"]) { window.focusPane(.right) },
             action("focusUp", OctetShortcut.focusUp.title, "arrow.up", shortcut: OctetShortcut.focusUp.keys, keywords: ["pane"]) { window.focusPane(.up) },

@@ -2,8 +2,9 @@ import Foundation
 
 /// `!` in a conversation's composer, as in Claude Code's terminal: the rest
 /// of the line runs in the conversation's folder, its output shows in the
-/// conversation, and it goes to the agent with your next message so it
-/// knows what you saw. Nothing is sent to the agent when the command runs.
+/// conversation, and it goes to the agent when the command finishes, so it
+/// answers what you saw (with your next message instead when a turn is
+/// running or the command was stopped).
 /// OpenCode runs `!` itself; every other agent gets it from Octet.
 enum ShellPassthrough {
     struct Run: Equatable {
