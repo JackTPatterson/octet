@@ -4,6 +4,16 @@
         <title>Octet</title>
         <item>
             <title>0.1.0</title>
+            <pubDate>Thu, 29 Oct 2026 09:44:11 -0400</pubDate>
+            <link>https://github.com/JackTPatterson/octet</link>
+            <sparkle:version>34</sparkle:version>
+            <sparkle:shortVersionString>0.1.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/JackTPatterson/octet/releases/download/v0.1.0-beta.34/Octet-0.1.0-beta.34-arm64.zip" length="31479059" type="application/octet-stream" sparkle:edSignature="/XSuyWSlk9XpNk2ceS8BU3uCu9Fbu1pSJaTgZi+YR7DkHqYf9+UE/JPwjS4iEo4OcyjlUATqxxqnwut1YZHVBQ=="/>
+        </item>
+        <item>
+            <title>0.1.0</title>
             <pubDate>Wed, 28 Oct 2026 17:00:49 -0400</pubDate>
             <link>https://github.com/JackTPatterson/octet</link>
             <sparkle:version>33</sparkle:version>
@@ -21,16 +31,6 @@
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
             <enclosure url="https://github.com/JackTPatterson/octet/releases/download/v0.1.0-beta.32/Octet-0.1.0-beta.32-arm64.zip" length="31467952" type="application/octet-stream" sparkle:edSignature="vIshD8Po9k+HE5xZ31SVSPAVG26LD5qgU1njz/ntTXe1ypZauss4/b52s/ttglT5hPVtWcdsKC8aWcLZ8PrMBQ=="/>
-        </item>
-        <item>
-            <title>0.1.0</title>
-            <pubDate>Mon, 26 Oct 2026 18:13:45 -0400</pubDate>
-            <link>https://github.com/JackTPatterson/octet</link>
-            <sparkle:version>31</sparkle:version>
-            <sparkle:shortVersionString>0.1.0</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/JackTPatterson/octet/releases/download/v0.1.0-beta.31/Octet-0.1.0-beta.31-arm64.zip" length="31414046" type="application/octet-stream" sparkle:edSignature="t85o5d7BhNmz3araTqCN5ubfanRcig2QT2kchs7IY4MTE0spl/6T7B8JUIsMDd7yi+fQwgusikuaa21JWrmuAw=="/>
         </item>
     </channel>
 </rss>
