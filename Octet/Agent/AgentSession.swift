@@ -3237,7 +3237,28 @@ final class AgentCenter: ObservableObject {
         return session
     }
 
+    /// Conversations closed this launch, newest last, for ⌘⇧T. Only ones that
+    /// reached the agent: those have a log to pick up again.
+    private var recentlyClosed: [AgentSession.Saved] = []
+
+    /// Brings back the conversation closed last, in `workspaceId`.
+    /// False when there's none.
+    @discardableResult
+    func reopenLastClosed(in workspaceId: String) -> Bool {
+        guard let saved = recentlyClosed.popLast() else { return false }
+        let session = AgentSession.restore(saved, workspaceId: workspaceId, start: false)
+        sessions.append(session)
+        setActive(session.id, in: workspaceId)
+        session.startRestoredProcess()
+        save()
+        return true
+    }
+
     func close(_ session: AgentSession) {
+        if session.hasTurns {
+            recentlyClosed.append(session.saved)
+            if recentlyClosed.count > 20 { recentlyClosed.removeFirst() }
+        }
         session.close()
         if activeIds[session.workspaceId] == session.id { activeIds[session.workspaceId] = nil }
         sessions.removeAll { $0.id == session.id }

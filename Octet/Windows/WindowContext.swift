@@ -737,6 +737,8 @@ final class WindowContext: ObservableObject, Identifiable {
     func reopenClosedTab(_ record: ClosedTabRecord? = nil) {
         let closed = store.closedTabs
         guard let record = record ?? closed.records.last else {
+            if record == nil, let workspace = focusedWorkspace?.workspaceId,
+               AgentCenter.shared.reopenLastClosed(in: workspace) { return }
             ToastCenter.shared.info("No closed tabs to reopen",
                                     detail: "A tab closed while something runs in it can be reopened for a while.")
             return
