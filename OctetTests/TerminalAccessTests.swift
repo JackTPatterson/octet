@@ -66,7 +66,7 @@ final class TerminalAccessTests: XCTestCase {
 
     func testTheToolIsOfferedOnlyInsideOctet() throws {
         let tools = try result(TerminalMCP.respond(to: rpc("tools/list"), origin: inPane, call: { _, _ in [:] }))["tools"] as? [[String: Any]]
-        XCTAssertEqual(tools?.map { $0["name"] as? String }, ["read_sidebar_terminal", "suggest_sidebar_command"])
+        XCTAssertEqual(tools?.map { $0["name"] as? String }, ["read_sidebar_terminal", "suggest_sidebar_command", "open_terminal", "queue_command"])
         let none = try result(TerminalMCP.respond(to: rpc("tools/list"), origin: nil, call: { _, _ in [:] }))["tools"] as? [[String: Any]]
         XCTAssertEqual(none?.count, 0)
         let initialized = try result(TerminalMCP.respond(to: rpc("initialize", params: ["protocolVersion": "2025-03-26"]), origin: inPane, call: { _, _ in [:] }))

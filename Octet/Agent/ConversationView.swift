@@ -2335,6 +2335,9 @@ private struct Composer: View {
                     .padding(.horizontal, ChatStyle.composerRadius)
             }
             .shadow(color: .black.opacity(Theme.isLight ? 0.4 : 0), radius: 14, y: 12)
+            // Floats: inset from the pane's sides and bottom so every corner shows.
+            .padding(.horizontal, 12)
+            .padding(.bottom, 12)
         }
         .padding(.top, 8)
         .onAppear {
@@ -2373,11 +2376,9 @@ private struct Composer: View {
         .onDrop(of: [.image, .fileURL], isTargeted: nil) { providers in load(providers) }
     }
 
-    /// Docked to the pane's sides and bottom, so only the top corners round.
-    private var composerShape: UnevenRoundedRectangle {
-        UnevenRoundedRectangle(topLeadingRadius: ChatStyle.composerRadius, bottomLeadingRadius: 0,
-                               bottomTrailingRadius: 0, topTrailingRadius: ChatStyle.composerRadius,
-                               style: .continuous)
+    /// A card floating off the pane's sides and bottom, rounded at every corner.
+    private var composerShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: ChatStyle.composerRadius, style: .continuous)
     }
 
     /// `/` and `@` open T3 Code's command menu: a banner on the card's top

@@ -112,6 +112,7 @@ private struct WorkspaceAgentTaskRow: View {
     let action: () -> Void
     @State private var hovered = false
     @ObservedObject private var motion = MotionPreferences.shared
+    @ObservedObject private var settingsStore = SettingsStore.shared
 
     var body: some View {
         Button(action: action) {
@@ -128,9 +129,8 @@ private struct WorkspaceAgentTaskRow: View {
                         // the row's height, not in a column of its own.
                         .overlay(alignment: .bottom) {
                             if AgentState(status) == .working {
-                                LoadingLine(width: 14, thickness: 1.5)
-                                    .offset(y: 7)
-                                    .transition(.opacity)
+                                LoadingIndicator(style: settingsStore.values.loadingStyle, size: 14)
+                                    .transition(.opacity.combined(with: .scale(scale: 0.6)))
                             }
                         }
                 }
@@ -159,7 +159,7 @@ private struct WorkspaceAgentTaskRow: View {
         }
         .buttonStyle(.plain)
         .animation(motion.animation(.sidebar, .smooth(duration: 0.25)), value: AgentState(status).needsGlyph)
-        .animation(.easeOut(duration: 0.2), value: AgentState(status) == .working)
+        .animation(motion.animation(.sidebar, .easeInOut(duration: 0.22)), value: AgentState(status) == .working)
         .onHover { hovered = $0 }
         .help("\(brand?.displayName ?? "Agent") · \(stateLabel(status))\n\(title)")
         .accessibilityLabel("\(brand?.displayName ?? "Agent"), \(stateLabel(status)), \(title)")
@@ -198,6 +198,9 @@ struct AgentToolMark: View {
 /// several agents' logos are.
 struct WorkspaceProcessRow: View {
     @ObservedObject var store: SessionStore
+    @ObservedObject private var center = AgentCenter.shared
+    @ObservedObject private var motion = MotionPreferences.shared
+    @ObservedObject private var settingsStore = SettingsStore.shared
     let workspaceId: String
 
     /// Each program once, by the name its logo and label use.
@@ -228,29 +231,88 @@ struct WorkspaceProcessRow: View {
         return name.isEmpty ? command : name
     }
 
+    /// One avatar in the group: an agent, or a program running beside it.
+    private struct Avatar: Identifiable {
+        enum Kind { case agent(AgentBrand, working: Bool), program(String) }
+        let id: String
+        let kind: Kind
+    }
+
+    /// The workspace's agents' brands, each once, working if any of its
+    /// agents is, then the programs: the group a glance reads as "what's
+    /// running here".
+    private var avatars: [Avatar] {
+        var brands: [(brand: AgentBrand, working: Bool)] = []
+        func note(_ brand: AgentBrand?, working: Bool) {
+            guard let brand else { return }
+            if let index = brands.firstIndex(where: { $0.brand.displayName == brand.displayName }) {
+                brands[index].working = brands[index].working || working
+            } else {
+                brands.append((brand, working))
+            }
+        }
+        for agent in store.snapshot.agents(inWorkspace: workspaceId) {
+            note(AgentBrand.forAgent(agent.agent), working: AgentState(agent.agentStatus) == .working)
+        }
+        for session in AgentCenter.shared.sessions(in: workspaceId) {
+            note(AgentBrand.forAgent(session.engine.agent), working: session.conversation.isRunning)
+        }
+        return brands.map { Avatar(id: "agent-" + $0.brand.displayName, kind: .agent($0.brand, working: $0.working)) }
+            + programs.map { Avatar(id: "program-" + $0, kind: .program($0)) }
+    }
+
+    @ViewBuilder
+    private func avatarView(_ avatar: Avatar, index: Int, count: Int) -> some View {
+        let size: CGFloat = 17
+        Group {
+            switch avatar.kind {
+            case .agent(let brand, _):
+                AgentLogo(brand: brand, size: 10)
+            case .program(let name):
+                if let logo = LanguageLogo(language: name, size: 10) {
+                    logo
+                } else {
+                    OctetIcon("terminal", size: 10).foregroundStyle(Theme.textSecondary)
+                }
+            }
+        }
+        .frame(width: size, height: size)
+        .background(Circle().fill(Theme.cardSelected))
+        .overlay(Circle().strokeBorder(Theme.border, lineWidth: 1))
+        .overlay {
+            if case .agent(_, let working) = avatar.kind, working {
+                LoadingIndicator(style: settingsStore.values.loadingStyle, size: size)
+                    .transition(.opacity.combined(with: .scale(scale: 0.6)))
+            }
+        }
+        .zIndex(Double(count - index))
+        // Leaves and arrives from the middle of its own spot, the way the
+        // rest of the stack slides to close or open the gap.
+        .transition(.scale(scale: 0.4).combined(with: .opacity))
+    }
+
     var body: some View {
         let programs = programs
         if !programs.isEmpty {
+            let avatars = Array(avatars.prefix(4))
             HStack(spacing: 6) {
-                HStack(spacing: -14 * 0.3) {
-                    ForEach(Array(programs.prefix(3).enumerated()), id: \.offset) { index, name in
-                        Group {
-                            if let logo = LanguageLogo(language: name, size: 10) {
-                                logo
-                            } else {
-                                OctetIcon("terminal", size: 10).foregroundStyle(Theme.textSecondary)
-                            }
-                        }
-                        .frame(width: 17, height: 17)
-                        .background(Circle().fill(Theme.cardSelected))
-                        .overlay(Circle().strokeBorder(Theme.border, lineWidth: 1))
-                        .zIndex(Double(3 - index))
+                HStack(spacing: -17 * 0.3) {
+                    ForEach(Array(avatars.enumerated()), id: \.element.id) { index, avatar in
+                        avatarView(avatar, index: index, count: avatars.count)
                     }
                 }
+                // Ease in and out: it starts and settles gently, so a program
+                // starting or ending reads as a change, not a jump.
+                .animation(motion.animation(.sidebar, .timingCurve(0.32, 0.72, 0, 1, duration: 0.32)), value: avatars.map(\.id))
+                .animation(motion.animation(.sidebar, .easeInOut(duration: 0.22)), value: avatars.map { avatar -> Bool in
+                    if case .agent(_, let working) = avatar.kind { return working } else { return false }
+                })
                 Text(programs.joined(separator: ", "))
                     .font(Theme.Text.mono(10.5))
                     .lineLimit(1)
                     .truncationMode(.tail)
+                    .contentTransition(.opacity)
+                    .animation(motion.animation(.sidebar, .easeInOut(duration: 0.2)), value: programs)
                 Spacer(minLength: 0)
             }
             .foregroundStyle(Theme.textTertiary)

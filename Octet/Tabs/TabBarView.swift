@@ -332,10 +332,10 @@ private struct TabItem: View {
     var body: some View {
         let agent = store.primaryAgent(in: store.snapshot.agents(inTab: tab.tabId))
         let brand = AgentBrand.forAgent(agent?.agent)
-        // A colour picked by hand, here or on the root agent's tab or the
-        // workspace, outranks the vendor's.
+        // Only a colour picked by hand (here, on the root agent's tab or the
+        // workspace) tints the tab; the agent's vendor colour never does.
         let picked = store.tabColor(tab)
-        let hue = picked?.hex ?? brand?.hueHex
+        let hue = picked?.hex
 
         HStack(spacing: 6) {
             if let agent, handoffTitle == nil {
@@ -343,10 +343,10 @@ private struct TabItem: View {
                     .frame(width: 10)
             }
             if let brand, agent?.isSubagentViewer == true {
-                // A subagent's tab: the agent icon in its vendor's colour,
-                // so it reads as a helper rather than another session.
+                // A subagent's tab: the agent icon, so it reads as a helper
+                // rather than another session.
                 OctetIcon("tool.agent", size: 11)
-                    .foregroundStyle(brand.hueHex.map { Color(hex: $0) } ?? Theme.textPrimary)
+                    .foregroundStyle(Theme.textSecondary)
                     .help("\(brand.displayName) subagent")
             } else if let brand {
                 AgentLogo(brand: brand, size: 11)
@@ -796,9 +796,7 @@ private struct ConversationTab: View {
         .onTapGesture {
             // Beside the terminal, it's already in view.
             guard !window.isBeside("conversation:" + session.id) else { return }
-            window.editor.dismiss()
-            window.containerLogs.activeID = nil
-            AgentCenter.shared.activeId = session.id
+            window.showConversation(session.id)
         }
         .contextMenu {
             ConversationActionsMenu(session: session)
@@ -811,11 +809,7 @@ private struct ConversationTab: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(session.engine.displayName) conversation, \(session.title)")
         .accessibilityAddTraits(isActive ? [.isButton, .isSelected] : .isButton)
-        .accessibilityAction {
-            window.editor.dismiss()
-            window.containerLogs.activeID = nil
-            AgentCenter.shared.activeId = session.id
-        }
+        .accessibilityAction { window.showConversation(session.id) }
         .accessibilityAction(named: "Close") { AgentCenter.shared.close(session) }
     }
 }
@@ -830,19 +824,37 @@ private struct EditorOuterTab: View {
     @EnvironmentObject private var window: WindowContext
     @State private var hovered = false
 
+    /// The only open file, when there is just one.
+    private var single: EditorDocument? { workspace.documents.count == 1 ? workspace.activeDocument : nil }
+
     var body: some View {
         HStack(spacing: 7) {
-            if let path = workspace.activeDocument?.url.path, let logo = LanguageLogo(path: path, size: 13) {
+            // One file is named for itself; several are just "the editor", as
+            // the file tabs below it already name each one.
+            if let single, let logo = LanguageLogo(path: single.url.path, size: 13) {
                 logo.frame(width: 13, height: 13)
             } else {
-                OctetIcon(workspace.activeDocument.map { FileIcons.symbol(forName: $0.name) } ?? "tool.edit", size: 13)
+                OctetIcon(single.map { FileIcons.symbol(forName: $0.name) } ?? "tool.edit", size: 13)
                     .foregroundStyle(isActive ? Theme.textPrimary : Theme.textSecondary)
             }
-            Text(workspace.activeDocument?.name ?? "Editor")
+            Text(single?.name ?? "Editor")
                 .font(Theme.uiFont)
                 .fontWeight(isActive ? .medium : .regular)
                 .foregroundStyle(isActive ? Theme.textPrimary : Theme.textSecondary)
                 .lineLimit(1)
+            if workspace.documents.count > 1 {
+                // Several files in one tab: the count, badged like a split's.
+                HStack(spacing: 2) {
+                    Image(systemName: "doc.on.doc").font(.system(size: 9, weight: .semibold))
+                    Text("\(workspace.documents.count)").font(Theme.interfaceFont(10, weight: .semibold).monospacedDigit())
+                }
+                .foregroundStyle(isActive ? Theme.textPrimary : Theme.textSecondary)
+                .padding(.horizontal, 4)
+                .frame(height: 15)
+                .background(Capsule().fill(Theme.textPrimary.opacity(0.08)))
+                .help("\(workspace.documents.count) files open")
+                .accessibilityLabel("\(workspace.documents.count) files open")
+            }
             Spacer(minLength: 4)
             if !workspace.dirtyDocuments.isEmpty {
                 Circle().fill(Theme.textSecondary).frame(width: 6, height: 6)
@@ -879,7 +891,7 @@ private struct EditorOuterTab: View {
             Divider()
             Button("Close Editor") { workspace.closeEditor() }
         }
-        .help(workspace.activeDocument?.url.path ?? "Editor")
+        .help(single?.url.path ?? "Editor")
         .accessibilityLabel("Editor")
         .accessibilityAddTraits(isActive ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { window.showEditor() }

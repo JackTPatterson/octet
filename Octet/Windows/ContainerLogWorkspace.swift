@@ -130,13 +130,23 @@ extension WindowContext {
         return displayedFocusedTabId.map { "terminal:" + $0 }
     }
 
+    /// Brings a conversation to the front. The review and Pull Requests pages
+    /// draw above it, so they step aside too; left up, the tab would change
+    /// and the page stay, as if the conversation were empty.
+    func showConversation(_ sessionId: String) {
+        containerLogs.activeID = nil
+        editor.dismiss()
+        ui.review = nil
+        ui.pullRequests = nil
+        twin.hide()
+        AgentCenter.shared.setActive(sessionId, in: focusedWorkspace?.workspaceId)
+    }
+
     func focusVisualTab(_ id: String) {
         if let log = workspaceContainerLogs.first(where: { $0.visualID == id }) { focusContainerLogs(log.id) }
         else if id.hasPrefix("terminal:") { focusTab(String(id.dropFirst("terminal:".count))) }
         else if id.hasPrefix("conversation:") {
-            containerLogs.activeID = nil
-            editor.dismiss()
-            AgentCenter.shared.setActive(String(id.dropFirst("conversation:".count)), in: focusedWorkspace?.workspaceId)
+            showConversation(String(id.dropFirst("conversation:".count)))
         } else if id.hasPrefix("editor:") { showEditor() }
     }
 }

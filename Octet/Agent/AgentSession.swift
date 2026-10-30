@@ -813,8 +813,22 @@ final class AgentSession: ObservableObject, Identifiable {
     /// couldn't be started, so the caller can give it back to the person.
     @discardableResult
     func send(_ text: String, attachments: [Attachment] = [], delivery: Delivery = .queue) -> Bool {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !attachments.isEmpty else { return true }
+        // A pasted key becomes `$NAME` before it reaches the model or the
+        // transcript; the agent is told where the value is kept.
+        var secretNote = ""
+        if SettingsStore.shared.values.shieldSecrets, !trimmed.hasPrefix("!") {
+            let shielded = secretVault.shield(trimmed)
+            if !shielded.added.isEmpty {
+                trimmed = shielded.text
+                secretNote = secretVault.note(for: shielded.added)
+                let names = shielded.added.map { "$\($0.name)" }.joined(separator: ", ")
+                notice("Kept \(names) out of the conversation. The value is in \(secretVault.fileURL.path) for you to copy; it's removed when this closes.")
+            } else {
+                trimmed = shielded.text
+            }
+        }
         takeBaselineIfNeeded()
         let wasRunning = conversation.isRunning
         // Typed in full rather than picked from the menu, /remote-control
@@ -872,7 +886,7 @@ final class AgentSession: ObservableObject, Identifiable {
         // What `!` commands printed goes along, so the agent knows what you saw.
         let outgoing = ShellPassthrough.outgoing(trimmed, runs: shellRuns)
         if outgoing.usedRuns { shellRuns = [] }
-        let sent = outgoing.text
+        let sent = outgoing.text + secretNote
         switch engine {
         case .claude, .qwen:
             var text = sent
@@ -1410,6 +1424,7 @@ final class AgentSession: ObservableObject, Identifiable {
 
     func close() {
         closed = true
+        secretVault.removeFile()
         cancelResume()
         denyAllPending(message: "The conversation was closed.")
         if engine == .opencode { closeOpenCode() }
@@ -1419,6 +1434,9 @@ final class AgentSession: ObservableObject, Identifiable {
         // No process is left to end the turn, so it ends here.
         conversation.isRunning = false
     }
+
+    /// Secrets pasted into this conversation, kept out of the model's view.
+    private lazy var secretVault = SecretVault(conversationID: id)
 
     /// Set by close(), so nothing held is sent from a conversation that's
     /// gone; a move to the background that fails clears it again.
@@ -2071,6 +2089,7 @@ final class AgentSession: ObservableObject, Identifiable {
         var environment = Self.accountEnvironment(cwd: cwd)
         // A wait this conversation sets comes back to it.
         environment[WaitControl.conversationVariable] = id
+        environment.merge(secretVault.environment) { $1 }
         // Checkpoints each message's file edits, so a rewind can undo them.
         environment["CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING"] = "true"
         process.environment = environment
@@ -2236,6 +2255,7 @@ final class AgentSession: ObservableObject, Identifiable {
         process.currentDirectoryURL = URL(fileURLWithPath: cwd)
         var environment = Self.accountEnvironment(cwd: cwd)
         environment[WaitControl.conversationVariable] = id
+        environment.merge(secretVault.environment) { $1 }
         process.environment = environment
         let input = Pipe(), output = Pipe(), errors = Pipe()
         process.standardInput = input
@@ -2352,9 +2372,11 @@ final class AgentSession: ObservableObject, Identifiable {
 
     private func consume(_ data: Data) {
         guard !data.isEmpty else { return }
-        lineBuffer.append(data)
+        // Masked per chunk; a value split across two reads is caught once
+        // the line is whole, below.
+        lineBuffer.append(secretVault.mask(data))
         while let newline = lineBuffer.firstIndex(of: 0x0A) {
-            let line = lineBuffer[lineBuffer.startIndex..<newline]
+            let line = secretVault.mask(Data(lineBuffer[lineBuffer.startIndex..<newline]))
             lineBuffer.removeSubrange(lineBuffer.startIndex...newline)
             guard let event = (try? JSONSerialization.jsonObject(with: Data(line))) as? [String: Any] else { continue }
             if event["type"] as? String == "control_response",

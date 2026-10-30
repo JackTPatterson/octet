@@ -743,7 +743,7 @@ private struct WorkspaceCard: View {
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(cardBackground(isSelected: isSelected,
-                                   hue: store.workspaceColor(workspace.workspaceId)?.hex ?? brand?.hueHex))
+                                   hue: store.workspaceColor(workspace.workspaceId)?.hex))
         .clipShape(RoundedRectangle(cornerRadius: Theme.controlRadius))
         .animation(.easeOut(duration: 0.15), value: hovered)
         .animation(motion.animation(.sidebar, .smooth(duration: 0.25)), value: showsMark)

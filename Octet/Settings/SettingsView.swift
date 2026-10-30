@@ -758,6 +758,11 @@ private struct AppearanceSettings: View {
         }
         .onAppear(perform: readInstalledFonts)
         .onChange(of: fontsRevision) { readInstalledFonts() }
+        SettingsGroup(title: "Loading") {
+            SettingsRow(title: "Indicator", detail: "How an agent's avatar shows it's working in the sidebar.", setting: \.loadingStyle) {
+                OctetSegmented(selection: $settings.values.loadingStyle, items: LoadingStyle.allCases.map { ($0, $0.title) })
+            }
+        }
         SettingsGroup(title: "Cursor") {
             SettingsRow(title: "Shape", setting: \.cursorStyle) {
                 OctetSegmented(selection: $settings.values.cursorStyle, items: [(OctetSettings.CursorStyle.block, "Block"), (OctetSettings.CursorStyle.bar, "Bar"), (OctetSettings.CursorStyle.underline, "Underline")])
@@ -861,6 +866,14 @@ private struct TerminalSettings: View {
                 setting: \.tidyAgentCopies
             ) {
                 Toggle("Tidy text copied from agents", isOn: $settings.values.tidyAgentCopies).labelsHidden().toggleStyle(OctetSwitchStyle())
+            }
+            SettingsDivider()
+            SettingsRow(
+                title: "Keep pasted secrets from agents",
+                detail: "API keys, tokens and private keys in a prompt are swapped for $NAME before the agent sees them. The value goes to a private temporary env file for you to copy, and the agent is told to load it by name. Anything it prints that contains the value is masked. Not a sandbox: an agent running commands can still use the variable.",
+                setting: \.shieldSecrets
+            ) {
+                Toggle("Keep pasted secrets from agents", isOn: $settings.values.shieldSecrets).labelsHidden().toggleStyle(OctetSwitchStyle())
             }
             SettingsDivider()
             SettingsRow(
@@ -1352,12 +1365,12 @@ private struct IntegrationsSettings: View {
                             unavailable: "Turn on the Other Macs plugin in Plugins to set this up.") { EmptyView() }
             }
         }
+        PhoneSettingsGroup()
         if settings.values.delegationEnabled {
             DelegationSettingsGroup(settings: settings)
         } else {
             SettingsGroup(title: "Delegation") {
                 SettingsRow(title: "Hand work to other agents",
-        PhoneSettingsGroup()
                             detail: "Lets an agent ask another agent on this Mac to review its work or take a separate task.",
                             unavailable: "Turn on the Delegation plugin in Plugins to set this up.") { EmptyView() }
             }

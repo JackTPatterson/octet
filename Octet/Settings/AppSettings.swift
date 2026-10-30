@@ -35,6 +35,8 @@ struct OctetSettings: Codable, Equatable {
     var lineHeightPercent: Double = 100
     var fontThicken = false
     var cursorStyle: CursorStyle = .block
+    /// How an agent's avatar shows it's working.
+    var loadingStyle: LoadingStyle = .line
     var cursorBlink = true
     var backgroundOpacity: Double = 1
     var backgroundBlur = false
@@ -66,6 +68,8 @@ struct OctetSettings: Codable, Equatable {
     var previewLongPastes = true
     /// Turn on Secure Keyboard Entry while a pane asks for a password.
     var secureInputAtPasswords = true
+    /// Swap keys and tokens pasted into an agent prompt for `$NAME`, kept in a private env file.
+    var shieldSecrets = true
     /// Prompt marks from zsh, bash and fish, through Octet's shell wrapper.
     var shellIntegration = true
     /// ntfy topic for agent notices on your phone; empty is off.
@@ -391,6 +395,7 @@ struct OctetSettings: Codable, Equatable {
         lineHeightPercent = value("lineHeightPercent", defaults.lineHeightPercent)
         fontThicken = value("fontThicken", defaults.fontThicken)
         cursorStyle = value("cursorStyle", defaults.cursorStyle)
+        loadingStyle = value("loadingStyle", defaults.loadingStyle)
         cursorBlink = value("cursorBlink", defaults.cursorBlink)
         backgroundOpacity = value("backgroundOpacity", defaults.backgroundOpacity)
         backgroundBlur = value("backgroundBlur", defaults.backgroundBlur)
@@ -408,6 +413,7 @@ struct OctetSettings: Codable, Equatable {
         previewLongPastes = value("previewLongPastes", defaults.previewLongPastes)
         secureInputAtPasswords = value("secureInputAtPasswords", defaults.secureInputAtPasswords)
         shellIntegration = value("shellIntegration", defaults.shellIntegration)
+        shieldSecrets = value("shieldSecrets", defaults.shieldSecrets)
         phoneTopic = value("phoneTopic", defaults.phoneTopic)
         phoneServer = value("phoneServer", defaults.phoneServer)
         mouseScrollLines = value("mouseScrollLines", defaults.mouseScrollLines)
