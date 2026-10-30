@@ -1357,6 +1357,7 @@ private struct IntegrationsSettings: View {
         } else {
             SettingsGroup(title: "Delegation") {
                 SettingsRow(title: "Hand work to other agents",
+        PhoneSettingsGroup()
                             detail: "Lets an agent ask another agent on this Mac to review its work or take a separate task.",
                             unavailable: "Turn on the Delegation plugin in Plugins to set this up.") { EmptyView() }
             }

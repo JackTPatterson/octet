@@ -128,7 +128,7 @@ struct PullRequestReactionBar: View {
     @State private var picking = false
 
     var body: some View {
-        SplashFlow(spacing: 4) {
+        FlowLayout(spacing: 4) {
             ForEach(reactions) { group in
                 Pill(group: group) { model.toggleReaction(group.reaction, on: subjectId) }
             }

@@ -242,6 +242,7 @@ final class SessionStore: ObservableObject {
         PasswordWatcher.shared.start(store: self)
         AttentionWatcher.shared.start(store: self)
         PeerCenter.shared.apply(store: self)
+        PhoneHostCenter.shared.apply(store: self)
         DelegationCenter.shared.apply(store: self)
         TerminalAccessCenter.shared.apply(store: self)
         BrowserAgentCenter.shared.apply(store: self)
@@ -1720,6 +1721,16 @@ final class SessionStore: ObservableObject {
     }
 
     /// Types a line into `paneId`'s shell and runs it.
+    /// Types `text` at the pane's prompt without pressing Return, so a
+    /// command that changes the machine waits for the person to run it.
+    func typeInPane(_ paneId: String, text: String) {
+        let client = self.client
+        EngineClient.inputQueue.async {
+            _ = try? client.call("pane.send_text", ["pane_id": paneId, "text": text])
+        }
+        OctetTerminalRuntime.focusTerminal()
+    }
+
     func runInPane(_ paneId: String, line: String) {
         let client = self.client
         // In order with every other write to the pane.

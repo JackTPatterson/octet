@@ -24,7 +24,7 @@ struct StatusBarSettings: View {
                 Text("Drag chips to reorder them. A chip only shows when it has something to say.")
                     .font(Theme.interfaceFont(11))
                     .foregroundStyle(Theme.textTertiary)
-                SplashFlow(spacing: 6) {
+                FlowLayout(spacing: 6) {
                     ForEach(order, id: \.self) { id in
                         if let descriptor = byId[id] {
                             StatusChipPreview(descriptor: descriptor, action: .remove) { remove(id, from: order) }
@@ -68,7 +68,7 @@ struct StatusBarSettings: View {
                         Text(sourceName(source))
                             .font(Theme.interfaceFont(11, weight: .medium))
                             .foregroundStyle(Theme.textSecondary)
-                        SplashFlow(spacing: 6) {
+                        FlowLayout(spacing: 6) {
                             ForEach(sources[source] ?? []) { descriptor in
                                 StatusChipPreview(descriptor: descriptor, action: .add) {
                                     host.setStatusBarOrder(order + [descriptor.id])

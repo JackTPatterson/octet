@@ -167,7 +167,7 @@ struct PullRequestSummaryTab: View {
                 if reviewers.isEmpty {
                     none
                 } else {
-                    SplashFlow(spacing: 4) {
+                    FlowLayout(spacing: 4) {
                         ForEach(reviewers) { reviewer in PullRequestReviewerChip(reviewer: reviewer) }
                     }
                 }
@@ -185,7 +185,7 @@ struct PullRequestSummaryTab: View {
                 if detail.labels.isEmpty {
                     none
                 } else {
-                    SplashFlow(spacing: 4) {
+                    FlowLayout(spacing: 4) {
                         ForEach(detail.labels) { label in PullRequestLabelCapsule(label: label) }
                     }
                 }

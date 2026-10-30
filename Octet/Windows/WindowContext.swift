@@ -839,6 +839,11 @@ final class WindowContext: ObservableObject, Identifiable {
         store.runInPane(pane, line: line)
     }
 
+    func typeInFocusedPane(_ text: String) {
+        guard let pane = focusedPaneId else { return }
+        store.typeInPane(pane, text: text)
+    }
+
     func runInFocusedPane(_ agent: DiscoveredAgent) {
         guard let path = agent.executablePath else { return }
         runInFocusedPane(agent.onShellPath == true ? agent.command : shellQuote(path))

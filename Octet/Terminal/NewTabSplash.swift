@@ -75,7 +75,7 @@ struct NewTabSplash: View {
     var hostWindow: NSWindow?
     let runAgent: (DiscoveredAgent) -> Void
     let openFolder: (String) -> Void
-    /// Runs a command line in this tab's shell: an agent's installer.
+    /// Types a command line at this tab's prompt without running it: an agent's installer.
     var runCommand: ((String) -> Void)?
     let shortcuts: [Shortcut]
     @ObservedObject private var discovery = AgentDiscoveryStore.shared
@@ -106,7 +106,7 @@ struct NewTabSplash: View {
         .frame(maxWidth: 480)
         .padding(.horizontal, 24)
         .task {
-            folders = await RecentFolders.load()
+            folders = await RecentFolders.refreshed()
             keys.items = items(level: level)
         }
         .onAppear {
@@ -211,7 +211,9 @@ struct NewTabSplash: View {
         }
         .font(Theme.captionFont)
         .frame(maxWidth: .infinity)
-        .accessibilityHidden(true)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(keys.selected == nil ? "Press down arrow to choose an item"
+                            : "Up and down arrows to move, Return to run, Escape to go back to the shell")
     }
 
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
@@ -228,7 +230,8 @@ struct NewTabSplash: View {
 
 /// The splash's keyboard: a local key monitor that only answers in its own
 /// window while the terminal (not a text field) has the keys, and only once
-/// ↓ has started a choice, so the shell keeps its history on ↑.
+/// ↓ has started a choice, so the shell keeps its history on ↑. The ↓ that
+/// starts it is passed on to the shell as well.
 @MainActor
 final class SplashKeys: ObservableObject {
     struct Item {
@@ -276,10 +279,11 @@ final class SplashKeys: ObservableObject {
         switch event.keyCode {
         case 125, 124: // down, right
             guard let index else {
-                // → at a fresh prompt is the shell's; ↓ starts choosing.
+                // → at a fresh prompt is the shell's; ↓ starts choosing, and
+                // still reaches the shell, so a binding on it keeps working.
                 guard event.keyCode == 125 else { return false }
                 selected = items.first?.id
-                return true
+                return false
             }
             selected = items[min(index + 1, items.count - 1)].id
             return true
@@ -322,7 +326,8 @@ private struct SplashCard<Content: View>: View {
 }
 
 /// What to do on a Mac with no coding agent yet: the installers for the
-/// two Octet knows best, each run in this tab on click, and a scan to pick
+/// two Octet knows best, each typed into this tab on click (Return runs it),
+/// and a scan to pick
 /// up one installed some other way.
 private struct InstallAgentCard: View {
     let scanning: Bool
@@ -383,9 +388,9 @@ private struct InstallAgentCard: View {
             .buttonStyle(OctetPressStyle())
             .onHover { hovered = $0 }
             .contextMenu { Button("Copy Command", action: copy) }
-            .help(run == nil ? "Copy \(command)" : "Run \(command) in this tab")
+            .help(run == nil ? "Copy \(command)" : "Type \(command) in this tab; press Return to run it")
             .accessibilityLabel("Install \(name)")
-            .accessibilityHint(run == nil ? "Copies the install command" : "Runs \(command) in this tab")
+            .accessibilityHint(run == nil ? "Copies the install command" : "Types \(command) in this tab; press Return to run it")
         }
 
         private func copy() {
@@ -436,7 +441,7 @@ private struct AgentTile: View {
             .frame(maxWidth: .infinity)
             .frame(height: 74)
             .background(shape.fill(selected ? Theme.cardSelected : hovered ? Theme.hover : Theme.card.opacity(0.45)))
-            .overlay(shape.strokeBorder(selected ? Theme.accent.opacity(0.7) : Theme.border.opacity(0.7), lineWidth: 1))
+            .overlay(shape.strokeBorder(selected ? Theme.textSecondary.opacity(0.55) : Theme.border.opacity(0.7), lineWidth: 1))
             .overlay(alignment: .top) {
                 Rectangle().fill(Theme.divider).frame(height: 1).padding(.horizontal, Theme.controlRadius)
             }
@@ -446,6 +451,7 @@ private struct AgentTile: View {
         .onHover { hovered = $0 }
         .help("Run \(agent.onShellPath == true ? agent.command : agent.executablePath ?? agent.command) in this tab")
         .accessibilityLabel("Start \(agent.displayName) in this tab")
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 
@@ -498,6 +504,7 @@ private struct FolderRow: View {
         .onHover { hovered = $0 }
         .help("cd \(abbreviateHome(path))")
         .accessibilityLabel("Change to \((path as NSString).lastPathComponent)")
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 
@@ -533,6 +540,7 @@ private struct ShortcutRow: View {
         .buttonStyle(OctetPressStyle())
         .onHover { hovered = $0 }
         .accessibilityLabel(shortcut.title)
+        .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityHint(shortcut.keys.map { "Keyboard shortcut \($0)" } ?? "")
     }
 
@@ -549,43 +557,6 @@ private struct ShortcutRow: View {
     }
 }
 
-/// Chips laid out in rows, wrapping when the next one doesn't fit.
-struct SplashFlow: Layout {
-    var spacing: CGFloat = 8
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let width = proposal.width ?? .infinity
-        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0, widest: CGFloat = 0
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if x > 0, x + size.width > width {
-                y += rowHeight + spacing
-                x = 0
-                rowHeight = 0
-            }
-            x += size.width + spacing
-            rowHeight = max(rowHeight, size.height)
-            widest = max(widest, x - spacing)
-        }
-        return CGSize(width: widest, height: y + rowHeight)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var x = bounds.minX, y = bounds.minY, rowHeight: CGFloat = 0
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if x > bounds.minX, x + size.width > bounds.maxX {
-                y += rowHeight + spacing
-                x = bounds.minX
-                rowHeight = 0
-            }
-            subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
-            x += size.width + spacing
-            rowHeight = max(rowHeight, size.height)
-        }
-    }
-}
-
 /// A recent project folder and when something in it last changed.
 struct RecentFolder: Equatable {
     let path: String
@@ -598,12 +569,25 @@ struct RecentFolder: Equatable {
 enum RecentFolders {
     @MainActor static var cached: [RecentFolder] = []
 
+    @MainActor private static var loadedAt = Date.distantPast
+    /// A splash opens with every new tab, and the walk is only worth
+    /// repeating once what it found could have changed.
+    private static let freshFor: TimeInterval = 30
+
+    /// The folders, read again only when the last reading is old.
+    @MainActor
+    static func refreshed() async -> [RecentFolder] {
+        if Date().timeIntervalSince(loadedAt) < freshFor, !cached.isEmpty { return cached }
+        return await load()
+    }
+
     @MainActor
     static func load() async -> [RecentFolder] {
         let folders = await Task.detached(priority: .utility) {
             ProjectDirectories.listWithDates().map { RecentFolder(path: $0.path, modified: $0.modified == .distantPast ? nil : $0.modified) }
         }.value
         cached = folders
+        loadedAt = Date()
         return folders
     }
 }

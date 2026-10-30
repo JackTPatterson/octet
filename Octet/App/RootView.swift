@@ -1482,7 +1482,7 @@ struct RootView: View {
                 hostWindow: window.nsWindow,
                 runAgent: { window.startAgent($0) },
                 openFolder: { window.runInFocusedPane("cd " + shellQuote($0)) },
-                runCommand: { window.runInFocusedPane($0) },
+                runCommand: { window.typeInFocusedPane($0) },
                 shortcuts: [
                     .init(title: "Command Palette", keys: OctetShortcut.palette.keys) { ui.paletteVisible = true },
                     .init(title: "New Claude Conversation", keys: OctetShortcut.newConversation.keys, agent: "claude") {
