@@ -15,6 +15,9 @@ struct OctetSettings: Codable, Equatable {
     var hotkeyDropDown = false
     /// The Octet Notch: an island at the top of the screen (see Octet/Notch).
     var notch = NotchSettings()
+    /// What a new window opens to: a chat splash with no terminal, or the
+    /// terminal-first workspace. Unset for anyone who hasn't chosen, so Chat.
+    var defaultMode: DefaultMode = .chat
     var newPaneDirectory: NewPaneDirectory = .follow
     var defaultShell = ""
     var shellMode: ShellMode = .auto
@@ -242,6 +245,15 @@ struct OctetSettings: Codable, Equatable {
     var allowNestedSessions = false
 
     enum NewPaneDirectory: String, Codable, CaseIterable { case follow, home, current }
+    /// How a window opens. Chat is Octet's conversation surface alone; Workspace is the
+    /// terminal-first layout Octet has always had.
+    enum DefaultMode: String, Codable, CaseIterable {
+        case chat, workspace
+        var title: String { self == .chat ? "Chat" : "Workspace" }
+        var other: DefaultMode { self == .chat ? .workspace : .chat }
+        /// Whether the terminal, its tabs and the status bar are drawn.
+        var showsTerminal: Bool { self == .workspace }
+    }
     enum ShellMode: String, Codable, CaseIterable { case auto, login, nonLogin = "non_login" }
     enum CursorStyle: String, Codable, CaseIterable { case block, bar, underline }
     enum WindowPadding: String, Codable, CaseIterable { case compact, normal, roomy }
@@ -376,6 +388,7 @@ struct OctetSettings: Codable, Equatable {
         globalHotkey = value("globalHotkey", defaults.globalHotkey)
         hotkeyDropDown = value("hotkeyDropDown", defaults.hotkeyDropDown)
         notch = value("notch", defaults.notch)
+        defaultMode = value("defaultMode", defaults.defaultMode)
         newPaneDirectory = value("newPaneDirectory", defaults.newPaneDirectory)
         defaultShell = value("defaultShell", defaults.defaultShell)
         shellMode = value("shellMode", defaults.shellMode)

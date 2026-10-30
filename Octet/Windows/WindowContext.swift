@@ -58,6 +58,9 @@ final class WindowContext: ObservableObject, Identifiable {
     let id: UUID
     let store: SessionStore
     let ui = UIState()
+    /// Chat or Workspace for this window. Starts as Settings › Default mode and
+    /// follows it when that changes; switching here only moves this window.
+    @Published var mode: OctetSettings.DefaultMode = SettingsStore.shared.values.defaultMode
     let chromeDropdowns = OctetDropdownState()
     /// The plan of the agent in front, for the todo panel and its button.
     let todos = TodoModel()

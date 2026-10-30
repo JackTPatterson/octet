@@ -485,6 +485,14 @@ private struct GeneralSettings: View {
 
     var body: some View {
         SettingsGroup(title: "Startup & quitting") {
+            SettingsRow(
+                title: "Default mode",
+                detail: "Chat opens to a conversation with no terminal. Workspace opens to the terminal. Applies to every window now; a window can switch from its own corner button or the command palette.",
+                setting: \.defaultMode
+            ) {
+                OctetSegmented(selection: $settings.values.defaultMode, items: OctetSettings.DefaultMode.allCases.map { ($0, $0.title) })
+            }
+            SettingsDivider()
             SettingsRow(title: "Confirm before quitting", detail: "Quitting Octet leaves terminals and agents running in the background.", setting: \.confirmQuit) {
                 Toggle("Confirm before quitting", isOn: $settings.values.confirmQuit).labelsHidden().toggleStyle(OctetSwitchStyle())
             }

@@ -35,6 +35,7 @@ struct SettingDefault {
 enum SettingsDefaults {
     static let all: [SettingDefault] = [
         // General
+        .init("Default mode", \.defaultMode),
         .init("Confirm before quitting", \.confirmQuit),
         .init("Hotkey from any app", \.globalHotkey),
         .init("Drop down from the top", \.hotkeyDropDown),
