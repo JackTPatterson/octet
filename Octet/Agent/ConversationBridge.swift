@@ -30,7 +30,15 @@ final class ConversationBridge: ObservableObject {
         let direction: Direction
     }
 
+    /// Words for the composer to start from (a starter on the Chat page),
+    /// editable and not yet sent, unlike a `Draft`.
+    struct Prefill: Equatable {
+        let id = UUID()
+        let text: String
+    }
+
     @Published var draft: Draft?
+    @Published var prefill: Prefill?
     /// What the composer is doing with the draft it took, for its banner.
     @Published var editing: Draft.Purpose?
     /// For the resend being edited: how many files going back would put back.

@@ -42,6 +42,7 @@ enum SettingsSearchIndex {
     ]
 
     private static let general: [SettingsSearchEntry] = [
+        .init(.general, "Default mode", ["chat", "workspace", "terminal", "splash", "start", "launch", "t3", "conversation"]),
         .init(.general, "Confirm before quitting", ["quit", "exit", "close", "background", "prompt"]),
         .init(.general, "Start new tabs and workspaces in", ["folder", "directory", "cwd", "working", "new pane", "home", "session"]),
         .init(.general, "Shell", ["zsh", "bash", "fish", "login shell", "default shell", "path"]),

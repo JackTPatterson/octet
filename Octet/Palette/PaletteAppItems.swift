@@ -67,6 +67,15 @@ extension PaletteCatalog {
             ))
         }
 
+        let target = window.mode.other
+        items.append(PaletteItem(
+            id: "action.mode.\(target.rawValue)", kind: .action, title: "Switch to \(target.title) Mode",
+            subtitle: target == .workspace ? "Show the terminal in this window" : "Chat with no terminal",
+            keywords: ["chat", "workspace", "terminal", "mode", "splash", "default"],
+            icon: .symbol(target == .workspace ? "terminal" : "bubble.left"),
+            effect: .run { window.mode = target }
+        ))
+
         // The menu's Broadcast: who it can reach right now, to pick from.
         items.append(PaletteItem(
             id: "action.broadcastMenu", kind: .action, title: OctetShortcut.broadcast.title,

@@ -1731,7 +1731,7 @@ private struct ListeningIndicator: View {
 
 // MARK: - Composer
 
-private struct Composer: View {
+struct Composer: View {
     @ObservedObject var session: AgentSession
     @ObservedObject var dropdowns: OctetDropdownState
     @ObservedObject var bridge: ConversationBridge
@@ -1766,6 +1766,14 @@ private struct Composer: View {
     @State private var dismissedPlan: String?
     /// Refine was picked with nothing typed: the box asks for the changes.
     @State private var refiningPlan = false
+
+    /// Explicit, as its stored state is private: the Chat page builds one too.
+    init(session: AgentSession, dropdowns: OctetDropdownState, bridge: ConversationBridge, questions: QuestionDraftModel) {
+        self.session = session
+        self.dropdowns = dropdowns
+        self.bridge = bridge
+        self.questions = questions
+    }
 
     /// Hold Space to talk: a tap types, a hold listens until let go.
     private func holdSpace(_ press: KeyPress) -> KeyPress.Result {
@@ -2211,6 +2219,13 @@ private struct Composer: View {
                             refreshReferences()
                         }
                         .onChange(of: bridge.draft?.id) { _, _ in takeDraft() }
+                        .onChange(of: bridge.prefill?.id) { _, _ in
+                            guard let prefill = bridge.prefill else { return }
+                            bridge.prefill = nil
+                            text = prefill.text
+                            dismissedFor = prefill.text
+                            focused = true
+                        }
                         .onChange(of: session.editorRequest?.id) { _, _ in
                             guard let request = session.editorRequest else { return }
                             session.editorRequestTaken = request.id
