@@ -285,7 +285,7 @@ struct RootView: View {
                         .allowsHitTesting(ui.sidePanelVisible)
                         .accessibilityHidden(!ui.sidePanelVisible)
                     }
-                    if settings.values.repoContextBar {
+                    if settings.values.repoContextBar, window.mode.showsTerminal {
                         StatusBar(model: statusBar, store: store, ui: ui, ssh: focusedSSH, agent: focusedAgent,
                                   openOnOctetUI: { window.openOnOctetUI($0) })
                     }
@@ -459,17 +459,25 @@ struct RootView: View {
     }
 
     private var terminalWorkspaceSurface: some View {
-        VStack(spacing: 0) {
-            TabBarView(store: store, ui: ui, focusOwner: window.splitParent ?? window).id(settings.themeKey)
-            if let offer = agentOffer {
+        // Chat mode has no terminal: no tabs, drawer or terminal under the
+        // conversation, only the page the overlay draws.
+        let showsTerminal = window.mode.showsTerminal
+        return VStack(spacing: 0) {
+            if showsTerminal {
+                TabBarView(store: store, ui: ui, focusOwner: window.splitParent ?? window).id(settings.themeKey)
+            }
+            if showsTerminal, let offer = agentOffer {
                 AgentOfferBanner(agent: offer,
                                  open: { window.continueInOctet(offer) },
                                  dismiss: { offers.dismiss(offer) }, never: turnOffAgentBanner)
                     .id(AgentOffer.key(offer))
             }
-            terminal.overlay { terminalOverlay }
+            Group {
+                if showsTerminal { terminal } else { Theme.terminalBackground }
+            }
+            .overlay { terminalOverlay }
                 .overlay {
-                    if terminalDisconnected && window.activeContainerLog == nil {
+                    if showsTerminal && terminalDisconnected && window.activeContainerLog == nil {
                         TerminalDisconnectedCard(
                             serverReachable: store.isConnected,
                             retryFailed: lastReconnect.map { Date().timeIntervalSince($0) < 10 } ?? false
@@ -485,10 +493,12 @@ struct RootView: View {
                     if ui.detailsVisible { DetailsCard(model: statusBar, store: store, ui: ui).padding(12) }
                 }
                 .animation(motion.animation(.sidebar, .easeOut(duration: 0.15)), value: ui.detailsVisible)
-            TerminalDrawerHost(store: store, ui: ui)
+            if showsTerminal { TerminalDrawerHost(store: store, ui: ui) }
         }
         .contentShape(Rectangle())
         .simultaneousGesture(TapGesture().onEnded { window.activateSplitSurface() })
+        // Settings › Default mode applies to every open window at once.
+        .onChange(of: settings.values.defaultMode) { _, mode in window.mode = mode }
     }
 
     @ViewBuilder
@@ -1183,15 +1193,26 @@ struct RootView: View {
                         CodeEditorView(workspace: window.editor, rootDirectory: window.editorRootDirectory,
                                revealFolder: revealInFiles)
                     } else if let conversation = coveringConversation {
-                        ConversationView(session: conversation, client: store.client)
-                            .id(conversation.id)
-                            .onAppear { DebugSnapshot.overlay("conversation", true) }
-                            .onDisappear { DebugSnapshot.overlay("conversation", false) }
+                        Group {
+                            // Chat mode's page for a conversation with nothing said yet.
+                            if window.mode == .chat, conversation.conversation.items.isEmpty {
+                                ChatHomeView(session: conversation)
+                            } else {
+                                ConversationView(session: conversation, client: store.client)
+                            }
+                        }
+                        .id(conversation.id)
+                        .onAppear { DebugSnapshot.overlay("conversation", true) }
+                        .onDisappear { DebugSnapshot.overlay("conversation", false) }
                     } else if twin.isVisible {
                         TwinView(twin: twin, store: store)
                     } else if let hints = ui.hints {
                         HintsOverlay(session: hints, geometry: paneGeometry, window: window)
                         .id(hints.id)
+                    } else if window.mode == .chat {
+                        // Nothing in front and no terminal to show: a new conversation.
+                        Theme.terminalBackground
+                            .task(id: window.focusedWorkspace?.workspaceId) { window.ensureChatConversation() }
                     } else {
                         FocusedGridReader(geometry: paneGeometry) { grid in
                             if let grid, let tab = splash.tabId,
@@ -1230,6 +1251,9 @@ struct RootView: View {
                     dropLayers
                 }
                 .overlay { popupPane }
+                .overlay(alignment: .topTrailing) {
+                    if window.mode == .chat { ModeSwitchButton(window: window) }
+                }
                 .overlay(alignment: .top) { BroadcastBanner(mode: BroadcastMode.shared, tabId: window.displayedFocusedTabId) }
                 .overlay(alignment: .bottomLeading) { HoverLinkPreview() }
                 .overlay(alignment: .topTrailing) { SecureInputBadge() }
