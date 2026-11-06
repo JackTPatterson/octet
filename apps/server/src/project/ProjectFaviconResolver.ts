@@ -61,6 +61,75 @@ const FAVICON_CANDIDATES = [
   "AppIcon.icns",
 ] as const;
 
+/**
+ * App icons, after any favicon: what a mobile, desktop or Apple app keeps its icon in, so a
+ * project that is an app and not a website still gets a picture. Browser-renderable formats
+ * only, largest sizes first.
+ */
+const APP_ICON_CANDIDATES = [
+  "public/apple-touch-icon.png",
+  "public/icon.png",
+  "public/icon.svg",
+  "public/logo.svg",
+  "public/logo.png",
+  "static/favicon.svg",
+  "static/favicon.png",
+  "static/favicon.ico",
+  "static/icon.png",
+  "src/assets/logo.svg",
+  "src/assets/icon.png",
+  // Expo and React Native.
+  "assets/images/icon.png",
+  "assets/images/adaptive-icon.png",
+  "assets/images/favicon.png",
+  "assets/adaptive-icon.png",
+  // Electron and Tauri.
+  "build/icon.png",
+  "build/icon.svg",
+  "resources/icon.png",
+  "src-tauri/icons/icon.png",
+  "src-tauri/icons/128x128@2x.png",
+  "src-tauri/icons/128x128.png",
+  "icons/icon.png",
+  // Android.
+  "android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png",
+  "android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png",
+  "android/app/src/main/res/mipmap-xhdpi/ic_launcher.png",
+  "app/src/main/res/mipmap-xxxhdpi/ic_launcher.png",
+  "app/src/main/res/mipmap-xxhdpi/ic_launcher.png",
+] as const;
+
+/** Where an Xcode project keeps its app icon set, relative to the project folder. */
+const APP_ICON_SET_PARENTS = ["", "ios", "macos"] as const;
+const APP_ICON_SET_CATALOGS = ["Images.xcassets", "Assets.xcassets"] as const;
+
+/** The pixel size an `AppIcon.appiconset` image entry stands for ("60x60" at "3x" is 180). */
+export function appIconEntryPixels(entry: {
+  readonly size?: unknown;
+  readonly scale?: unknown;
+}): number {
+  const size = typeof entry.size === "string" ? Number.parseFloat(entry.size.split("x")[0] ?? "") : NaN;
+  const scale = typeof entry.scale === "string" ? Number.parseFloat(entry.scale) : 1;
+  return Number.isFinite(size) ? size * (Number.isFinite(scale) ? scale : 1) : 0;
+}
+
+/** The file of the largest PNG in an `AppIcon.appiconset`'s Contents.json, or null. */
+export function largestAppIconFile(contentsJson: string): string | null {
+  try {
+    const parsed = JSON.parse(contentsJson) as { readonly images?: ReadonlyArray<Record<string, unknown>> };
+    let best: { readonly file: string; readonly pixels: number } | null = null;
+    for (const entry of parsed.images ?? []) {
+      const file = entry.filename;
+      if (typeof file !== "string" || !/\.png$/i.test(file)) continue;
+      const pixels = appIconEntryPixels(entry);
+      if (best === null || pixels > best.pixels) best = { file, pixels };
+    }
+    return best?.file ?? null;
+  } catch {
+    return null;
+  }
+}
+
 const ICON_SOURCE_FILES = [
   "index.html",
   "public/index.html",
@@ -233,6 +302,38 @@ export const make = Effect.gen(function* () {
     return yield* findExistingFile(projectCwd, resolveIconHref(href), "workspace");
   });
 
+  /** The largest icon of an Xcode `AppIcon.appiconset` one level below the project, if any. */
+  const findAppIconSetImage = Effect.fn("ProjectFaviconResolver.findAppIconSetImage")(function* (
+    projectCwd: string,
+  ): Effect.fn.Return<string | null, ProjectFaviconResolutionError> {
+    for (const parent of APP_ICON_SET_PARENTS) {
+      const parentPath = yield* workspacePaths
+        .resolveRelativePathWithinRoot({ workspaceRoot: projectCwd, relativePath: parent === "" ? "." : parent })
+        .pipe(Effect.catch(() => Effect.succeed(null)));
+      if (parentPath === null) continue;
+      const entries = yield* fileSystem
+        .readDirectory(parentPath.absolutePath)
+        .pipe(Effect.catch(() => Effect.succeed([] as string[])));
+      // The app target's folder, with its catalog inside; skip hidden and dependency folders.
+      for (const entry of entries.toSorted()) {
+        if (entry.startsWith(".") || entry === "node_modules" || entry === "Pods") continue;
+        for (const catalog of APP_ICON_SET_CATALOGS) {
+          const setDir = path.join(parentPath.absolutePath, entry, catalog, "AppIcon.appiconset");
+          const contents = yield* fileSystem
+            .readFileString(path.join(setDir, "Contents.json"))
+            .pipe(Effect.catch(() => Effect.succeed(null)));
+          if (contents === null) continue;
+          const file = largestAppIconFile(contents);
+          if (file === null) continue;
+          const image = path.join(setDir, file);
+          const stats = yield* fileSystem.stat(image).pipe(Effect.catch(() => Effect.succeed(null)));
+          if (stats !== null && stats.type === "File") return image;
+        }
+      }
+    }
+    return null;
+  });
+
   // Probe concurrently but join in list order so lower-ranked probes cannot delay a hit.
   // A failure surfaces only if no earlier probe found a file; scope exit interrupts remaining probes.
   const firstInOrder = Effect.fn("ProjectFaviconResolver.firstInOrder")(function* <A>(
@@ -289,9 +390,21 @@ export const make = Effect.gen(function* () {
       return wellKnown;
     }
 
-    return yield* firstInOrder(ICON_SOURCE_FILES, (sourceFile) =>
+    const fromSource = yield* firstInOrder(ICON_SOURCE_FILES, (sourceFile) =>
       findIconFromSource(projectCwd, sourceFile),
     );
+    if (fromSource) {
+      return fromSource;
+    }
+
+    // Not a website: an app's own icon.
+    const appIcon = yield* firstInOrder(APP_ICON_CANDIDATES, (candidate) =>
+      findExistingFile(projectCwd, [candidate], "workspace"),
+    );
+    if (appIcon) {
+      return appIcon;
+    }
+    return yield* findAppIconSetImage(projectCwd);
   });
 
   const faviconCache = yield* Cache.makeWith<string, string | null, ProjectFaviconResolutionError>(

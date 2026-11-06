@@ -11,6 +11,8 @@ import { projectFaviconUrlAtom } from "../state/assets";
 import { deriveProjectIdentity } from "../projectIdentity";
 import { projectIconColorClassName } from "../projectIconColors";
 import { ProjectMonogram } from "./ProjectMonogram";
+import { ProjectNameIcon } from "./octet/projectIcons/ProjectNameIcon";
+import { projectNameIcon } from "./octet/projectIcons/projectNameIcon.logic";
 import { cn } from "~/lib/utils";
 
 // All lucide icons load as one chunk, only once a project uses a lucide override.
@@ -128,6 +130,11 @@ function ProjectFaviconFallback({
 }) {
   if (projectName && projectName.trim().length > 0) {
     const identity = deriveProjectIdentity(projectName);
+    // Octet: an icon for what the name says (a wrench for tools), before falling to initials.
+    const nameIcon = projectNameIcon(projectName);
+    if (nameIcon) {
+      return <ProjectNameIcon icon={nameIcon} color={identity.color} className={className} />;
+    }
     return (
       <ProjectMonogram text={identity.monogram} color={identity.color} className={className} />
     );

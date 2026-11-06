@@ -48,6 +48,76 @@ const makeResolverWithFileSystem = (fileSystem: FileSystem.FileSystem) =>
   );
 
 it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
+  describe("app icons", () => {
+    it.effect("uses an Expo app's icon, and a favicon still wins over it", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const path = yield* Path.Path;
+        const app = yield* makeTempDir;
+        yield* writeTextFile(app, "assets/images/icon.png", "png");
+        expect(yield* resolver.resolvePath(app)).toBe(path.join(app, "assets/images/icon.png"));
+
+        const site = yield* makeTempDir;
+        yield* writeTextFile(site, "assets/images/icon.png", "png");
+        yield* writeTextFile(site, "public/favicon.svg", "<svg/>");
+        expect(yield* resolver.resolvePath(site)).toBe(path.join(site, "public/favicon.svg"));
+      }),
+    );
+
+    it.effect("finds an Electron or Tauri app's icon", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const path = yield* Path.Path;
+        const electron = yield* makeTempDir;
+        yield* writeTextFile(electron, "build/icon.png", "png");
+        expect(yield* resolver.resolvePath(electron)).toBe(path.join(electron, "build/icon.png"));
+        const tauri = yield* makeTempDir;
+        yield* writeTextFile(tauri, "src-tauri/icons/128x128.png", "png");
+        expect(yield* resolver.resolvePath(tauri)).toBe(
+          path.join(tauri, "src-tauri/icons/128x128.png"),
+        );
+      }),
+    );
+
+    it.effect("picks the largest image of an Xcode app icon set", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const set = "ios/MyApp/Images.xcassets/AppIcon.appiconset";
+        yield* writeTextFile(
+          cwd,
+          `${set}/Contents.json`,
+          JSON.stringify({
+            images: [
+              { filename: "small.png", size: "20x20", scale: "2x" },
+              { filename: "big.png", size: "1024x1024", scale: "1x" },
+              { filename: "mid.png", size: "60x60", scale: "3x" },
+            ],
+          }),
+        );
+        for (const name of ["small.png", "big.png", "mid.png"]) {
+          yield* writeTextFile(cwd, `${set}/${name}`, "png");
+        }
+        expect(yield* resolver.resolvePath(cwd)).toBe(path.join(cwd, set, "big.png"));
+      }),
+    );
+  });
+
+  describe("appIconEntryPixels / largestAppIconFile", () => {
+    it("reads sizes and scales, and ignores what is not a PNG", () => {
+      expect(ProjectFaviconResolver.appIconEntryPixels({ size: "60x60", scale: "3x" })).toBe(180);
+      expect(ProjectFaviconResolver.appIconEntryPixels({ size: "1024x1024" })).toBe(1024);
+      expect(ProjectFaviconResolver.appIconEntryPixels({})).toBe(0);
+      expect(
+        ProjectFaviconResolver.largestAppIconFile(
+          JSON.stringify({ images: [{ filename: "a.pdf", size: "1024x1024" }] }),
+        ),
+      ).toBeNull();
+      expect(ProjectFaviconResolver.largestAppIconFile("not json")).toBeNull();
+    });
+  });
+
   describe("resolvePath", () => {
     it.effect("finds a favicon added after a cached miss once the workspace is invalidated", () =>
       Effect.gen(function* () {
