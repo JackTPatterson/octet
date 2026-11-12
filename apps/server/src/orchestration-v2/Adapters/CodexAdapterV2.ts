@@ -38,6 +38,7 @@ import {
   ProviderDriverKind,
   ProviderSetupError,
   type ServerProviderCompatibilityAdvisory,
+  type McpServerSummary,
 } from "@t3tools/contracts";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { AgentScope } from "@t3tools/shared/AgentScope";
@@ -81,6 +82,7 @@ import type {
 import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexSchema from "effect-codex-app-server/schema";
+import * as Predicate from "effect/Predicate";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
@@ -163,6 +165,62 @@ export const CODEX_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CODEX_DRIVER
 type CodexFileChangeKinds = Readonly<
   Record<string, CodexSchema.V2ItemStartedNotification__PatchChangeKind>
 >;
+
+const CODEX_MCP_STATUS: Record<
+  CodexSchema.V2ListMcpServerStatusResponse__McpServerConnectionStatus,
+  McpServerSummary["status"]
+> = {
+  notStarted: "pending",
+  starting: "pending",
+  connected: "connected",
+  authenticationRequired: "needs-auth",
+  failed: "failed",
+  cancelled: "failed",
+  disabled: "disabled",
+};
+
+/** Codex's view of one MCP server, as `/mcp` lists it. */
+export function codexMcpServerSummary(
+  server: CodexSchema.V2ListMcpServerStatusResponse__McpServerStatus,
+): McpServerSummary {
+  const tools = Object.values(server.tools);
+  // Older Codex builds report no runtime status: a sign-in it lacks, else tools, mean the state.
+  const status =
+    server.runtimeStatus != null
+      ? CODEX_MCP_STATUS[server.runtimeStatus]
+      : server.authStatus === "notLoggedIn"
+        ? "needs-auth"
+        : tools.length > 0
+          ? "connected"
+          : "pending";
+  return {
+    name: server.name,
+    status,
+    ...(server.toolsError ? { error: server.toolsError } : {}),
+    ...(server.pluginId ? { scope: "plugin" } : {}),
+    ...(server.httpOrigin ? { url: server.httpOrigin } : {}),
+    tools: tools.flatMap((tool) =>
+      tool.name.trim()
+        ? [
+            {
+              name: tool.name.trim(),
+              ...(tool.description ? { description: tool.description } : {}),
+            },
+          ]
+        : [],
+    ),
+  };
+}
+
+/** Codex's own reason for a failed MCP request, when it gave one. */
+function codexMcpErrorDetail(cause: unknown): string | undefined {
+  return Predicate.isObject(cause) &&
+    typeof cause.message === "string" &&
+    cause.message.trim() &&
+    !cause.message.startsWith("Codex App Server")
+    ? cause.message.trim()
+    : undefined;
+}
 
 function codexFileChangeApprovalPrompt(input: {
   readonly reason?: string | null;
@@ -7022,6 +7080,57 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           ),
         };
 
+        const mcpServersError = (detail: string) => (cause: unknown) =>
+          new ProviderAdapter.ProviderAdapterProtocolError({
+            driver: CODEX_PROVIDER,
+            detail: codexMcpErrorDetail(cause) ?? detail,
+            payload: cause,
+          });
+        const mcpServers: ProviderAdapter.ProviderAdapterV2McpServers = {
+          list: Effect.fn("CodexAdapterV2.listMcpServers")(
+            function* ({ providerThread }) {
+              const threadId = yield* getNativeThreadId(providerThread);
+              yield* ensureInitialized;
+              const servers: Array<McpServerSummary> = [];
+              let cursor: string | null = null;
+              // Pages until Codex stops returning a cursor; the cap guards a server that never does.
+              for (let page = 0; page < 20; page++) {
+                const response: CodexSchema.V2ListMcpServerStatusResponse = yield* client.request(
+                  "mcpServerStatus/list",
+                  {
+                    threadId,
+                    detail: "full",
+                    ...(cursor === null ? {} : { cursor }),
+                  },
+                );
+                servers.push(...response.data.map(codexMcpServerSummary));
+                cursor = response.nextCursor ?? null;
+                if (cursor === null) break;
+              }
+              return servers;
+            },
+            Effect.mapError(mcpServersError("Couldn't read Codex's MCP servers.")),
+          ),
+          login: Effect.fn("CodexAdapterV2.loginMcpServer")(
+            function* ({ providerThread, server }) {
+              const threadId = yield* getNativeThreadId(providerThread);
+              const response = yield* ensureInitialized.pipe(
+                Effect.andThen(client.request("mcpServer/oauth/login", { name: server, threadId })),
+              );
+              return { authorizationUrl: response.authorizationUrl };
+            },
+            Effect.mapError(mcpServersError("Couldn't start the MCP sign-in.")),
+          ),
+          reloadAll: Effect.fn("CodexAdapterV2.reloadMcpServers")(
+            function* () {
+              yield* ensureInitialized.pipe(
+                Effect.andThen(client.request("config/mcpServer/reload", undefined)),
+              );
+            },
+            Effect.mapError(mcpServersError("Couldn't reload Codex's MCP servers.")),
+          ),
+        };
+
         const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
           instanceId: adapterOptions.instanceId,
           driver: CODEX_PROVIDER,
@@ -7820,6 +7929,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             ),
           ),
           mcpApps,
+          mcpServers,
           readThreadSnapshot: Effect.fn("CodexAdapterV2.readThreadSnapshot")(
             function* (threadInput) {
               const threadId = yield* getNativeThreadId(threadInput.providerThread);

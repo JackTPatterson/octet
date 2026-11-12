@@ -54,6 +54,11 @@ export const make = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
   const homeDirectory = yield* HostProcess.HomeDirectory;
   return yield* Effect.sync((): DesktopPreReadyElectronOptions["Service"] => {
+    // No remote Chrome debugging: drop the switches before Chromium reads them, so a launch
+    // flag can't open a debugger on the app's windows.
+    for (const name of DesktopEarlyElectronStartup.REMOTE_DEBUGGING_SWITCHES) {
+      if (Electron.app.commandLine.hasSwitch(name)) Electron.app.commandLine.removeSwitch(name);
+    }
     const linuxPasswordStoreCommandLine =
       platform === "linux"
         ? readCommandLineSwitchValue(Electron.app.commandLine, "password-store")

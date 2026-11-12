@@ -1026,7 +1026,17 @@ export type DesktopMediaRead = typeof DesktopMediaReadSchema.Type;
 export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access"]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
+export interface DesktopVoiceEvent {
+  readonly id: string;
+  readonly type: "listening" | "partial" | "level" | "final" | "error" | "cancelled";
+  readonly text: string;
+}
+
 export interface DesktopBridge {
+  voiceInput?: {
+    control: (input: { id: string; action: "start" | "stop" | "cancel" }) => Promise<void>;
+    subscribe: (listener: (event: DesktopVoiceEvent) => void) => () => void;
+  };
   getAppBranding: () => DesktopAppBranding | null;
   getRelayTelemetryEnabled: () => boolean;
   getPathForFile: (file: File) => string;
@@ -1169,7 +1179,6 @@ export interface DesktopPreviewBridge {
   hardReload: (tabId: string) => Promise<void>;
   setColorScheme: (tabId: string, colorScheme: DesktopPreviewColorScheme) => Promise<void>;
   setAudioMuted: (tabId: string, audioMuted: boolean) => Promise<void>;
-  openDevTools: (tabId: string) => Promise<void>;
   clearCookies: (environmentId: EnvironmentId, profileId?: string) => Promise<void>;
   clearCache: (environmentId: EnvironmentId, profileId?: string) => Promise<void>;
   getPreviewConfig: (

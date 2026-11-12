@@ -755,14 +755,13 @@ describe("DesktopWindow", () => {
 
         yield* desktopWindow.runMainContentsCommand("reload");
         yield* desktopWindow.runMainContentsCommand("forceReload");
-        yield* desktopWindow.runMainContentsCommand("toggleDevTools");
 
         assert.equal(fakeWindow.reload.mock.calls.length, 1);
         assert.equal(fakeWindow.reloadIgnoringCache.mock.calls.length, 1);
-        assert.equal(fakeWindow.toggleDevTools.mock.calls.length, 1);
+        // There is no DevTools command any more.
+        assert.equal(fakeWindow.toggleDevTools.mock.calls.length, 0);
         assert.equal(popup.reload.mock.calls.length, 0);
         assert.equal(popup.reloadIgnoringCache.mock.calls.length, 0);
-        assert.equal(popup.toggleDevTools.mock.calls.length, 0);
       }).pipe(Effect.provide(layer));
     }),
   );
@@ -1014,7 +1013,7 @@ describe("DesktopWindow", () => {
     }),
   );
 
-  it.effect("maps macOS horizontal swipes to available history navigation", () =>
+  it.effect("leaves macOS swipe gestures alone: they never navigate the app", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
       const createCount = yield* Ref.make(0);
@@ -1024,25 +1023,9 @@ describe("DesktopWindow", () => {
       yield* Effect.gen(function* () {
         const desktopWindow = yield* DesktopWindow.DesktopWindow;
         yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
-        const swipe = fakeWindow.windowListeners.get("swipe");
-        assert.isDefined(swipe);
-        if (!swipe) return;
-        const history = fakeWindow.navigationHistory;
-
-        swipe({}, "left");
-        assert.equal(history.goBack.mock.calls.length, 1);
-        assert.equal(history.goForward.mock.calls.length, 0);
-        swipe({}, "right");
-        assert.equal(history.goForward.mock.calls.length, 1);
-
-        swipe({}, "up");
-        swipe({}, "down");
-        history.canGoBack.mockReturnValue(false);
-        history.canGoForward.mockReturnValue(false);
-        swipe({}, "left");
-        swipe({}, "right");
-        assert.equal(history.goBack.mock.calls.length, 1);
-        assert.equal(history.goForward.mock.calls.length, 1);
+        assert.isUndefined(fakeWindow.windowListeners.get("swipe"));
+        assert.equal(fakeWindow.navigationHistory.goBack.mock.calls.length, 0);
+        assert.equal(fakeWindow.navigationHistory.goForward.mock.calls.length, 0);
       }).pipe(Effect.provide(layer));
     }),
   );

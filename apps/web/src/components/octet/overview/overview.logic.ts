@@ -1,10 +1,9 @@
-/**
- * Octet's Overview plane lists what a thread's agent is running: its
- * subagents (drawn as T3 draws them in the timeline) and its background
- * commands and monitors as a tree. T3 already tracks this per thread
- * (turn items, and `pendingBackgroundTasks` with `parentTaskId` for the
- * nesting); this file only shapes it.
- */
+import type { ThreadStructureTurnItem } from "@t3tools/client-runtime/state/models";
+import type {
+  OrchestrationV2TurnItem,
+  OrchestrationV2PendingBackgroundTask,
+} from "@t3tools/contracts";
+import { presentPendingBackgroundWork } from "@t3tools/client-runtime/state/thread-execution";
 
 export type OverviewTaskKind = "subagent" | "command" | "monitor" | "background_task";
 
@@ -13,6 +12,8 @@ export interface OverviewTask {
   readonly kind: OverviewTaskKind;
   readonly parentTaskId?: string | undefined;
   readonly childThreadId?: string | undefined;
+  /** Still working: what Stop all would stop. Finished agents stay listed but aren't live. */
+  readonly live?: boolean | undefined;
 }
 
 export interface OverviewNode<T extends OverviewTask> {
@@ -58,13 +59,17 @@ export function buildOverviewTree<T extends OverviewTask>(
     return { task, children };
   };
   // A cycle (a is b's parent and b is a's) has no root; show its members flat.
-  const forest = roots.toSorted((left, right) => KIND_ORDER[left.kind] - KIND_ORDER[right.kind]).map(build);
+  const forest = roots
+    .toSorted((left, right) => KIND_ORDER[left.kind] - KIND_ORDER[right.kind])
+    .map(build);
   for (const task of tasks) if (!visited.has(task.taskId)) forest.push(build(task));
   return forest;
 }
 
 /** How many tasks the forest holds. */
-export function countOverviewNodes<T extends OverviewTask>(forest: readonly OverviewNode<T>[]): number {
+export function countOverviewNodes<T extends OverviewTask>(
+  forest: readonly OverviewNode<T>[],
+): number {
   return forest.reduce((total, node) => total + 1 + countOverviewNodes(node.children), 0);
 }
 
@@ -106,4 +111,172 @@ export function hasWorkingSubagent(items: readonly SubagentItemInput[]): boolean
 /** Pending background tasks other than subagents, which the subagent list covers. */
 export function backgroundTasks<T extends OverviewTask>(tasks: readonly T[]): readonly T[] {
   return tasks.filter((task) => task.kind !== "subagent");
+}
+
+interface AgentTreeItem {
+  readonly id: string;
+  readonly subagentId: string;
+  readonly parentItemId: string | null;
+}
+
+export interface OverviewAgentTask<T extends AgentTreeItem> extends OverviewTask {
+  readonly kind: "subagent";
+  readonly agent: T;
+}
+
+export function buildOverviewAgentTree<T extends AgentTreeItem>(
+  agents: readonly T[],
+  items: readonly { readonly id: string; readonly parentItemId: string | null }[],
+): readonly OverviewNode<OverviewAgentTask<T>>[] {
+  const byId = new Map(items.map((item) => [item.id, item]));
+  const latest = new Map<string, T>();
+  for (const agent of agents)
+    if (!latest.has(agent.subagentId)) latest.set(agent.subagentId, agent);
+  const aliases = new Map(agents.map((agent) => [agent.id, latest.get(agent.subagentId)!]));
+  return buildOverviewTree(
+    [...latest.values()].map((agent): OverviewAgentTask<T> => {
+      const seen = new Set([agent.id]);
+      let parent = agent.parentItemId;
+      while (parent && !seen.has(parent)) {
+        seen.add(parent);
+        const ancestor = aliases.get(parent);
+        if (ancestor && ancestor.subagentId !== agent.subagentId) {
+          return { taskId: agent.id, kind: "subagent", agent, parentTaskId: ancestor.id };
+        }
+        parent = byId.get(parent)?.parentItemId ?? null;
+      }
+      return { taskId: agent.id, kind: "subagent", agent };
+    }),
+  );
+}
+
+const ENDED_RUN = new Set(["completed", "interrupted", "failed", "cancelled", "rolled_back"]);
+
+interface RunStatusInput {
+  readonly id: string;
+  readonly status: string;
+}
+
+/**
+ * Whether an item that says it is working really is. The projection can leave an
+ * item `running` after its run ended (a dropped completion event), so an item of
+ * an ended run is stale, whatever its own status.
+ */
+function itemWorking(
+  item: { readonly status: string; readonly runId?: string | null },
+  endedRuns: ReadonlySet<string>,
+): boolean {
+  return WORKING.has(item.status) && !(item.runId && endedRuns.has(item.runId));
+}
+
+/** Whether a node or any node under it is live. */
+export function isLiveNode<T extends OverviewTask>(node: OverviewNode<T>): boolean {
+  return node.task.live === true || node.children.some(isLiveNode);
+}
+
+export type OverviewActivity =
+  | OverviewAgentTask<Extract<OrchestrationV2TurnItem, { type: "subagent" }>>
+  | (OverviewTask & {
+      readonly kind: "command" | "monitor" | "background_task";
+      readonly label: string;
+      readonly startedAt: OrchestrationV2TurnItem["startedAt"];
+    });
+
+export function buildOverviewActivityTree(
+  items: readonly ThreadStructureTurnItem[],
+  pending: readonly OrchestrationV2PendingBackgroundTask[],
+  runs: readonly RunStatusInput[] = [],
+): readonly OverviewNode<OverviewActivity>[] {
+  const endedRuns = new Set(runs.flatMap((run) => (ENDED_RUN.has(run.status) ? [run.id] : [])));
+  const pendingIds = new Set(
+    pending.flatMap((task) => [
+      task.taskId as string,
+      ...(task.kind === "subagent" && task.childThreadId ? [task.childThreadId as string] : []),
+    ]),
+  );
+  const agents = subagentItems(items).flatMap((item) => (item.type === "subagent" ? [item] : []));
+  const tasks: OverviewActivity[] = [];
+  const flatten = (nodes: readonly OverviewNode<OverviewAgentTask<(typeof agents)[number]>>[]) => {
+    for (const node of nodes) {
+      const agent = node.task.agent;
+      const live =
+        itemWorking(agent, endedRuns) ||
+        (WORKING.has(agent.status) &&
+          [agent.id, agent.subagentId, agent.childThreadId].some(
+            (id) => id != null && pendingIds.has(id),
+          ));
+      tasks.push({ ...node.task, live });
+      flatten(node.children);
+    }
+  };
+  flatten(buildOverviewAgentTree(agents, items));
+  const aliases = new Map<string, string>();
+  for (const task of tasks) {
+    if (task.kind === "subagent") aliases.set(task.agent.subagentId, task.taskId);
+  }
+  for (const agent of agents) aliases.set(agent.id, aliases.get(agent.subagentId)!);
+  const commands = items.flatMap((item) =>
+    item.type === "command_execution" && itemWorking(item, endedRuns) ? [item] : [],
+  );
+  for (const item of commands) {
+    aliases.set(item.id, item.id);
+    if (item.nativeItemRef?.nativeId) aliases.set(item.nativeItemRef.nativeId, item.id);
+  }
+  const byId = new Map(items.map((item) => [item.id as string, item]));
+  const parentOf = (id: string | null | undefined): string | undefined => {
+    const seen = new Set<string>();
+    while (id && !seen.has(id)) {
+      seen.add(id);
+      if (aliases.has(id)) return aliases.get(id);
+      if (pending.some((task) => task.taskId === id)) return id;
+      id = byId.get(id)?.parentItemId;
+    }
+    return undefined;
+  };
+  const work = new Map<string, OverviewActivity>();
+  for (const item of commands) {
+    work.set(item.id, {
+      taskId: item.id,
+      kind: item.monitor ? "monitor" : "command",
+      label: item.input,
+      startedAt: item.startedAt,
+      parentTaskId: parentOf(item.parentItemId),
+      live: true,
+    });
+  }
+  for (const task of pending) {
+    if (task.kind === "subagent") continue;
+    const id = aliases.get(task.taskId) ?? task.taskId;
+    const existing = work.get(id);
+    work.set(id, {
+      taskId: id,
+      kind: task.kind,
+      label: presentPendingBackgroundWork([task])?.items[0]?.label ?? task.kind,
+      startedAt: existing && existing.kind !== "subagent" ? existing.startedAt : null,
+      parentTaskId: parentOf(task.parentTaskId) ?? existing?.parentTaskId,
+      live: true,
+    });
+  }
+  return buildOverviewTree([...tasks, ...work.values()]);
+}
+
+/** The forest with only its agents: other work is dropped, with everything under it. */
+export function agentsOnly(
+  nodes: readonly OverviewNode<OverviewActivity>[],
+): readonly OverviewNode<OverviewActivity>[] {
+  return nodes.flatMap((node) =>
+    node.task.kind === "subagent" ? [{ task: node.task, children: agentsOnly(node.children) }] : [],
+  );
+}
+
+export type OverviewWork = Exclude<OverviewActivity, { kind: "subagent" }>;
+
+/** Every command, monitor and background task in the forest, in tree order. */
+export function collectWork(
+  nodes: readonly OverviewNode<OverviewActivity>[],
+): readonly OverviewWork[] {
+  return nodes.flatMap((node) => [
+    ...(node.task.kind === "subagent" ? [] : [node.task]),
+    ...collectWork(node.children),
+  ]);
 }

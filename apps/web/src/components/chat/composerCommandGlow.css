@@ -1,0 +1,53 @@
+[data-slot="composer-command-glow"] {
+  --command-glow-blue: 37 99 235;
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.dark [data-slot="composer-command-glow"] {
+  --command-glow-blue: 81 162 255;
+}
+
+[data-slot="composer-command-glow"] > div {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse 646px 190px at 50% 0%,
+    rgb(var(--command-glow-blue) / 46%) 0%,
+    rgb(var(--command-glow-blue) / 34%) 18%,
+    rgb(var(--command-glow-blue) / 20%) 40%,
+    rgb(var(--command-glow-blue) / 9%) 62%,
+    rgb(var(--command-glow-blue) / 3%) 82%,
+    transparent 100%
+  );
+  filter: blur(10px);
+  transform-origin: top;
+  transform: scaleY(0.55);
+  opacity: 0;
+  transition:
+    opacity 700ms ease-in-out,
+    transform 700ms ease-in-out;
+}
+
+[data-slot="composer-command-glow"][data-level="1"] > div,
+[data-slot="composer-command-glow"][data-level="2"] > div {
+  transform: scaleY(1);
+  transition-duration: 900ms;
+}
+
+[data-slot="composer-command-glow"][data-level="1"] > div {
+  opacity: 0.4;
+}
+
+[data-slot="composer-command-glow"][data-level="2"] > div {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="composer-command-glow"] > div {
+    transition: none;
+  }
+}

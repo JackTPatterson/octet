@@ -21,6 +21,13 @@ import {
   McpAppUpdateModelContextInput,
 } from "./mcpApps.ts";
 import {
+  McpServersRequestError,
+  ThreadMcpServerActionInput,
+  ThreadMcpServerActionResult,
+  ThreadMcpServersInput,
+  ThreadMcpServersResult,
+} from "./mcpServers.ts";
+import {
   PeerLink,
   PeerLinkCreateInput,
   PeerLinkError,
@@ -450,6 +457,8 @@ export const WS_METHODS = {
   mcpAppsToolInfo: "mcpApps.toolInfo",
   mcpAppsReadResource: "mcpApps.readResource",
   mcpAppsUpdateModelContext: "mcpApps.updateModelContext",
+  mcpServersList: "mcpServers.list",
+  mcpServersAction: "mcpServers.action",
 
   providerUploadFeedback: "provider.uploadFeedback",
   providerAuthStart: "provider.auth.start",
@@ -1484,6 +1493,18 @@ const WsMcpAppsReadResourceRpc = Rpc.make(WS_METHODS.mcpAppsReadResource, {
   error: Schema.Union([McpAppRequestError, EnvironmentAuthorizationError]),
 });
 
+const WsMcpServersListRpc = Rpc.make(WS_METHODS.mcpServersList, {
+  payload: ThreadMcpServersInput,
+  success: ThreadMcpServersResult,
+  error: Schema.Union([McpServersRequestError, EnvironmentAuthorizationError]),
+});
+
+const WsMcpServersActionRpc = Rpc.make(WS_METHODS.mcpServersAction, {
+  payload: ThreadMcpServerActionInput,
+  success: ThreadMcpServerActionResult,
+  error: Schema.Union([McpServersRequestError, EnvironmentAuthorizationError]),
+});
+
 const WsProviderUploadFeedbackRpc = Rpc.make(WS_METHODS.providerUploadFeedback, {
   payload: ProviderUploadFeedbackInput,
   success: ProviderUploadFeedbackResult,
@@ -2220,6 +2241,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsMcpAppsCallToolRpc,
   WsMcpAppsToolInfoRpc,
   WsMcpAppsReadResourceRpc,
+  WsMcpServersListRpc,
+  WsMcpServersActionRpc,
   WsMcpAppsUpdateModelContextRpc,
   WsProviderUploadFeedbackRpc,
   WsSubscribeVcsStatusRpc,

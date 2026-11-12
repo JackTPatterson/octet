@@ -88,7 +88,7 @@ export type DesktopWindowError =
   | PreviewManager.PreviewManagerError;
 
 export type MainWindowZoomDirection = "in" | "out" | "reset";
-export type MainWindowContentsCommand = "reload" | "forceReload" | "toggleDevTools";
+export type MainWindowContentsCommand = "reload" | "forceReload";
 
 export class DesktopWindow extends Context.Service<
   DesktopWindow,
@@ -408,6 +408,8 @@ export const make = Effect.gen(function* () {
         webviewTag: true,
         // Guest fullscreen propagates to the embedder; both must opt out to keep it inside the webview.
         disableHtmlFullscreenWindowResize: true,
+        // No Chrome DevTools in the app, by any shortcut or menu.
+        devTools: false,
       },
     });
     if (yield* Ref.get(desktopState.quitting)) {
@@ -694,12 +696,6 @@ export const make = Effect.gen(function* () {
     });
 
     if (environment.platform === "darwin") {
-      // Mouse drivers can deliver Back/Forward as macOS swipe gestures instead of buttons.
-      window.on("swipe", (_event, direction) => {
-        const history = window.webContents.navigationHistory;
-        if (direction === "left" && history.canGoBack()) history.goBack();
-        else if (direction === "right" && history.canGoForward()) history.goForward();
-      });
       window.on("enter-full-screen", () => {
         window.webContents.send(WINDOW_FULLSCREEN_STATE_CHANNEL, true);
       });
@@ -855,9 +851,6 @@ export const make = Effect.gen(function* () {
     });
 
     loadApplication();
-    if (environment.isDevelopment) {
-      window.webContents.openDevTools({ mode: "detach" });
-    }
 
     window.on("closed", () => {
       if (!backendHasStarted) mainClosedDuringStartup = true;
@@ -937,6 +930,7 @@ export const make = Effect.gen(function* () {
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
+        devTools: false,
       },
     });
     if (yield* Ref.get(desktopState.quitting)) {
@@ -1060,8 +1054,7 @@ export const make = Effect.gen(function* () {
       if (Option.isNone(window) || window.value.isDestroyed()) return;
       const webContents = window.value.webContents;
       if (command === "reload") webContents.reload();
-      else if (command === "forceReload") webContents.reloadIgnoringCache();
-      else webContents.toggleDevTools();
+      else webContents.reloadIgnoringCache();
     }),
     syncAppearance: Effect.gen(function* () {
       const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;

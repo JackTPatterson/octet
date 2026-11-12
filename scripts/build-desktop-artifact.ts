@@ -983,6 +983,8 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   "!**/node_modules/@anthropic-ai/claude-agent-sdk-*/**/*",
   "!**/*.map",
   "!**/*.d.cts",
+  "!apps/desktop/resources/voice",
+  "!apps/desktop/resources/voice/**/*",
   "!apps/desktop/resources/browser-secret",
   "!apps/desktop/resources/browser-secret/**/*",
   "!apps/desktop/prod-resources/browser-secret",
@@ -2771,6 +2773,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   arch?: typeof BuildArch.Type,
 ) {
   const buildConfig: Record<string, unknown> = {
+    // No Node debugger in the shipped app: `--inspect` and its kin are ignored. Run-as-node stays
+    // on; Octet runs helpers (the Expo device hub) through its own binary.
+    electronFuses: { enableNodeCliInspectArguments: false },
     afterPack: (yield* Path.Path).join(yield* RepoRoot, "scripts/prepare-server-compile-cache.cjs"),
     appId: DESKTOP_APP_ID,
     productName: resolveDesktopProductName(version),
@@ -2793,6 +2798,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       : {}),
     extraResources: [
       ...DESKTOP_EXTRA_RESOURCES,
+      ...(platform === "mac" ? [{ from: "apps/desktop/resources/voice", to: "voice" }] : []),
       ...(platform === "linux" ? LINUX_CAPTURE_EXTRA_RESOURCES : []),
       ...(platform === "linux" ? LINUX_BROWSER_SECRET_EXTRA_RESOURCES : []),
       ...(platform === "win" ? WINDOWS_SERVER_EXTRA_RESOURCES : []),
@@ -2819,6 +2825,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   if (platform === "mac") {
     const path = yield* Path.Path;
     const repoRoot = yield* RepoRoot;
+    // An unsigned build is ad-hoc signed so macOS doesn't call the downloaded app "damaged".
+    if (!signed) buildConfig.afterSign = path.join(repoRoot, "scripts/adhoc-sign-mac.cjs");
     buildConfig.mac = {
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
@@ -2832,8 +2840,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
           "Octet captures the active window when you use the window capture shortcut.",
         NSCameraUsageDescription:
           "Octet lets commands run by terminals and coding agents use the camera.",
+        NSSpeechRecognitionUsageDescription:
+          "Octet transcribes speech when you hold Space in the message composer.",
         NSMicrophoneUsageDescription:
-          "Octet lets commands run by terminals and coding agents use the microphone.",
+          "Octet uses the microphone for hold-Space voice input and commands you run.",
         // macOS lists an app under Default web browser only when it opens web
         // pages as documents as well as http and https links (see protocols).
         CFBundleDocumentTypes: [

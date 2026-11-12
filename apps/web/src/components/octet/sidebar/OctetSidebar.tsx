@@ -1,9 +1,20 @@
 import { cardColorKey, colorHex, useOctetColors } from "../colors/octetColors";
 import { NewWaitButton } from "../waits/NewWaitButton";
-import { scopedThreadKey, scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  scopedThreadKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
 import type { DiscoveredLocalServer, ScopedThreadRef } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { DndContext, PointerSensor, useDndContext, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import {
+  DndContext,
+  PointerSensor,
+  useDndContext,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
 import { useRouter } from "@tanstack/react-router";
 import { SquarePenIcon } from "lucide-react";
 import { useRef, useState, type KeyboardEvent, type ReactNode } from "react";
@@ -161,18 +172,18 @@ export default function OctetSidebar() {
   )
     .filter((folder) => projectInScope(folder.group.projectKey, scopeKeys))
     .map((folder) => {
-    const expansionKeys = sidebarFolderExpansionKeys(folder.group);
-    return {
-      ...folder,
-      expansionKeys,
-      // A search shows every match, folded or not.
-      collapsed: !isSearching && !resolveProjectExpanded(projectExpandedById, expansionKeys),
-      cards: filterBranchCards(
-        groupIntoBranchCards(folder.threads, resolveSidebarThreadStatus),
-        searchQuery,
-      ),
-    };
-  });
+      const expansionKeys = sidebarFolderExpansionKeys(folder.group);
+      return {
+        ...folder,
+        expansionKeys,
+        // A search shows every match, folded or not.
+        collapsed: !isSearching && !resolveProjectExpanded(projectExpandedById, expansionKeys),
+        cards: filterBranchCards(
+          groupIntoBranchCards(folder.threads, resolveSidebarThreadStatus),
+          searchQuery,
+        ),
+      };
+    });
   const matchingCards = folders.flatMap((folder) => folder.cards);
 
   const openThread = (ref: ScopedThreadRef) => {
@@ -251,39 +262,39 @@ export default function OctetSidebar() {
       >
         <SidebarGroup className="flex flex-1 flex-col">
           <CardDropZone place="active">
-          <ul className="flex flex-col">
-            {folders
-              .filter((folder) => !isSearching || folder.cards.length > 0)
-              .map((folder) => (
-                <FolderSection
-                  key={folder.group.projectKey}
-                  group={folder.group}
-                  collapsed={folder.collapsed}
-                  hiddenThreads={folder.collapsed ? folder.threads : []}
-                  onToggle={() => setProjectExpanded(folder.expansionKeys, folder.collapsed)}
-                  onNewThread={() =>
-                    void handleNewThread(
-                      scopeProjectRef(folder.group.environmentId, folder.group.id),
-                    )
-                  }
-                >
-                  {folder.cards.map((card) => (
-                    <ActionableCard
-                      key={card.key}
-                      place="active"
-                      projectCwd={projectCwdFor(card.threads[0]!)}
-                      card={card}
-                      routeThreadKey={routeThreadKey}
-                      nowMs={nowMs}
-                      providerEntries={providersFor(card.threads[0]!)}
-                      onOpen={openShell}
-                      onNewThread={() => newThreadOnCard(card)}
-                      showServers
-                    />
-                  ))}
-                </FolderSection>
-              ))}
-          </ul>
+            <ul className="flex flex-col">
+              {folders
+                .filter((folder) => !isSearching || folder.cards.length > 0)
+                .map((folder) => (
+                  <FolderSection
+                    key={folder.group.projectKey}
+                    group={folder.group}
+                    collapsed={folder.collapsed}
+                    hiddenThreads={folder.collapsed ? folder.threads : []}
+                    onToggle={() => setProjectExpanded(folder.expansionKeys, folder.collapsed)}
+                    onNewThread={() =>
+                      void handleNewThread(
+                        scopeProjectRef(folder.group.environmentId, folder.group.id),
+                      )
+                    }
+                  >
+                    {folder.cards.map((card) => (
+                      <ActionableCard
+                        key={card.key}
+                        place="active"
+                        projectCwd={projectCwdFor(card.threads[0]!)}
+                        card={card}
+                        routeThreadKey={routeThreadKey}
+                        nowMs={nowMs}
+                        providerEntries={providersFor(card.threads[0]!)}
+                        onOpen={openShell}
+                        onNewThread={() => newThreadOnCard(card)}
+                        showServers
+                      />
+                    ))}
+                  </FolderSection>
+                ))}
+            </ul>
           </CardDropZone>
           {/* T3's shelves: a muted label, a trailing count, a chevron. */}
           <div className="mt-auto pt-2">
@@ -383,12 +394,16 @@ export function BranchCardRow(props: {
   onContextMenu?: ((position: { x: number; y: number }) => void) | undefined;
   /** Present while the title is being renamed. */
   rename?:
-    | { title: string; onChange: (title: string) => void; onCommit: () => void; onCancel: () => void }
+    | {
+        title: string;
+        onChange: (title: string) => void;
+        onCommit: () => void;
+        onCancel: () => void;
+      }
     | undefined;
   /** Drag wiring, from `useCardActions`. */
   liRef?: ((node: HTMLLIElement | null) => void) | undefined;
-  liProps?: | { onPointerDown?: React.PointerEventHandler<HTMLLIElement> | undefined }
-    | undefined;
+  liProps?: { onPointerDown?: React.PointerEventHandler<HTMLLIElement> | undefined } | undefined;
   dragging?: boolean | undefined;
   dragTransform?: { x: number; y: number } | null | undefined;
   /** Content for the hover peek; the card shows no peek without it. */
@@ -418,125 +433,128 @@ export function BranchCardRow(props: {
       )}
     >
       <PeekFrame peek={props.dragging || props.rename ? undefined : props.peek}>
-      <div
-        role="button"
-        tabIndex={0}
-        onContextMenu={
-          props.onContextMenu
-            ? (event) => {
-                event.preventDefault();
-                props.onContextMenu?.({ x: event.clientX, y: event.clientY });
-              }
-            : undefined
-        }
-        aria-current={active ? "page" : undefined}
-        onClick={() => props.onOpen(newest)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            props.onOpen(newest);
+        <div
+          role="button"
+          tabIndex={0}
+          onContextMenu={
+            props.onContextMenu
+              ? (event) => {
+                  event.preventDefault();
+                  props.onContextMenu?.({ x: event.clientX, y: event.clientY });
+                }
+              : undefined
           }
-        }}
-        style={hue ? ({ "--octet-hue": hue } as React.CSSProperties) : undefined}
-        className={cn(
-          "group/sidebar-row relative w-full cursor-pointer overflow-hidden rounded-md text-left outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-          active
-            ? "bg-sidebar-row-active text-sidebar-foreground light:ring-1 light:ring-inset light:ring-sidebar-border/70"
-            : recede
-              ? "text-sidebar-muted-foreground/75 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
-              : "bg-transparent text-sidebar-foreground hover:bg-sidebar-row-hover",
-        )}
-      >
-        {hue ? (
-          // A hint of the card's colour over the row's fill: a little more on hover and when open.
-          <span
-            aria-hidden
-            data-testid="octet-card-hue"
-            className={cn(
-              "pointer-events-none absolute inset-0 transition-opacity",
-              active ? "opacity-[0.12]" : "opacity-[0.08] group-hover/sidebar-row:opacity-[0.2]",
-            )}
-            style={{ backgroundColor: hue }}
-          />
-        ) : null}
-        <div className="relative z-10 px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)">
-          {props.project ? (
-            <div className="flex h-5 min-w-0 items-center gap-1.5">
-              <ProjectFavicon project={props.project} className="size-4 shrink-0" />
-              <span className="min-w-0 flex-1 truncate font-normal text-secondary-label text-xs">
-                {props.projectName}
-              </span>
-            </div>
-          ) : null}
-          <div className={cn("flex min-w-0 items-center gap-1.5", props.project && "mt-1")}>
-            {props.rename ? (
-              <ThreadRenameInput
-                title={props.rename.title}
-                onTitleChange={props.rename.onChange}
-                onCommit={props.rename.onCommit}
-                onCancel={props.rename.onCancel}
-              />
-            ) : (
-              <span
-                className={cn(
-                  "min-w-0 flex-1 truncate text-start text-sm",
-                  recede
-                    ? "font-normal text-foreground/75 group-hover/sidebar-row:text-foreground"
-                    : "font-medium text-foreground",
-                )}
-              >
-                {newest.title}
-              </span>
-            )}
-            <span className="flex shrink-0 items-center gap-1 text-xs tabular-nums text-secondary-label">
-              {status ? (
-                <span className={cn("font-medium", status.className)}>{status.label}</span>
-              ) : (
-                <span className={cn(props.onNewThread && "group-hover/sidebar-row:hidden")}>
-                  {relativeAge(newest, props.nowMs)}
-                </span>
-              )}
-              {props.onNewThread ? (
-                <button
-                  type="button"
-                  aria-label="New thread on this branch"
-                  title="New thread on this branch"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    props.onNewThread?.();
-                  }}
-                  className="hidden size-4 cursor-pointer items-center justify-center text-sidebar-muted-foreground hover:text-sidebar-foreground group-hover/sidebar-row:flex"
-                >
-                  <SquarePenIcon className="size-3.5" aria-hidden />
-                </button>
-              ) : null}
-            </span>
-          </div>
-          <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
-            {newest.branch ? (
-              <>
-                <ThreadWorktreeIndicator thread={newest} />
-                <span className="flex min-w-0 flex-1">
-                  <MiddleTruncate value={newest.branch} showTitle={false} />
-                </span>
-              </>
-            ) : (
-              <span className="flex-1" />
-            )}
+          aria-current={active ? "page" : undefined}
+          onClick={() => props.onOpen(newest)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              props.onOpen(newest);
+            }
+          }}
+          style={hue ? ({ "--octet-hue": hue } as React.CSSProperties) : undefined}
+          className={cn(
+            "group/sidebar-row relative w-full cursor-pointer overflow-hidden rounded-md text-left outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+            active
+              ? "bg-sidebar-row-active text-sidebar-foreground light:ring-1 light:ring-inset light:ring-sidebar-border/70"
+              : recede
+                ? "text-sidebar-muted-foreground/75 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+                : "bg-transparent text-sidebar-foreground hover:bg-sidebar-row-hover",
+          )}
+        >
+          {hue ? (
+            // A hint of the card's colour over the row's fill: a little more on hover and when open.
             <span
               aria-hidden
-              className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
-            >
-              <SidebarProviderStack thread={newest} providerEntryByInstanceId={props.providerEntries} />
-            </span>
+              data-testid="octet-card-hue"
+              className={cn(
+                "pointer-events-none absolute inset-0 transition-opacity",
+                active ? "opacity-[0.12]" : "opacity-[0.08] group-hover/sidebar-row:opacity-[0.2]",
+              )}
+              style={{ backgroundColor: hue }}
+            />
+          ) : null}
+          <div className="relative z-10 px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)">
+            {props.project ? (
+              <div className="flex h-5 min-w-0 items-center gap-1.5">
+                <ProjectFavicon project={props.project} className="size-4 shrink-0" />
+                <span className="min-w-0 flex-1 truncate font-normal text-secondary-label text-xs">
+                  {props.projectName}
+                </span>
+              </div>
+            ) : null}
+            <div className={cn("flex min-w-0 items-center gap-1.5", props.project && "mt-1")}>
+              {props.rename ? (
+                <ThreadRenameInput
+                  title={props.rename.title}
+                  onTitleChange={props.rename.onChange}
+                  onCommit={props.rename.onCommit}
+                  onCancel={props.rename.onCancel}
+                />
+              ) : (
+                <span
+                  className={cn(
+                    "min-w-0 flex-1 truncate text-start text-sm",
+                    recede
+                      ? "font-normal text-foreground/75 group-hover/sidebar-row:text-foreground"
+                      : "font-medium text-foreground",
+                  )}
+                >
+                  {newest.title}
+                </span>
+              )}
+              <span className="flex shrink-0 items-center gap-1 text-xs tabular-nums text-secondary-label">
+                {status ? (
+                  <span className={cn("font-medium", status.className)}>{status.label}</span>
+                ) : (
+                  <span className={cn(props.onNewThread && "group-hover/sidebar-row:hidden")}>
+                    {relativeAge(newest, props.nowMs)}
+                  </span>
+                )}
+                {props.onNewThread ? (
+                  <button
+                    type="button"
+                    aria-label="New thread on this branch"
+                    title="New thread on this branch"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      props.onNewThread?.();
+                    }}
+                    className="hidden size-4 cursor-pointer items-center justify-center text-sidebar-muted-foreground hover:text-sidebar-foreground group-hover/sidebar-row:flex"
+                  >
+                    <SquarePenIcon className="size-3.5" aria-hidden />
+                  </button>
+                ) : null}
+              </span>
+            </div>
+            <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
+              {newest.branch ? (
+                <>
+                  <ThreadWorktreeIndicator thread={newest} />
+                  <span className="flex min-w-0 flex-1">
+                    <MiddleTruncate value={newest.branch} showTitle={false} />
+                  </span>
+                </>
+              ) : (
+                <span className="flex-1" />
+              )}
+              <span
+                aria-hidden
+                className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
+              >
+                <SidebarProviderStack
+                  thread={newest}
+                  providerEntryByInstanceId={props.providerEntries}
+                />
+              </span>
+            </div>
           </div>
+          {props.servers ? (
+            <ServicePortsRow servers={props.servers} onOpen={() => {}} />
+          ) : props.showServers ? (
+            <CardServers card={card} />
+          ) : null}
         </div>
-        {props.servers ? (
-          <ServicePortsRow servers={props.servers} onOpen={() => {}} />
-        ) : props.showServers ? (
-          <CardServers card={card} />
-        ) : null}
-      </div>
       </PeekFrame>
     </li>
   );
@@ -635,7 +653,9 @@ function Shelf(props: {
         onClick={props.onToggle}
         data-testid={`octet-${props.label.toLowerCase()}-shelf-toggle`}
         accessory={
-          <span className="font-normal tabular-nums">{props.threads.length + (props.extraCount ?? 0)}</span>
+          <span className="font-normal tabular-nums">
+            {props.threads.length + (props.extraCount ?? 0)}
+          </span>
         }
       >
         {props.label}

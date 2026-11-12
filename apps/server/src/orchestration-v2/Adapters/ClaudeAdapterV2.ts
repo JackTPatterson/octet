@@ -128,6 +128,7 @@ import {
   type RunId,
   type ThreadId,
   resolveIdleCompaction,
+  type McpServerSummary,
 } from "@t3tools/contracts";
 
 import { FILE_HEADERS_ONLY, formatPatch, structuredPatch } from "diff";
@@ -565,6 +566,15 @@ export interface ClaudeAgentSdkQuerySession {
     ReadonlyArray<ClaudeMcpServerStatus>,
     ClaudeAgentSdkQueryRunnerError
   >;
+  /** Absent on runners that can't reconnect a server; `/mcp` then hides Reconnect. */
+  readonly reconnectMcpServer?: (
+    server: string,
+  ) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
+  /** Absent on runners that can't toggle a server; `/mcp` then hides Enable/Disable. */
+  readonly toggleMcpServer?: (
+    server: string,
+    enabled: boolean,
+  ) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly readMcpResource: (input: {
     readonly server: string;
     readonly uri: string;
@@ -766,6 +776,46 @@ function claudeSupportsMcpApps(capabilities: ReadonlySet<string>): boolean {
 }
 
 // Claude Code routes `mcp__a__b__tool` to server `a` even when `a__b` is connected, so either prefix is ambiguous.
+/** The origin of a remote server's URL; never its path or query, which can carry tokens. */
+function mcpServerOrigin(config: unknown): string | undefined {
+  if (!Predicate.isObject(config) || typeof config.url !== "string") return undefined;
+  try {
+    const url = new URL(config.url);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.origin : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Claude's view of one MCP server, as `/mcp` lists it. */
+export function claudeMcpServerSummary(status: ClaudeMcpServerStatus): McpServerSummary {
+  const scope = status.scope ?? status.source;
+  const url = mcpServerOrigin(status.config);
+  return {
+    name: status.name,
+    status: status.status,
+    ...(status.error ? { error: status.error } : {}),
+    ...(scope ? { scope } : {}),
+    ...(url ? { url } : {}),
+    tools: (status.tools ?? []).flatMap((tool) =>
+      tool.name.trim()
+        ? [
+            {
+              name: tool.name.trim(),
+              ...(tool.description ? { description: tool.description } : {}),
+            },
+          ]
+        : [],
+    ),
+  };
+}
+
+/** The SDK's own reason for a failed MCP control request, when it gave one. */
+function claudeMcpErrorDetail(cause: ClaudeAgentSdkQueryRunnerError): string | undefined {
+  const inner = cause.cause;
+  return inner instanceof Error && inner.message.trim() ? inner.message.trim() : undefined;
+}
+
 function claudeMcpServerPrefixOverlaps(
   statuses: ReadonlyArray<ClaudeMcpServerStatus>,
   server: string,
@@ -1486,6 +1536,16 @@ export const layerQueryRunner: Layer.Layer<
               try: () => queryRuntime.mcpServerStatus(),
               catch: (cause) => queryRunnerError(cause, "mcpServerStatus"),
             }),
+            reconnectMcpServer: (server) =>
+              Effect.tryPromise({
+                try: () => queryRuntime.reconnectMcpServer(server),
+                catch: (cause) => queryRunnerError(cause, "reconnectMcpServer"),
+              }),
+            toggleMcpServer: (server, enabled) =>
+              Effect.tryPromise({
+                try: () => queryRuntime.toggleMcpServer(server, enabled),
+                catch: (cause) => queryRunnerError(cause, "toggleMcpServer"),
+              }),
             readMcpResource: ({ server, uri }) =>
               Effect.tryPromise({
                 try: () => queryRuntime.readMcpResource(server, uri),
@@ -7394,6 +7454,67 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           return liveQuery;
         });
 
+        /** The thread's live query for `/mcp`, which needs no MCP Apps support. */
+        const mcpServersQuery = Effect.fn("ClaudeAdapterV2.mcpServersQuery")(function* (
+          providerThread: OrchestrationV2ProviderThread,
+        ) {
+          const liveQuery = yield* Ref.get(queryContext);
+          if (
+            liveQuery === null ||
+            liveQuery.stopping ||
+            liveQuery.nativeThreadId !== providerThread.nativeThreadRef?.nativeId
+          ) {
+            return yield* new ProviderAdapter.ProviderAdapterSessionStoppedError({
+              driver: CLAUDE_PROVIDER,
+            });
+          }
+          return liveQuery;
+        });
+        const mcpServersError = (detail: string) => (cause: ClaudeAgentSdkQueryRunnerError) =>
+          new ProviderAdapter.ProviderAdapterProtocolError({
+            driver: CLAUDE_PROVIDER,
+            detail: claudeMcpErrorDetail(cause) ?? detail,
+            cause,
+          });
+        const mcpServersUnsupported = new ProviderAdapter.ProviderAdapterProtocolError({
+          driver: CLAUDE_PROVIDER,
+          detail: "This Claude process can't do that to an MCP server.",
+        });
+        const mcpServers: ProviderAdapter.ProviderAdapterV2McpServers = {
+          list: Effect.fn("ClaudeAdapterV2.listMcpServers")(function* ({ providerThread }) {
+            const liveQuery = yield* mcpServersQuery(providerThread);
+            const statuses = yield* liveQuery.query.mcpServerStatus.pipe(
+              Effect.mapError(mcpServersError("Couldn't read Claude's MCP servers.")),
+            );
+            return statuses.map(claudeMcpServerSummary);
+          }),
+          reconnect: Effect.fn("ClaudeAdapterV2.reconnectMcpServer")(function* ({
+            providerThread,
+            server,
+          }) {
+            const liveQuery = yield* mcpServersQuery(providerThread);
+            const reconnect = liveQuery.query.reconnectMcpServer;
+            if (reconnect === undefined) return yield* mcpServersUnsupported;
+            yield* reconnect(server).pipe(
+              Effect.mapError(mcpServersError(`Couldn't reconnect ${server}.`)),
+            );
+          }),
+          setEnabled: Effect.fn("ClaudeAdapterV2.toggleMcpServer")(function* ({
+            providerThread,
+            server,
+            enabled,
+          }) {
+            const liveQuery = yield* mcpServersQuery(providerThread);
+            const toggle = liveQuery.query.toggleMcpServer;
+            if (toggle === undefined) return yield* mcpServersUnsupported;
+            yield* toggle(server, enabled).pipe(
+              Effect.mapError(
+                mcpServersError(`Couldn't ${enabled ? "enable" : "disable"} ${server}.`),
+              ),
+            );
+          }),
+        };
+
         // Servers can connect after capture, and a forged app reference can name a colliding server.
         const mcpAppServerStatuses = Effect.fn("ClaudeAdapterV2.mcpAppServerStatuses")(function* (
           providerThread: OrchestrationV2ProviderThread,
@@ -11827,6 +11948,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               message: { ...turnInput.message, text: "/compact" },
             }),
           steerTurn,
+          mcpServers,
           mcpApps: {
             listTools: Effect.fn("ClaudeAdapterV2.listMcpTools")(function* ({
               providerThread,

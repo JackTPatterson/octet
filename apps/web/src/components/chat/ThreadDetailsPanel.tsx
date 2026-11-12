@@ -1,3 +1,5 @@
+import { latestThreadTasks, ThreadTasksCard } from "./ThreadTasksCard";
+import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import type {
   EditorId,
   EnvironmentId,
@@ -61,6 +63,7 @@ interface ThreadDetailsPanelProps extends Pick<
   showOpenInPicker: boolean;
   openInShortcutEnabled: boolean;
   gitCwd: string | null;
+  taskProjection: Pick<ThreadStructure, "turnItems"> | null;
   isGitRepo: boolean;
   envLocked: boolean;
   availableEnvironments: readonly EnvironmentOption[];
@@ -125,6 +128,14 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
       threadRef={{ environmentId: props.environmentId, threadId: props.threadId }}
       anchor={props.anchor}
       handle={props.handle}
+      additionalCard={
+        latestThreadTasks(props.taskProjection?.turnItems ?? [])?.steps.length ? (
+          <ThreadTasksCard
+            key={`${props.environmentId}:${props.threadId}`}
+            projection={props.taskProjection}
+          />
+        ) : null
+      }
       contentKey={THREAD_DETAILS_ITEMS.filter((item) => visible[item.id])
         .map((item) => item.id)
         .join(",")}

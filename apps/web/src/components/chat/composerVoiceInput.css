@@ -1,0 +1,58 @@
+[data-slot="composer-shell"] {
+  interpolate-size: allow-keywords;
+  transition:
+    width 240ms cubic-bezier(0.22, 1, 0.36, 1),
+    height 240ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+[data-slot="composer-shell"][data-voice-recording="true"] {
+  /* Half the composer, but never too short for the status line and a readable waveform
+     (nor taller than the composer itself). */
+  width: min(var(--voice-width), max(calc(var(--voice-width) / 2), 240px));
+  height: min(var(--voice-height), max(calc(var(--voice-height) / 2), 72px));
+  min-width: 0;
+  overflow: hidden;
+}
+[data-voice-recording="true"] > :not([data-voice-overlay]) {
+  opacity: 0;
+  pointer-events: none;
+}
+[data-voice-overlay] {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 16px;
+  border-radius: inherit;
+  background: var(--card);
+  pointer-events: none;
+}
+/* The waveform takes the height the status line leaves (up to 32px) and its bars are a share
+   of it, so a short composer shows a shorter waveform instead of clipping one. */
+[data-voice-waveform] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  flex: 1 1 0;
+  align-self: stretch;
+  min-height: 12px;
+  max-height: 32px;
+  min-width: 0;
+}
+[data-voice-waveform] > span {
+  flex: 0 1 3px;
+  min-width: 1px;
+  border-radius: 99px;
+  background: var(--primary);
+  transition: height 80ms linear;
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="composer-shell"],
+  [data-voice-waveform] > span {
+    transition: none;
+  }
+}

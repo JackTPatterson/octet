@@ -787,6 +787,93 @@ effectIt.effect.each(["linux", "darwin"] as const)(
   },
 );
 
+effectIt.effect("recognizes container runtimes as shared daemons, not agent servers", () =>
+  Effect.sync(() => {
+    for (const command of [
+      "/Applications/Docker.app/Contents/MacOS/com.docker.backend",
+      "/Applications/Docker.app/Contents/MacOS/com.docker.backend services PATH=/usr/bin",
+      "/Applications/OrbStack.app/Contents/Frameworks/OrbStack Helper.app/Contents/MacOS/OrbStack Helper",
+      "/usr/bin/dockerd",
+      "/usr/bin/docker-proxy -proto tcp -host-port 5432",
+      "/opt/homebrew/bin/limactl hostagent colima",
+      "  gvproxy -listen unix:///tmp/podman.sock",
+    ]) {
+      expect(PortScanner.isSharedDaemonCommand(command)).toBe(true);
+    }
+    for (const command of [
+      "node server.js PATH=/Applications/Docker.app/Contents/Resources/bin",
+      "/usr/local/bin/node /Users/dev/docker-app/server.js",
+      "python3 -m http.server DOCKER_HOST=unix:///var/run/docker.sock",
+      "postgres -D /data",
+    ]) {
+      expect(PortScanner.isSharedDaemonCommand(command)).toBe(false);
+    }
+  }),
+);
+
+effectIt.effect.each(["linux", "darwin"] as const)(
+  "never credits a container runtime an agent launched to that agent's thread on %s",
+  (platform) => {
+    const appPort = 43_130;
+    const containerPort = 43_131;
+    const marked = `${PortScanner.AGENT_THREAD_ENV}=thread-agent`;
+    const files: Record<string, string> = {
+      "/proc/4242/environ": `PATH=/usr/bin\0${marked}\0`,
+      "/proc/4242/cmdline": "node\0server.js\0",
+      "/proc/6000/environ": `PATH=/usr/bin\0${marked}\0`,
+      "/proc/6000/cmdline": "/usr/bin/dockerd\0",
+    };
+    const missing = FileSystem.makeNoop({});
+    const layer = PortScanner.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          FileSystem.layerNoop({
+            readFileString: (path) =>
+              files[path] === undefined
+                ? missing.readFileString(path)
+                : Effect.succeed(files[path]!),
+          }),
+          Layer.succeed(ProcessRunner.ProcessRunner, {
+            run: (input) => {
+              if (input.command === "lsof") {
+                return Effect.succeed(
+                  processOutput(
+                    `p4242\ncnode\nn127.0.0.1:${appPort}\n` +
+                      `p6000\ncdockerd\nn127.0.0.1:${containerPort}\n`,
+                  ),
+                );
+              }
+              if (input.args[0] === "-A") return Effect.succeed(processOutput(""));
+              return Effect.succeed(
+                processOutput(
+                  `  4242 node server.js PATH=/usr/bin ${marked}\n` +
+                    `  6000 /Applications/Docker.app/Contents/MacOS/com.docker.backend PATH=/usr/bin ${marked}\n`,
+                ),
+              );
+            },
+          }),
+          Layer.succeed(HostProcess.Platform, platform),
+          FetchHttpClient.layer.pipe(
+            Layer.provide(
+              Layer.succeed(FetchHttpClient.Fetch, () =>
+                Promise.resolve(new Response("app", { headers: { "content-type": "text/html" } })),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const scanner = yield* PortScanner.PortDiscovery;
+      scanner.trackAgent()();
+      expect(yield* scanner.scan()).toMatchObject([
+        { port: appPort, pid: 4242, agent: { threadId: "thread-agent" } },
+      ]);
+    }).pipe(Effect.provide(layer));
+  },
+);
+
 effectIt.effect("stops only a job's own process group", () =>
   Effect.sync(() => {
     const serverPid = 100;

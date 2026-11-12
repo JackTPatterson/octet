@@ -45,6 +45,7 @@ function Card({
   rows = 1,
   automationRows = 0,
   serverOverflowRows = 0,
+  additionalRows = 0,
 }: {
   threadRef: ScopedThreadRef;
   inline: boolean;
@@ -55,6 +56,7 @@ function Card({
   automationRows?: number;
   /** Rows of 100px that expanded server lists add, which density ignores. */
   serverOverflowRows?: number;
+  additionalRows?: number;
 }) {
   return (
     // The web root renders in StrictMode, which re-runs ref callbacks on every mount.
@@ -77,6 +79,11 @@ function Card({
           anchor={fixture.anchor}
           handle={fixture.handle}
           contentKey={String(rows)}
+          additionalCard={
+            additionalRows ? (
+              <div style={{ height: additionalRows * 100 }}>Project tasks</div>
+            ) : null
+          }
         >
           {(density) => (
             <>
@@ -190,7 +197,14 @@ it("keeps full density when many automations make the content tall", async () =>
 it("stays full while expanded server rows overflow", async () => {
   using fixture = setup();
   await using _screen = await render(
-    <Card threadRef={threadB} inline fixture={fixture} rows={2} serverOverflowRows={4} />,
+    <Card
+      threadRef={threadB}
+      inline
+      fixture={fixture}
+      rows={2}
+      serverOverflowRows={4}
+      additionalRows={4}
+    />,
   );
   await expect
     .element(page.getByRole("region", { name: "Thread details" }))

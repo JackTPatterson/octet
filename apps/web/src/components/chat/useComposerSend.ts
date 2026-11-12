@@ -15,6 +15,7 @@ import {
   makeThreadErrorSetter,
 } from "../ChatView.logic";
 import { isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
+import { isMcpCommand } from "@t3tools/shared/mcpCommand";
 import {
   AuthOrchestrationOperateScope,
   DEFAULT_MODEL,
@@ -213,6 +214,8 @@ interface ComposerSendInput {
   readonly usageLimitsOffered: boolean;
   readonly openUsageLimits: UsageLimitsPanel["open"];
   readonly clearUsageLimitsFor: UsageLimitsPanel["clearFor"];
+  /** Opens Octet's MCP servers dialog for a sent `/mcp`; null when the thread can't show one. */
+  readonly openMcpServers: (() => void) | null;
   readonly needsLoadBalancing: boolean;
   readonly loadBalancing: DraftEnvironmentRouting["loadBalancing"];
   readonly readPendingEnvironmentChange: DraftEnvironmentRouting["readPendingEnvironmentChange"];
@@ -308,6 +311,7 @@ export function useComposerSend(input: ComposerSendInput) {
     usageLimitsOffered,
     openUsageLimits,
     clearUsageLimitsFor,
+    openMcpServers,
     needsLoadBalancing,
     loadBalancing,
     readPendingEnvironmentChange,
@@ -415,6 +419,19 @@ export function useComposerSend(input: ComposerSendInput) {
     // What the user pressed send on; uploads below can take a while, and a redirect must not
     // decline approvals for a draft that changed meanwhile.
     const promptAtSend = promptRef.current;
+    // `/mcp` is Octet's, not the agent's: the CLIs' own needs their interactive terminal UI.
+    if (
+      openMcpServers !== null &&
+      !directAnnotation &&
+      !draftHasNonPromptContent(composerDraftTarget) &&
+      isMcpCommand(promptRef.current)
+    ) {
+      promptRef.current = "";
+      setComposerDraftPrompt(composerDraftTarget, "");
+      composerRef.current?.resetCursorState();
+      openMcpServers();
+      return;
+    }
     if (
       usageLimitsOffered &&
       usageLimitsKey !== null &&

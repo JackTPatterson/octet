@@ -237,17 +237,12 @@ export const make = Effect.gen(function* () {
       {
         label: "View",
         submenu: [
-          /* Native reload/DevTools/zoom roles target focused guests; these commands must target the app. */
+          /* Native reload/zoom roles target focused guests; these commands must target the app. */
           { label: "Reload", accelerator: "CmdOrCtrl+R", click: mainContentsClick("reload") },
           {
             label: "Force Reload",
             accelerator: "Shift+CmdOrCtrl+R",
             click: mainContentsClick("forceReload"),
-          },
-          {
-            label: "Toggle Developer Tools",
-            accelerator: environment.platform === "darwin" ? "Alt+Command+I" : "Ctrl+Shift+I",
-            click: mainContentsClick("toggleDevTools"),
           },
           { type: "separator" },
           { label: "Actual Size", accelerator: "CmdOrCtrl+0", click: zoomClick("reset") },

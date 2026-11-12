@@ -31,7 +31,9 @@ export interface EarlyLinuxElectronOptions {
 }
 
 export const resolveLinuxDesktopEntryName = (isDevelopment: boolean): string =>
-  isDevelopment ? "com.jpxsoftware.OctetNext.Development.desktop" : "com.jpxsoftware.OctetNext.desktop";
+  isDevelopment
+    ? "com.jpxsoftware.OctetNext.Development.desktop"
+    : "com.jpxsoftware.OctetNext.desktop";
 
 const trimNonEmpty = (value: string | undefined): string | null => {
   const trimmed = value?.trim();
@@ -152,6 +154,14 @@ export function resolveEarlyLinuxElectronOptions(
     }),
   };
 }
+
+/** Chromium switches that open the app to a remote debugger; removed at startup. */
+export const REMOTE_DEBUGGING_SWITCHES = [
+  "remote-debugging-port",
+  "remote-debugging-pipe",
+  "remote-debugging-address",
+  "remote-allow-origins",
+] as const;
 
 /** Remember the explicit Chromium scale across AppImage updates, which drop launch arguments. */
 export function restoreEarlyLinuxDeviceScaleFactor(

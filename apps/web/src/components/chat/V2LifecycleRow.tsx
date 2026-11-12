@@ -72,6 +72,8 @@ export function V2LifecycleRow(props: {
   readonly resourceSummary?: boolean | undefined;
   readonly runs: ReadonlyArray<HandoffTimelineRun>;
   readonly onOpenThread: (threadId: ThreadId) => void;
+  /** One line per agent (name and time) for narrow trees; status lives in the dot and tooltip. */
+  readonly compact?: boolean | undefined;
 }) {
   const { item } = props;
   if (item.type === "run_interrupt_result") {
@@ -161,6 +163,7 @@ export function V2LifecycleRow(props: {
         threadId={item.childThreadId}
         remote={item.remoteChild}
         onOpenThread={props.onOpenThread}
+        compact={props.compact}
       />
     );
   }
@@ -409,6 +412,7 @@ function SubagentTimelineLink(props: {
   /** The thread in a linked environment that runs this task, when it runs there. */
   readonly remote?: OrchestrationV2RemoteTaskChild | undefined;
   readonly onOpenThread: (threadId: ThreadId) => void;
+  readonly compact?: boolean | undefined;
   readonly event?: {
     readonly status: OrchestrationV2TurnItem["status"] | null;
     readonly label: string;
@@ -449,6 +453,25 @@ function SubagentTimelineLink(props: {
     startedAt: isoOrNull(agent?.startedAt ?? props.startedAt),
     completedAt: isoOrNull(agent?.completedAt ?? props.completedAt),
   };
+  const compactContent = (
+    <>
+      <EnvironmentSubagentAvatar
+        environmentId={props.parentRef.environmentId}
+        providerInstanceId={props.providerInstanceId}
+        driver={props.driver}
+        remote={remote}
+        status={status ?? undefined}
+      />
+      <span className="min-w-0 flex-1 truncate text-xs text-foreground/90">{props.title}</span>
+      {failed ? (
+        <span className="shrink-0 text-2xs text-destructive">{statusLabel}</span>
+      ) : settled ? null : (
+        <span className="shrink-0 text-2xs text-muted-foreground/80 tabular-nums">
+          <SubagentElapsed agent={timing} />
+        </span>
+      )}
+    </>
+  );
   const content = (
     <>
       <EnvironmentSubagentAvatar
@@ -500,8 +523,9 @@ function SubagentTimelineLink(props: {
       ) : null}
     </>
   );
-  const className =
-    "group/subagent flex w-full min-w-0 items-center gap-2.5 rounded-md px-2 py-1.5 text-left";
+  const className = props.compact
+    ? "group/subagent flex w-full min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-left"
+    : "group/subagent flex w-full min-w-0 items-center gap-2.5 rounded-md px-2 py-1.5 text-left";
   return (
     <Tooltip>
       <TooltipTrigger
@@ -509,7 +533,7 @@ function SubagentTimelineLink(props: {
         render={
           open === null ? (
             <div data-v2-item-type="subagent" aria-description={statusLabel} className={className}>
-              {content}
+              {props.compact ? compactContent : content}
             </div>
           ) : (
             <button
@@ -523,7 +547,7 @@ function SubagentTimelineLink(props: {
                 "cursor-pointer transition-colors hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
               )}
             >
-              {content}
+              {props.compact ? compactContent : content}
             </button>
           )
         }

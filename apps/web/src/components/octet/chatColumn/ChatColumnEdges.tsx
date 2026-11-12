@@ -4,6 +4,7 @@ import { useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { updateClientSettings, useClientSettings } from "../../../hooks/useSettings";
 import { observeResize } from "../../../lib/observeResize";
 import { cn } from "~/lib/utils";
+import { Tooltip, TooltipTrigger, TooltipPopup } from "../../ui/tooltip";
 import {
   chatColumnWidth,
   distinctChatWidths,
@@ -14,25 +15,25 @@ import {
 const STRIP_PX = 12;
 /** Clear of the find bar along the top. */
 const TOP_INSET_PX = 44;
+// The message minimap occupies the first 72px along the left edge.
+const MINIMAP_WIDTH_PX = 72;
 const LABELS: Record<ChatWidth, string> = {
   comfortable: "Comfortable",
   wide: "Wide",
   full: "Full",
 };
 
-/**
- * Octet's conversation width control: a strip just outside each edge of the chat column.
- * Hovering one shows a grip; dragging it moves the column between its widths as the
- * pointer passes them, both edges at once since the column stays centred. Escape (or
- * leaving the window) puts it back, a double-click goes back to the default width, and
- * the arrow keys step it. One choice for every thread, kept in the Chat width setting.
- */
 export function ChatColumnEdges() {
   const chatWidth = useClientSettings((settings) => settings.chatWidth);
   const [available, setAvailable] = useState(0);
   const [hovered, setHovered] = useState(false);
-  const [dragging, setDragging] = useState(false);
-  const drag = useRef<{ pointerId: number; start: ChatWidth; left: number } | null>(null);
+  const [draggingSide, setDraggingSide] = useState<string | null>(null);
+  const dragging = draggingSide !== null;
+  const drag = useRef<{
+    pointerId: number;
+    start: ChatWidth;
+    left: number;
+  } | null>(null);
   const stopObserving = useRef<(() => void) | null>(null);
   const abort = useRef<(() => void) | null>(null);
 
@@ -52,7 +53,7 @@ export function ChatColumnEdges() {
     abort.current?.();
     abort.current = null;
     drag.current = null;
-    setDragging(false);
+    setDraggingSide(null);
     if (revertTo) updateClientSettings({ chatWidth: revertTo });
   };
 
@@ -63,8 +64,12 @@ export function ChatColumnEdges() {
     event.currentTarget.setPointerCapture(event.pointerId);
     event.preventDefault();
     const start = chatWidth;
-    drag.current = { pointerId: event.pointerId, start, left: container.getBoundingClientRect().left };
-    setDragging(true);
+    drag.current = {
+      pointerId: event.pointerId,
+      start,
+      left: container.getBoundingClientRect().left,
+    };
+    setDraggingSide(event.currentTarget.dataset.side ?? "right");
     // Escape, or leaving the window, puts the width back as it was.
     const cancel = () => endDrag(start);
     const onKeyDown = (key: globalThis.KeyboardEvent) => {
@@ -105,43 +110,50 @@ export function ChatColumnEdges() {
   const column = chatColumnWidth(chatWidth, available);
   const lit = hovered || dragging;
   const strip = (side: "left" | "right") => (
-    <div
-      key={side}
-      role="separator"
-      aria-orientation="vertical"
-      aria-label="Conversation width"
-      aria-valuetext={LABELS[chatWidth]}
-      data-side={side}
-      data-testid={`chat-column-edge-${side}`}
-      tabIndex={0}
-      title="Drag to widen the conversation. Double-click to reset."
-      className="group pointer-events-auto absolute inset-y-0 cursor-col-resize touch-none select-none outline-none"
-      style={{
-        width: STRIP_PX,
-        left:
-          side === "left"
-            ? Math.max(0, available / 2 - column / 2 - STRIP_PX - 2)
-            : Math.min(available - STRIP_PX, available / 2 + column / 2 + 2),
-      }}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={() => endDrag(drag.current?.start)}
-      onLostPointerCapture={() => drag.current && endDrag()}
-      onPointerEnter={() => setHovered(true)}
-      onPointerLeave={() => setHovered(false)}
-      onDoubleClick={() => set("comfortable")}
-      onKeyDown={onKeyDown}
-    >
-      <span
-        aria-hidden
-        className={cn(
-          "pointer-events-none absolute top-1/2 left-1/2 h-11 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-border opacity-0 transition-opacity duration-150 group-focus-visible:bg-primary/60 group-focus-visible:opacity-100",
-          lit && "opacity-100",
-          dragging && "bg-primary/60",
-        )}
+    <Tooltip key={side}>
+      <TooltipTrigger
+        render={
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Conversation width"
+            aria-valuetext={LABELS[chatWidth]}
+            data-side={side}
+            data-testid={`chat-column-edge-${side}`}
+            tabIndex={0}
+            className="group pointer-events-auto absolute inset-y-0 cursor-col-resize touch-none select-none outline-none"
+            style={{
+              width: STRIP_PX,
+              left:
+                side === "left"
+                  ? Math.max(0, available / 2 - column / 2 - STRIP_PX - 2)
+                  : Math.min(available - STRIP_PX, available / 2 + column / 2 + 2),
+            }}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerCancel={() => endDrag(drag.current?.start)}
+            onLostPointerCapture={() => drag.current && endDrag()}
+            onPointerEnter={() => setHovered(true)}
+            onPointerLeave={() => setHovered(false)}
+            onDoubleClick={() => set("comfortable")}
+            onKeyDown={onKeyDown}
+          >
+            <span
+              aria-hidden
+              className={cn(
+                "pointer-events-none absolute top-1/2 left-1/2 h-11 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-border opacity-0 transition-opacity duration-150 group-focus-visible:bg-primary/60 group-focus-visible:opacity-100",
+                lit && "opacity-100",
+                dragging && "bg-primary/60",
+              )}
+            />
+          </div>
+        }
       />
-    </div>
+      <TooltipPopup side="right">
+        Drag to resize the conversation. Double-click to reset.
+      </TooltipPopup>
+    </Tooltip>
   );
 
   return (
@@ -153,7 +165,9 @@ export function ChatColumnEdges() {
       {/* A window too narrow for more than one width has nothing to drag between. */}
       {distinctChatWidths(available).length > 1 ? (
         <>
-          {strip("left")}
+          {available / 2 - column / 2 - STRIP_PX - 2 >= MINIMAP_WIDTH_PX || draggingSide === "left"
+            ? strip("left")
+            : null}
           {strip("right")}
         </>
       ) : null}

@@ -38,6 +38,23 @@ const makeEnvironment = (
 ) => DesktopEnvironment.DesktopEnvironment.pipe(Effect.provide(layerEnvironment(overrides, env)));
 
 describe("DesktopEnvironment", () => {
+  it.effect(
+    "isolates an explicitly configured desktop profile without changing the home directory",
+    () =>
+      Effect.gen(function* () {
+        const environment = yield* makeEnvironment(
+          {},
+          {
+            T3CODE_DESKTOP_APP_DATA_DIR: "/tmp/octet-demo/profile",
+            T3CODE_HOME: "/tmp/octet-demo",
+          },
+        );
+        assert.equal(environment.appDataDirectory, "/tmp/octet-demo/profile");
+        assert.equal(environment.homeDirectory, "/Users/alice");
+        assert.equal(environment.baseDir, "/tmp/octet-demo");
+      }),
+  );
+
   it.effect("uses the packaged Windows server sidecar as the backend root", () =>
     Effect.gen(function* () {
       const environment = yield* makeEnvironment({

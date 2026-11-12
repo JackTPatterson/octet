@@ -1,3 +1,4 @@
+import { ComposerVoiceInput } from "./chat/ComposerVoiceInput";
 import { documentChipKindForFileName } from "~/pierre-icons";
 import { isProviderSkillUserInvocable } from "@t3tools/client-runtime/providerSkills";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
@@ -1775,6 +1776,7 @@ function ComposerPromptEditorTiptapInner(
               containerClassName,
             )}
           >
+            <ComposerVoiceInput editor={editor} />
             <EditorContent
               editor={editor}
               onKeyDown={(event) => {

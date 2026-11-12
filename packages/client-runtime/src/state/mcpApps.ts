@@ -29,5 +29,17 @@ export function createMcpAppEnvironmentAtoms<R, E>(
       label: "environment-command:mcp-apps:update-model-context",
       tag: WS_METHODS.mcpAppsUpdateModelContext,
     }),
+    /** `/mcp`: the thread's running agent's MCP servers, re-read while the dialog is open. */
+    listServersQuery: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:mcp-servers:list",
+      tag: WS_METHODS.mcpServersList,
+      staleTimeMs: 0,
+      refreshIntervalMs: 5_000,
+      idleTtlMs: 0,
+    }),
+    serverAction: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:mcp-servers:action",
+      tag: WS_METHODS.mcpServersAction,
+    }),
   };
 }

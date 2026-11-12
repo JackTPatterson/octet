@@ -193,11 +193,6 @@ const setAudioMuted = DesktopIpc.makeIpcMethod({
     yield* manager.setAudioMuted(tabId, audioMuted);
   }),
 });
-const openDevTools = tabMethod(
-  IpcChannels.PREVIEW_OPEN_DEVTOOLS_CHANNEL,
-  "desktop.ipc.preview.openDevTools",
-  (manager, tabId) => manager.openDevTools(tabId),
-);
 const cancelPickElement = tabMethod(
   IpcChannels.PREVIEW_CANCEL_PICK_ELEMENT_CHANNEL,
   "desktop.ipc.preview.cancelPickElement",
@@ -432,7 +427,6 @@ export const methods = [
   setColorScheme,
   setZoomFactor,
   setAudioMuted,
-  openDevTools,
   clearCookies,
   clearCache,
   getPreviewConfig,

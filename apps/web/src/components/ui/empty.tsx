@@ -3,6 +3,8 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "~/lib/utils";
 
 const emptySizeClassName = {
+  panel:
+    "gap-3 p-6 [&_[data-slot=empty-title]]:text-sm [&_[data-slot=empty-description]]:text-xs [&_[data-slot=empty-description]]:leading-5",
   compact:
     "min-h-64 gap-4 p-6 md:p-10 [&_[data-slot=empty-media]]:mb-0 [&_[data-slot=empty-title]]:text-[1.0625rem] [&_[data-slot=empty-title]]:leading-6 [&_[data-slot=empty-description]]:text-[0.8125rem] [&_[data-slot=empty-description]]:leading-[1.125rem]",
   default: "gap-6 p-6 md:p-12",
@@ -120,3 +122,30 @@ function EmptyContent({ className, ...props }: React.ComponentProps<"div">) {
 }
 
 export { Empty, EmptyHeader, EmptyTitle, EmptyDescription, EmptyContent, EmptyMedia };
+
+export function PanelEmptyState({
+  title,
+  description,
+  icon,
+  children,
+}: {
+  readonly title: string;
+  readonly description?: React.ReactNode;
+  readonly icon?: React.ReactNode;
+  readonly children?: React.ReactNode;
+}) {
+  return (
+    <Empty size="panel">
+      {icon ? (
+        <div aria-hidden="true" className="text-muted-foreground [&_svg]:size-6">
+          {icon}
+        </div>
+      ) : null}
+      <EmptyHeader>
+        <EmptyTitle>{title}</EmptyTitle>
+        {description ? <EmptyDescription>{description}</EmptyDescription> : null}
+      </EmptyHeader>
+      {children ? <EmptyContent>{children}</EmptyContent> : null}
+    </Empty>
+  );
+}

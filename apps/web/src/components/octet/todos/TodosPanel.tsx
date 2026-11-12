@@ -1,75 +1,28 @@
-import { AuthFilesystemWriteScope, type EnvironmentId, type ScopedThreadRef } from "@t3tools/contracts";
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useProjectTodoFile } from "./useProjectTodoFile";
+import { AuthFilesystemWriteScope, type ScopedThreadRef } from "@t3tools/contracts";
+import { useState, type KeyboardEvent } from "react";
 
 import { cn } from "~/lib/utils";
 import { projectEnvironment } from "../../../state/projects";
-import { useEnvironmentQuery } from "../../../state/query";
 import { useEnvironmentScope } from "../../../state/session";
 import { useAtomCommand } from "../../../state/use-atom-command";
 import { Checkbox } from "../../ui/checkbox";
 import { CollapsibleSectionHeader } from "../../ui/collapsible-section-header";
 import { Input } from "../../ui/input";
 import {
-  PROJECT_TODO_FILE_NAMES,
   addingTodo,
   parseProjectTodos,
   settingTodoStatus,
   type ProjectTodoItem,
 } from "./projectTodos.logic";
 
-const REFRESH_MS = 2_500;
-
-function useTodoFileRead(environmentId: EnvironmentId, cwd: string | null, relativePath: string) {
-  return useEnvironmentQuery(
-    cwd === null
-      ? null
-      : projectEnvironment.readFile({
-          environmentId,
-          input: { cwd, relativePath, allowMissing: true },
-        }),
-  );
-}
-
-/** The project's list: the first of the usual names that exists, else where a new one would go. */
-function useProjectTodoFile(environmentId: EnvironmentId, cwd: string | null) {
-  const queries = [
-    useTodoFileRead(environmentId, cwd, PROJECT_TODO_FILE_NAMES[0]),
-    useTodoFileRead(environmentId, cwd, PROJECT_TODO_FILE_NAMES[1]),
-    useTodoFileRead(environmentId, cwd, PROJECT_TODO_FILE_NAMES[2]),
-    useTodoFileRead(environmentId, cwd, PROJECT_TODO_FILE_NAMES[3]),
-  ];
-  const index = queries.findIndex((query) => query.data && query.data.exists !== false);
-  const found = index >= 0 ? queries[index]! : null;
-  const refreshAll = useRef(() => {});
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- polls the file while the panel is mounted, as agents and editors tick items elsewhere
-  useEffect(() => {
-    refreshAll.current = () => queries.forEach((query) => query.refresh());
-  });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- polls the file while the panel is mounted, as agents and editors tick items elsewhere
-  useEffect(() => {
-    if (cwd === null) return;
-    const timer = setInterval(() => refreshAll.current(), REFRESH_MS);
-    return () => clearInterval(timer);
-  }, [cwd]);
-  return {
-    fileName: index >= 0 ? PROJECT_TODO_FILE_NAMES[index]! : PROJECT_TODO_FILE_NAMES[0],
-    contents: found?.data?.contents ?? "",
-    loaded: queries.every((query) => !query.isPending) || found !== null,
-    refresh: () => refreshAll.current(),
-  };
-}
-
-/**
- * Octet's TODO plane: the project's own list (`TODO.md`) you can tick and
- * add to. Rows, checkboxes, the input and the
- * section headers are T3's own.
- */
 export function TodosPanel(props: {
   readonly threadRef: ScopedThreadRef;
-  /** The project's root, where `TODO.md` lives. */
   readonly projectRoot: string | null;
+  readonly variant?: "panel" | "card";
 }) {
   const { environmentId } = props.threadRef;
+  const card = props.variant === "card";
   const canWrite = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
   const writeFile = useAtomCommand(projectEnvironment.writeFile, { reportFailure: false });
   const file = useProjectTodoFile(environmentId, props.projectRoot);
@@ -105,7 +58,11 @@ export function TodosPanel(props: {
     const fresh = parseProjectTodos(file.contents).items.find((entry) => entry.id === item.id);
     void save(
       fresh
-        ? settingTodoStatus(fresh.status === "completed" ? "pending" : "completed", fresh.line, file.contents)
+        ? settingTodoStatus(
+            fresh.status === "completed" ? "pending" : "completed",
+            fresh.line,
+            file.contents,
+          )
         : null,
     );
   };
@@ -155,7 +112,13 @@ export function TodosPanel(props: {
   );
 
   return (
-    <div data-octet-todos-panel="" className="flex h-full min-h-0 flex-col overflow-y-auto px-3 py-2">
+    <div
+      data-octet-todos-panel=""
+      className={cn(
+        "flex min-h-0 flex-col px-3 py-2",
+        card ? "dropdown-glass overflow-hidden rounded-2xl" : "h-full overflow-y-auto",
+      )}
+    >
       <section data-todos-section="project">
         <CollapsibleSectionHeader
           variant="panel"
@@ -163,11 +126,11 @@ export function TodosPanel(props: {
           onClick={() => setProjectOpen((value) => !value)}
           accessory={
             <span className="text-muted-foreground tabular-nums">
-              {file.fileName} · {open.length}
+              {card ? `${open.length} open` : `${file.fileName} · ${open.length}`}
             </span>
           }
         >
-          Project
+          {card ? "TODO" : "Project"}
         </CollapsibleSectionHeader>
         {projectOpen ? (
           <div className="mt-1">
@@ -177,11 +140,14 @@ export function TodosPanel(props: {
               </p>
             ) : list.items.length === 0 && file.loaded ? (
               <p className="px-2 py-1 text-muted-foreground text-xs">
-                No items in {file.fileName} yet. Add one below{canWrite ? "" : " (needs write access)"}.
+                No items in {file.fileName} yet. Add one below
+                {canWrite ? "" : " (needs write access)"}.
               </p>
             ) : null}
             {open.length > 0 ? (
-              <ul className="rounded-lg border border-border/60 bg-card/30 p-1">{open.map(row)}</ul>
+              <ul className={card ? "py-1" : "rounded-lg border border-border/60 bg-card/30 p-1"}>
+                {open.map(row)}
+              </ul>
             ) : null}
             {canWrite && props.projectRoot !== null ? (
               <div className="mt-2">
@@ -203,12 +169,18 @@ export function TodosPanel(props: {
                   variant="panel"
                   expanded={doneOpen}
                   onClick={() => setDoneOpen((value) => !value)}
-                  accessory={<span className="text-muted-foreground tabular-nums">{done.length}</span>}
+                  accessory={
+                    <span className="text-muted-foreground tabular-nums">{done.length}</span>
+                  }
                 >
                   Done
                 </CollapsibleSectionHeader>
                 {doneOpen ? (
-                  <ul className="mt-1 rounded-lg border border-border/60 bg-card/30 p-1">
+                  <ul
+                    className={
+                      card ? "mt-1" : "mt-1 rounded-lg border border-border/60 bg-card/30 p-1"
+                    }
+                  >
                     {done.map(row)}
                   </ul>
                 ) : null}

@@ -132,7 +132,9 @@ export function AgentTabBar(props: {
     open(next);
     // The new tab is the same element once the route changes; focus follows it.
     requestAnimationFrame(() =>
-      listRef.current?.querySelector<HTMLElement>(`[data-tab-id="${CSS.escape(next.id)}"] [role="tab"]`)?.focus(),
+      listRef.current
+        ?.querySelector<HTMLElement>(`[data-tab-id="${CSS.escape(next.id)}"] [role="tab"]`)
+        ?.focus(),
     );
   };
 
@@ -159,7 +161,11 @@ export function AgentTabBar(props: {
           // A helper of another agent: the agent mark, so it reads as a subagent, not another session.
           <BotIcon aria-hidden className="size-3.5 text-muted-foreground" />
         ) : providerEntries && saved ? (
-          <SidebarProviderStack thread={shell as never} providerEntryByInstanceId={providerEntries} />
+          <SidebarProviderStack
+            thread={shell as never}
+            providerEntryByInstanceId={providerEntries}
+            currentOnly
+          />
         ) : saved ? null : (
           // A draft has no provider yet; the compose icon fills the slot.
           <SquarePenIcon aria-hidden className="size-3.5 text-muted-foreground" />
@@ -220,7 +226,9 @@ export function AgentTabBar(props: {
               className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left outline-none focus-visible:underline"
             >
               <span className="min-w-0 truncate">{title}</span>
-              {dot ? <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", dot)} /> : null}
+              {dot ? (
+                <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", dot)} />
+              ) : null}
             </button>
           </div>
         );

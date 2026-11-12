@@ -2,7 +2,7 @@ import "../../../index.css";
 
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { beforeEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../../test/render";
@@ -48,26 +48,35 @@ import { TodosPanel } from "./TodosPanel";
 
 const threadRef = scopeThreadRef(EnvironmentId.make("env"), ThreadId.make("thread"));
 
-beforeEach(() => {
+function setup() {
   fixture.files = {};
   fixture.writes = [];
   fixture.refreshes = 0;
-});
+}
 
-function panel() {
+function panel(variant: "panel" | "card" = "panel") {
   return (
-    <div style={{ width: 380, height: 460 }} className="bg-background text-foreground">
-      <TodosPanel threadRef={threadRef} projectRoot="/work/app" />
+    <div
+      style={{ width: variant === "card" ? 280 : 380, minHeight: 280 }}
+      className="bg-background text-foreground"
+    >
+      <TodosPanel threadRef={threadRef} projectRoot="/work/app" variant={variant} />
     </div>
   );
 }
 
 it("shows the project's list and ticks an item in the file", async () => {
-  fixture.files["TODO.md"] = "# TODO\n\n## Now\n- [ ] Port the sidebar\n- [~] Status bar\n- [x] Rebrand\n";
-  await using screen = await render(panel());
+  setup();
+  fixture.files["TODO.md"] =
+    "# TODO\n\n## Now\n- [ ] Port the sidebar\n- [~] Status bar\n- [x] Rebrand\n";
+  await using screen = await render(panel("card"));
 
   expect(page.getByText("Agent plan").elements()).toHaveLength(0);
   await expect.element(page.getByText("Port the sidebar")).toBeVisible();
+  await page.screenshot({
+    path: "__screenshots__/project-todo-card.png",
+    element: screen.container.firstElementChild as HTMLElement,
+  });
   // Done items fold away until asked.
   expect(page.getByText("Rebrand").elements()).toHaveLength(0);
   await page.screenshot({
@@ -85,6 +94,7 @@ it("shows the project's list and ticks an item in the file", async () => {
 });
 
 it("adds an item with Enter, creating TODO.md when there is none", async () => {
+  setup();
   await using _screen = await render(panel());
   await expect.element(page.getByText(/No items in TODO.md yet/)).toBeVisible();
   const input = page.getByLabelText("Add a TODO item");
@@ -99,6 +109,7 @@ it("adds an item with Enter, creating TODO.md when there is none", async () => {
 });
 
 it("uses an existing lowercase todo.md and shows done items on request", async () => {
+  setup();
   fixture.files["todo.md"] = "- [ ] Open one\n- [x] Closed one\n";
   await using _screen = await render(panel());
   await expect.element(page.getByText("Open one")).toBeVisible();

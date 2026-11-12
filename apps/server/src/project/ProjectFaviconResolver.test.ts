@@ -104,6 +104,59 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
     );
   });
 
+  describe("apps that keep their icon away from the root", () => {
+    it.effect("finds an Xcode app target's icon set at the top level", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const path = yield* Path.Path;
+        const app = yield* makeTempDir;
+        const set = "Mac/Assets.xcassets/AppIcon.appiconset";
+        yield* writeTextFile(
+          app,
+          `${set}/Contents.json`,
+          JSON.stringify({
+            images: [
+              { filename: "small.png", size: "16x16", scale: "1x" },
+              { filename: "large.png", size: "512x512", scale: "2x" },
+            ],
+          }),
+        );
+        yield* writeTextFile(app, `${set}/small.png`, "png");
+        yield* writeTextFile(app, `${set}/large.png`, "png");
+        expect(yield* resolver.resolvePath(app)).toBe(path.join(app, set, "large.png"));
+      }),
+    );
+
+    it.effect("uses a monorepo web app's linked favicon before a mobile app's icon", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const path = yield* Path.Path;
+        const repo = yield* makeTempDir;
+        yield* writeTextFile(repo, "apps/mobile/assets/images/icon.png", "png");
+        yield* writeTextFile(
+          repo,
+          "apps/web/src/index.html",
+          '<link rel="icon" href="assets/favicon.png" />',
+        );
+        yield* writeTextFile(repo, "apps/web/src/assets/favicon.png", "png");
+        expect(yield* resolver.resolvePath(repo)).toBe(
+          path.join(repo, "apps/web/src/assets/favicon.png"),
+        );
+      }),
+    );
+
+    it.effect("prefers the root's own icon over any subproject's", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const path = yield* Path.Path;
+        const repo = yield* makeTempDir;
+        yield* writeTextFile(repo, "apps/web/public/favicon.svg", "<svg/>");
+        yield* writeTextFile(repo, "public/favicon.svg", "<svg/>");
+        expect(yield* resolver.resolvePath(repo)).toBe(path.join(repo, "public/favicon.svg"));
+      }),
+    );
+  });
+
   describe("appIconEntryPixels / largestAppIconFile", () => {
     it("reads sizes and scales, and ignores what is not a PNG", () => {
       expect(ProjectFaviconResolver.appIconEntryPixels({ size: "60x60", scale: "3x" })).toBe(180);

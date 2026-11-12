@@ -182,6 +182,8 @@ function terminalProcessLabel(count: number): string {
 export function SidebarProviderStack(props: {
   thread: SidebarThreadSummary;
   providerEntryByInstanceId: ReadonlyMap<string, SidebarProviderEntry>;
+  /** Only the current provider, for a one-icon slot such as a tab's close button. */
+  currentOnly?: boolean;
 }) {
   const stack = resolveThreadProviderStack(props.thread);
   const currentInstanceId = stack[stack.length - 1]!;
@@ -203,7 +205,7 @@ export function SidebarProviderStack(props: {
       iconClassName="opacity-60"
     />
   );
-  if (stack.length === 1) {
+  if (stack.length === 1 || props.currentOnly) {
     return <span className="inline-flex shrink-0 items-center">{current}</span>;
   }
   return (

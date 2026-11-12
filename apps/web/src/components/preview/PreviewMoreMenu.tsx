@@ -35,7 +35,6 @@ export interface PreviewMoreMenuActions {
   readonly resetZoom: () => void;
   readonly clearCookies: () => void;
   readonly clearCache: () => void;
-  readonly openDevTools?: () => void;
   readonly toggleNativePictureInPicture?: () => void;
 }
 
@@ -86,11 +85,6 @@ export function PreviewMoreMenu({
         <MenuItem onClick={actions.hardReload} disabled={disabled}>
           Hard reload
         </MenuItem>
-        {actions.openDevTools ? (
-          <MenuItem onClick={actions.openDevTools} disabled={disabled}>
-            Open DevTools
-          </MenuItem>
-        ) : null}
         {actions.toggleNativePictureInPicture ? (
           <MenuItem onClick={actions.toggleNativePictureInPicture} disabled={disabled}>
             {nativePictureInPicture

@@ -2019,23 +2019,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const hardReload = (tabId: string) =>
     withWebContents("hardReload", tabId, (wc) => wc.reloadIgnoringCache());
 
-  const openDevTools = Effect.fn("PreviewManager.openDevTools")(function* (tabId: string) {
-    const wc = yield* requireWebContents(tabId);
-    if (wc.isDevToolsOpened()) {
-      yield* attempt({ operation: "openDevTools.focus", tabId, webContentsId: wc.id }, () =>
-        wc.devToolsWebContents?.focus(),
-      );
-      return;
-    }
-    yield* detachControlSession(wc.id);
-    yield* attempt({ operation: "openDevTools", tabId, webContentsId: wc.id }, () => {
-      wc.once("devtools-closed", () => {
-        if (!wc.isDestroyed()) runFork(restoreControlSession(tabId, wc));
-      });
-      wc.openDevTools({ mode: "detach" });
-    });
-  });
-
   const setAnnotationTheme = Effect.fn("PreviewManager.setAnnotationTheme")(function* (
     theme: DesktopPreviewAnnotationTheme,
   ) {
@@ -3293,7 +3276,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     hardReload,
     navigate,
     openPictureInPicture,
-    openDevTools,
     pickElement,
     prepareWebview,
     reapplyZoom,
@@ -3512,7 +3494,6 @@ export class PreviewManager extends Context.Service<
       tabId: string,
       audioMuted: boolean,
     ) => Effect.Effect<void, PreviewManagerError>;
-    readonly openDevTools: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly clearCookies: (
       partitions?: ReadonlyArray<string>,
     ) => Effect.Effect<void, PreviewManagerError>;
@@ -3652,7 +3633,6 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     setColorScheme: operations.setColorScheme,
     setZoomFactor: operations.setZoomFactor,
     setAudioMuted: operations.setAudioMuted,
-    openDevTools: operations.openDevTools,
     clearCookies: Effect.fn("PreviewManager.clearCookies")(function* (partitions) {
       yield* browserSession
         .clearCookies(partitions)

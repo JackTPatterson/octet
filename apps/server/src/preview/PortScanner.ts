@@ -356,6 +356,17 @@ const lsofProcessIds = (raw: string): ReadonlyArray<number> => {
 
 const AGENT_THREAD_ASSIGNMENT = new RegExp(`(?:^|\\s)${AGENT_THREAD_ENV}=(\\S+)`);
 
+/**
+ * Container runtimes hold every published container port in one long-lived process. An agent that
+ * happens to launch one passes on its thread id, which would credit that thread with every
+ * container on the machine and offer to stop the runtime, so these never belong to a thread.
+ */
+const SHARED_DAEMON_EXECUTABLE =
+  /^(?:\/Applications\/(?:Docker|OrbStack|Rancher Desktop|Podman Desktop)\.app\/|(?:\S*\/)?(?:com\.docker\.\S+|vpnkit\S*|docker-proxy|dockerd|containerd\S*|gvproxy|rootlessport|limactl|colima|podman|orbstack\S*)(?:\s|$))/;
+
+export const isSharedDaemonCommand = (command: string): boolean =>
+  SHARED_DAEMON_EXECUTABLE.test(command.trimStart());
+
 /** Reads `/proc/<pid>/environ`, whose entries are NUL-separated. */
 const parseProcEnvironThread = (raw: string): ThreadId | null => {
   const prefix = `${AGENT_THREAD_ENV}=`;
@@ -376,7 +387,9 @@ const parsePsEnvironmentThreads = (raw: string): ReadonlyMap<number, ThreadId | 
   for (const line of raw.split("\n")) {
     const match = /^\s*(\d+)\s(.*)$/.exec(line);
     if (!match) continue;
-    const value = AGENT_THREAD_ASSIGNMENT.exec(match[2]!)?.[1];
+    const value = isSharedDaemonCommand(match[2]!)
+      ? undefined
+      : AGENT_THREAD_ASSIGNMENT.exec(match[2]!)?.[1];
     threads.set(Number(match[1]), value ? ThreadId.make(value) : null);
   }
   return threads;
@@ -496,6 +509,17 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
                 (pid) =>
                   fileSystem.readFileString(`/proc/${pid}/environ`).pipe(
                     Effect.map(parseProcEnvironThread),
+                    // Only a marked process costs a second read, of its executable.
+                    Effect.flatMap((threadId) =>
+                      threadId === null
+                        ? Effect.succeed(null)
+                        : fileSystem.readFileString(`/proc/${pid}/cmdline`).pipe(
+                            Effect.map((cmdline) =>
+                              isSharedDaemonCommand(cmdline.split("\0")[0] ?? "") ? null : threadId,
+                            ),
+                            Effect.orElseSucceed(() => threadId),
+                          ),
+                    ),
                     Effect.orElseSucceed(() => null),
                     Effect.map((threadId) => [pid, threadId] as const),
                   ),

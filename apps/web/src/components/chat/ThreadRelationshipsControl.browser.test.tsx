@@ -1,5 +1,4 @@
-import * as DateTime from "effect/DateTime";
-import { EnvironmentId, NodeId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
@@ -9,6 +8,7 @@ const state = vi.hoisted(() => ({
   projection: null as unknown,
   commandSucceeds: false,
   relatedShells: [] as unknown[],
+  activity: { live: [] as unknown[], finished: [] as unknown[] },
 }));
 
 vi.mock(import("@effect/atom-react"), async (original) => ({
@@ -27,6 +27,21 @@ vi.mock(import("../../state/entities"), () => ({
   useProjects: (() => []) as never,
   useHiddenThreadKeys: (() => new Set()) as never,
   useAnyEnvironmentHiding: (() => false) as never,
+  // The Lineage activity tree's rows.
+  useProject: (() => null) as never,
+  useThreadShell: (() => null) as never,
+  useQuietThreadProjection: (() => null) as never,
+}));
+// The tree has its own tests (OverviewPanel); here only what Lineage hands it matters.
+vi.mock(import("../octet/overview/ActivityTree"), () => ({
+  useActivityForest: (() => state.activity) as never,
+  ActivityTree: ((props: { forest: { live: unknown[]; finished: unknown[] } }) => (
+    <div
+      data-testid="activity-tree"
+      data-live={props.forest.live.length}
+      data-finished={props.forest.finished.length}
+    />
+  )) as never,
 }));
 vi.mock(import("../../state/environments"), () => ({
   useEnvironment: (() => null) as never,
@@ -43,7 +58,6 @@ vi.mock(import("../../state/use-atom-command"), () => ({
 }));
 
 import { render } from "../../../test/render";
-import { makeThreadProjectionFixture } from "../../test-fixtures";
 import { ToastProvider } from "../ui/toast";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
 
@@ -51,6 +65,7 @@ const environmentId = EnvironmentId.make("environment");
 const threadId = ThreadId.make("fork");
 
 function setup() {
+  state.activity = { live: [], finished: [] };
   state.commandSucceeds = false;
   state.relatedShells = [];
   state.projection = {
@@ -146,54 +161,6 @@ it.each([
   }
 });
 
-it("opens an idle child from Lineage when its shell has not been loaded", async () => {
-  setup();
-  const projection = makeThreadProjectionFixture();
-  const childId = ThreadId.make("omitted-child");
-  const environmentId = EnvironmentId.make("local");
-  state.projection = {
-    ...projection,
-    subagents: [
-      {
-        id: NodeId.make("agent"),
-        threadId: projection.thread.id,
-        runId: null,
-        parentNodeId: NodeId.make("parent"),
-        origin: "app_owned",
-        createdBy: "agent",
-        driver: "codex",
-        providerInstanceId: projection.thread.providerInstanceId,
-        providerThreadId: null,
-        childThreadId: childId,
-        nativeTaskRef: null,
-        prompt: "Inspect the change",
-        title: "Idle child",
-        model: null,
-        status: "completed",
-        result: null,
-        startedAt: null,
-        completedAt: projection.thread.updatedAt,
-        updatedAt: projection.thread.updatedAt,
-      },
-    ],
-  };
-  await using screen = await render(
-    <ThreadRelationshipsPanel
-      environmentId={environmentId}
-      threadId={projection.thread.id}
-      showLineage
-      showSideChats
-    />,
-  );
-  await screen.getByRole("button", { name: /Previous agents/ }).click();
-  const child = screen.getByRole("button", { name: /Idle child/ });
-  await expect.element(child).toBeEnabled();
-  await child.click();
-  await vi.waitFor(() =>
-    expect(screen.router?.state.location.pathname).toBe("/local/omitted-child"),
-  );
-});
-
 it("shows a lineage thread's full title in its tooltip", async () => {
   setup();
   const longTitle = "Compare the lineage tooltip against a title that the row truncates";
@@ -249,66 +216,6 @@ it("shows a side chat's full title in its tooltip", async () => {
   );
 });
 
-it("shows a remote subagent's full title in its tooltip even when its environment is unavailable", async () => {
-  setup();
-  const longTitle = "Investigate a remote subagent issue across linked environments";
-  const remoteEnvId = EnvironmentId.make("remote-env");
-  const remoteThreadId = ThreadId.make("remote-thread");
-  const now = DateTime.makeUnsafe("2026-10-31T20:00:00.000Z");
-  state.projection = {
-    ...(state.projection as Record<string, unknown>),
-    subagents: [
-      {
-        id: NodeId.make("remote-agent"),
-        threadId,
-        runId: null,
-        parentNodeId: NodeId.make("parent"),
-        origin: "app_owned",
-        createdBy: "agent",
-        driver: "codex",
-        providerInstanceId: "provider",
-        providerThreadId: null,
-        childThreadId: null,
-        nativeTaskRef: null,
-        prompt: "Run remote task",
-        title: longTitle,
-        model: null,
-        status: "completed",
-        result: null,
-        startedAt: null,
-        completedAt: null,
-        updatedAt: now,
-        remoteChild: {
-          environmentId: remoteEnvId,
-          threadId: remoteThreadId,
-          label: "Remote VM",
-        },
-      },
-    ],
-  };
-  await using screen = await render(
-    <ThreadRelationshipsPanel
-      environmentId={environmentId}
-      threadId={threadId}
-      showLineage
-      showSideChats={false}
-    />,
-    { router: "/environment/fork" },
-  );
-
-  const row = screen.getByRole("button", { name: new RegExp(longTitle) });
-  await userEvent.hover(row);
-  await vi.waitFor(() =>
-    expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toContain(longTitle),
-  );
-  expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toContain(
-    "Runs on Remote VM. Connect to it to open the thread there.",
-  );
-
-  await row.click({ force: true });
-  expect(screen.router?.state.location.pathname).toBe("/environment/fork");
-});
-
 it("shows a delegated-from thread's full title in its tooltip even when its environment is unavailable", async () => {
   setup();
   const longTitle = "Parent task delegated from another machine that has a long description";
@@ -344,4 +251,56 @@ it("shows a delegated-from thread's full title in its tooltip even when its envi
 
   await row.click({ force: true });
   expect(screen.router?.state.location.pathname).toBe("/environment/fork");
+});
+
+it("shows the thread's agents as the activity tree, with live ones in the heading", async () => {
+  setup();
+  const agent = (live: boolean) => ({
+    task: { taskId: live ? "live" : "done", kind: "subagent", live },
+    children: [],
+  });
+  state.activity = { live: [agent(true)], finished: [agent(false), agent(false)] };
+  await using screen = await render(
+    <ThreadRelationshipsPanel
+      environmentId={environmentId}
+      threadId={threadId}
+      showLineage
+      showSideChats
+    />,
+  );
+  const tree = screen.getByTestId("activity-tree");
+  await expect.element(tree).toBeInTheDocument();
+  expect(tree.element().getAttribute("data-live")).toBe("1");
+  expect(tree.element().getAttribute("data-finished")).toBe("2");
+  await expect.element(screen.getByText("Lineage · 1 running")).toBeVisible();
+});
+
+it("lists the thread's shells and monitors in their own section, not in Lineage", async () => {
+  setup();
+  const work = (taskId: string, kind: "command" | "monitor", label: string) => ({
+    task: { taskId, kind, label, startedAt: null, live: true },
+    children: [],
+  });
+  state.activity = {
+    live: [
+      {
+        task: { taskId: "agent", kind: "subagent", live: true },
+        children: [work("ssh", "command", "ssh deploy@host")],
+      },
+      work("tail", "monitor", "tail -f build.log"),
+    ],
+    finished: [],
+  };
+  await using screen = await render(
+    <ThreadRelationshipsPanel
+      environmentId={environmentId}
+      threadId={threadId}
+      showLineage
+      showSideChats
+    />,
+  );
+  await expect.element(screen.getByText("Shells & monitors · 2")).toBeVisible();
+  await expect.element(screen.getByText("ssh deploy@host")).toBeVisible();
+  await expect.element(screen.getByText("tail -f build.log")).toBeVisible();
+  await expect.element(screen.getByText("Lineage · 1 running")).toBeVisible();
 });

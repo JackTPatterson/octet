@@ -1,3 +1,4 @@
+import { SurfaceActivity, type SurfaceActivityContext } from "./SurfaceActivity";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
@@ -107,6 +108,7 @@ import { observeResize } from "~/lib/observeResize";
 import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
 
 export interface RightPanelTabsProps {
+  activityContext?: SurfaceActivityContext | undefined;
   mode: PreviewPanelMode;
   maximized?: boolean;
   open?: boolean;
@@ -322,7 +324,8 @@ function SurfaceMenuItem(props: {
   return <DisabledReasonTooltip reason={props.disabledReason} trigger={item} />;
 }
 
-function RightPanelEmptyState(props: {
+export function RightPanelEmptyState(props: {
+  activityContext?: SurfaceActivityContext | undefined;
   onAddBrowser: () => void;
   onAddBrowserInProfile: (profileId: string) => void;
   browserProfiles: ReadonlyArray<{ readonly id: string; readonly name: string }>;
@@ -547,6 +550,17 @@ function RightPanelEmptyState(props: {
                   >
                     {action.label}
                   </span>
+                  {props.activityContext ? (
+                    <span
+                      className={
+                        action.label === "Browser" && props.browserProfiles.length > 1
+                          ? "mr-7"
+                          : undefined
+                      }
+                    >
+                      <SurfaceActivity label={action.label} context={props.activityContext} />
+                    </span>
+                  ) : null}
                   <Kbd>{action.shortcut}</Kbd>
                 </button>
                 {action.label === "Browser" && props.browserProfiles.length > 1 ? (
@@ -1489,6 +1503,12 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                           >
                             <Icon />
                             {action.label}
+                            {addSurfaceMenuOpen && props.activityContext ? (
+                              <SurfaceActivity
+                                label={action.label}
+                                context={props.activityContext}
+                              />
+                            ) : null}
                             <MenuShortcut>{action.shortcut}</MenuShortcut>
                           </MenuSubTrigger>
                           <MenuSubPopup className="max-w-56">
@@ -1514,6 +1534,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                       >
                         <Icon />
                         {action.label}
+                        {addSurfaceMenuOpen && action.available && props.activityContext ? (
+                          <SurfaceActivity label={action.label} context={props.activityContext} />
+                        ) : null}
                       </SurfaceMenuItem>
                     );
                   })}
@@ -1580,6 +1603,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       <div className="flex min-h-0 flex-1 flex-col" data-right-panel-surface-content>
         {props.activeSurfaceId === null ? (
           <RightPanelEmptyState
+            activityContext={props.open === false ? undefined : props.activityContext}
             onAddBrowser={props.onAddBrowser}
             onAddBrowserInProfile={props.onAddBrowserInProfile}
             browserProfiles={browserProfiles}

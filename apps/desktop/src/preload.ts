@@ -1,5 +1,6 @@
 import type {
   DesktopBridge,
+  DesktopVoiceEvent,
   DesktopPreviewOpenLinkEvent,
   DesktopPreviewPointerEvent,
   DesktopPreviewRecordingInputEvent,
@@ -73,6 +74,20 @@ function unwrapEnsureSshEnvironmentResult(result: unknown) {
 }
 
 contextBridge.exposeInMainWorld("desktopBridge", {
+  ...(clientPlatform === "darwin"
+    ? {
+        voiceInput: {
+          control: (input: { id: string; action: "start" | "stop" | "cancel" }) =>
+            ipcRenderer.invoke(IpcChannels.VOICE_CONTROL_CHANNEL, input),
+          subscribe: (listener: (event: DesktopVoiceEvent) => void) => {
+            const handler = (_event: Electron.IpcRendererEvent, value: DesktopVoiceEvent) =>
+              listener(value);
+            ipcRenderer.on(IpcChannels.VOICE_EVENT_CHANNEL, handler);
+            return () => ipcRenderer.removeListener(IpcChannels.VOICE_EVENT_CHANNEL, handler);
+          },
+        },
+      }
+    : {}),
   getAppBranding: () => {
     const result = ipcRenderer.sendSync(IpcChannels.GET_APP_BRANDING_CHANNEL);
     if (typeof result !== "object" || result === null) {
@@ -348,8 +363,6 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.invoke(IpcChannels.PREVIEW_SET_COLOR_SCHEME_CHANNEL, { tabId, colorScheme }),
     setAudioMuted: (tabId, audioMuted) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_SET_AUDIO_MUTED_CHANNEL, { tabId, audioMuted }),
-    openDevTools: (tabId) =>
-      ipcRenderer.invoke(IpcChannels.PREVIEW_OPEN_DEVTOOLS_CHANNEL, { tabId }),
     listBrowserImportSources: () => ipcRenderer.invoke(IpcChannels.PREVIEW_IMPORT_SOURCES_CHANNEL),
     importBrowserCookies: (input) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_IMPORT_COOKIES_CHANNEL, input),

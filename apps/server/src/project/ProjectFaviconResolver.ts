@@ -108,7 +108,8 @@ export function appIconEntryPixels(entry: {
   readonly size?: unknown;
   readonly scale?: unknown;
 }): number {
-  const size = typeof entry.size === "string" ? Number.parseFloat(entry.size.split("x")[0] ?? "") : NaN;
+  const size =
+    typeof entry.size === "string" ? Number.parseFloat(entry.size.split("x")[0] ?? "") : NaN;
   const scale = typeof entry.scale === "string" ? Number.parseFloat(entry.scale) : 1;
   return Number.isFinite(size) ? size * (Number.isFinite(scale) ? scale : 1) : 0;
 }
@@ -116,7 +117,9 @@ export function appIconEntryPixels(entry: {
 /** The file of the largest PNG in an `AppIcon.appiconset`'s Contents.json, or null. */
 export function largestAppIconFile(contentsJson: string): string | null {
   try {
-    const parsed = JSON.parse(contentsJson) as { readonly images?: ReadonlyArray<Record<string, unknown>> };
+    const parsed = JSON.parse(contentsJson) as {
+      readonly images?: ReadonlyArray<Record<string, unknown>>;
+    };
     let best: { readonly file: string; readonly pixels: number } | null = null;
     for (const entry of parsed.images ?? []) {
       const file = entry.filename;
@@ -129,6 +132,13 @@ export function largestAppIconFile(contentsJson: string): string | null {
     return null;
   }
 }
+
+/**
+ * Where a monorepo keeps the projects that carry the icon (a web app in `apps/web`, a mobile
+ * app in `apps/mobile`): searched, one level deep, only when the root has no icon of its own.
+ */
+const SUBPROJECT_PARENTS = ["apps", "packages"] as const;
+const SUBPROJECT_DIRS = ["web", "site", "website", "www", "frontend", "client", "app"] as const;
 
 const ICON_SOURCE_FILES = [
   "index.html",
@@ -299,7 +309,14 @@ export const make = Effect.gen(function* () {
     if (!href) {
       return null;
     }
-    return yield* findExistingFile(projectCwd, resolveIconHref(href), "workspace");
+    // An href is relative to the page, so also try it beside the source file
+    // (`src/index.html` linking `assets/favicon.png` means `src/assets/favicon.png`).
+    const besideSource = path.join(path.dirname(sourceFile), href.replace(/^\//, ""));
+    return yield* findExistingFile(
+      projectCwd,
+      [...resolveIconHref(href), besideSource],
+      "workspace",
+    );
   });
 
   /** The largest icon of an Xcode `AppIcon.appiconset` one level below the project, if any. */
@@ -307,13 +324,17 @@ export const make = Effect.gen(function* () {
     projectCwd: string,
   ): Effect.fn.Return<string | null, ProjectFaviconResolutionError> {
     for (const parent of APP_ICON_SET_PARENTS) {
-      const parentPath = yield* workspacePaths
-        .resolveRelativePathWithinRoot({ workspaceRoot: projectCwd, relativePath: parent === "" ? "." : parent })
-        .pipe(Effect.catch(() => Effect.succeed(null)));
+      // The root itself is not a path "within" the root, so it is taken as is.
+      const parentPath =
+        parent === ""
+          ? { absolutePath: projectCwd }
+          : yield* workspacePaths
+              .resolveRelativePathWithinRoot({ workspaceRoot: projectCwd, relativePath: parent })
+              .pipe(Effect.orElseSucceed(() => null));
       if (parentPath === null) continue;
       const entries = yield* fileSystem
         .readDirectory(parentPath.absolutePath)
-        .pipe(Effect.catch(() => Effect.succeed([] as string[])));
+        .pipe(Effect.orElseSucceed(() => [] as string[]));
       // The app target's folder, with its catalog inside; skip hidden and dependency folders.
       for (const entry of entries.toSorted()) {
         if (entry.startsWith(".") || entry === "node_modules" || entry === "Pods") continue;
@@ -321,17 +342,44 @@ export const make = Effect.gen(function* () {
           const setDir = path.join(parentPath.absolutePath, entry, catalog, "AppIcon.appiconset");
           const contents = yield* fileSystem
             .readFileString(path.join(setDir, "Contents.json"))
-            .pipe(Effect.catch(() => Effect.succeed(null)));
+            .pipe(Effect.orElseSucceed(() => null));
           if (contents === null) continue;
           const file = largestAppIconFile(contents);
           if (file === null) continue;
           const image = path.join(setDir, file);
-          const stats = yield* fileSystem.stat(image).pipe(Effect.catch(() => Effect.succeed(null)));
+          const stats = yield* fileSystem.stat(image).pipe(Effect.orElseSucceed(() => null));
           if (stats !== null && stats.type === "File") return image;
         }
       }
     }
     return null;
+  });
+
+  /** A monorepo's app folders (`apps/web`, `packages/ui`, `web`), in a stable order. */
+  const findSubprojects = Effect.fn("ProjectFaviconResolver.findSubprojects")(function* (
+    projectCwd: string,
+  ): Effect.fn.Return<ReadonlyArray<string>> {
+    const isDirectory = (dir: string) =>
+      fileSystem.stat(dir).pipe(
+        Effect.map((stats) => stats.type === "Directory"),
+        Effect.orElseSucceed(() => false),
+      );
+    const found: string[] = [];
+    for (const parent of SUBPROJECT_PARENTS) {
+      const entries = yield* fileSystem
+        .readDirectory(path.join(projectCwd, parent))
+        .pipe(Effect.orElseSucceed(() => [] as string[]));
+      for (const entry of entries.toSorted()) {
+        if (entry.startsWith(".") || entry === "node_modules") continue;
+        const dir = path.join(projectCwd, parent, entry);
+        if (yield* isDirectory(dir)) found.push(dir);
+      }
+    }
+    for (const name of SUBPROJECT_DIRS) {
+      const dir = path.join(projectCwd, name);
+      if (yield* isDirectory(dir)) found.push(dir);
+    }
+    return found;
   });
 
   // Probe concurrently but join in list order so lower-ranked probes cannot delay a hit.
@@ -404,7 +452,33 @@ export const make = Effect.gen(function* () {
     if (appIcon) {
       return appIcon;
     }
-    return yield* findAppIconSetImage(projectCwd);
+    const appIconSet = yield* findAppIconSetImage(projectCwd);
+    if (appIconSet) {
+      return appIconSet;
+    }
+
+    // A monorepo: its apps' icons, each kind across all of them before the next, so a web
+    // app's favicon wins over a mobile app's launcher icon.
+    const subprojects = yield* findSubprojects(projectCwd);
+    for (const probe of [
+      (dir: string) =>
+        firstInOrder(FAVICON_CANDIDATES, (candidate) =>
+          findExistingFile(dir, [candidate], "workspace"),
+        ),
+      (dir: string) =>
+        firstInOrder(ICON_SOURCE_FILES, (sourceFile) => findIconFromSource(dir, sourceFile)),
+      (dir: string) =>
+        firstInOrder(APP_ICON_CANDIDATES, (candidate) =>
+          findExistingFile(dir, [candidate], "workspace"),
+        ),
+      findAppIconSetImage,
+    ]) {
+      const found = yield* firstInOrder(subprojects, probe);
+      if (found) {
+        return found;
+      }
+    }
+    return null;
   });
 
   const faviconCache = yield* Cache.makeWith<string, string | null, ProjectFaviconResolutionError>(

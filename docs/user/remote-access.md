@@ -85,7 +85,7 @@ all that keeps other devices on them out.
 If a server is already running, generate a fresh link without restarting it:
 
 ```bash
-t3 pair
+octet pair
 ```
 
 Scan the QR code on your phone or paste the pairing URL into **Add environment**
@@ -181,7 +181,7 @@ t3 serve --tailscale-serve
 For an already-running server:
 
 ```bash
-t3 pair --tailscale
+octet pair --tailscale
 ```
 
 The pairing link uses an address such as `https://machine.tailnet.ts.net/`.
@@ -193,7 +193,7 @@ tailscale serve --https=443 --set-path=/ off
 ```
 
 If that port is already in use, choose another with
-`--tailscale-serve-port`. See `t3 pair --help` for other pairing options.
+`--tailscale-serve-port`. See `octet pair --help` for other pairing options.
 
 ### Hosted web app
 
@@ -375,7 +375,7 @@ expires.
 To choose a token's permissions, pass `--scope` once for each scope you want:
 
 ```sh
-npx t3 pair --scope orchestration:read --scope relay:read
+octet pair --scope orchestration:read --scope relay:read
 ```
 
 The selected scopes replace the default permissions. The same option works with

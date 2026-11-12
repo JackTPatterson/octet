@@ -1,3 +1,6 @@
+import { PullRequestGlyph } from "../../pullRequest/pullRequestIcons";
+import { CircleCheckIcon } from "lucide-react";
+import { PanelEmptyState } from "../../ui/empty";
 import { selectEnvironmentQueryData } from "@t3tools/client-runtime/state/runtime";
 import type {
   EnvironmentId,
@@ -39,18 +42,27 @@ export function CiPanel(props: {
     reference === null
       ? null
       : pullRequestEnvironment.checks({ environmentId: props.environmentId, input: reference });
-  const checks = useEnvironmentQuerySelector(checksAtom, selectEnvironmentQueryData)?.checks ?? null;
+  const checks =
+    useEnvironmentQuerySelector(checksAtom, selectEnvironmentQueryData)?.checks ?? null;
   const state = checks ? pullRequestChecksState(checks) : null;
   const presentation = state ? pullRequestChecksStatePresentation(state) : null;
 
   return (
     <div data-octet-ci-panel="" className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto p-3">
       {pullRequest === null || pullRequest === undefined ? (
-        <p className="text-muted-foreground text-sm">
-          This branch has no pull request yet, so there is no CI to show. Push it and open one.
-        </p>
+        <PanelEmptyState
+          icon={<PullRequestGlyph.pullRequest />}
+          title="No pull request yet"
+          description="Push this branch and open a pull request to see its checks here."
+        />
       ) : checks === null ? (
         <p className="text-muted-foreground text-sm">Loading checks for #{pullRequest.number}…</p>
+      ) : checks.length === 0 ? (
+        <PanelEmptyState
+          icon={<CircleCheckIcon />}
+          title="No checks yet"
+          description="Checks will appear here when they are reported for this pull request."
+        />
       ) : (
         <>
           <div className="flex items-center gap-2">
@@ -60,7 +72,9 @@ export function CiPanel(props: {
                 className={cn("size-4 shrink-0", presentation.toneClassName)}
               />
             ) : null}
-            <span className="font-medium text-sm">{presentation?.label ?? "No checks reported"}</span>
+            <span className="font-medium text-sm">
+              {presentation?.label ?? "No checks reported"}
+            </span>
             <span className="text-muted-foreground text-xs">#{pullRequest.number}</span>
           </div>
           {checks.length > 0 ? (

@@ -1,3 +1,4 @@
+import { mcpToolActivityIcon } from "./mcpServerLogos.ts";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
 import { COMPUTER_USE_TOOL_SOURCE, dynamicToolSurface } from "@t3tools/shared/toolActivity";
 import type {
@@ -128,7 +129,12 @@ export function extractToolActivityPresentation(
     toolSurface === "computer" && retainedSource?.kind !== "computer"
       ? COMPUTER_USE_TOOL_SOURCE
       : retainedSource;
-  const toolIcon = activityIcon(payload?.toolIcon);
+  // An MCP call with no icon of its own shows its service's logo (GitHub, Linear, Gmail…).
+  const toolIcon =
+    activityIcon(payload?.toolIcon) ??
+    (payload?.type === "dynamic_tool" && toolSurface === undefined
+      ? mcpToolActivityIcon(typeof payload.toolName === "string" ? payload.toolName : undefined)
+      : undefined);
   const viewedImagePath = trimmedString(payload?.viewedImagePath, 4096);
   return {
     ...(toolSurface ? { toolSurface } : {}),

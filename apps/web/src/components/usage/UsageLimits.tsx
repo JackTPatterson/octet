@@ -117,10 +117,12 @@ function WindowBar({
   color,
   window,
   now,
+  thin = false,
 }: {
   readonly color: string;
   readonly window: ServerProviderUsageWindow;
   readonly now: number;
+  readonly thin?: boolean;
 }) {
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const remaining = remainingPercent(window);
@@ -143,16 +145,18 @@ function WindowBar({
             role="img"
             aria-label={summary}
             tabIndex={0}
-            className="relative h-6 cursor-default rounded-full outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            className={`relative ${thin ? "h-3" : "h-6"} cursor-default rounded-full outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background`}
           />
         }
       >
         {/* Clip both layers so the gap exposes even a translucent composer surface. */}
         <div className="absolute inset-0" style={paceMark?.gap}>
-          <div className="absolute inset-x-0 inset-y-1.5 rounded-full bg-muted" />
+          <div
+            className={`absolute inset-x-0 ${thin ? "inset-y-0.5" : "inset-y-1.5"} rounded-full bg-muted`}
+          />
           {remaining > 0 ? (
             <div
-              className="absolute inset-y-1.5 left-0 rounded-full"
+              className={`absolute ${thin ? "inset-y-0.5" : "inset-y-1.5"} left-0 rounded-full`}
               style={{ width: `${remaining}%`, backgroundColor: color }}
             />
           ) : null}
@@ -160,7 +164,7 @@ function WindowBar({
         {paceMark ? (
           <span
             aria-hidden
-            className="absolute inset-y-1 w-0.5 -translate-x-1/2 rounded-full bg-foreground"
+            className={`absolute ${thin ? "inset-y-0" : "inset-y-1"} w-0.5 -translate-x-1/2 rounded-full bg-foreground`}
             style={paceMark.tick}
           />
         ) : null}
@@ -191,14 +195,44 @@ export function LimitWindows({
   windows,
   now,
   compact = false,
+  stacked = false,
 }: {
   readonly driver: ServerProvider["driver"];
   readonly accentColor?: string | undefined;
   readonly windows: ReadonlyArray<ServerProviderUsageWindow>;
   readonly now: number;
   readonly compact?: boolean;
+  /** One window per block (label and reset over a full-width bar), for narrow cards. */
+  readonly stacked?: boolean;
 }) {
   const color = normalizeProviderAccentColor(accentColor) ?? barColor(driver);
+  if (stacked) {
+    return (
+      <div className="flex flex-col gap-2">
+        {windows.map((window) => {
+          const pace = paceOf(window, now);
+          const resetsIn = formatResetsIn(window, now);
+          return (
+            <div key={window.id} className="flex flex-col gap-1">
+              <div className="flex min-w-0 items-baseline gap-2 text-xs">
+                <span className="min-w-0 truncate text-muted-foreground">{window.label}</span>
+                {resetsIn ? (
+                  <span className="shrink-0 text-muted-foreground/70 tabular-nums">
+                    · {resetsIn}
+                  </span>
+                ) : null}
+                <span className="ms-auto flex shrink-0 items-center gap-1.5 self-center font-medium text-foreground tabular-nums">
+                  {pace ? <PaceIcon pace={pace} /> : null}
+                  {remainingPercent(window)}% left
+                </span>
+              </div>
+              <WindowBar color={color} window={window} now={now} thin />
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
   return (
     <div
       className={
