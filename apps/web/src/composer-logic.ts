@@ -318,6 +318,46 @@ export function composerStateAtPromptEnd(
   };
 }
 
+/** `!command` as the whole message: a shell command for the thread's terminal, not the agent. */
+export function parseShellCommand(text: string): string | null {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("!")) return null;
+  const command = trimmed.slice(1).trim();
+  return command.length > 0 ? command : null;
+}
+
+/** What a `!command` printed, as the message that hands it to the agent. */
+export function formatShellCommandMessage(
+  command: string,
+  result: {
+    readonly output: string;
+    readonly exitCode: number | null;
+    readonly timedOut: boolean;
+    readonly truncated: boolean;
+  },
+): string {
+  const fenceFor = (text: string) =>
+    "`".repeat(Math.max(3, ...(text.match(/`+/g) ?? []).map((run) => run.length + 1)));
+  const commandFence = fenceFor(command);
+  const ran =
+    command.includes("\n") || command.includes("`")
+      ? `I ran:\n\n${commandFence}sh\n${command}\n${commandFence}`
+      : `I ran \`${command}\`:`;
+  const output = result.output.replace(/^\n+|\s+$/g, "");
+  const outputFence = fenceFor(output);
+  const printed =
+    output.length > 0 ? `${outputFence}\n${output}\n${outputFence}` : "It printed nothing.";
+  const notes = [
+    result.timedOut
+      ? "It was stopped for running too long."
+      : result.exitCode !== null && result.exitCode !== 0
+        ? `It exited with code ${result.exitCode}.`
+        : null,
+    result.truncated ? "Its output was cut short." : null,
+  ].filter((note) => note !== null);
+  return [ran, printed, notes.join(" ")].filter((part) => part.length > 0).join("\n\n");
+}
+
 /** `/side [prompt]`, or its alias `/btw [prompt]`, as the whole message. */
 export function parseSideChatCommand(text: string): { prompt: string } | null {
   const match = /^\/(?:side|btw)(?:\s+([\s\S]*))?$/i.exec(text.trim());

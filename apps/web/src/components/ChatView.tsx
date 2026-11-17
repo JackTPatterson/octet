@@ -188,7 +188,7 @@ import { shortcutLabelForCommand } from "../keybindings";
 import { cn } from "~/lib/utils";
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
-import { toastManager } from "./ui/toast";
+import { stackedThreadToast, toastManager } from "./ui/toast";
 import { projectScriptIdFromCommand } from "~/projectScripts";
 import { newMessageId } from "~/lib/utils";
 import { isInSideChatPane, type SideChatParentPanel } from "~/lib/sideChatPane";
@@ -229,6 +229,7 @@ import { type TerminalContextDraft } from "../lib/terminalContext";
 import { collectInlineContextIds } from "../lib/composerContextReferences";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
+import { terminalEnvironment } from "../state/terminal";
 import { useEnvironmentQuery } from "../state/query";
 import { useEnvironmentScope } from "~/state/session";
 import {
@@ -2935,6 +2936,32 @@ export default function ChatView(props: ChatViewProps) {
     activeEnvironmentUnavailable,
     defaultRuntimeMode,
   });
+  const runTerminalCommand = useAtomCommand(terminalEnvironment.runCommand, {
+    reportFailure: false,
+  });
+  // A composer `!command`: runs in the thread's folder, and its output becomes the message.
+  const runComposerShellCommand = async (command: string) => {
+    if (gitCwd === null) return null;
+    const toastId = toastManager.add({ type: "loading", title: `Running ${command}` });
+    const result = await runTerminalCommand({
+      environmentId,
+      input: { cwd: gitCwd, command },
+    });
+    toastManager.close(toastId);
+    if (result._tag === "Success") return result.value;
+    if (!isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Command not run",
+          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+        }),
+      );
+    }
+    return null;
+  };
+  const runComposerShellCommandStable = useStableCallback(runComposerShellCommand);
   const { onSend } = useComposerSend({
     environmentId,
     routeThreadKey,
@@ -3007,6 +3034,8 @@ export default function ChatView(props: ChatViewProps) {
     anchorNewTurn,
     acknowledgeActiveThreadWoke,
     handleInteractionModeChange,
+    onShellCommand:
+      gitCwd !== null && canOperateTerminal ? runComposerShellCommandStable : undefined,
     onSideChat: sideChat.available ? sendSideChatStable : undefined,
     sideChatDisabledReason,
     handleNewThreadInActiveProject,

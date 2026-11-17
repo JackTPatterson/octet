@@ -22,6 +22,7 @@ import {
   type EnvironmentId,
   type ModelSelection,
   type PreviewAnnotationPayload,
+  type TerminalRunCommandResult,
   type ThreadId,
   ProviderInteractionMode,
   RuntimeMode,
@@ -55,6 +56,8 @@ import {
 import {
   type ComposerSubmissionIntent,
   collapseExpandedComposerCursor,
+  formatShellCommandMessage,
+  parseShellCommand,
   parseSideChatCommand,
   parseStandaloneComposerSlashCommand,
 } from "../../composer-logic";
@@ -244,6 +247,13 @@ interface ComposerSendInput {
   readonly anchorNewTurn: TimelineFollow["anchorNewTurn"];
   readonly acknowledgeActiveThreadWoke: () => void;
   readonly handleInteractionModeChange: (mode: ProviderInteractionMode) => void;
+  /**
+   * Runs a `!command` in the thread's folder; resolves null when it couldn't, having said why.
+   * Absent where the user can't run commands on this environment.
+   */
+  readonly onShellCommand?:
+    | ((command: string) => Promise<TerminalRunCommandResult | null>)
+    | undefined;
   /** Resolves true once the side chat started and got the prompt. */
   readonly onSideChat?: ((prompt: string) => Promise<boolean>) | undefined;
   /** Refuses `/side` with this reason and keeps the draft. */
@@ -334,6 +344,7 @@ export function useComposerSend(input: ComposerSendInput) {
     anchorNewTurn,
     acknowledgeActiveThreadWoke,
     handleInteractionModeChange,
+    onShellCommand,
     onSideChat,
     sideChatDisabledReason,
     handleNewThreadInActiveProject,
@@ -498,6 +509,55 @@ export function useComposerSend(input: ComposerSendInput) {
         id: `chat-send-environment-unavailable:${toastSlot}`,
       });
       return;
+    }
+    // `!command` runs once in the thread's folder, and what it printed goes to the agent as
+    // this message: sent as typed, the agent would only read it as a request to run it.
+    const shellCommand =
+      !directAnnotation && !queuedRunEdit.isEditing ? parseShellCommand(promptAtSend) : null;
+    if (shellCommand !== null) {
+      if (!onShellCommand) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Command not run",
+            description: "You can't run commands on this environment.",
+          }),
+        );
+        return;
+      }
+      if (draftHasNonPromptContent(composerDraftTarget)) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Commands take text only",
+            description: "Remove the attachments and context, then run it again.",
+          }),
+        );
+        return;
+      }
+      sendInFlightRef.current = true;
+      const result = await onShellCommand(shellCommand).finally(() => {
+        sendInFlightRef.current = false;
+      });
+      if (result === null) return;
+      // A draft typed while it ran is the user's next message; leave it, and the output with it.
+      if (
+        currentRouteThreadKeyRef.current !== routeThreadKey ||
+        promptRef.current !== promptAtSend
+      ) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "info",
+            title: "Output not sent",
+            description: "The message changed while the command ran.",
+          }),
+        );
+        return;
+      }
+      // Sent like a typed message from here, so it queues behind a running turn.
+      const message = formatShellCommandMessage(shellCommand, result);
+      promptRef.current = message;
+      setComposerDraftPrompt(composerDraftTarget, message);
     }
     const sendCtx = composerRef.current?.getSendContext();
     // `/side` beats an open question and a plan follow-up, which would send the text to main.

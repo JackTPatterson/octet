@@ -109,6 +109,10 @@ export function createTerminalEnvironmentAtoms<R, E>(
       scheduler: lifecycleScheduler,
       concurrency: lifecycleConcurrency,
     }),
+    runCommand: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:terminal:run-command",
+      tag: WS_METHODS.terminalRunCommand,
+    }),
     close: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:terminal:close",
       tag: WS_METHODS.terminalClose,

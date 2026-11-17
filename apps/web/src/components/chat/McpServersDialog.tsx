@@ -7,7 +7,7 @@ import type {
   ThreadMcpServersResult,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import { ChevronRightIcon, PlugIcon, RefreshCwIcon } from "lucide-react";
+import { EllipsisIcon, PlugIcon, RefreshCwIcon } from "lucide-react";
 import { useState } from "react";
 
 import { cn } from "~/lib/utils";
@@ -24,21 +24,35 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../ui/dialog";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
-
-const STATUS: Record<McpServerSummary["status"], { label: string; dot: string }> = {
-  connected: { label: "Connected", dot: "bg-success" },
-  pending: { label: "Connecting", dot: "bg-amber-500 animate-pulse" },
-  failed: { label: "Failed", dot: "bg-destructive" },
-  "needs-auth": { label: "Needs sign-in", dot: "bg-amber-500" },
-  disabled: { label: "Disabled", dot: "bg-muted-foreground/50" },
-};
 
 const DRIVER_LABEL: Record<string, string> = { claudeAgent: "Claude", codex: "Codex" };
 
 /** Connectors from a claude.ai account are signed into there, not from the CLI. */
 const CLAUDE_AI_CONNECTORS_URL = "https://claude.ai/settings/connectors";
+
+const SECTIONS: ReadonlyArray<{
+  readonly key: string;
+  readonly label: string;
+  readonly statuses: ReadonlyArray<McpServerSummary["status"]>;
+}> = [
+  { key: "attention", label: "Needs attention", statuses: ["failed", "needs-auth"] },
+  { key: "connected", label: "Connected", statuses: ["connected", "pending"] },
+  { key: "disabled", label: "Disabled", statuses: ["disabled"] },
+];
+
+/** claude.ai connectors arrive as "claude.ai Gmail"; the section and logo already say where from. */
+function displayName(server: McpServerSummary): string {
+  return server.name.replace(/^claude\.ai\s+/i, "");
+}
+
+function sourceLabel(scope: string | undefined): string | null {
+  if (!scope) return null;
+  if (scope === "claudeai") return "claude.ai connector";
+  return `${scope} config`;
+}
 
 function failureMessage(cause: Cause.Cause<unknown>): string {
   const error = Cause.squash(cause);
@@ -54,16 +68,13 @@ function openInBrowser(url: string) {
 function ServerLogo({ name }: { readonly name: string }) {
   const logo = mcpServerLogo(name);
   return (
-    <span
-      aria-hidden
-      className="flex size-6 shrink-0 items-center justify-center rounded-md border border-border/70 bg-muted"
-    >
+    <span aria-hidden className="flex size-5 shrink-0 items-center justify-center">
       {logo ? (
-        <svg viewBox="0 0 24 24" className="size-3.5 fill-current text-foreground/80">
+        <svg viewBox="0 0 24 24" className="size-4 fill-current text-foreground/75">
           <path d={logo.path} />
         </svg>
       ) : (
-        <PlugIcon className="size-3.5 text-muted-foreground" />
+        <PlugIcon className="size-3.5 text-muted-foreground/70" />
       )}
     </span>
   );
@@ -137,11 +148,16 @@ function McpServersBody(props: {
   return (
     <>
       <DialogHeader>
-        <div className="flex items-center gap-2">
-          <DialogTitle className="flex-1">MCP servers</DialogTitle>
+        <DialogTitle>MCP servers</DialogTitle>
+        <div className="flex items-center gap-1.5">
+          <DialogDescription>
+            {result
+              ? `${DRIVER_LABEL[result.driver] ?? result.driver} · ${connected} of ${result.servers.length} connected`
+              : "The servers this thread's agent is using."}
+          </DialogDescription>
           <Button
             size="icon-xs"
-            variant="ghost"
+            variant="ghost-muted"
             aria-label="Refresh MCP servers"
             disabled={query.isPending || busy !== null}
             onClick={() => query.refresh()}
@@ -149,15 +165,10 @@ function McpServersBody(props: {
             {query.isPending && result !== null ? (
               <Spinner size="xs" />
             ) : (
-              <RefreshCwIcon className="size-3.5" />
+              <RefreshCwIcon className="size-3" />
             )}
           </Button>
         </div>
-        <DialogDescription>
-          {result
-            ? `${DRIVER_LABEL[result.driver] ?? result.driver} · ${connected} of ${result.servers.length} connected`
-            : "The servers this thread's agent is using."}
-        </DialogDescription>
       </DialogHeader>
       <DialogPanel>
         {result === null && query.error === null ? (
@@ -173,95 +184,36 @@ function McpServersBody(props: {
             This agent has no MCP servers configured.
           </p>
         ) : (
-          <ul className="-mx-2 flex flex-col">
-            {result.servers.map((server) => {
-              const status = STATUS[server.status];
-              const isOpen = expanded.has(server.name);
-              const rowBusy = busy?.startsWith(`${server.name}:`) === true;
+          <div className="-mx-2 flex flex-col gap-3">
+            {SECTIONS.map((section) => {
+              const servers = result.servers.filter((server) =>
+                section.statuses.includes(server.status),
+              );
+              if (servers.length === 0) return null;
               return (
-                <li key={server.name} data-mcp-server={server.name} className="rounded-lg">
-                  <div className="flex min-h-11 items-center gap-2.5 px-2 py-1.5">
-                    <button
-                      type="button"
-                      aria-expanded={isOpen}
-                      aria-label={`${isOpen ? "Hide" : "Show"} ${server.name} tools`}
-                      disabled={server.tools.length === 0}
-                      onClick={() => toggleExpanded(server.name)}
-                      className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 text-left disabled:cursor-default"
-                    >
-                      <ServerLogo name={server.name} />
-                      <span className="min-w-0 flex-1">
-                        <span className="flex min-w-0 items-center gap-1.5">
-                          <span className="truncate text-sm font-medium">{server.name}</span>
-                          {server.scope ? (
-                            <span className="shrink-0 rounded bg-muted px-1 text-2xs text-muted-foreground">
-                              {server.scope}
-                            </span>
-                          ) : null}
-                        </span>
-                        <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-                          <span
-                            aria-hidden
-                            className={cn("size-1.5 shrink-0 rounded-full", status.dot)}
-                          />
-                          <span className="shrink-0">{status.label}</span>
-                          {server.tools.length > 0 ? (
-                            <span className="shrink-0 tabular-nums">
-                              · {server.tools.length} {server.tools.length === 1 ? "tool" : "tools"}
-                            </span>
-                          ) : null}
-                          {server.url ? <span className="truncate">· {server.url}</span> : null}
-                        </span>
-                      </span>
-                      {server.tools.length > 0 ? (
-                        <ChevronRightIcon
-                          aria-hidden
-                          className={cn(
-                            "size-3.5 shrink-0 text-muted-foreground transition-transform",
-                            isOpen && "rotate-90",
-                          )}
-                        />
-                      ) : null}
-                    </button>
-                    <ServerActions
-                      server={server}
-                      actions={result.actions}
-                      busy={rowBusy}
-                      disabled={busy !== null}
-                      onAct={(action) => void act(server.name, action)}
-                    />
-                  </div>
-                  {server.error &&
-                  (server.status === "failed" || server.status === "needs-auth") ? (
-                    <p className="ms-[2.625rem] -mt-1 mb-1.5 line-clamp-3 px-2 text-xs text-destructive/90">
-                      {server.error}
-                    </p>
-                  ) : null}
-                  {server.status === "needs-auth" && !result.actions.login ? (
-                    <p className="ms-[2.625rem] -mt-1 mb-1.5 px-2 text-xs text-muted-foreground">
-                      {server.scope === "claudeai"
-                        ? "This connector signs in through your claude.ai account."
-                        : "Sign in by running claude in a terminal and choosing this server in /mcp, then reconnect it here."}
-                    </p>
-                  ) : null}
-                  {isOpen ? (
-                    <ul className="ms-[2.625rem] mb-2 flex flex-col gap-0.5 px-2">
-                      {server.tools.map((tool) => (
-                        <li key={tool.name} className="flex min-w-0 gap-2 text-2xs">
-                          <span className="shrink-0 font-mono text-foreground/80">{tool.name}</span>
-                          {tool.description ? (
-                            <span className="truncate text-muted-foreground">
-                              {tool.description}
-                            </span>
-                          ) : null}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                </li>
+                <section key={section.key} data-mcp-section={section.key}>
+                  <h3 className="flex items-center gap-1.5 px-2 pb-1 text-2xs font-medium text-muted-foreground uppercase tracking-wide">
+                    {section.label}
+                    <span className="tabular-nums text-muted-foreground/60">{servers.length}</span>
+                  </h3>
+                  <ul className="flex flex-col">
+                    {servers.map((server) => (
+                      <ServerRow
+                        key={server.name}
+                        server={server}
+                        actions={result.actions}
+                        open={expanded.has(server.name)}
+                        onToggle={() => toggleExpanded(server.name)}
+                        busy={busy?.startsWith(`${server.name}:`) === true}
+                        disabled={busy !== null}
+                        onAct={(action) => void act(server.name, action)}
+                      />
+                    ))}
+                  </ul>
+                </section>
               );
             })}
-          </ul>
+          </div>
         )}
         {result?.actions.reloadAll ? (
           <div className="flex justify-end pt-3">
@@ -281,6 +233,113 @@ function McpServersBody(props: {
   );
 }
 
+/** One line per server; the source, address, error and tools open below it on click. */
+function ServerRow(props: {
+  readonly server: McpServerSummary;
+  readonly actions: ThreadMcpServersResult["actions"];
+  readonly open: boolean;
+  readonly onToggle: () => void;
+  readonly busy: boolean;
+  readonly disabled: boolean;
+  readonly onAct: (action: McpServerAction) => void;
+}) {
+  const { server, actions, open } = props;
+  const name = displayName(server);
+  const source = sourceLabel(server.scope);
+  const isClaudeAi = server.scope === "claudeai";
+  const attention = server.status === "failed" || server.status === "needs-auth";
+  const hint =
+    server.status === "needs-auth" && !actions.login
+      ? isClaudeAi
+        ? "Signs in through your claude.ai account."
+        : "Sign in by running claude in a terminal and choosing this server in /mcp, then reconnect it here."
+      : null;
+
+  return (
+    <li data-mcp-server={server.name} className="group/row rounded-md">
+      <div
+        className={cn(
+          "flex h-8 items-center gap-2 rounded-md px-2 hover:bg-accent/50",
+          open && "bg-accent/40",
+        )}
+      >
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-label={`${open ? "Hide" : "Show"} ${name} details`}
+          onClick={props.onToggle}
+          className="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
+        >
+          <ServerLogo name={server.name} />
+          <span
+            className={cn(
+              "truncate text-sm",
+              server.status === "disabled" && "text-muted-foreground",
+            )}
+          >
+            {name}
+          </span>
+          {server.status === "pending" ? <Spinner size="xs" /> : null}
+          {attention ? (
+            <span
+              className={cn(
+                "shrink-0 text-xs",
+                server.status === "failed" ? "text-destructive" : "text-warning-foreground",
+              )}
+            >
+              {server.status === "failed" ? "Failed" : "Sign-in needed"}
+            </span>
+          ) : null}
+          <span className="flex-1" />
+          {server.status === "connected" && server.tools.length > 0 ? (
+            <span className="shrink-0 text-xs tabular-nums text-muted-foreground/70">
+              {server.tools.length}
+            </span>
+          ) : null}
+        </button>
+        <ServerActions
+          server={server}
+          actions={actions}
+          busy={props.busy}
+          disabled={props.disabled}
+          onAct={props.onAct}
+        />
+      </div>
+      {open ? (
+        <div className="mb-1 ms-9 me-2 flex flex-col gap-1.5 pt-1 pb-2 text-xs">
+          {source || server.url ? (
+            <p className="truncate text-muted-foreground">
+              {[source, server.url].filter(Boolean).join(" · ")}
+            </p>
+          ) : null}
+          {server.error && attention ? (
+            <p className="line-clamp-3 text-destructive/90">{server.error}</p>
+          ) : null}
+          {hint ? <p className="text-muted-foreground">{hint}</p> : null}
+          {server.tools.length > 0 ? (
+            <ul className="flex flex-col gap-0.5">
+              {server.tools.map((tool) => (
+                <li key={tool.name} className="flex min-w-0 gap-2 text-2xs">
+                  <span className="shrink-0 font-mono text-foreground/80">{tool.name}</span>
+                  {tool.description ? (
+                    <span className="truncate text-muted-foreground">{tool.description}</span>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          ) : server.status === "connected" ? (
+            <p className="text-muted-foreground">No tools.</p>
+          ) : null}
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
+/**
+ * Only the action a row needs is shown (sign in, retry, enable); reconnect and disable sit in
+ * a menu that appears on hover.
+ */
 function ServerActions(props: {
   readonly server: McpServerSummary;
   readonly actions: ThreadMcpServersResult["actions"];
@@ -289,40 +348,67 @@ function ServerActions(props: {
   readonly onAct: (action: McpServerAction) => void;
 }) {
   const { server, actions } = props;
-  if (props.busy) return <Spinner size="xs" />;
-  const buttons: Array<{ action: McpServerAction | "claudeai"; label: string }> = [];
-  if (server.status === "needs-auth") {
-    if (actions.login) buttons.push({ action: "login", label: "Sign in" });
-    else if (server.scope === "claudeai")
-      buttons.push({ action: "claudeai", label: "Open claude.ai" });
-  }
-  if (actions.reconnect && server.status !== "disabled") {
-    buttons.push({ action: "reconnect", label: "Reconnect" });
-  }
-  if (actions.toggle) {
-    buttons.push(
-      server.status === "disabled"
-        ? { action: "enable", label: "Enable" }
-        : { action: "disable", label: "Disable" },
+  if (props.busy) {
+    return (
+      <span className="flex size-6 items-center justify-center">
+        <Spinner size="xs" />
+      </span>
     );
   }
+
+  let primary: { label: string; run: () => void } | null = null;
+  if (server.status === "needs-auth" && actions.login) {
+    primary = { label: "Sign in", run: () => props.onAct("login") };
+  } else if (server.status === "needs-auth" && server.scope === "claudeai") {
+    primary = { label: "Open claude.ai", run: () => openInBrowser(CLAUDE_AI_CONNECTORS_URL) };
+  } else if (server.status === "failed" && actions.reconnect) {
+    primary = { label: "Retry", run: () => props.onAct("reconnect") };
+  } else if (server.status === "disabled" && actions.toggle) {
+    primary = { label: "Enable", run: () => props.onAct("enable") };
+  }
+
+  const menu: Array<{ action: McpServerAction; label: string }> = [];
+  if (actions.reconnect && server.status !== "disabled" && server.status !== "failed") {
+    menu.push({ action: "reconnect", label: "Reconnect" });
+  }
+  if (actions.toggle && server.status !== "disabled") {
+    menu.push({ action: "disable", label: "Disable" });
+  }
+
   return (
-    <div className="flex shrink-0 items-center gap-1">
-      {buttons.map((button) => (
-        <Button
-          key={button.action}
-          size="xs"
-          variant={button.action === "login" || button.action === "enable" ? "outline" : "ghost"}
-          disabled={props.disabled}
-          onClick={() =>
-            button.action === "claudeai"
-              ? openInBrowser(CLAUDE_AI_CONNECTORS_URL)
-              : props.onAct(button.action)
-          }
-        >
-          {button.label}
+    <div className="flex shrink-0 items-center gap-0.5">
+      {primary ? (
+        <Button size="xs" variant="outline" disabled={props.disabled} onClick={primary.run}>
+          {primary.label}
         </Button>
-      ))}
+      ) : null}
+      {menu.length > 0 ? (
+        <span className="flex opacity-0 transition-opacity group-hover/row:opacity-100 focus-within:opacity-100 has-data-popup-open:opacity-100">
+          <Menu>
+            <MenuTrigger
+              render={
+                <Button
+                  size="icon-xs"
+                  variant="ghost-muted"
+                  aria-label={`More actions for ${displayName(server)}`}
+                  disabled={props.disabled}
+                />
+              }
+            >
+              <EllipsisIcon className="size-3.5" />
+            </MenuTrigger>
+            <MenuPopup align="end" side="bottom" sideOffset={4} className="min-w-32">
+              {menu.map((item) => (
+                <MenuItem key={item.action} onClick={() => props.onAct(item.action)}>
+                  {item.label}
+                </MenuItem>
+              ))}
+            </MenuPopup>
+          </Menu>
+        </span>
+      ) : (
+        <span aria-hidden className="size-6" />
+      )}
     </div>
   );
 }

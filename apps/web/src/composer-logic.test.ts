@@ -22,6 +22,8 @@ import {
   extendReplacementRangeForTrailingSpace,
   formatAssistantCitationForComposer,
   isPathSuggestionCurrent,
+  formatShellCommandMessage,
+  parseShellCommand,
   parseSideChatCommand,
   replaceTextRange,
 } from "./composer-logic";
@@ -548,6 +550,54 @@ describe("extendReplacementRangeForTrailingSpace", () => {
     expect(extendReplacementRangeForTrailingSpace("@firest", 3, "@file ")).toBe(3);
     expect(extendReplacementRangeForTrailingSpace("@fi rest", 3, "@file")).toBe(3);
     expect(extendReplacementRangeForTrailingSpace("@fi", 3, "@file ")).toBe(3);
+  });
+});
+
+describe("parseShellCommand", () => {
+  it("takes the command after a leading !", () => {
+    expect(parseShellCommand("!git status")).toBe("git status");
+    expect(parseShellCommand("  ! ls -la  ")).toBe("ls -la");
+    expect(parseShellCommand("!make\nmake test")).toBe("make\nmake test");
+  });
+
+  it("ignores a bare ! and text that only contains one", () => {
+    expect(parseShellCommand("!")).toBeNull();
+    expect(parseShellCommand("!   ")).toBeNull();
+    expect(parseShellCommand("fix this!")).toBeNull();
+    expect(parseShellCommand("why does `!x` fail?")).toBeNull();
+  });
+});
+
+describe("formatShellCommandMessage", () => {
+  const ok = { exitCode: 0, timedOut: false, truncated: false };
+
+  it("fences the output under the command it came from", () => {
+    expect(formatShellCommandMessage("git status", { ...ok, output: "clean\n\n" })).toBe(
+      "I ran `git status`:\n\n```\nclean\n```",
+    );
+  });
+
+  it("says how it ended when that matters", () => {
+    expect(formatShellCommandMessage("make", { ...ok, output: "", exitCode: 2 })).toBe(
+      "I ran `make`:\n\nIt printed nothing.\n\nIt exited with code 2.",
+    );
+    expect(
+      formatShellCommandMessage("serve", {
+        ...ok,
+        output: "up",
+        exitCode: null,
+        timedOut: true,
+        truncated: true,
+      }),
+    ).toBe(
+      "I ran `serve`:\n\n```\nup\n```\n\nIt was stopped for running too long. Its output was cut short.",
+    );
+  });
+
+  it("keeps fences longer than any backticks inside them", () => {
+    expect(formatShellCommandMessage("echo `id`", { ...ok, output: "a ``` b" })).toBe(
+      "I ran:\n\n```sh\necho `id`\n```\n\n````\na ``` b\n````",
+    );
   });
 });
 

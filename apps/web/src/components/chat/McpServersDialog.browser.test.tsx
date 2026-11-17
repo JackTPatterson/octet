@@ -69,16 +69,26 @@ it("lists the agent's servers with their status, tools and the provider's action
   };
   await using _screen = await render(dialog());
   await expect.element(page.getByText("Claude · 1 of 4 connected")).toBeVisible();
-  await expect.element(page.getByText("spawn blender ENOENT")).toBeVisible();
+  // Grouped by status, one line each; the claude.ai prefix is dropped from connector names.
+  await expect
+    .element(page.getByRole("heading", { name: "Needs attention", exact: false }))
+    .toBeVisible();
+  await expect.element(page.getByText("Notion", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("spawn blender ENOENT")).not.toBeInTheDocument();
   // A claude.ai connector signs in there; Claude has no sign-in of its own.
   await expect.element(page.getByRole("button", { name: "Open claude.ai" })).toBeVisible();
+  await expect.element(page.getByRole("button", { name: "Retry" })).toBeVisible();
   await expect.element(page.getByRole("button", { name: "Enable" })).toBeVisible();
 
-  await page.getByRole("button", { name: "Show github tools" }).click();
+  await page.getByRole("button", { name: "Show blender details" }).click();
+  await expect.element(page.getByText("spawn blender ENOENT")).toBeVisible();
+
+  await page.getByRole("button", { name: "Show github details" }).click();
   await expect.element(page.getByText("create_issue")).toBeVisible();
   await expect.element(page.getByText("Open an issue")).toBeVisible();
 
-  await page.getByRole("button", { name: "Reconnect" }).first().click();
+  await page.getByRole("button", { name: "More actions for github" }).click();
+  await page.getByRole("menuitem", { name: "Reconnect" }).click();
   await vi.waitFor(() =>
     expect(state.actions).toEqual([{ threadId, server: "github", action: "reconnect" }]),
   );
@@ -96,7 +106,9 @@ it("offers Codex's sign-in and config reload", async () => {
   await using _screen = await render(dialog());
   await expect.element(page.getByText("Codex · 0 of 1 connected")).toBeVisible();
   await expect.element(page.getByRole("button", { name: "Sign in" })).toBeVisible();
-  await expect.element(page.getByRole("button", { name: "Reconnect" })).not.toBeInTheDocument();
+  await expect
+    .element(page.getByRole("button", { name: "More actions for linear" }))
+    .not.toBeInTheDocument();
   await page.getByRole("button", { name: "Reload config" }).click();
   await vi.waitFor(() =>
     expect(state.actions).toEqual([{ threadId, server: "", action: "reload" }]),

@@ -128,6 +128,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as Waits from "./waits/WaitService.ts";
 import * as ProcessRunner from "./processRunner.ts";
+import { runTerminalCommand } from "./terminal/runCommand.ts";
 import { readRemoteControl } from "./remoteControl/readRemoteControl.ts";
 import { holdAwake } from "./keepAwake/keepAwake.ts";
 import { readProjectRuntimeVersion } from "./projectRuntime/projectRuntime.ts";
@@ -3179,6 +3180,8 @@ export const layerWsRpc = (
           terminalManager.resize(input, terminalViewerId(metadata)),
         [WS_METHODS.terminalClear]: (input) => terminalManager.clear(input),
         [WS_METHODS.terminalClose]: (input) => terminalManager.close(input),
+        [WS_METHODS.terminalRunCommand]: (input) =>
+          runTerminalCommand(input).pipe(Effect.provide(ProcessRunner.layer)),
         [WS_METHODS.terminalObserve]: (input) =>
           terminalOutputStream(
             (listener, registerCleanup) =>

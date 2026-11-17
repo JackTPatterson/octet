@@ -373,3 +373,34 @@ export const TerminalError = Schema.Union([
   TerminalResizeError,
 ]);
 export type TerminalError = typeof TerminalError.Type;
+
+// `!command` from the composer: one non-interactive run whose output goes to the agent.
+export const TERMINAL_RUN_COMMAND_TIMEOUT_MS = 120_000;
+export const TERMINAL_RUN_COMMAND_MAX_OUTPUT_BYTES = 24 * 1024;
+
+export const TerminalRunCommandInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  command: TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(65_536)),
+});
+export type TerminalRunCommandInput = typeof TerminalRunCommandInput.Type;
+
+export const TerminalRunCommandResult = Schema.Struct({
+  // stdout and stderr together, in order where the shell allows, without color codes.
+  output: Schema.String,
+  exitCode: Schema.NullOr(Schema.Int),
+  timedOut: Schema.Boolean,
+  truncated: Schema.Boolean,
+});
+export type TerminalRunCommandResult = typeof TerminalRunCommandResult.Type;
+
+export class TerminalRunCommandError extends Schema.TaggedError<TerminalRunCommandError>()(
+  "TerminalRunCommandError",
+  {
+    cwd: Schema.String,
+    detail: Schema.String,
+  },
+) {
+  override get message() {
+    return `Could not run the command in ${this.cwd}: ${this.detail}`;
+  }
+}
