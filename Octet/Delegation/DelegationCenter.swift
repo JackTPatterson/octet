@@ -275,6 +275,7 @@ final class DelegationCenter: ObservableObject {
             delegations[id] = finished
             let answer = answer(finished)
             waiters.forEach { $0(answer) }
+            if let pane = finished.paneId, let store { AgentTabCloser.shared.closeWhenSettled(pane: pane, store: store) }
             let verdict = finished.mode == .review ? DelegationVerdict.read(finished.result ?? "") : nil
             let headline = verdict.map { $0.outcome == .pass ? "passed" : $0.outcome == .fail ? "found \($0.findings.count) problem\($0.findings.count == 1 ? "" : "s")" : "is done" } ?? "is done"
             ToastCenter.shared.info("\(finished.agent)'s \(finished.mode == .review ? "review" : "task") \(headline)",

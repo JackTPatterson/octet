@@ -627,7 +627,14 @@ private struct UsageLimitsView: View {
                     .font(Theme.uiFont).foregroundStyle(Theme.textTertiary)
                     .frame(maxWidth: .infinity).padding(.top, 80)
             } else {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 340), spacing: 20, alignment: .top)], spacing: 20) {
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("Quota management")
+                            .font(Theme.interfaceFont(20, weight: .semibold))
+                            .foregroundStyle(Theme.textPrimary)
+                        Text("\(shown.count) providers")
+                            .font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
+                    }
                     ForEach(shown, id: \.agent) { card($0) }
                 }
                 .padding(28)
@@ -649,7 +656,9 @@ private struct UsageLimitsView: View {
                 Text(note(account)).font(Theme.uiFont).foregroundStyle(Theme.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                ForEach(account.live, id: \.name) { UsageWindowRow(window: $0, agent: account.agent) }
+                ForEach(account.live, id: \.name) { window in
+                    quotaWindow(window, agent: account.agent)
+                }
                 if let updatedAt = account.updatedAt {
                     Text("As of \(UsageMeter.relative(min(updatedAt, Date())))").font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
                 }
@@ -658,6 +667,51 @@ private struct UsageLimitsView: View {
         .padding(16)
         .background(RoundedRectangle(cornerRadius: Theme.popoverRadius).fill(Theme.card.opacity(0.5)))
         .overlay(RoundedRectangle(cornerRadius: Theme.popoverRadius).strokeBorder(Theme.border, lineWidth: 1))
+    }
+
+    private func quotaWindow(_ window: UsageWindow, agent: String) -> some View {
+        let now = Date()
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(window.title).font(Theme.uiFont).foregroundStyle(Theme.textSecondary)
+                    HStack(alignment: .firstTextBaseline, spacing: 5) {
+                        Text("\(window.percentLeft)%")
+                            .font(Theme.interfaceFont(28, weight: .semibold).monospacedDigit())
+                            .foregroundStyle(Theme.textPrimary)
+                        Text("remaining").font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
+                    }
+                }
+                Spacer()
+                if let resets = window.resetsIn(at: now) {
+                    Text(resets).font(Theme.captionFont).foregroundStyle(Theme.textSecondary)
+                }
+            }
+            if let reset = window.resetsAt, reset > now {
+                let end = window.limitBeforeReset(at: now)
+                Chart {
+                    RuleMark(y: .value("Remaining", 0)).foregroundStyle(Theme.border)
+                    RuleMark(y: .value("Remaining", 100)).foregroundStyle(Theme.border)
+                    PointMark(x: .value("Time", now), y: .value("Remaining", window.percentLeft))
+                        .foregroundStyle(UsagePalette.color(agent))
+                    if let end, end > now, end < reset {
+                        LineMark(x: .value("Time", now), y: .value("Remaining", window.percentLeft))
+                            .lineStyle(StrokeStyle(lineWidth: 2, dash: [5, 4]))
+                            .foregroundStyle(UsagePalette.color(agent))
+                        LineMark(x: .value("Time", end), y: .value("Remaining", 0))
+                            .lineStyle(StrokeStyle(lineWidth: 2, dash: [5, 4]))
+                            .foregroundStyle(UsagePalette.color(agent))
+                    }
+                }
+                .chartYScale(domain: 0...100)
+                .chartXScale(domain: now...reset)
+                .frame(height: 120)
+                Text(end.map { "Estimated to run out \(UsageWindowRow.reset($0)) at the current pace" } ?? "Current allowance snapshot · resets \(UsageWindowRow.reset(reset))")
+                    .font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
+            }
+            UsageWindowRow(window: window, agent: agent)
+        }
+        .padding(.vertical, 6)
     }
 
     private func label(_ account: AgentAccount) -> String {

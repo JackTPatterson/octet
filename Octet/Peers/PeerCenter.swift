@@ -494,6 +494,7 @@ final class PeerCenter: ObservableObject, PeerHost {
             incoming[id] = task
             guard finished else { continue }
             incoming[id] = nil
+            if !paneGone { AgentTabCloser.shared.closeWhenSettled(pane: task.paneId, store: store) }
             let client = store.client, device = task.device, pane = task.paneId, node = self.node
             let machine = machineName
             DispatchQueue.global(qos: .userInitiated).async {

@@ -116,3 +116,33 @@ extension AgentToolCall {
         return ArtifactCall(tool: name, input: inputObject, result: result)
     }
 }
+
+/// Documents produced in a conversation, ordered by their most recent mention.
+struct ConversationArtifact: Equatable, Identifiable {
+    let id: String
+    let title: String
+    let url: URL
+    let toolIcon: String
+
+    static func collect(from items: [AgentItem], cwd: String) -> [ConversationArtifact] {
+        let documentExtensions: Set<String> = ["md", "markdown", "pdf", "doc", "docx", "rtf", "txt", "html", "htm", "csv", "xlsx", "pptx"]
+        var seen = Set<String>()
+        var found: [ConversationArtifact] = []
+        for item in items.reversed() {
+            guard case let .tool(call) = item.kind, !call.isError else { continue }
+            let completed = call.result != nil || (call.inputObject?["status"] as? String) == "completed"
+            guard completed else { continue }
+            if let artifact = call.artifact, artifact.action == .publish, let url = artifact.url {
+                let entry = ConversationArtifact(id: url.absoluteString, title: artifact.title ?? "Artifact", url: url, toolIcon: call.iconName)
+                if seen.insert(entry.id).inserted { found.append(entry) }
+            }
+            for file in TurnChanges.changes(in: call, cwd: cwd) where file.created {
+                let url = URL(fileURLWithPath: file.path).standardizedFileURL
+                guard documentExtensions.contains(url.pathExtension.lowercased()) else { continue }
+                let entry = ConversationArtifact(id: url.path, title: url.lastPathComponent, url: url, toolIcon: call.iconName)
+                if seen.insert(entry.id).inserted { found.append(entry) }
+            }
+        }
+        return found
+    }
+}

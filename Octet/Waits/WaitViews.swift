@@ -342,93 +342,164 @@ private struct ReadyCard: View {
 }
 
 /// Every wait still waiting, docked above Idle: what, and where it stands.
+/// Dressed as the Idle and Snoozed shelves below it (name and count, a
+/// hairline, a chevron), so the three read as one dock.
 struct WaitsDock: View {
     @ObservedObject private var center = WaitCenter.shared
     @ObservedObject private var motion = MotionPreferences.shared
     @AppStorage("octet.waitsDock.collapsed") private var collapsed = false
+    /// The rows' height as laid out, so the dock opens to exactly them.
+    @State private var contentHeight: CGFloat = 0
+
+    private static let maxHeight: CGFloat = 220
+    /// The header and the gap above it.
+    private static let headerBlock: CGFloat = IdleDock.headerHeight + 4
 
     var body: some View {
         let waiting = center.waiting
+        let asking = waiting.contains { $0.needsAnswer() }
         VStack(spacing: 0) {
             Rectangle().fill(Theme.divider).frame(height: 1)
-            HStack(spacing: 6) {
-                Button {
-                    motion.perform(.sidebar) { collapsed.toggle() }
-                } label: {
-                    HStack(spacing: 4) {
-                        OctetIcon("chevron.down", size: 12).rotationEffect(.degrees(collapsed ? -90 : 0))
-                        Text("WAITING").font(Theme.headerFont).kerning(0.4)
-                        Text("\(waiting.count)").font(Theme.uiFont).foregroundStyle(Theme.textTertiary)
-                        if waiting.contains(where: { $0.needsAnswer() }) {
-                            Circle().fill(Theme.accent).frame(width: 6, height: 6).help("One asks you something")
-                        }
-                    }
-                    .foregroundStyle(Theme.textSecondary)
-                    .contentShape(Rectangle())
+            ShelfHeader(title: "Waiting", count: waiting.count, tone: .muted,
+                        help: "Things Octet is watching for. Each brings its work back when it happens.",
+                        collapsed: $collapsed) { hovered in
+                if asking {
+                    AttentionDot().help("One asks you something").transition(.scale(scale: 0.4).combined(with: .opacity))
                 }
-                .buttonStyle(.plain)
-                Spacer()
                 Button { WaitCenter.shared.compose(workspaceId: WindowRegistry.shared.key?.focusedWorkspace?.workspaceId) } label: {
-                    OctetIcon("plus", size: 14)
+                    OctetIcon("plus", size: 12).frame(width: 18, height: 18).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(Theme.textTertiary)
+                .hoverReveal(hovered)
                 .help("Wait for something…")
                 .accessibilityLabel("Wait for something")
             }
-            .padding(.horizontal, 12)
-            .frame(height: 30)
-            if !collapsed {
-                ScrollView {
-                    LazyVStack(spacing: 1) {
-                        ForEach(waiting) { wait in WaitRow(wait: wait) }
-                    }
-                    .padding(.horizontal, 6)
-                    .padding(.bottom, 6)
+            .padding(.horizontal, 6)
+            .padding(.top, 4)
+            // The list never changes as the dock folds: it stays as it is and
+            // the container's height runs over it, so it only looks like the
+            // dock moving up or down.
+            ScrollView {
+                VStack(spacing: 2) {
+                    ForEach(waiting) { wait in WaitRow(wait: wait) }
                 }
-                .scrollIndicators(.hidden)
-                .frame(height: min(waiting.reduce(0) { $0 + ($1.needsAnswer() ? 62 : 38) } + 6, 220))
+                .padding(.horizontal, 6)
+                .padding(.bottom, 6)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
             }
+            .scrollIndicators(.hidden)
+            // Always its full height; the frame around the whole dock is what
+            // runs, so nothing inside is laid out again while it moves.
+            .frame(height: min(contentHeight, Self.maxHeight))
+            .allowsHitTesting(!collapsed)
+            .accessibilityHidden(collapsed)
         }
+        // The one thing that animates: the dock's own height, from just its
+        // header to header and rows. Everything inside stays put, top-aligned,
+        // and is revealed or covered as the height moves.
+        .frame(height: 1 + Self.headerBlock + (collapsed ? 0 : min(contentHeight, Self.maxHeight)), alignment: .top)
+        .animation(motion.animation(.sidebar, IdleDock.spring), value: collapsed)
+        .animation(motion.animation(.sidebar, IdleDock.spring), value: contentHeight)
         .background(Theme.chrome)
+        .clipped()
+    }
+}
+
+/// The accent dot for "this asks you something", with a slow ring that
+/// swells out of it; still when motion is off.
+private struct AttentionDot: View {
+    @ObservedObject private var motion = MotionPreferences.shared
+    @State private var swell = false
+
+    var body: some View {
+        Circle().fill(Theme.accent).frame(width: 6, height: 6)
+            .background(
+                Circle().stroke(Theme.accent, lineWidth: 1)
+                    .scaleEffect(swell ? 2.4 : 1)
+                    .opacity(swell ? 0 : 0.6)
+            )
+            .onAppear {
+                guard motion.animates(.sidebar) else { return }
+                withAnimation(.easeOut(duration: 1.6).repeatForever(autoreverses: false)) { swell = true }
+            }
+    }
+}
+
+/// A small answer button on a wait: the likely answer filled, the other quiet.
+private struct WaitPill: View {
+    let title: String
+    var prominent = false
+    let action: () -> Void
+    @ObservedObject private var motion = MotionPreferences.shared
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(Theme.captionFont.weight(.medium))
+                .foregroundStyle(prominent ? Theme.accent : hovered ? Theme.textPrimary : Theme.textSecondary)
+                .padding(.horizontal, 8)
+                .frame(height: 20)
+                .background(Capsule().fill(prominent ? Theme.accent.opacity(hovered ? 0.24 : 0.14)
+                                                     : hovered ? Theme.cardSelected : Theme.hover.opacity(0.6))
+                    .animation(motion.animation(.sidebar, .easeOut(duration: 0.12)), value: hovered))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(OctetPressStyle())
+        .onHover { hovered = $0 }
     }
 }
 
 private struct WaitRow: View {
     let wait: Wait
     @ObservedObject private var center = WaitCenter.shared
+    @ObservedObject private var motion = MotionPreferences.shared
     @State private var hovered = false
 
     var body: some View {
+        let asking = wait.needsAnswer()
+        let checking = center.isChecking(wait.id)
         VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                OctetIcon(wait.condition.kind.icon, size: 12).foregroundStyle(Theme.textTertiary).frame(width: 12)
-                Text(wait.title).font(Theme.interfaceFont(11.5)).foregroundStyle(hovered ? Theme.textPrimary : Theme.textSecondary).lineLimit(1)
+            HStack(spacing: 8) {
+                OctetIcon(wait.condition.kind.icon, size: 12)
+                    .foregroundStyle(asking ? Theme.accent : Theme.textTertiary)
+                    .frame(width: 16, height: 16)
+                Text(wait.title).font(Theme.Text.transcript)
+                    .foregroundStyle(hovered || asking ? Theme.textPrimary : Theme.textSecondary).lineLimit(1)
                 Spacer(minLength: 4)
                 Text(WorkspaceActivity.ageLabel(since: wait.createdAt))
-                    .font(Theme.Text.mono(10.5)).foregroundStyle(Theme.textTertiary)
+                    .font(Theme.interfaceFont(11.5).monospacedDigit()).foregroundStyle(Theme.textTertiary)
             }
-            Text(center.isChecking(wait.id) ? "Checking…" : wait.statusLine())
-                .font(Theme.captionFont).foregroundStyle(Theme.textTertiary).lineLimit(1)
-                .padding(.leading, 18)
-            if wait.needsAnswer() {
+            Text(checking ? "Checking…" : wait.statusLine())
+                .font(Theme.captionFont).foregroundStyle(checking ? Theme.accent : Theme.textTertiary).lineLimit(1)
+                .padding(.leading, 24)
+                .contentTransition(.opacity)
+                .animation(motion.animation(.sidebar, .easeOut(duration: 0.2)), value: checking)
+            if asking {
                 HStack(spacing: 6) {
-                    Text(wait.isManual ? "Has it happened?" : "Still needed?").font(Theme.captionFont).foregroundStyle(Theme.textSecondary)
+                    Text(wait.isManual ? "Happened?" : "Still needed?")
+                        .font(Theme.captionFont).foregroundStyle(Theme.textSecondary).lineLimit(1).fixedSize()
                     Spacer(minLength: 0)
                     if wait.isManual {
-                        Button("Yes") { center.markReady(wait.id) }
-                        Button("Not yet") { center.confirm(wait.id) }
+                        WaitPill(title: "Not yet") { center.confirm(wait.id) }
+                        WaitPill(title: "Yes", prominent: true) { center.markReady(wait.id) }
                     } else {
-                        Button("Keep") { center.confirm(wait.id) }
-                        Button("Remove") { center.remove(wait.id) }
+                        WaitPill(title: "Remove") { center.remove(wait.id) }
+                        WaitPill(title: "Keep", prominent: true) { center.confirm(wait.id) }
                     }
                 }
-                .buttonStyle(.plain).font(Theme.captionFont.weight(.medium)).foregroundStyle(Theme.accent)
-                .padding(.leading, 18)
+                .padding(.leading, 24)
+                .padding(.top, 2)
+                .transition(.opacity.combined(with: .offset(y: -3)))
             }
         }
-        .padding(.horizontal, 8).padding(.vertical, 5)
-        .background(RoundedRectangle(cornerRadius: Theme.rowRadius).fill(hovered ? Theme.hover : Color.clear))
+        .padding(.horizontal, 10).padding(.vertical, 7)
+        .background(RoundedRectangle(cornerRadius: Theme.controlRadius)
+            .fill(asking ? Theme.accent.opacity(hovered ? 0.1 : 0.06) : hovered ? Theme.hover : Color.clear)
+            .animation(motion.animation(.sidebar, .easeOut(duration: 0.12)), value: hovered))
+        .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius)
+            .strokeBorder(asking ? Theme.accent.opacity(0.2) : .clear, lineWidth: 1))
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
         .contextMenu { WaitMenu(wait: wait) }

@@ -830,6 +830,20 @@ struct RootView: View {
             if let open = ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"], open.hasPrefix("checkin") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) { CheckInDebug.open(open, window: window) }
             }
+            #if DEBUG
+            // "waits-sample" fills the Waiting dock with made-up waits (memory only).
+            if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "waits-sample" {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    let origin = Wait.Origin(cwd: NSHomeDirectory(), workspaceLabel: "Sample")
+                    let now = Date()
+                    let asks = Wait(title: "TikTok adops app approved", condition: .manual("Approved"), next: "Launch the campaign",
+                                    origin: origin, now: now.addingTimeInterval(-12 * 86_400))
+                    let pr = Wait(title: "Release PR checks pass", condition: .manual("Checks"), next: "Merge it", origin: origin,
+                                  now: now.addingTimeInterval(-2 * 3600))
+                    WaitCenter.shared.installSample([asks, pr])
+                }
+            }
+            #endif
             if ProcessInfo.processInfo.environment["OCTET_OPEN_WINDOW"] == "snooze-picker" {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
                     if let workspace = window.focusedWorkspace { SnoozePickerCenter.shared.ask(store: store, workspaceId: workspace.workspaceId) }

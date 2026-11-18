@@ -1188,8 +1188,8 @@ private struct AgentSettings: View {
             }
             SettingsDivider()
             SettingsRow(
-                title: "When a subagent finishes",
-                detail: "Keep its tab open until you close it, or close it two minutes after the subagent finishes. A tab you're looking at stays open, and a subagent that's sent more work starts the wait again.",
+                title: "When an agent's tab finishes",
+                detail: "For tabs Octet opens for an agent's work: subagents, delegated reviews and tasks, and tasks from your other Macs. Keep the tab open until you close it, or close it two minutes after its agent finishes. A tab you're looking at stays open, and an agent that's given more work starts the wait again.",
                 setting: \.subagentTabClosing
             ) {
                 OctetSegmented(selection: $settings.values.subagentTabClosing, items: OctetSettings.SubagentTabClosing.allCases.map { ($0, $0.title) })

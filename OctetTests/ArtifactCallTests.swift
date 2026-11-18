@@ -43,4 +43,25 @@ final class ArtifactCallTests: XCTestCase {
         XCTAssertNil(ArtifactCall.pageTitle(in: "<title></title>"))
         XCTAssertNil(ArtifactCall.pageTitle(in: "<h1>No title</h1>"))
     }
+    func testConversationArtifactsCollectsCompletedDocumentsAndPublishedLinks() throws {
+        func call(_ name: String, _ input: [String: Any], result: String? = "done", error: Bool = false) throws -> AgentItem {
+            var tool = AgentToolCall(name: name, summary: "", input: "")
+            tool.inputData = try JSONSerialization.data(withJSONObject: input)
+            tool.result = result
+            tool.isError = error
+            return AgentItem(id: UUID().uuidString, kind: .tool(tool))
+        }
+        let items = try [
+            call("Write", ["file_path": "report.md"]),
+            call("Write", ["file_path": "code.swift"]),
+            call("Write", ["file_path": "failed.pdf"], error: true),
+            call("Write", ["file_path": "pending.md"], result: nil),
+            call("Edit", ["type": "fileChange", "status": "completed", "changes": [["path": "slides.pdf", "kind": "add"]]], result: nil),
+            call("Artifact", ["title": "Dashboard"], result: "https://claude.ai/artifact/abc"),
+            call("Write", ["file_path": "report.md"])
+        ]
+        let artifacts = ConversationArtifact.collect(from: items, cwd: "/project")
+        XCTAssertEqual(artifacts.map(\.title), ["report.md", "Dashboard", "slides.pdf"])
+        XCTAssertEqual(artifacts.first?.url.path, "/project/report.md")
+    }
 }

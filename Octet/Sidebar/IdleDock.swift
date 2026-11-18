@@ -183,7 +183,7 @@ struct IdleDock: View {
 
 /// A shelf's header, after T3 Code's: the name and count, a hairline to
 /// the edge, and a chevron that turns over when the shelf is folded.
-private struct ShelfHeader<Accessory: View>: View {
+struct ShelfHeader<Accessory: View>: View {
     enum Tone {
         /// Idle: quiet, like the rest of the sidebar's labels.
         case muted
@@ -202,8 +202,10 @@ private struct ShelfHeader<Accessory: View>: View {
 
     /// T3 dims its muted label to 60%; Octet's tertiary text is already
     /// that quiet and still meets the theme's contrast floor.
-    private var label: Color { tone == .info ? Theme.info : Theme.textTertiary }
-    private var line: Color { tone == .info ? Theme.info.opacity(0.15) : Theme.border.opacity(0.6) }
+    private var label: Color { tone == .info ? Theme.info : hovered ? Theme.textSecondary : Theme.textTertiary }
+    private var line: Color {
+        tone == .info ? Theme.info.opacity(hovered ? 0.3 : 0.15) : Theme.border.opacity(hovered ? 1 : 0.6)
+    }
 
     var body: some View {
         HStack(spacing: 8) {
@@ -226,7 +228,9 @@ private struct ShelfHeader<Accessory: View>: View {
         }
         .padding(.horizontal, 8)
         .frame(height: IdleDock.headerHeight)
-        .background(RoundedRectangle(cornerRadius: Theme.controlRadius).fill(hovered ? Theme.hover : .clear))
+        // No filled box under the pointer: the label, hairline and chevron
+        // brighten instead, so the header stays part of the dock's chrome.
+        .animation(motion.animation(.sidebar, .easeOut(duration: 0.12)), value: hovered)
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
         .onTapGesture(perform: toggle)
@@ -367,9 +371,11 @@ private struct IdleRow: View {
         .padding(.horizontal, 10)
         .frame(height: IdleDock.rowHeight)
         .background(RoundedRectangle(cornerRadius: Theme.controlRadius)
-            .fill(picked ? Theme.cardSelected : hovered ? Theme.hover : Color.clear))
+            .fill(picked ? Theme.cardSelected : hovered ? Theme.hover : Color.clear)
+            .animation(MotionPreferences.shared.animation(.sidebar, .easeOut(duration: 0.12)), value: hovered || picked))
         .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius)
-            .strokeBorder(picked ? Theme.accent.opacity(0.5) : .clear, lineWidth: 1))
+            .strokeBorder(picked ? Theme.accent.opacity(0.5) : .clear, lineWidth: 1)
+            .animation(MotionPreferences.shared.animation(.sidebar, .easeOut(duration: 0.15)), value: picked))
         .contentShape(Rectangle())
         .onHover { hovering in
             hovered = hovering
@@ -628,7 +634,8 @@ private struct SleepingRow: View {
         }
         .padding(.horizontal, 10)
         .frame(height: IdleDock.rowHeight)
-        .background(RoundedRectangle(cornerRadius: Theme.controlRadius).fill(hovered ? Theme.hover : Color.clear))
+        .background(RoundedRectangle(cornerRadius: Theme.controlRadius).fill(hovered ? Theme.hover : Color.clear)
+            .animation(MotionPreferences.shared.animation(.sidebar, .easeOut(duration: 0.12)), value: hovered))
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
         .onAppear {

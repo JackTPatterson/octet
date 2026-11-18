@@ -21,6 +21,14 @@ struct PhoneSettingsGroup: View {
                     SettingsRow(title: "Not listening", detail: error) { EmptyView() }
                 }
             }
+            SettingsGroup(title: "Other Macs") {
+                SettingsRow(
+                    title: "Use another Mac's agents here",
+                    detail: "Sign in to Octet on another Mac the way a phone does: it lists that Mac's agents live, and you can read them, message them, stop them and answer their permission requests from here. It needs Phone turned on there; pair each Mac with the other to see both ways."
+                ) {
+                    OctetButton(title: "Remote Macs…", icon: "desktopcomputer", kind: .secondary, compact: true) { RemoteMacWindow.show() }
+                }
+            }
             if center.running {
                 pair
                 paired

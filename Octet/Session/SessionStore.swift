@@ -243,6 +243,7 @@ final class SessionStore: ObservableObject {
         AttentionWatcher.shared.start(store: self)
         PeerCenter.shared.apply(store: self)
         PhoneHostCenter.shared.apply(store: self)
+        RemoteMacCenter.shared.start()
         DelegationCenter.shared.apply(store: self)
         TerminalAccessCenter.shared.apply(store: self)
         BrowserAgentCenter.shared.apply(store: self)
@@ -723,6 +724,7 @@ final class SessionStore: ObservableObject {
         AgentWorktreeWatcher.shared.observe(snapshot, store: self)
         AgentRelocator.shared.observe(snapshot, store: self)
         PeerCenter.shared.observe(snapshot)
+        AgentTabCloser.shared.observe(snapshot)
         refreshTip()
         if branches != self.branches { self.branches = branches }
         if locations != self.agentLocations { self.agentLocations = locations }

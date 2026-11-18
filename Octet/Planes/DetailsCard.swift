@@ -12,6 +12,7 @@ struct DetailsCard: View {
     @ObservedObject var store: SessionStore
     @ObservedObject var ui: UIState
     @ObservedObject private var ports = PortsWatcher.shared
+    @ObservedObject private var agentsCenter = AgentCenter.shared
     @State private var folderOpen = false
 
     var body: some View {
@@ -51,6 +52,9 @@ struct DetailsCard: View {
                     DetailsRow(icon: "pull.request", title: "No pull request", muted: true,
                                help: "Show this branch's pull request") { show(.pullRequest) }
                 }
+            }
+            if let session = agentsCenter.active(in: workspace) {
+                ConversationArtifactsRows(session: session)
             }
             ForEach(serving, id: \.self) { port in
                 DetailsRow(icon: "safari", title: "localhost:\(String(port))", detail: ports.services[port],
@@ -119,9 +123,44 @@ struct DetailsCard: View {
     }
 }
 
+/// Artifacts follow the active conversation and update as its tool calls finish.
+private struct ConversationArtifactsRows: View {
+    @ObservedObject var session: AgentSession
+    @EnvironmentObject private var window: WindowContext
+    @State private var expanded = true
+
+    var body: some View {
+        let artifacts = ConversationArtifact.collect(from: session.conversation.items, cwd: session.cwd)
+        if !artifacts.isEmpty {
+            DetailsRow(icon: "doc.text", title: "Artifacts", detail: "\(artifacts.count)",
+                       help: "Show or hide documents from this conversation") {
+                expanded.toggle()
+            } trailing: {
+                OctetIcon("chevron.down", size: 10)
+                    .foregroundStyle(Theme.textTertiary)
+                    .rotationEffect(.degrees(expanded ? 180 : 0))
+            }
+            if expanded {
+                ForEach(artifacts) { artifact in
+                    DetailsRow(icon: artifact.toolIcon, logo: artifact.url.isFileURL ? LanguageLogo(path: artifact.url.path, size: 15) : nil,
+                               title: artifact.title, help: artifact.url.isFileURL ? artifact.url.path : artifact.url.absoluteString) {
+                        if artifact.url.isFileURL {
+                            window.openFile(artifact.url, presentation: .full)
+                        } else {
+                            NSWorkspace.shared.open(artifact.url)
+                        }
+                    }
+                    .padding(.leading, 18)
+                }
+            }
+        }
+    }
+}
+
 /// A row in the details card: 32pt, an icon, a title, a quiet detail.
 private struct DetailsRow<Trailing: View>: View {
     let icon: String
+    var logo: LanguageLogo? = nil
     var tint: Color?
     let title: String
     var detail: String?
@@ -132,7 +171,7 @@ private struct DetailsRow<Trailing: View>: View {
 
     var body: some View {
         Button(action: action) {
-            DetailsRowLabel(icon: icon, tint: tint, title: title, detail: detail, muted: muted, trailing: trailing)
+            DetailsRowLabel(icon: icon, logo: logo, tint: tint, title: title, detail: detail, muted: muted, trailing: trailing)
         }
         .buttonStyle(.plain)
         .help(help)
@@ -140,15 +179,16 @@ private struct DetailsRow<Trailing: View>: View {
 }
 
 extension DetailsRow where Trailing == EmptyView {
-    init(icon: String, title: String, detail: String? = nil, tint: Color? = nil, muted: Bool = false,
+    init(icon: String, logo: LanguageLogo? = nil, title: String, detail: String? = nil, tint: Color? = nil, muted: Bool = false,
          help: String, action: @escaping () -> Void) {
-        self.init(icon: icon, tint: tint, title: title, detail: detail, muted: muted, help: help, action: action,
+        self.init(icon: icon, logo: logo, tint: tint, title: title, detail: detail, muted: muted, help: help, action: action,
                   trailing: { EmptyView() })
     }
 }
 
 private struct DetailsRowLabel<Trailing: View>: View {
     let icon: String
+    var logo: LanguageLogo? = nil
     var tint: Color?
     let title: String
     var detail: String?
@@ -158,9 +198,11 @@ private struct DetailsRowLabel<Trailing: View>: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            OctetIcon(icon, size: 15)
-                .foregroundStyle(tint ?? Theme.textTertiary)
-                .frame(width: 18)
+            Group {
+                if let logo { logo }
+                else { OctetIcon(icon, size: 15).foregroundStyle(tint ?? Theme.textTertiary) }
+            }
+            .frame(width: 18)
             Text(title)
                 .font(Theme.Text.transcriptMedium)
                 .foregroundStyle(muted ? Theme.textTertiary : Theme.textPrimary.opacity(0.85))

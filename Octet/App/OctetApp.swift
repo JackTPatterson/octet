@@ -113,6 +113,7 @@ struct OctetApp: App {
             OctetCommands(store: store, updater: updater)
             // Apart from OctetCommands, which holds as many as a builder takes.
             PeerCommands(settings: SettingsStore.shared, center: PeerCenter.shared)
+            RemoteMacCommands()
         }
 
         Settings {

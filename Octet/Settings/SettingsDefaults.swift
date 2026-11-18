@@ -130,7 +130,7 @@ enum SettingsDefaults {
         .init("Restore recent terminal output", \.paneHistory),
         .init("Read live usage from your Claude account", \.readClaudeAccountUsage),
         .init("Prompt for agent updates", \.checkForAgentUpdates),
-        .init("When a subagent finishes", \.subagentTabClosing),
+        .init("When an agent's tab finishes", \.subagentTabClosing),
         // Keyboard
         .init("Keyboard shortcuts", \.shortcutOverrides),
         // Advanced

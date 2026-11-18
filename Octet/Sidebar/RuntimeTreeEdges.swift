@@ -41,10 +41,14 @@ extension View {
 }
 
 enum TreeEdgeStyle {
-    static let ink = Theme.textPrimary
+    /// A dulled white, so the tree sits behind the rows instead of competing.
+    static var ink: Color { Theme.textPrimary.opacity(0.35) }
     static let lineWidth: CGFloat = 1
     static let portRadius: CGFloat = 2.75
-    static let corner: CGFloat = 5.5
+    static let corner: CGFloat = 8
+    /// The edge stops this short of the child's mark, so it reads as pointing
+    /// at it rather than running into it.
+    static let endGap: CGFloat = 3
     /// The mark is a 20pt disc: the port sits this far under its centre,
     /// on the disc's bottom edge, half inside it.
     static let portDrop: CGFloat = 10
@@ -57,9 +61,6 @@ enum TreeEdgeStyle {
     /// Pulling back in: gathering speed into the port (ease-in), and quicker
     /// than drawing out, as leaving should be.
     static let retract = Animation.timingCurve(0.5, 0, 0.75, 0.4, duration: 0.22)
-    /// Following rows as they move: the spring the rows themselves move on,
-    /// so an edge never lags or jumps ahead of its mark.
-    static let follow = Animation.spring(response: 0.32, dampingFraction: 0.86)
     /// A port springs in a beat before its edges leave it, and goes once
     /// they've pulled back in.
     static let portIn = Animation.spring(response: 0.26, dampingFraction: 0.72)
@@ -76,7 +77,7 @@ private struct TreeEdgeLayer: View {
             guard let parent = node.parent, let from = nodes[parent] else { return nil }
             return Edge(id: id, parentID: parent, order: node.order,
                         port: CGPoint(x: from.rect.midX, y: from.rect.midY + TreeEdgeStyle.portDrop),
-                        end: CGPoint(x: node.rect.minX, y: node.rect.midY))
+                        end: CGPoint(x: node.rect.minX - TreeEdgeStyle.endGap, y: node.rect.midY))
         }
         .sorted { $0.order < $1.order }
         // A parent's children draw out one after another.
@@ -104,9 +105,9 @@ private struct TreeEdgeLayer: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        // Rows moving carry their edges and ports with them, on the rows' spring.
-        .animation(MotionPreferences.shared.animation(.sidebar, TreeEdgeStyle.follow),
-                   value: edges.map { [$0.port.x, $0.port.y, $0.end.x, $0.end.y] })
+        // No animation of its own: rows moving carry their edges and ports on
+        // the transaction that moves them, so a resize on any curve, or none,
+        // is followed in step instead of trailing on a second spring.
     }
 
     private struct Edge: Identifiable {
